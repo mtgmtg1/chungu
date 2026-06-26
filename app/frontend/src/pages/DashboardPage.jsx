@@ -1,7 +1,7 @@
 // [Flow: Step 1 (사용자 정보/잔액 로드) -> Step 2 (작업 내역 조회) -> Step 3 (목록 표시 + 다운로드 버튼)]
 import { useEffect, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { Coins, History, Download, Loader2, LogOut, CreditCard } from 'lucide-react'
+import { Coins, History, Download, Loader2, LogOut, CreditCard, Eye } from 'lucide-react'
 import { useAuth } from '../AuthContext.jsx'
 import { api } from '../api.js'
 
@@ -113,8 +113,8 @@ export default function DashboardPage() {
                     <td className="px-4 py-3 text-right">
                       {j.status === 'done' ? (
                         <div className="flex justify-end gap-2">
-                          <button onClick={() => download(j.job_id, 'csv')} className="text-blue-600 hover:underline flex items-center gap-1"><Download size={14} /> CSV</button>
-                          <button onClick={() => download(j.job_id, 'md')} className="text-green-600 hover:underline flex items-center gap-1"><Download size={14} /> MD</button>
+                          <Link to={`/jobs/${j.job_id}`} className="text-primary hover:underline flex items-center gap-1"><Eye size={14} /> 보기</Link>
+                          <button onClick={() => download(j.job_id, 'xlsx')} className="text-blue-600 hover:underline flex items-center gap-1"><Download size={14} /> Excel</button>
                         </div>
                       ) : (
                         <span className="text-slate-400">-</span>

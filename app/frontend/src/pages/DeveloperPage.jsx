@@ -1,17 +1,22 @@
-// [Flow: Step 1 (로그인/개발자 권한 확인) -> Step 2 (계정/키/사용량 데이터 로드) -> Step 3 (키 발급/삭제/복사 UI) -> Step 4 (cURL 예시 제공)]
+// [Flow: Step 1 (로그인/개발자 권한 확인) -> Step 2 (계정/키/사용량 데이터 로드) -> Step 3 (키 발급/삭제/복사 UI) -> Step 4 (사용량 차트 + Docs 렌더링)]
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
 
-function Section({ title, children }) {
-  return (
-    <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm mb-6">
-      <h2 className="text-lg font-semibold mb-4">{title}</h2>
-      {children}
-    </div>
-  )
-}
+const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
+
+const curlExample = `curl -X POST ${baseUrl}/api/v1/jobs/upload \\
+  -H "X-API-Key: <YOUR_API_KEY>" \\
+  -F "files=@document.pdf" \\
+  -F "pipeline=vision"`
+
+const navItems = [
+  { icon: 'dashboard', label: 'Dashboard', href: '/dashboard' },
+  { icon: 'list_alt', label: 'Jobs', href: '/dashboard' },
+  { icon: 'code', label: 'Developer', href: '/developer', active: true },
+  { icon: 'settings', label: 'Settings', href: '#' },
+]
 
 export default function DeveloperPage() {
   const { user, loading } = useAuth()
@@ -24,9 +29,8 @@ export default function DeveloperPage() {
   const [newKeyName, setNewKeyName] = useState('')
   const [revealedKey, setRevealedKey] = useState(null)
   const [error, setError] = useState('')
-  const [activeTab, setActiveTab] = useState('keys')
-
-  const baseUrl = window.location.origin
+  const [showCreate, setShowCreate] = useState(false)
+  const [period, setPeriod] = useState('7')
 
   useEffect(() => {
     if (loading) return
@@ -36,6 +40,11 @@ export default function DeveloperPage() {
     }
     loadAll()
   }, [user, loading, navigate])
+
+  useEffect(() => {
+    if (!user) return
+    loadUsage()
+  }, [user, period])
 
   const loadKeys = async () => {
     try {
@@ -47,18 +56,25 @@ export default function DeveloperPage() {
     }
   }
 
+  const loadUsage = async () => {
+    try {
+      const usg = await api.devUsage(parseInt(period, 10))
+      setUsage(usg)
+    } catch (e) {
+      console.error('Usage 로드 실패:', e)
+    }
+  }
+
   const loadAll = async () => {
     try {
       setError('')
-      const [acc, prc, usg, tx] = await Promise.all([
+      const [acc, prc, tx] = await Promise.all([
         api.devAccount(),
         api.devPricing(),
-        api.devUsage(30),
         api.devTransactions(20),
       ])
       setAccount(acc)
       setPricing(prc)
-      setUsage(usg)
       setTransactions(tx)
     } catch (e) {
       setError(e.message || '데이터를 불러오지 못했습니다')
@@ -73,16 +89,12 @@ export default function DeveloperPage() {
       setKeys([res, ...keys])
       setRevealedKey(res)
       setNewKeyName('')
+      setShowCreate(false)
       await loadKeys()
     } catch (e) {
       setError(e.message || 'key 생성 실패')
     }
   }
-
-  useEffect(() => {
-    if (!user || activeTab !== 'keys') return
-    loadKeys()
-  }, [activeTab, user])
 
   const deleteKey = async (id) => {
     if (!confirm('이 API key를 삭제하시겠습니까?')) return
@@ -98,171 +110,317 @@ export default function DeveloperPage() {
     navigator.clipboard.writeText(text)
   }
 
-  const curlExample = account?.api_key?.prefix
-    ? `curl -X POST ${baseUrl}/api/v1/jobs/upload \\\n  -H "X-API-Key: chu_live_..." \\\n  -F "files=@document.pdf" \\\n  -F "pipeline=vision"`
-    : `curl -X POST ${baseUrl}/api/v1/keys \\\n  -H "Authorization: Bearer <your-jwt>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"name":"my-app"}'`
+  const maxPoints = Math.max(1, ...usage.map((u) => u.points_spent || 0))
+  const totalUsage = account?.today_usage?.points_spent || 0
+  const balance = account?.points_balance || 0
+  const limit = 12500
+  const usagePct = Math.min(100, Math.round((totalUsage / limit) * 100))
 
-  if (loading || !user) return <div className="max-w-5xl mx-auto p-6">로딩 중...</div>
+  if (loading || !user) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    )
+  }
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="border-b bg-white">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
-          <h1 className="text-xl font-bold">개발자 포털</h1>
-          <Link to="/" className="text-sm text-slate-600 hover:text-slate-900">← 메인으로</Link>
+    <div className="min-h-screen bg-background text-on-background">
+      <aside className="h-screen w-64 fixed left-0 top-0 bg-surface/90 backdrop-blur-xl border-r border-outline-variant z-50 flex flex-col py-6 px-4">
+        <div className="flex items-center gap-3 mb-10 px-2">
+          <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
+            <span className="material-symbols-outlined text-white text-xl">dataset</span>
+          </div>
+          <div>
+            <h1 className="font-headline-md text-headline-md font-bold text-primary leading-tight">Chungu</h1>
+            <p className="text-[10px] uppercase tracking-widest text-outline">Precision Data</p>
+          </div>
         </div>
-      </header>
-      <main className="max-w-5xl mx-auto px-6 py-8">
-        {error && <div className="mb-4 rounded-lg bg-red-50 text-red-700 px-4 py-3 text-sm">{error}</div>}
-
-        <div className="flex gap-2 mb-6">
-          {['keys', 'usage', 'billing', 'docs'].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium ${
-                activeTab === tab
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+        <nav className="flex-grow space-y-1">
+          {navItems.map((item) => (
+            <Link
+              key={item.label}
+              to={item.href}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                item.active
+                  ? 'text-primary font-bold border-r-2 border-primary bg-primary-container/5'
+                  : 'text-on-surface-variant hover:bg-primary-container/10'
               }`}
             >
-              {tab === 'keys' && 'API Keys'}
-              {tab === 'usage' && '사용량'}
-              {tab === 'billing' && '결제/잔액'}
-              {tab === 'docs' && 'Docs'}
-            </button>
+              <span className="material-symbols-outlined text-xl">{item.icon}</span>
+              <span className="font-body-md text-body-md">{item.label}</span>
+            </Link>
           ))}
+        </nav>
+        <div className="mt-auto p-4 glass-panel rounded-xl border border-primary/10">
+          <p className="font-label-sm text-label-sm text-on-surface-variant mb-2">Usage Limit</p>
+          <div className="w-full bg-outline-variant rounded-full h-1.5 mb-2">
+            <div className="bg-primary h-1.5 rounded-full" style={{ width: `${usagePct}%` }}></div>
+          </div>
+          <p className="text-[11px] text-outline">{totalUsage.toLocaleString()} / {limit.toLocaleString()} calls</p>
         </div>
+      </aside>
 
-        {activeTab === 'keys' && (
-          <Section title="API Keys">
-            <div className="flex gap-2 mb-4">
-              <input
-                type="text"
-                placeholder="key 이름 (예: production)"
-                value={newKeyName}
-                onChange={(e) => setNewKeyName(e.target.value)}
-                className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-              <button onClick={createKey} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">새 API key 발급</button>
-              <button onClick={loadKeys} className="rounded-lg bg-white border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">새로고침</button>
+      <header className="fixed top-0 right-0 w-[calc(100%-16rem)] z-40 bg-surface/80 backdrop-blur-md border-b border-outline-variant flex justify-between items-center h-16 px-gutter">
+        <div className="flex items-center flex-1 max-w-xl">
+          <div className="relative w-full">
+            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline">search</span>
+            <input
+              className="w-full bg-surface-container-low border-none rounded-full py-2 pl-10 pr-4 text-body-md focus:ring-1 focus:ring-primary focus:outline-none"
+              placeholder="Search documentation or keys..."
+              type="text"
+            />
+          </div>
+        </div>
+        <div className="flex items-center gap-6">
+          <div className="flex gap-4 text-on-surface-variant">
+            <span className="material-symbols-outlined cursor-pointer hover:text-primary transition-colors">notifications</span>
+            <div className="w-8 h-8 rounded-full bg-primary-fixed-dim border border-primary/20 flex items-center justify-center overflow-hidden">
+              <span className="material-symbols-outlined text-primary text-sm">person</span>
             </div>
+          </div>
+        </div>
+      </header>
+
+      <main className="pt-24 pl-64 pr-gutter pb-gutter min-h-screen">
+        <div className="max-w-container-max mx-auto space-y-8">
+          {error && (
+            <div className="bg-error-container text-error px-4 py-3 rounded-xl text-sm border border-error/10">
+              {error}
+            </div>
+          )}
+
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h2 className="font-headline-lg text-headline-lg text-on-surface">Developer Portal</h2>
+              <p className="text-on-surface-variant text-body-md">Manage your API keys, track usage, and explore the documentation.</p>
+            </div>
+            <button
+              onClick={() => setShowCreate(true)}
+              className="bg-primary text-white px-6 py-2.5 rounded-lg flex items-center gap-2 font-body-md hover:bg-primary/90 transition-all shadow-sm"
+            >
+              <span className="material-symbols-outlined text-xl">add</span>
+              Create New Key
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-gutter">
+            <div className="lg:col-span-8 space-y-gutter">
+              <div className="glass-panel p-6 rounded-2xl">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="font-headline-md text-headline-md text-on-surface">Usage Analytics</h3>
+                  <select
+                    value={period}
+                    onChange={(e) => setPeriod(e.target.value)}
+                    className="bg-surface-container-low border-none rounded-lg text-label-sm py-1 pl-2 pr-8 focus:ring-1 focus:ring-primary focus:outline-none"
+                  >
+                    <option value="7">Last 7 Days</option>
+                    <option value="30">Last 30 Days</option>
+                  </select>
+                </div>
+                <div className="h-64 flex items-end gap-1 px-2 relative">
+                  <div className="absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none">
+                    <span className="material-symbols-outlined text-9xl">monitoring</span>
+                  </div>
+                  {usage.map((u, i) => {
+                    const pct = Math.round(((u.points_spent || 0) / maxPoints) * 100)
+                    return (
+                      <div key={u.day || i} className="flex-1 flex flex-col justify-end items-center group h-full">
+                        <div
+                          className="w-full bg-primary/20 rounded-t hover:bg-primary/40 transition-all cursor-pointer relative"
+                          style={{ height: `${Math.max(4, pct)}%` }}
+                        >
+                          <div className="hidden group-hover:block absolute -top-8 left-1/2 -translate-x-1/2 bg-on-surface text-white text-[10px] py-1 px-2 rounded whitespace-nowrap">
+                            {(u.points_spent || 0).toLocaleString()}P
+                          </div>
+                        </div>
+                        <span className="text-[10px] text-outline mt-2">
+                          {u.day ? new Date(u.day).toLocaleDateString('ko-KR', { weekday: 'short' }) : '-'}
+                        </span>
+                      </div>
+                    )
+                  })}
+                  {usage.length === 0 && (
+                    <div className="absolute inset-0 flex items-center justify-center text-outline text-sm">
+                      No usage data yet
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="glass-panel rounded-2xl overflow-hidden">
+                <div className="p-6 border-b border-outline-variant flex justify-between items-center">
+                  <h3 className="font-headline-md text-headline-md text-on-surface">API Keys</h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-surface-container-low text-on-surface-variant font-label-sm text-label-sm uppercase tracking-wider">
+                      <tr>
+                        <th className="px-6 py-4">Label</th>
+                        <th className="px-6 py-4">API Key</th>
+                        <th className="px-6 py-4 text-right">Rate</th>
+                        <th className="px-6 py-4 text-right">Created</th>
+                        <th className="px-6 py-4 w-10"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-outline-variant text-body-md">
+                      {keys.map((k) => (
+                        <tr key={k.id} className="hover:bg-primary-container/5 transition-colors">
+                          <td className="px-6 py-4 font-medium text-on-surface">{k.name}</td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2">
+                              <code className="bg-surface-container-high px-2 py-1 rounded text-primary-container font-mono text-sm">
+                                {k.prefix}••••••••••••••••
+                              </code>
+                              <button
+                                onClick={() => copyToClipboard(k.prefix + '••••••••••••••••')}
+                                className="text-outline hover:text-primary transition-colors"
+                                title="Copy"
+                              >
+                                <span className="material-symbols-outlined text-lg">content_copy</span>
+                              </button>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-right text-on-surface-variant">{k.rate_limit_rpm}/min</td>
+                          <td className="px-6 py-4 text-right text-on-surface-variant">
+                            {k.created_at ? new Date(k.created_at).toLocaleDateString('ko-KR') : '-'}
+                          </td>
+                          <td className="px-6 py-4">
+                            <button
+                              onClick={() => deleteKey(k.id)}
+                              className="text-outline hover:text-error transition-colors"
+                              title="Delete"
+                            >
+                              <span className="material-symbols-outlined text-lg">delete</span>
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div className="lg:col-span-4 space-y-gutter">
+              <div className="glass-panel p-6 rounded-2xl">
+                <div className="flex items-center gap-3 mb-6">
+                  <span className="material-symbols-outlined text-primary bg-primary/10 p-2 rounded-lg">speed</span>
+                  <h3 className="font-headline-md text-headline-md text-on-surface">Rate Limit</h3>
+                </div>
+                <div className="space-y-4">
+                  <div className="flex justify-between items-end">
+                    <div>
+                      <p className="text-3xl font-bold text-on-surface">{totalUsage.toLocaleString()}</p>
+                      <p className="text-on-surface-variant text-label-sm">Monthly API Calls</p>
+                    </div>
+                    <p className="text-outline text-label-sm">Limit: {limit.toLocaleString()}</p>
+                  </div>
+                  <div className="w-full bg-outline-variant/30 rounded-full h-3 overflow-hidden">
+                    <div className="bg-primary h-full rounded-full transition-all duration-1000 ease-out" style={{ width: `${usagePct}%` }}></div>
+                  </div>
+                  <div className="p-3 bg-secondary-container/30 border border-secondary/10 rounded-lg flex items-start gap-2">
+                    <span className="material-symbols-outlined text-secondary text-sm mt-0.5">info</span>
+                    <p className="text-[12px] text-on-secondary-fixed-variant leading-relaxed">
+                      Your usage resets daily. Points balance: {balance.toLocaleString()}P.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="glass-panel rounded-2xl overflow-hidden">
+                <div className="p-6 border-b border-outline-variant">
+                  <h3 className="font-headline-md text-headline-md text-on-surface">Quick Start</h3>
+                </div>
+                <div className="p-6 space-y-6">
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-label-sm font-bold text-outline">ENDPOINT</span>
+                      <span className="text-label-sm px-2 py-0.5 bg-primary-container text-white rounded uppercase">POST</span>
+                    </div>
+                    <code className="block bg-surface-container-low p-2 rounded font-mono text-sm text-primary">/api/v1/jobs/upload</code>
+                  </div>
+                  <div className="space-y-4">
+                    <div className="flex border-b border-outline-variant">
+                      <button className="px-4 py-2 text-primary border-b-2 border-primary font-label-sm">cURL</button>
+                    </div>
+                    <div className="code-block p-4 rounded-xl text-sm overflow-x-auto">
+                      <pre><code>{curlExample}</code></pre>
+                    </div>
+                  </div>
+                  <a href={`${baseUrl}/api/v1/docs`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary font-body-md hover:underline">
+                    View full API reference
+                    <span className="material-symbols-outlined text-sm">arrow_forward</span>
+                  </a>
+                </div>
+              </div>
+
+              <div className="glass-panel p-6 rounded-2xl">
+                <div className="flex items-center gap-3 mb-4">
+                  <span className="material-symbols-outlined text-primary bg-primary/10 p-2 rounded-lg">payments</span>
+                  <h3 className="font-headline-md text-headline-md text-on-surface">Billing</h3>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex justify-between text-body-md">
+                    <span className="text-on-surface-variant">Points balance</span>
+                    <span className="font-bold text-on-surface">{balance.toLocaleString()}P</span>
+                  </div>
+                  <div className="flex justify-between text-body-md">
+                    <span className="text-on-surface-variant">Today usage</span>
+                    <span className="font-bold text-on-surface">{account?.today_usage?.points_spent?.toLocaleString() || 0}P</span>
+                  </div>
+                  <div className="h-px bg-outline-variant/40 my-2"></div>
+                  <div className="space-y-1 text-[12px] text-on-surface-variant">
+                    <p>PDF page: {pricing?.rates?.krw_per_page || '-'}P</p>
+                    <p>Image: {pricing?.rates?.krw_per_image || '-'}P</p>
+                    <p>Audio/sec: {pricing?.rates?.krw_per_audio_second || '-'}P</p>
+                    <p>Video/sec: {pricing?.rates?.krw_per_video_second || '-'}P</p>
+                  </div>
+                  <button
+                    onClick={() => navigate('/payment')}
+                    className="w-full mt-2 bg-primary text-white rounded-lg py-2.5 font-body-md hover:bg-primary/90 transition-colors"
+                  >
+                    충전하기
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      {showCreate && (
+        <div className="fixed inset-0 z-[60] bg-on-surface/30 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-outline-variant shadow-2xl w-full max-w-md p-6">
+            <h3 className="font-headline-md text-headline-md text-on-surface mb-4">Create New API Key</h3>
+            <input
+              type="text"
+              placeholder="Key name (e.g., production)"
+              value={newKeyName}
+              onChange={(e) => setNewKeyName(e.target.value)}
+              className="w-full border border-outline-variant rounded-lg px-3 py-2.5 text-body-md mb-4 focus:ring-1 focus:ring-primary focus:outline-none"
+            />
             {revealedKey && (
-              <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4">
-                <p className="mb-2 text-sm font-semibold text-amber-800">아래 key는 다시 표시되지 않습니다. 복사해 저장하세요.</p>
-                <pre className="mb-2 rounded bg-white p-2 text-xs break-all">{revealedKey.key}</pre>
-                <div className="flex gap-2">
-                  <button onClick={() => copyToClipboard(revealedKey.key)} className="rounded bg-amber-700 px-3 py-1 text-xs text-white hover:bg-amber-800">복사</button>
-                  <button onClick={() => setRevealedKey(null)} className="rounded bg-slate-200 px-3 py-1 text-xs text-slate-700 hover:bg-slate-300">숨기기</button>
+              <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                <p className="text-xs font-semibold text-amber-800 mb-2">Save this key now. It will not be shown again.</p>
+                <pre className="rounded bg-white p-2 text-xs break-all text-on-surface">{revealedKey.key}</pre>
+                <div className="flex gap-2 mt-2">
+                  <button onClick={() => copyToClipboard(revealedKey.key)} className="rounded bg-amber-700 px-3 py-1 text-xs text-white hover:bg-amber-800">Copy</button>
+                  <button onClick={() => setRevealedKey(null)} className="rounded bg-slate-200 px-3 py-1 text-xs text-slate-700 hover:bg-slate-300">Hide</button>
                 </div>
               </div>
             )}
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-100 text-slate-600">
-                  <tr><th className="px-3 py-2 text-left">이름</th><th className="px-3 py-2 text-left">prefix</th><th className="px-3 py-2 text-left">scope</th><th className="px-3 py-2 text-left">rate limit</th><th className="px-3 py-2 text-left">마지막 사용</th><th className="px-3 py-2 text-left">상태</th><th className="px-3 py-2 text-left"></th></tr>
-                </thead>
-                <tbody>
-                  {keys.map((k) => (
-                    <tr key={k.id} className="border-b border-slate-100">
-                      <td className="px-3 py-2">{k.name}</td>
-                      <td className="px-3 py-2">{k.prefix}...</td>
-                      <td className="px-3 py-2">{(k.scopes || []).join(', ')}</td>
-                      <td className="px-3 py-2">{k.rate_limit_rpm}/min</td>
-                      <td className="px-3 py-2">{k.last_used_at ? new Date(k.last_used_at).toLocaleString() : '-'}</td>
-                      <td className="px-3 py-2">{k.is_active ? <span className="text-green-600">활성</span> : <span className="text-slate-400">비활성</span>}</td>
-                      <td className="px-3 py-2">
-                        {k.is_active && (
-                          <button onClick={() => deleteKey(k.id)} className="text-xs text-red-600 hover:underline">삭제</button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="flex gap-3">
+              <button onClick={() => setShowCreate(false)} className="flex-1 border border-outline-variant rounded-lg py-2.5 font-body-md text-on-surface hover:bg-surface-container transition-colors">
+                Cancel
+              </button>
+              <button onClick={createKey} className="flex-1 bg-primary text-white rounded-lg py-2.5 font-body-md hover:bg-primary/90 transition-colors">
+                Create
+              </button>
             </div>
-          </Section>
-        )}
-
-        {activeTab === 'usage' && (
-          <Section title="사용량">
-            <div className="mb-4 grid grid-cols-2 gap-4">
-              <div className="rounded-lg bg-slate-50 p-4">
-                <div className="text-xs text-slate-500">잔액</div>
-                <div className="text-xl font-bold">{account?.points_balance?.toLocaleString() || 0}P</div>
-              </div>
-              <div className="rounded-lg bg-slate-50 p-4">
-                <div className="text-xs text-slate-500">오늘 사용</div>
-                <div className="text-xl font-bold">{account?.today_usage?.points_spent || 0}P</div>
-                <div className="text-xs text-slate-500">{account?.today_usage?.requests || 0}건</div>
-              </div>
-            </div>
-            <h3 className="mb-2 font-medium">최근 30일 일별 사용량</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-100 text-slate-600"><tr><th className="px-3 py-2 text-left">날짜</th><th className="px-3 py-2 text-left">요청 수</th><th className="px-3 py-2 text-left">사용 포인트</th></tr></thead>
-                <tbody>
-                  {usage.map((u) => (
-                    <tr key={u.day} className="border-b border-slate-100">
-                      <td className="px-3 py-2">{u.day}</td>
-                      <td className="px-3 py-2">{u.requests}</td>
-                      <td className="px-3 py-2">{u.points_spent.toLocaleString()}P</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Section>
-        )}
-
-        {activeTab === 'billing' && (
-          <Section title="결제 및 잔액">
-            <p className="mb-4 text-sm">현재 잔액: <strong className="text-lg">{account?.points_balance?.toLocaleString() || 0}P</strong></p>
-            <h3 className="mb-2 font-medium">단가</h3>
-            <ul className="mb-4 list-disc pl-5 text-sm text-slate-700">
-              <li>PDF 페이지: {pricing?.rates?.krw_per_page}P</li>
-              <li>이미지: {pricing?.rates?.krw_per_image}P</li>
-              <li>오디오 1초: {pricing?.rates?.krw_per_audio_second}P</li>
-              <li>비디오 1초: {pricing?.rates?.krw_per_video_second}P</li>
-            </ul>
-            <h3 className="mb-2 font-medium">최근 거래 내역</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-100 text-slate-600"><tr><th className="px-3 py-2 text-left">일시</th><th className="px-3 py-2 text-left">유형</th><th className="px-3 py-2 text-left">금액</th><th className="px-3 py-2 text-left">설명</th></tr></thead>
-                <tbody>
-                  {transactions.map((t) => (
-                    <tr key={t.id} className="border-b border-slate-100">
-                      <td className="px-3 py-2">{new Date(t.created_at).toLocaleString()}</td>
-                      <td className="px-3 py-2">{t.type}</td>
-                      <td className="px-3 py-2">{t.amount.toLocaleString()}P</td>
-                      <td className="px-3 py-2">{t.description}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <button onClick={() => navigate('/payment')} className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">포인트 충전하기</button>
-          </Section>
-        )}
-
-        {activeTab === 'docs' && (
-          <Section title="API 사용 가이드">
-            <p className="mb-4 text-sm text-slate-700">모든 API는 <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">/api/v1</code> prefix를 사용하고, <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">X-API-Key</code> 헤더로 인증합니다.</p>
-            <h3 className="mb-2 font-medium">1. API key 발급</h3>
-            <p className="mb-4 text-sm text-slate-700">위 <strong>API Keys</strong> 탭에서 key를 생성하세요.</p>
-            <h3 className="mb-2 font-medium">2. 파일 업로드 (비용 미리보기)</h3>
-            <pre className="mb-4 rounded-lg bg-slate-900 p-3 text-xs text-slate-50 overflow-x-auto">{curlExample}</pre>
-            <h3 className="mb-2 font-medium">3. 작업 승인 및 차감</h3>
-            <pre className="mb-4 rounded-lg bg-slate-900 p-3 text-xs text-slate-50 overflow-x-auto">{`curl -X POST ${baseUrl}/api/v1/jobs/<job_id>/confirm \\\n  -H "X-API-Key: <your-key>"`}</pre>
-            <h3 className="mb-2 font-medium">4. 상태 조회</h3>
-            <pre className="mb-4 rounded-lg bg-slate-900 p-3 text-xs text-slate-50 overflow-x-auto">{`curl ${baseUrl}/api/v1/jobs/<job_id> \\\n  -H "X-API-Key: <your-key>"`}</pre>
-            <h3 className="mb-2 font-medium">5. 결과 다운로드</h3>
-            <pre className="mb-4 rounded-lg bg-slate-900 p-3 text-xs text-slate-50 overflow-x-auto">{`curl -X GET "${baseUrl}/api/v1/jobs/<job_id>/download?type=xlsx" \\\n  -H "X-API-Key: <your-key>"`}</pre>
-            <h3 className="mb-2 font-medium">OpenAPI 문서</h3>
-            <a href={`${baseUrl}/api/v1/docs`} target="_blank" rel="noreferrer" className="text-sm text-blue-600 hover:underline">{baseUrl}/api/v1/docs</a>
-          </Section>
-        )}
-      </main>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

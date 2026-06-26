@@ -195,6 +195,29 @@ async def upload_job(
     }
 
 
+@router.put("/jobs/{job_id}")
+def update_job(
+    job_id: str,
+    payload: dict,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = db.get(Job, job_id)
+    if job is None or str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+    if job.status != "pending":
+        raise HTTPException(status_code=400, detail="대기 중인 작업만 수정할 수 있습니다")
+
+    if "pipeline" in payload and payload["pipeline"] in ("vision", "hybrid"):
+        job.pipeline = payload["pipeline"]
+    if "columns" in payload:
+        job.columns = _parse_columns(payload["columns"])
+    if "prompt" in payload:
+        job.prompt = str(payload["prompt"]).strip()
+    db.commit()
+    return _job_summary(job)
+
+
 @router.post("/jobs/{job_id}/confirm")
 def confirm_job(
     job_id: str,

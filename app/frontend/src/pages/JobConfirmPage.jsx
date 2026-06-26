@@ -12,7 +12,6 @@ export default function JobConfirmPage() {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
-  const [showAdvanced, setShowAdvanced] = useState(false)
   const [pipeline, setPipeline] = useState('vision')
   const [columns, setColumns] = useState('')
   const [prompt, setPrompt] = useState('')
@@ -39,6 +38,7 @@ export default function JobConfirmPage() {
     setSubmitting(true)
     setError('')
     try {
+      await api.updateJob(jobId, { pipeline, columns, prompt })
       await api.confirmJob(jobId)
       nav(`/jobs/${jobId}`)
     } catch (e) {

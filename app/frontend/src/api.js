@@ -30,6 +30,7 @@ export const api = {
 
   // 작업
   uploadJob: (formData) => request('/api/jobs/upload', { method: 'POST', body: formData }),
+  updateJob: (id, payload) => request(`/api/jobs/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   confirmJob: (id) => request(`/api/jobs/${id}/confirm`, { method: 'POST' }),
   getJob: (id) => request(`/api/jobs/${id}`),
   listJobs: () => request('/api/jobs'),

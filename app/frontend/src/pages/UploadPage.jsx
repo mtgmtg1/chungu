@@ -109,7 +109,7 @@ export default function UploadPage() {
             speed={0.6}
             scale={1.5}
             brightness={0.5}
-            color1="#ffffff"
+            color1="#f1f1f1"
             color2="#2dd2ffa4"
             noiseFrequency={2.5}
             noiseAmplitude={1.0}
@@ -118,7 +118,7 @@ export default function UploadPage() {
             octaveDecay={0.1}
             layerOffset={0}
             colorSpeed={1.0}
-            enableMouseInteraction={false}
+            enableMouseInteraction={true}}
             mouseInfluence={0.25}
           />
         </div>

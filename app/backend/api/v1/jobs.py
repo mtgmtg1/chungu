@@ -9,14 +9,15 @@ from io import BytesIO
 from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile, status
 from pypdf import PdfReader
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...auth.api_key_auth import require_api_key_with_key
 from ...auth.supabase_auth import CurrentUser
-from ...core import archive_handler, media_loader, points_service, supabase_client
+from ...core import archive_handler, media_loader, office_converter, points_service, supabase_client
+from ...core.llm_xlsx_converter import convert_markdown_to_xlsx_with_settings
 from ...core.prompts import DEFAULT_COLUMNS
 from ...core.rate_limit import add_daily_spent_points, enforce_rate_limit
 from ...db.models import ApiKey, ApiUsage, Job, User
@@ -64,6 +65,7 @@ def _job_summary(job: Job) -> dict:
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
         "downloadable": job.status == "done",
+        "xlsx_converted": bool(job.result_xlsx_storage_path),
     }
 
 
@@ -97,7 +99,8 @@ async def upload_job(
     pipeline: str = Form("vision"),
     columns: str = Form(""),
     prompt: str = Form(""),
-    dpi: int = Form(150),
+    dpi: int = Form(300),
+    relative_paths: str = Form(""),
     auth: tuple[CurrentUser, ApiKey] = Depends(require_api_key_with_key),
     db: Session = Depends(get_db),
 ):
@@ -126,8 +129,22 @@ async def upload_job(
     if total_size > max_mb * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"전체 파일이 너무 큽니다 (최대 {max_mb}MB)")
 
+    rel_paths = []
+    if relative_paths:
+        try:
+            rel_paths = json.loads(relative_paths)
+            if not isinstance(rel_paths, list):
+                rel_paths = []
+        except Exception:
+            rel_paths = []
+
+    def _relative_path(i: int) -> str:
+        if i < len(rel_paths) and rel_paths[i]:
+            return rel_paths[i]
+        return files[i].filename
+
     is_single_pdf = len(files) == 1 and files[0].filename.lower().endswith(".pdf")
-    original_filename = files[0].filename if len(files) == 1 else f"{len(files)}_files"
+    original_filename = files[0].filename if len(files) == 1 else f"{len(files)}_files.zip"
 
     job = Job(
         user_id=uuid.UUID(user.user_id),
@@ -160,13 +177,14 @@ async def upload_job(
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmp_path = Path(tmpdir)
                 extracted: list[Path] = []
-                for file, data in zip(files, file_data):
+                for i, (file, data) in enumerate(zip(files, file_data)):
+                    rel_path = _relative_path(i)
                     if archive_handler.is_archive(file.filename):
-                        archive_dest = tmp_path / f"extracted_{file.filename}"
+                        archive_dest = tmp_path / f"extracted_{rel_path}"
                         archive_dest.mkdir(parents=True, exist_ok=True)
                         extracted.extend(archive_handler.extract_all_recursive(file.filename, data, archive_dest))
                     else:
-                        file_path = tmp_path / file.filename
+                        file_path = tmp_path / rel_path
                         file_path.parent.mkdir(parents=True, exist_ok=True)
                         file_path.write_bytes(data)
                         extracted.append(file_path)
@@ -203,8 +221,8 @@ async def upload_job(
                 else:
                     zip_path = tmp_path / f"{job.id}.zip"
                     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                        for file, data in zip(files, file_data):
-                            zf.writestr(file.filename, data)
+                        for i, (file, data) in enumerate(zip(files, file_data)):
+                            zf.writestr(_relative_path(i), data)
                     storage_path = supabase_client.upload_input(job.id, zip_path.read_bytes(), zip_path.name, "application/zip")
                     job.pdf_storage_path = storage_path
                     job.file_type = "mixed"
@@ -332,6 +350,41 @@ def list_jobs(
     return [_job_summary(j) for j in rows]
 
 
+def _get_markdown_content(job: Job) -> str:
+    """편집된 마크다운이 있으면 사용하고, 없으면 원본 마크다운을 다운로드한다."""
+    client = supabase_client.get_service_client()
+    if job.result_edited_md_storage_path:
+        return client.storage.from_("results").download(job.result_edited_md_storage_path).decode("utf-8")
+    if job.result_md_storage_path:
+        return client.storage.from_("results").download(job.result_md_storage_path).decode("utf-8")
+    return ""
+
+
+def _ensure_xlsx_bundle(job: Job, db: Session) -> int:
+    """CSV/XLSX 다운로드가 가능하도록 xlsx 변환을 한 번 수행한다. 이미 변환된 경우 0을 반환한다."""
+    if job.result_xlsx_storage_path:
+        return 0
+    db_user = db.get(User, job.user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+    units = job.total_pages if job.total_pages else (job.total_files or 1)
+    cost = units * 3
+    try:
+        points_service.spend_points(db, db_user, cost, f"API xlsx 변환: {job.original_filename}")
+    except ValueError as e:
+        raise HTTPException(status_code=402, detail=str(e))
+    markdown = _get_markdown_content(job)
+    if not markdown.strip():
+        raise HTTPException(status_code=400, detail="변환할 마크다운 결과가 없습니다")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_path = Path(tmpdir) / "result.xlsx"
+        convert_markdown_to_xlsx_with_settings(markdown, out_path, db)
+        storage_path = supabase_client.upload_office_result(job.id, out_path, "xlsx")
+    job.result_xlsx_storage_path = storage_path
+    db.commit()
+    return cost
+
+
 @router.get("/{job_id}/download")
 def download_job(
     request: Request,
@@ -350,10 +403,17 @@ def download_job(
     if job.status != "done":
         raise HTTPException(status_code=400, detail="완료된 작업만 다운로드할 수 있습니다")
 
+    # csv와 xlsx는 번들: xlsx 변환 완료 시에만 다운로드, 미변환 시 동일 요금으로 변환 후 제공
+    points_spent = 0
+    if type in ("csv", "xlsx"):
+        points_spent = _ensure_xlsx_bundle(job, db)
+
     path_map = {
         "csv": job.result_csv_storage_path,
-        "md": job.result_md_storage_path,
+        "md": job.result_edited_md_storage_path or job.result_md_storage_path,
         "xlsx": job.result_xlsx_storage_path,
+        "docx": job.result_docx_storage_path,
+        "pptx": job.result_pptx_storage_path,
     }
     path = path_map.get(type)
     if not path:
@@ -361,10 +421,110 @@ def download_job(
 
     try:
         url = supabase_client.get_signed_download_url(path, bucket="results", expires_in=3600)
+        add_daily_spent_points(api_key.id, points_spent)
         _log_api_usage(
             db, api_key, uuid.UUID(user.user_id), "/api/v1/jobs/download", 200, job_id=job.id,
+            points_spent=points_spent,
             client_ip=request.client.host if request.client else "",
         )
         return {"download_url": url}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+
+
+@router.post("/{job_id}/convert")
+def convert_job(
+    request: Request,
+    job_id: str,
+    payload: dict = Body(...),
+    auth: tuple[CurrentUser, ApiKey] = Depends(require_api_key_with_key),
+    db: Session = Depends(get_db),
+):
+    """마크다운 결과를 office 파일로 변환합니다. xlsx 변환은 추가 비용이 발생합니다."""
+    user, api_key = auth
+    enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
+
+    job = db.get(Job, job_id)
+    if job is None or str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+    if job.status != "done":
+        raise HTTPException(status_code=400, detail="완료된 작업만 변환할 수 있습니다")
+
+    fmt = str(payload.get("format", "")).lower()
+    if fmt not in ("xlsx", "docx", "pptx"):
+        raise HTTPException(status_code=400, detail="지원하지 않는 변환 형식입니다")
+
+    db_user = db.get(User, job.user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+
+    # 이미 변환된 파일이 있으면 비용 없이 재사용
+    existing_path = {
+        "xlsx": job.result_xlsx_storage_path,
+        "docx": job.result_docx_storage_path,
+        "pptx": job.result_pptx_storage_path,
+    }.get(fmt)
+    if existing_path:
+        try:
+            url = supabase_client.get_signed_download_url(existing_path, bucket="results", expires_in=3600)
+            _log_api_usage(
+                db, api_key, uuid.UUID(user.user_id), "/api/v1/jobs/convert", 200,
+                points_spent=0, job_id=job.id,
+                client_ip=request.client.host if request.client else "",
+            )
+            return {"download_url": url, "format": fmt, "storage_path": existing_path}
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+
+    points_spent = 0
+    if fmt == "xlsx":
+        units = job.total_pages if job.total_pages else (job.total_files or 1)
+        cost = units * 3
+        points_spent = cost
+        try:
+            points_service.spend_points(db, db_user, cost, f"API xlsx 변환: {job.original_filename}")
+        except ValueError as e:
+            raise HTTPException(status_code=402, detail=str(e))
+
+    def _get_markdown() -> str:
+        client = supabase_client.get_service_client()
+        if job.result_edited_md_storage_path:
+            return client.storage.from_("results").download(job.result_edited_md_storage_path).decode("utf-8")
+        if job.result_md_storage_path:
+            return client.storage.from_("results").download(job.result_md_storage_path).decode("utf-8")
+        return ""
+
+    try:
+        markdown = _get_markdown()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_path = Path(tmpdir) / f"result.{fmt}"
+            if fmt == "xlsx":
+                convert_markdown_to_xlsx_with_settings(markdown, out_path, db)
+            elif fmt == "docx":
+                office_converter.markdown_to_docx(markdown, out_path)
+            else:
+                office_converter.markdown_to_pptx(markdown, out_path)
+            storage_path = supabase_client.upload_office_result(job_id, out_path, fmt)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"변환 실패: {e}")
+
+    if fmt == "xlsx":
+        job.result_xlsx_storage_path = storage_path
+    elif fmt == "docx":
+        job.result_docx_storage_path = storage_path
+    else:
+        job.result_pptx_storage_path = storage_path
+    db.commit()
+
+    try:
+        url = supabase_client.get_signed_download_url(storage_path, bucket="results", expires_in=3600)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+
+    add_daily_spent_points(api_key.id, points_spent)
+    _log_api_usage(
+        db, api_key, uuid.UUID(user.user_id), "/api/v1/jobs/convert", 200,
+        points_spent=points_spent, job_id=job.id,
+        client_ip=request.client.host if request.client else "",
+    )
+    return {"download_url": url, "format": fmt, "storage_path": storage_path}

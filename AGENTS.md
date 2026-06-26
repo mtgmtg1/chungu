@@ -24,6 +24,8 @@ app/
     db/             SQLAlchemy models and migrations
     workers/        Celery tasks
   frontend/         React SPA
+    src/components/ Reusable UI components (Prism, PdfViewer, etc.)
+    src/pages/      Page components
   Dockerfile.backend
   docker-compose.yml
   .env.example
@@ -82,6 +84,19 @@ This syncs `app/` to the `a1` server, rebuilds Docker images, and restarts conta
 - Billing: points are deducted per page/image/audio/video
 - Docs: `/api/v1/docs` (OpenAPI/Swagger)
 - Developer portal: `/developer` in the web UI
+
+## Media Processing
+
+- Video and audio files are processed in 30-second segments.
+- Each segment is sent to the multimodal LLM with extracted frames (1 fps) plus audio (when available) for the best structured extraction.
+- Segment results are merged into a single markdown table with absolute timestamps.
+- Video cost is **10 KRW per second** of source duration.
+
+## Frontend Features
+
+- Web UI supports selecting a whole folder via `webkitdirectory` (file + folder buttons on the upload page).
+- Folder upload preserves the relative directory structure when zipping files for Storage.
+- Landing page uses the `<Prism />` WebGL background animation from React Bits (requires a WebGL-capable browser).
 
 ## Agent Guidelines
 

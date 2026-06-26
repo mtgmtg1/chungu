@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # [Flow: Step 1 (업로드 -> 파일 유형 감지/압축 해제/Storage 저장) -> Step 2 (비용 계산) -> Step 3 (승인 -> 포인트 차감 + Celery) -> Step 4 (상태 폴링/Storage 다운로드)]
 import json
+import re as _re
 import tempfile
 import uuid
 import zipfile
@@ -9,16 +10,16 @@ from io import BytesIO
 from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from openpyxl import load_workbook
 from pypdf import PdfReader
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import settings_store
 from ..auth.supabase_auth import CurrentUser, get_current_admin, get_current_user
-from ..core import archive_handler, media_loader, points_service, supabase_client
+from ..core import archive_handler, media_loader, office_converter, points_service, supabase_client
+from ..core.llm_xlsx_converter import convert_markdown_to_xlsx_with_settings
 from ..core.prompts import DEFAULT_COLUMNS
 from ..db.models import Job
 from ..db.session import get_db
@@ -54,7 +55,8 @@ async def upload_job(
     pipeline: str = Form("vision"),
     columns: str = Form(""),
     prompt: str = Form(""),
-    dpi: int = Form(150),
+    dpi: int = Form(300),
+    relative_paths: str = Form(""),
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -79,9 +81,23 @@ async def upload_job(
     if total_size > max_mb * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"전체 파일이 너무 큽니다 (최대 {max_mb}MB)")
 
+    rel_paths = []
+    if relative_paths:
+        try:
+            rel_paths = json.loads(relative_paths)
+            if not isinstance(rel_paths, list):
+                rel_paths = []
+        except Exception:
+            rel_paths = []
+
+    def _relative_path(i: int) -> str:
+        if i < len(rel_paths) and rel_paths[i]:
+            return rel_paths[i]
+        return files[i].filename
+
     # 하나의 파일만 업로드되고 PDF일 때는 기존 단일 PDF 플로우를 유지
     is_single_pdf = len(files) == 1 and files[0].filename.lower().endswith(".pdf")
-    original_filename = files[0].filename if len(files) == 1 else f"{len(files)}_files"
+    original_filename = files[0].filename if len(files) == 1 else f"{len(files)}_files.zip"
 
     job = Job(
         user_id=uuid.UUID(user.user_id),
@@ -117,13 +133,14 @@ async def upload_job(
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmp_path = Path(tmpdir)
                 extracted: list[Path] = []
-                for file, data in zip(files, file_data):
+                for i, (file, data) in enumerate(zip(files, file_data)):
+                    rel_path = _relative_path(i)
                     if archive_handler.is_archive(file.filename):
-                        archive_dest = tmp_path / f"extracted_{file.filename}"
+                        archive_dest = tmp_path / f"extracted_{rel_path}"
                         archive_dest.mkdir(parents=True, exist_ok=True)
                         extracted.extend(archive_handler.extract_all_recursive(file.filename, data, archive_dest))
                     else:
-                        file_path = tmp_path / file.filename
+                        file_path = tmp_path / rel_path
                         file_path.parent.mkdir(parents=True, exist_ok=True)
                         file_path.write_bytes(data)
                         extracted.append(file_path)
@@ -161,8 +178,8 @@ async def upload_job(
                 else:
                     zip_path = tmp_path / f"{job.id}.zip"
                     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                        for file, data in zip(files, file_data):
-                            zf.writestr(file.filename, data)
+                        for i, (file, data) in enumerate(zip(files, file_data)):
+                            zf.writestr(_relative_path(i), data)
                     storage_path = supabase_client.upload_input(job.id, zip_path.read_bytes(), zip_path.name, "application/zip")
                     job.pdf_storage_path = storage_path
                     job.file_type = "mixed"
@@ -288,6 +305,16 @@ def get_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: Sess
     return _job_summary(job)
 
 
+@router.delete("/jobs/{job_id}")
+def delete_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    job = db.get(Job, job_id)
+    if job is None or str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+    db.delete(job)
+    db.commit()
+    return {"deleted": True}
+
+
 @router.get("/jobs/{job_id}/download")
 def download_job(
     job_id: str,
@@ -301,10 +328,16 @@ def download_job(
     if job.status != "done":
         raise HTTPException(status_code=400, detail="완료된 작업만 다운로드할 수 있습니다")
 
+    # csv와 xlsx는 번들: xlsx 변환 완료 시에만 다운로드, 미변환 시 동일 요금으로 변환 후 제공
+    if type in ("csv", "xlsx"):
+        _ensure_xlsx_bundle(job, db)
+
     path_map = {
         "csv": job.result_csv_storage_path,
-        "md": job.result_md_storage_path,
+        "md": job.result_edited_md_storage_path or job.result_md_storage_path,
         "xlsx": job.result_xlsx_storage_path,
+        "docx": job.result_docx_storage_path,
+        "pptx": job.result_pptx_storage_path,
     }
     path = path_map.get(type)
     if not path:
@@ -317,40 +350,345 @@ def download_job(
         raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
 
 
+def _get_markdown_content(job: Job) -> str:
+    """편집된 마크다운이 있으면 사용하고, 없으면 원본 마크다운을 다운로드한다."""
+    client = supabase_client.get_service_client()
+    if job.result_edited_md_storage_path:
+        data = client.storage.from_("results").download(job.result_edited_md_storage_path)
+        return data.decode("utf-8")
+    if job.result_md_storage_path:
+        data = client.storage.from_("results").download(job.result_md_storage_path)
+        return data.decode("utf-8")
+    if job.result_md_path and Path(job.result_md_path).exists():
+        return Path(job.result_md_path).read_text(encoding="utf-8")
+    return ""
+
+
+_PAGE_MARKER_RE = _re.compile(r"<!--\s*페이지\s*(\d+)\s*-->", _re.IGNORECASE)
+
+
+def _image_files(job: Job) -> list[tuple[int, dict]]:
+    """extracted_files에서 이미지 파일만 순서대로 (page_num, info)로 반환한다."""
+    files = job.extracted_files or []
+    images: list[tuple[int, dict]] = []
+    for idx, info in enumerate(files):
+        if isinstance(info, dict) and info.get("type") == "image" and info.get("storage_path"):
+            images.append((idx + 1, info))
+    return images
+
+
+def _detect_source_type(job: Job) -> str | None:
+    """원본 파일의 실제 유형에 따라 source_type을 반환한다."""
+    if not job.pdf_storage_path:
+        return None
+    files = job.extracted_files or []
+    if len(files) == 1:
+        ftype = files[0].get("type", "")
+        if ftype in ("audio", "video"):
+            return ftype
+    # 파일명 확장자 기준 fallback
+    ext = Path(job.pdf_storage_path).suffix.lower()
+    if ext in (".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma"):
+        return "audio"
+    if ext in (".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".webm", ".m4v"):
+        return "video"
+    return "pdf"
+
+
+def _split_markdown_by_pages(markdown: str) -> list[tuple[int, str]]:
+    """페이지 마커를 기준으로 마크다운을 분할한다."""
+    matches = list(_PAGE_MARKER_RE.finditer(markdown))
+    if not matches:
+        content = markdown.strip()
+        if content:
+            return [(1, content)]
+        return []
+    pages: list[tuple[int, str]] = []
+    for idx, match in enumerate(matches):
+        page_num = int(match.group(1))
+        start = match.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(markdown)
+        content = markdown[start:end].strip()
+        if content:
+            pages.append((page_num, content))
+    return pages
+
+
+def _ensure_xlsx_bundle(job: Job, db: Session) -> None:
+    """CSV/XLSX 다운로드가 가능하도록 xlsx 변환을 한 번 수행한다. 이미 변환된 경우 아무것도 하지 않는다."""
+    if job.result_xlsx_storage_path:
+        return
+    from ..db.models import User
+    db_user = db.get(User, job.user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+    units = job.total_pages if job.total_pages else (job.total_files or 1)
+    cost = units * 3
+    try:
+        points_service.spend_points(db, db_user, cost, f"xlsx 변환: {job.original_filename}")
+    except ValueError as e:
+        raise HTTPException(status_code=402, detail=str(e))
+    markdown = _get_markdown_content(job)
+    if not markdown.strip():
+        raise HTTPException(status_code=400, detail="변환할 마크다운 결과가 없습니다")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_path = Path(tmpdir) / "result.xlsx"
+        convert_markdown_to_xlsx_with_settings(markdown, out_path, db)
+        storage_path = supabase_client.upload_office_result(job.id, out_path, "xlsx")
+    job.result_xlsx_storage_path = storage_path
+    db.commit()
+
+
 @router.get("/jobs/{job_id}/preview")
 def preview_job(
     job_id: str,
+    start_page: int = Query(1, ge=1, description="시작 페이지 번호"),
+    end_page: int | None = Query(None, ge=1, description="종료 페이지 번호(미지정 시 마지막 페이지)"),
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """완료된 작업의 마크다운 결과를 페이지 단위로 조회한다."""
+    job = db.get(Job, job_id)
+    if job is None or str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+    if not job.result_md_storage_path and not job.result_edited_md_storage_path:
+        raise HTTPException(status_code=400, detail="결과 파일이 준비되지 않았습니다")
+
+    try:
+        markdown = _get_markdown_content(job)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"결과 미리보기 생성 실패: {e}")
+
+    pages = _split_markdown_by_pages(markdown)
+    page_nums = [num for num, _ in pages]
+    last_page = max(page_nums) if page_nums else 1
+    effective_end = end_page if end_page is not None else last_page
+    if effective_end < start_page:
+        effective_end = start_page
+
+    selected = [content for num, content in pages if start_page <= num <= effective_end]
+    partial_markdown = "\n\n---\n\n".join(selected)
+
+    source_url = None
+    source_type = None
+    image_urls: list[str] = []
+    if job.pdf_storage_path:
+        try:
+            source_url = supabase_client.get_signed_download_url(job.pdf_storage_path, bucket="pdfs", expires_in=3600)
+            source_type = _detect_source_type(job)
+        except Exception:
+            pass
+
+    images = _image_files(job)
+    if images:
+        source_type = "images"
+        for page_num, info in images:
+            if start_page <= page_num <= effective_end:
+                try:
+                    url = supabase_client.get_signed_download_url(info["storage_path"], bucket="pdfs", expires_in=3600)
+                    image_urls.append(url)
+                except Exception:
+                    pass
+
+    return {
+        "job": _job_summary(job),
+        "markdown": partial_markdown,
+        "source_url": source_url,
+        "source_type": source_type,
+        "image_urls": image_urls,
+        "start_page": start_page,
+        "end_page": effective_end,
+        "last_page": last_page,
+    }
+
+
+@router.get("/jobs/{job_id}/preview/pages")
+def preview_job_pages(
+    job_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """완료된 작업의 페이지 목록 메타데이터를 반환한다."""
+    job = db.get(Job, job_id)
+    if job is None or str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+    if not job.result_md_storage_path and not job.result_edited_md_storage_path:
+        raise HTTPException(status_code=400, detail="결과 파일이 준비되지 않았습니다")
+
+    try:
+        markdown = _get_markdown_content(job)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"결과 미리보기 생성 실패: {e}")
+
+    pages = _split_markdown_by_pages(markdown)
+    images = _image_files(job)
+    image_map = {page_num: info for page_num, info in images}
+    out_pages = []
+    for num, content in pages:
+        entry: dict = {"page_num": num, "preview": content[:200].replace("\n", " ").strip()}
+        info = image_map.get(num)
+        if info:
+            try:
+                entry["image_url"] = supabase_client.get_signed_download_url(info["storage_path"], bucket="pdfs", expires_in=3600)
+            except Exception:
+                pass
+        out_pages.append(entry)
+
+    return {
+        "job": _job_summary(job),
+        "total_pages": len(pages),
+        "pages": out_pages,
+    }
+
+
+@router.put("/jobs/{job_id}/result")
+def save_result_markdown(
+    job_id: str,
+    payload: dict = Body(...),
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
-    if not job.result_xlsx_storage_path:
-        raise HTTPException(status_code=400, detail="결과 파일이 준비되지 않았습니다")
+    if job.status != "done":
+        raise HTTPException(status_code=400, detail="완료된 작업만 수정할 수 있습니다")
+
+    markdown = str(payload.get("markdown", ""))
+    with tempfile.TemporaryDirectory() as tmpdir:
+        edited_path = Path(tmpdir) / "result_edited.md"
+        edited_path.write_text(markdown, encoding="utf-8")
+        try:
+            storage_path = supabase_client.upload_result(
+                job_id, edited_md_path=edited_path
+            ).get("edited_md", "")
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"편집 마크다운 저장 실패: {e}")
+    job.result_edited_md_storage_path = storage_path
+    job.result_edited_md_path = ""
+    db.commit()
+    return {"job_id": job.id, "saved": True, "storage_path": storage_path}
+
+
+@router.patch("/jobs/{job_id}/result/pages/{page_num}")
+def save_result_page(
+    job_id: str,
+    page_num: int,
+    payload: dict = Body(...),
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """특정 페이지의 마크다운만 갱신하고 전체 편집 마크다운을 다시 저장한다."""
+    job = db.get(Job, job_id)
+    if job is None or str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+    if job.status != "done":
+        raise HTTPException(status_code=400, detail="완료된 작업만 수정할 수 있습니다")
+
+    new_content = str(payload.get("markdown", "")).strip()
+    try:
+        markdown = _get_markdown_content(job)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"마크다운 로드 실패: {e}")
+
+    pages = _split_markdown_by_pages(markdown)
+    if not pages:
+        raise HTTPException(status_code=400, detail="페이지가 없습니다")
+    target_idx = next((idx for idx, (num, _) in enumerate(pages) if num == page_num), None)
+    if target_idx is None:
+        raise HTTPException(status_code=404, detail="해당 페이지를 찾을 수 없습니다")
+
+    pages[target_idx] = (page_num, new_content)
+    updated = "\n\n---\n\n".join([f"<!-- 페이지 {num} -->\n\n{content}" for num, content in pages])
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        edited_path = Path(tmpdir) / "result_edited.md"
+        edited_path.write_text(updated, encoding="utf-8")
+        try:
+            storage_path = supabase_client.upload_result(
+                job_id, edited_md_path=edited_path
+            ).get("edited_md", "")
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"편집 마크다운 저장 실패: {e}")
+    job.result_edited_md_storage_path = storage_path
+    job.result_edited_md_path = ""
+    db.commit()
+    return {"job_id": job.id, "page_num": page_num, "saved": True, "storage_path": storage_path}
+
+
+@router.post("/jobs/{job_id}/convert")
+def convert_job(
+    job_id: str,
+    payload: dict = Body(...),
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = db.get(Job, job_id)
+    if job is None or str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+    if job.status != "done":
+        raise HTTPException(status_code=400, detail="완료된 작업만 변환할 수 있습니다")
+
+    fmt = str(payload.get("format", "")).lower()
+    if fmt not in ("xlsx", "docx", "pptx"):
+        raise HTTPException(status_code=400, detail="지원하지 않는 변환 형식입니다")
+
+    from ..db.models import User
+
+    db_user = db.get(User, job.user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+
+    # 이미 변환된 파일이 있으면 비용 없이 재사용
+    existing_path = {
+        "xlsx": job.result_xlsx_storage_path,
+        "docx": job.result_docx_storage_path,
+        "pptx": job.result_pptx_storage_path,
+    }.get(fmt)
+    if existing_path:
+        try:
+            url = supabase_client.get_signed_download_url(existing_path, bucket="results", expires_in=3600)
+            return {"download_url": url, "format": fmt, "storage_path": existing_path}
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+
+    # xlsx 변환은 페이지/파일당 3원 차감
+    if fmt == "xlsx":
+        units = job.total_pages if job.total_pages else (job.total_files or 1)
+        cost = units * 3
+        try:
+            points_service.spend_points(db, db_user, cost, f"xlsx 변환: {job.original_filename}")
+        except ValueError as e:
+            raise HTTPException(status_code=402, detail=str(e))
 
     try:
-        xlsx_bytes = supabase_client.get_service_client().storage.from_("results").download(job.result_xlsx_storage_path)
-        wb = load_workbook(BytesIO(xlsx_bytes))
-        sheets = {}
-        for sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            sheets[sheet_name] = [[cell.value for cell in row] for row in ws.iter_rows()]
+        markdown = _get_markdown_content(job)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_path = Path(tmpdir) / f"result.{fmt}"
+            if fmt == "xlsx":
+                convert_markdown_to_xlsx_with_settings(markdown, out_path, db)
+            elif fmt == "docx":
+                office_converter.markdown_to_docx(markdown, out_path)
+            else:
+                office_converter.markdown_to_pptx(markdown, out_path)
+            storage_path = supabase_client.upload_office_result(job_id, out_path, fmt)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"결과 미리보기 생성 실패: {e}")
+        raise HTTPException(status_code=502, detail=f"변환 실패: {e}")
 
-    source_url = None
-    if job.pdf_storage_path:
-        try:
-            source_url = supabase_client.get_signed_download_url(job.pdf_storage_path, bucket="pdfs", expires_in=3600)
-        except Exception:
-            pass
+    if fmt == "xlsx":
+        job.result_xlsx_storage_path = storage_path
+    elif fmt == "docx":
+        job.result_docx_storage_path = storage_path
+    else:
+        job.result_pptx_storage_path = storage_path
+    db.commit()
 
-    return {
-        "job": _job_summary(job),
-        "sheets": sheets,
-        "source_url": source_url,
-    }
+    try:
+        url = supabase_client.get_signed_download_url(storage_path, bucket="results", expires_in=3600)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+
+    return {"download_url": url, "format": fmt, "storage_path": storage_path}
 
 
 @router.get("/admin/jobs")
@@ -380,6 +718,7 @@ def _job_summary(job: Job) -> dict:
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
         "downloadable": job.status == "done",
+        "xlsx_converted": bool(job.result_xlsx_storage_path),
     }
 
 
@@ -392,7 +731,12 @@ def legacy_download(token: str, type: str = "csv", db: Session = Depends(get_db)
     if job.expires_at and job.expires_at < datetime.utcnow():
         raise HTTPException(status_code=410, detail="다운로드 링크가 만료되었습니다")
 
-    path = job.result_csv_storage_path if type == "csv" else job.result_md_storage_path
+    if type == "csv":
+        if not job.result_xlsx_storage_path:
+            raise HTTPException(status_code=402, detail="CSV는 xlsx 변환 후에 다운로드할 수 있습니다")
+        path = job.result_csv_storage_path
+    else:
+        path = job.result_md_storage_path
     if not path:
         # Storage로 이전되지 않은 예전 파일은 로컬 경로 사용
         local = job.result_csv_path if type == "csv" else job.result_md_path

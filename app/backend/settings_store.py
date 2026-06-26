@@ -25,7 +25,7 @@ SETTING_DEFS: dict[str, tuple[str, bool]] = {
     "cost_per_page_krw": ("3", False),
     "cost_per_image_krw": ("3", False),
     "cost_per_audio_sec_krw": ("1", False),
-    "cost_per_video_sec_krw": ("3", False),
+    "cost_per_video_sec_krw": ("10", False),
     "cost_per_page_usd": ("0.002", False),
     "usd_to_krw_rate": ("1500", False),
     "point_packages": ('[{"name":"1,000P","points":1000,"krw":1000,"usd":0.67},{"name":"5,000P","points":5000,"krw":5000,"usd":3.34},{"name":"10,000P","points":10000,"krw":10000,"usd":6.67}]', False),
@@ -34,6 +34,10 @@ SETTING_DEFS: dict[str, tuple[str, bool]] = {
     "paddle_api_key": ("", True),
     "paddle_webhook_secret": ("", True),
     "paddle_vendor_id": ("", False),
+    # 미디어 전용 LLM (오디오/비디오)
+    "media_llm_endpoint": (settings.media_llm_endpoint, False),
+    "media_llm_model": (settings.media_llm_model, False),
+    "media_llm_api_key": (settings.media_llm_api_key, True),
     # API
     "api_key_default_rate_limit_rpm": ("60", False),
     "api_key_default_daily_quota": ("", False),

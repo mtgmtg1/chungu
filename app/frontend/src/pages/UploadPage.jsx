@@ -1,7 +1,7 @@
 // [Flow: Step 1 (로그인 확인) -> Step 2 (중앙 업로드 영역) -> Step 3 (업로드 -> 비용 확인 페이지 이동) -> Step 4 (승인 -> 결과 페이지 이동)]
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { FileUp, Loader2, LogIn, Settings, Coins } from 'lucide-react'
+import { FileUp, Loader2, LogIn, Coins } from 'lucide-react'
 import { useAuth } from '../AuthContext.jsx'
 import { api } from '../api.js'
 
@@ -31,7 +31,12 @@ export default function UploadPage() {
     if (!files.length) return setError('파일을 선택하세요')
 
     const fd = new FormData()
-    files.forEach((f) => fd.append('files', f))
+    const relativePaths = []
+    files.forEach((f) => {
+      fd.append('files', f)
+      relativePaths.push(f.webkitRelativePath || f.name)
+    })
+    fd.append('relative_paths', JSON.stringify(relativePaths))
 
     setSubmitting(true)
     try {
@@ -68,7 +73,6 @@ export default function UploadPage() {
             ) : (
               <Link to="/login" className="text-body-md flex items-center gap-1 text-on-surface-variant hover:text-primary transition-colors font-medium"><LogIn size={18} /> 로그인</Link>
             )}
-            <a href="/admin" className="text-on-surface-variant hover:text-primary transition-colors" title="관리자"><Settings size={20} /></a>
           </div>
         </div>
       </nav>
@@ -98,19 +102,41 @@ export default function UploadPage() {
                 </div>
                 <h3 className="text-headline-md font-medium text-on-surface mb-2">여기에 파일을 놓으세요</h3>
                 <p className="text-body-md text-outline">PDF, 이미지, 오디오, 비디오, 압축 파일</p>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    document.getElementById('file-input').click()
-                  }}
-                  className="mt-8 px-8 py-3 bg-primary text-on-primary rounded-full font-headline-md hover:bg-primary-container transition-all shadow-md"
-                >
-                  파일 선택
-                </button>
+                <div className="mt-8 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      document.getElementById('file-input').click()
+                    }}
+                    className="px-8 py-3 bg-primary text-on-primary rounded-full font-headline-md hover:bg-primary-container transition-all shadow-md"
+                  >
+                    파일 선택
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      document.getElementById('folder-input').click()
+                    }}
+                    className="px-8 py-3 bg-surface-container text-on-surface border border-outline-variant rounded-full font-headline-md hover:bg-surface-container-high transition-all shadow-md"
+                  >
+                    폴더 선택
+                  </button>
+                </div>
                 <input
                   id="file-input"
                   type="file"
+                  multiple
+                  className="hidden"
+                  accept=".pdf,.zip,.rar,.7z,.tar.gz,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.mp4,.avi,.mov,.mkv,.webm"
+                  onChange={(e) => setFiles(Array.from(e.target.files || []))}
+                />
+                <input
+                  id="folder-input"
+                  type="file"
+                  webkitdirectory=""
+                  directory=""
                   multiple
                   className="hidden"
                   accept=".pdf,.zip,.rar,.7z,.tar.gz,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.mp4,.avi,.mov,.mkv,.webm"
@@ -126,6 +152,9 @@ export default function UploadPage() {
                   {files.map((f, i) => (
                     <li key={i} className="flex items-center gap-2">
                       <span className="bg-surface-container px-2 py-0.5 rounded">{f.name}</span>
+                      {f.webkitRelativePath && (
+                        <span className="text-outline text-xs truncate max-w-xs" title={f.webkitRelativePath}>{f.webkitRelativePath}</span>
+                      )}
                       <span>({(f.size / 1024 / 1024).toFixed(2)} MB)</span>
                     </li>
                   ))}

@@ -1,7 +1,7 @@
 {
   "upload": {
-    "title": "파일을 정밀 데이터로 변환",
-    "subtitle": "AI로 PDF, 이미지, 오디오에서 표를 자동 추출합니다",
+    "title": "대규모 스캔/비디오/오디오 자료를 원클릭 데이터 변환",
+    "subtitle": "AI로 PDF, 이미지, 비디오, 오디오에서 보기좋게 내용을 추출합니다",
     "dropText": "파일 또는 폴더를 놓으세요",
     "fileTypes": "PDF, 이미지, 오디오, 비디오, 압축 파일",
     "selectFiles": "파일 선택",
@@ -19,7 +19,7 @@
     "badgeInstant": "즉시",
     "badgeProcessing": "처리",
     "badgeLanguages": "100+ 언어",
-    "copyright": "© 2024 Chungu Technologies",
+    "copyright": "© 2026 TeamCat",
     "api": "API",
     "admin": "관리자"
   },

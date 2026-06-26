@@ -1,35 +1,68 @@
 // [Flow: Step 1 (source_type/URL 수신) -> Step 2 (audio/video 태그 선택) -> Step 3 (컨트롤 제공)]
-import { useTranslation } from 'react-i18next'
-import { Volume2, Film } from 'lucide-react'
+import { useTranslation } from "react-i18next";
+import { Volume2, Film } from "lucide-react";
 
 export default function MediaPlayer({ sourceType, url, filename }) {
-  const { t } = useTranslation()
-  const isAudio = sourceType === 'audio'
-  const isVideo = sourceType === 'video'
-  if (!isAudio && !isVideo) return null
+  const { t } = useTranslation();
+  const isAudio = sourceType === "audio";
+  const isVideo = sourceType === "video";
+  if (!isAudio && !isVideo) return null;
 
   return (
-    <div className="flex flex-col h-full border-r border-outline-variant bg-surface-container-low">
-      <div className="p-4 flex items-center justify-between border-b border-outline-variant bg-white flex-shrink-0">
-        <h3 className="font-bold text-sm text-on-surface flex items-center gap-2">
-          {isAudio ? <Volume2 size={16} /> : <Film size={16} />}
-          {t(isAudio ? 'page:components.originalAudio' : 'page:components.originalVideo')}
+    <div
+      className="flex flex-col h-full border-r border-outline-variant bg-surface-container-low"
+      data-oid="j.-78mt"
+    >
+      <div
+        className="p-4 flex items-center justify-between border-b border-outline-variant bg-white flex-shrink-0"
+        data-oid="8t6hvc8"
+      >
+        <h3
+          className="font-bold text-sm text-on-surface flex items-center gap-2"
+          data-oid="tiayx.h"
+        >
+          {isAudio ? (
+            <Volume2 size={16} data-oid="7t2ldi6" />
+          ) : (
+            <Film size={16} data-oid="woqnb8p" />
+          )}
+          {t(
+            isAudio
+              ? "page:components.originalAudio"
+              : "page:components.originalVideo",
+          )}
         </h3>
-        <span className="text-[10px] text-outline font-mono bg-surface px-1.5 py-0.5 rounded border border-outline-variant truncate max-w-[200px]">
+        <span
+          className="text-[10px] text-outline font-mono bg-surface px-1.5 py-0.5 rounded border border-outline-variant truncate max-w-[200px]"
+          data-oid="4zt9uhv"
+        >
           {filename}
         </span>
       </div>
-      <div className="flex-1 min-h-0 flex items-center justify-center p-4">
+      <div
+        className="flex-1 min-h-0 flex items-center justify-center p-4"
+        data-oid="5lu.d63"
+      >
         {isAudio ? (
-          <audio controls src={url} className="w-full max-w-md">
-            {t('page:components.audioNotSupported')}
+          <audio
+            controls
+            src={url}
+            className="w-full max-w-md"
+            data-oid="8fdvpat"
+          >
+            {t("page:components.audioNotSupported")}
           </audio>
         ) : (
-          <video controls src={url} className="max-w-full max-h-full rounded border border-outline-variant shadow-sm bg-black">
-            {t('page:components.videoNotSupported')}
+          <video
+            controls
+            src={url}
+            className="max-w-full max-h-full rounded border border-outline-variant shadow-sm bg-black"
+            data-oid="pmuej4t"
+          >
+            {t("page:components.videoNotSupported")}
           </video>
         )}
       </div>
     </div>
-  )
+  );
 }

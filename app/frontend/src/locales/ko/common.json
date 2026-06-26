@@ -1,8 +1,8 @@
 {
   "app": {
-    "name": "Chungu",
-    "tagline": "Precision Data",
-    "copyright": "© 2026 Chungu AI. Effortless Precision."
+    "name": "Chungu File",
+    "tagline": "Convert large files with AI",
+    "copyright": "© 2026 TeamCat. Convert large files with AI."
   },
   "nav": {
     "dashboard": "대시보드",

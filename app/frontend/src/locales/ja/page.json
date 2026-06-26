@@ -1,6 +1,6 @@
 {
   "upload": {
-    "title": "ファイルを精密データに変換",
+    "title": "ファイルをAIで変換",
     "subtitle": "AIがPDF、画像、音声から表を自動抽出します",
     "dropText": "ファイルまたはフォルダをドロップ",
     "fileTypes": "PDF、画像、音声、動画、圧縮ファイル",
@@ -19,7 +19,7 @@
     "badgeInstant": "即座に",
     "badgeProcessing": "処理",
     "badgeLanguages": "100+ 言語",
-    "copyright": "© 2024 Chungu Technologies",
+    "copyright": "© 2026 TeamCat",
     "api": "API",
     "admin": "管理者"
   },

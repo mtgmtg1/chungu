@@ -1,0 +1,78 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Build outputs
+app/frontend/dist/
+app/frontend/.vite/
+*.egg-info/
+build/
+dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Media and large binaries
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.tiff
+*.tif
+*.bmp
+*.ico
+*.pdf
+*.mp4
+*.mp3
+*.wav
+*.avi
+*.mov
+*.mkv
+*.flv
+*.wmv
+*.webm
+*.m4v
+*.flac
+*.aac
+*.ogg
+*.m4a
+*.wma
+
+# OCR output directories
+ocr_output/img/
+ocr_output/pages/
+ocr_output/*.csv
+
+# Archives
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+*.tgz
+*.bz2
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+package-lock.json

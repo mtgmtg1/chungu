@@ -1,0 +1,48 @@
+# [Flow: Stage 1 (프론트 빌드) -> Stage 2 (OCR 의존성 포함 파이썬 런타임) -> Stage 3 (백엔드 + dist 복사)]
+
+# ---------- Stage 1: 프론트엔드 빌드 ----------
+FROM node:20-slim AS frontend
+ARG VITE_SUPABASE_URL=http://192.168.1.50:28000
+ARG VITE_SUPABASE_ANON_KEY
+ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+ENV VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+WORKDIR /fe
+COPY frontend/package.json ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
+
+# ---------- Stage 2: 백엔드 런타임 ----------
+FROM python:3.11-slim AS runtime
+
+# OCR 의존성: poppler(pdftoppm), tesseract(kor+eng), imagemagick(magick)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-kor \
+    tesseract-ocr-eng \
+    imagemagick \
+    ffmpeg \
+    unrar-free \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Mailu 자체서명 TLS 인증서를 신뢰 저장소에 추가
+COPY backend/certs/mailu-cert.pem /usr/local/share/ca-certificates/mailu.crt
+RUN update-ca-certificates
+
+# ImageMagick의 PDF 정책 제한 완화 불필요(이미지 변환만 사용)하지만 PNG->JPG 허용 보장
+WORKDIR /app
+
+COPY backend/requirements.txt ./backend/requirements.txt
+RUN pip install --no-cache-dir -r backend/requirements.txt
+
+COPY backend/ ./backend/
+# 빌드된 프론트 정적 산출물 복사 (main.py가 ../frontend/dist 를 참조)
+COPY --from=frontend /fe/dist ./frontend/dist
+
+ENV PYTHONUNBUFFERED=1
+EXPOSE 28181
+
+# 기본 커맨드는 compose에서 오버라이드 (api / worker)
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "28181"]

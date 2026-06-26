@@ -1,0 +1,67 @@
+# [Flow: Redis -> Mailu front/admin/imap/smtp/webmail -> Supabase 네트워크 연결]
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - ./redis:/data
+    networks:
+      - default
+
+  front:
+    image: ghcr.io/mailu/nginx:2024.06
+    restart: unless-stopped
+    env_file: mailu.env
+    ports:
+      - "127.0.0.1:28090:80"
+      - "587:587"
+      - "993:993"
+    volumes:
+      - ./certs:/certs
+    depends_on:
+      - admin
+      - smtp
+      - imap
+    networks:
+      default:
+      supabase-network:
+        aliases:
+          - mail.chungu.local
+
+  admin:
+    image: ghcr.io/mailu/admin:2024.06
+    restart: unless-stopped
+    env_file: mailu.env
+    volumes:
+      - ./data:/data
+      - ./dkim:/dkim
+    depends_on:
+      - redis
+    networks:
+      - default
+
+  imap:
+    image: ghcr.io/mailu/dovecot:2024.06
+    restart: unless-stopped
+    env_file: mailu.env
+    volumes:
+      - ./mail:/mail
+    networks:
+      - default
+
+  smtp:
+    image: ghcr.io/mailu/postfix:2024.06
+    restart: unless-stopped
+    env_file: mailu.env
+    volumes:
+      - ./mailqueue:/queue
+      - ./overrides/postfix.cf:/overrides/postfix.cf:ro
+    networks:
+      - default
+
+networks:
+  supabase-network:
+    external: true
+    name: supabase-network

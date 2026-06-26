@@ -1,0 +1,59 @@
+# [Flow: Step 1 (redis 기동) -> Step 2 (api: FastAPI + Supabase 연동) -> Step 3 (worker: Celery + Storage) -> Step 4 (volume에 임시 작업 저장)]
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - default
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-http://192.168.1.50:28000}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 28181
+    env_file: .env
+    ports:
+      - "${APP_PORT:-28181}:28181"
+    volumes:
+      - appdata:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - default
+      - supabase-network
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-http://192.168.1.50:28000}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+    command: celery -A backend.celery_app.celery worker --loglevel=info --concurrency=2
+    env_file: .env
+    volumes:
+      - appdata:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - default
+      - supabase-network
+    restart: unless-stopped
+
+volumes:
+  appdata:
+
+networks:
+  supabase-network:
+    external: true
+    name: supabase-network

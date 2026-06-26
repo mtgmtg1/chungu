@@ -24,6 +24,7 @@ class User(Base):
     points_balance: Mapped[int] = mapped_column(Integer, default=0)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_developer: Mapped[bool] = mapped_column(Boolean, default=True)
+    language: Mapped[str] = mapped_column(String(10), default="en")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     jobs: Mapped[list["Job"]] = relationship("Job", back_populates="user", lazy="selectin")

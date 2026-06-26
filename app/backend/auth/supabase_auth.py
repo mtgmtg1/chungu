@@ -16,14 +16,18 @@ from ..db.session import get_db
 class CurrentUser:
     """인증된 사용자 정보."""
 
-    def __init__(self, user_id: str, email: str, is_admin: bool, points_balance: int):
+    def __init__(self, user_id: str, email: str, is_admin: bool, points_balance: int, language: str = "en"):
         self.user_id = user_id
         self.email = email
         self.is_admin = is_admin
         self.points_balance = points_balance
+        self.language = language
 
     def __repr__(self) -> str:
         return f"CurrentUser({self.email}, admin={self.is_admin})"
+
+
+SUPPORTED_LANGUAGES = {"en", "ko", "ja"}
 
 
 ALGO = "HS256"
@@ -72,7 +76,7 @@ def get_current_user(
         db.execute(select(AdminUser).where(AdminUser.email == user.email)).scalar_one_or_none() is not None
     )
 
-    return CurrentUser(str(user.id), user.email, is_admin, user.points_balance)
+    return CurrentUser(str(user.id), user.email, is_admin, user.points_balance, user.language or "en")
 
 
 def get_current_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:

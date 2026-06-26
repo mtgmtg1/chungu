@@ -70,7 +70,7 @@ def get_current_api_key(
     api_key.last_used_at = datetime.now(timezone.utc)
     db.commit()
 
-    return CurrentUser(str(user.id), user.email, is_admin, user.points_balance), api_key
+    return CurrentUser(str(user.id), user.email, is_admin, user.points_balance, language=user.language), api_key
 
 
 def require_api_key(

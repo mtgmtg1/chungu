@@ -4,6 +4,7 @@
     "subtitle": "AIがPDF、画像、音声から表を自動抽出します",
     "dropText": "ファイルまたはフォルダをドロップ",
     "fileTypes": "PDF、画像、音声、動画、圧縮ファイル",
+    "selectFiles": "ファイルを選択",
     "selectFolder": "フォルダを選択",
     "selectedFiles": "選択されたファイル",
     "cancel": "キャンセル",

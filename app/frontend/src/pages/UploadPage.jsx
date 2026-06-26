@@ -145,16 +145,36 @@ export default function UploadPage() {
                 </div>
                 <h3 className="text-headline-md font-medium text-on-surface mb-2">{t('page:upload.dropText')}</h3>
                 <p className="text-body-md text-outline">{t('page:upload.fileTypes')}</p>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    document.getElementById('folder-input').click()
-                  }}
-                  className="mt-8 px-8 py-3 bg-primary text-on-primary rounded-full font-headline-md hover:bg-primary-container transition-all shadow-md"
-                >
-                  {t('page:upload.selectFolder')}
-                </button>
+                <div className="mt-8 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      document.getElementById('file-input').click()
+                    }}
+                    className="px-6 py-3 bg-primary text-on-primary rounded-full font-headline-md hover:bg-primary-container transition-all shadow-md"
+                  >
+                    {t('page:upload.selectFiles')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      document.getElementById('folder-input').click()
+                    }}
+                    className="px-6 py-3 border border-outline-variant text-on-surface rounded-full font-headline-md hover:bg-surface-container transition-all"
+                  >
+                    {t('page:upload.selectFolder')}
+                  </button>
+                </div>
+                <input
+                  id="file-input"
+                  type="file"
+                  multiple
+                  className="hidden"
+                  accept=".pdf,.zip,.rar,.7z,.tar.gz,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.mp4,.avi,.mov,.mkv,.webm"
+                  onChange={(e) => setFiles(Array.from(e.target.files || []))}
+                />
                 <input
                   id="folder-input"
                   type="file"

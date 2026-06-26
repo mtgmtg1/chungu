@@ -4,6 +4,7 @@
     "subtitle": "AI automatically extracts tables from PDFs, images, and audio.",
     "dropText": "Drop files or folders here",
     "fileTypes": "PDF, images, audio, video, archive files",
+    "selectFiles": "Select Files",
     "selectFolder": "Select Folder",
     "selectedFiles": "Selected files",
     "cancel": "Cancel",

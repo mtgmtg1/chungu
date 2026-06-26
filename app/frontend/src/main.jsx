@@ -11,6 +11,7 @@ import PaymentPage from './pages/PaymentPage.jsx'
 import AdminLogin from './pages/AdminLogin.jsx'
 import AdminDashboard from './pages/AdminDashboard.jsx'
 import DeveloperPage from './pages/DeveloperPage.jsx'
+import JobsPage from './pages/JobsPage.jsx'
 import JobConfirmPage from './pages/JobConfirmPage.jsx'
 import JobResultPage from './pages/JobResultPage.jsx'
 
@@ -22,6 +23,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
           <Route path="/" element={<UploadPage />} />
           <Route path="/login" element={<AuthPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/jobs" element={<JobsPage />} />
           <Route path="/payment" element={<PaymentPage />} />
           <Route path="/developer" element={<DeveloperPage />} />
           <Route path="/jobs/:jobId/confirm" element={<JobConfirmPage />} />

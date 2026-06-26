@@ -1,7 +1,15 @@
-// [Flow: Step 1 (job ID로 진입) -> Step 2 (작업 상태 폴링) -> Step 3 (완료 시 preview API 호출) -> Step 4 (시트 탭 + Excel 그리드 렌더링) -> Step 5 (XLSX 다운로드)]
+// [Flow: Step 1 (job ID로 진입) -> Step 2 (작업 상태 폴링) -> Step 3 (완료 시 preview API 호출) -> Step 4 (TipTap 에디터로 마크다운 표시/편집) -> Step 5 (마크다운/Office/CSV 다운로드)]
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, Download, FileSpreadsheet, Loader2, XCircle } from 'lucide-react'
+import { ArrowLeft, Check, Download, FileText, Loader2, Save, Table2, XCircle } from 'lucide-react'
+import { useEditor, EditorContent } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
+import { Table } from '@tiptap/extension-table'
+import { TableRow } from '@tiptap/extension-table-row'
+import { TableCell } from '@tiptap/extension-table-cell'
+import { TableHeader } from '@tiptap/extension-table-header'
+import { marked } from 'marked'
+import TurndownService from 'turndown'
 import { api } from '../api.js'
 
 const STATUS_LABEL = {
@@ -9,21 +17,127 @@ const STATUS_LABEL = {
   merging: '표 병합 중', done: '완료', error: '실패',
 }
 
+const turndown = new TurndownService({
+  headingStyle: 'atx',
+  codeBlockStyle: 'fenced',
+  emDelimiter: '_',
+  strongDelimiter: '**',
+})
+
+turndown.addRule('table', {
+  filter: 'table',
+  replacement: function (content, node) {
+    const rows = Array.from(node.querySelectorAll('tr'))
+    if (!rows.length) return ''
+    const lines = []
+    rows.forEach((row, idx) => {
+      const cells = Array.from(row.querySelectorAll('th, td')).map((cell) => cell.textContent.trim().replace(/\|/g, '\\|'))
+      lines.push('| ' + cells.join(' | ') + ' |')
+      if (idx === 0) {
+        lines.push('| ' + cells.map(() => '---').join(' | ') + ' |')
+      }
+    })
+    return '\n\n' + lines.join('\n') + '\n\n'
+  },
+})
+
+function downloadByUrl(url, filename) {
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.style.display = 'none'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+}
+
+function EditorToolbar({ editor }) {
+  if (!editor) return null
+  return (
+    <div className="flex items-center gap-1 px-4 py-2 border-b border-outline-variant bg-surface">
+      <button
+        type="button"
+        onClick={() => editor.chain().focus().toggleBold().run()}
+        className={`px-3 py-1.5 rounded text-sm font-bold ${editor.isActive('bold') ? 'bg-primary text-white' : 'hover:bg-surface-container-high'}`}
+      >
+        B
+      </button>
+      <button
+        type="button"
+        onClick={() => editor.chain().focus().toggleItalic().run()}
+        className={`px-3 py-1.5 rounded text-sm italic ${editor.isActive('italic') ? 'bg-primary text-white' : 'hover:bg-surface-container-high'}`}
+      >
+        I
+      </button>
+      <div className="w-px h-5 bg-outline-variant mx-1"></div>
+      <button
+        type="button"
+        onClick={() => editor.chain().focus().addColumnBefore().run()}
+        disabled={!editor.can().addColumnBefore()}
+        className="px-2 py-1.5 rounded text-sm hover:bg-surface-container-high disabled:opacity-40"
+      >
+        +열
+      </button>
+      <button
+        type="button"
+        onClick={() => editor.chain().focus().addRowAfter().run()}
+        disabled={!editor.can().addRowAfter()}
+        className="px-2 py-1.5 rounded text-sm hover:bg-surface-container-high disabled:opacity-40"
+      >
+        +행
+      </button>
+      <button
+        type="button"
+        onClick={() => editor.chain().focus().deleteColumn().run()}
+        disabled={!editor.can().deleteColumn()}
+        className="px-2 py-1.5 rounded text-sm hover:bg-surface-container-high disabled:opacity-40"
+      >
+        -열
+      </button>
+      <button
+        type="button"
+        onClick={() => editor.chain().focus().deleteRow().run()}
+        disabled={!editor.can().deleteRow()}
+        className="px-2 py-1.5 rounded text-sm hover:bg-surface-container-high disabled:opacity-40"
+      >
+        -행
+      </button>
+    </div>
+  )
+}
+
 export default function JobResultPage() {
   const { jobId } = useParams()
   const [job, setJob] = useState(null)
-  const [sheets, setSheets] = useState({})
-  const [activeSheet, setActiveSheet] = useState('')
+  const [markdown, setMarkdown] = useState('')
   const [sourceUrl, setSourceUrl] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [converting, setConverting] = useState(false)
+  const [saveMessage, setSaveMessage] = useState('')
   const pollRef = useRef(null)
+
+  const editor = useEditor({
+    extensions: [StarterKit, Table.configure({ resizable: true }), TableRow, TableHeader, TableCell],
+    content: '',
+    editable: false,
+  })
 
   useEffect(() => {
     if (!jobId) return
     loadJob()
-    return () => clearInterval(pollRef.current)
+    return () => {
+      clearInterval(pollRef.current)
+      editor?.destroy()
+    }
   }, [jobId])
+
+  useEffect(() => {
+    if (!editor || !markdown) return
+    editor.commands.setContent(marked.parse(markdown), false)
+    editor.setEditable(true)
+  }, [editor, markdown])
 
   async function loadJob() {
     try {
@@ -64,10 +178,8 @@ export default function JobResultPage() {
   async function loadPreview() {
     try {
       const preview = await api.previewJob(jobId)
-      setSheets(preview.sheets || {})
+      setMarkdown(preview.markdown || '')
       setSourceUrl(preview.source_url)
-      const first = Object.keys(preview.sheets || {})[0]
-      if (first) setActiveSheet(first)
     } catch (e) {
       setError(e.message || '결과 미리보기를 불러오지 못했습니다')
     } finally {
@@ -75,25 +187,50 @@ export default function JobResultPage() {
     }
   }
 
-  async function downloadXlsx() {
-    const { download_url } = await api.downloadJob(jobId, 'xlsx')
-    const filename = (job?.filename ? job.filename.replace(/\.[^/.]+$/, '') : 'result') + '.xlsx'
-    const a = document.createElement('a')
-    a.href = download_url
-    a.download = filename
-    a.style.display = 'none'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+  async function saveMarkdown() {
+    if (!editor) return
+    const html = editor.getHTML()
+    const updated = turndown.turndown(html)
+    setSaving(true)
+    setSaveMessage('')
+    try {
+      await api.saveResultMarkdown(jobId, updated)
+      setMarkdown(updated)
+      setSaveMessage('저장되었습니다')
+      setTimeout(() => setSaveMessage(''), 2000)
+    } catch (e) {
+      setError(e.message || '저장에 실패했습니다')
+    } finally {
+      setSaving(false)
+    }
   }
+
+  async function download(type) {
+    const { download_url } = await api.downloadJob(jobId, type)
+    const base = job?.filename ? job.filename.replace(/\.[^/.]+$/, '') : 'result'
+    const ext = type === 'md' ? 'md' : type
+    downloadByUrl(download_url, `${base}.${ext}`)
+  }
+
+  async function convertAndDownload(format) {
+    setConverting(true)
+    setError('')
+    try {
+      const { download_url } = await api.convertJob(jobId, format)
+      const base = job?.filename ? job.filename.replace(/\.[^/.]+$/, '') : 'result'
+      downloadByUrl(download_url, `${base}.${format}`)
+    } catch (e) {
+      setError(e.message || '변환에 실패했습니다')
+    } finally {
+      setConverting(false)
+    }
+  }
+
+  const xlsxCost = job ? (job.total_pages || job.total_files || 1) * 3 : 0
 
   const pct = job && (job.total_pages || job.total_files)
     ? Math.round(((job.done_pages || job.done_files || 0) / (job.total_pages || job.total_files || 1)) * 100)
     : 0
-
-  const currentRows = sheets[activeSheet] || []
-  const headers = currentRows[0] || []
-  const rows = currentRows.slice(1)
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -118,29 +255,87 @@ export default function JobResultPage() {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-4">
-          <button
-            onClick={downloadXlsx}
-            disabled={job?.status !== 'done'}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg font-bold hover:opacity-90 transition-all shadow-sm disabled:opacity-50"
-          >
-            <Download size={18} />
-            .xlsx 다운로드
-          </button>
+        <div className="flex items-center gap-2">
+          {job?.status === 'done' && (
+            <>
+              <button
+                onClick={() => download('md')}
+                className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
+              >
+                <FileText size={16} />
+                .md
+              </button>
+              <button
+                onClick={() => {
+                  if (!job.xlsx_converted) {
+                    if (!window.confirm(`CSV/XLSX 다운로드는 ${xlsxCost.toLocaleString()}P가 차감됩니다. 계속하시겠습니까?`)) return
+                  }
+                  download('csv')
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
+              >
+                <Table2 size={16} />
+                {job.xlsx_converted ? '.csv' : `.csv - ${xlsxCost.toLocaleString()}P`}
+              </button>
+              <div className="relative group">
+                <button className="flex items-center gap-1.5 px-3 py-2 bg-primary text-white rounded-lg font-bold hover:opacity-90 transition-colors shadow-sm">
+                  <Download size={16} />
+                  Office
+                </button>
+                <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg border border-outline-variant hidden group-hover:flex flex-col z-50 py-1">
+                  <button
+                    onClick={() => convertAndDownload('xlsx')}
+                    disabled={converting}
+                    className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+                  >
+                    Excel (.xlsx) {job.xlsx_converted ? '(다운로드)' : `- ${xlsxCost.toLocaleString()}P`}
+                  </button>
+                  <button
+                    onClick={() => convertAndDownload('docx')}
+                    disabled={converting}
+                    className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+                  >
+                    Word (.docx) - 무료
+                  </button>
+                  <button
+                    onClick={() => convertAndDownload('pptx')}
+                    disabled={converting}
+                    className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+                  >
+                    PowerPoint (.pptx) - 무료
+                  </button>
+                </div>
+              </div>
+              <button
+                onClick={saveMarkdown}
+                disabled={saving}
+                className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg font-bold hover:opacity-90 transition-colors shadow-sm disabled:opacity-50"
+              >
+                {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                저장
+              </button>
+            </>
+          )}
         </div>
       </header>
 
-      {loading && !job && (
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 className="animate-spin text-primary" size={32} />
+      {saveMessage && (
+        <div className="bg-green-50 text-green-700 px-4 py-2 text-sm flex items-center gap-2 border-b border-green-200">
+          <Check size={16} />
+          {saveMessage}
         </div>
       )}
 
       {error && (
-        <div className="flex-1 flex items-center justify-center p-6">
-          <div className="bg-red-50 text-red-700 px-6 py-4 rounded-lg border border-red-200 max-w-xl text-center">
-            <p className="font-medium">{error}</p>
-          </div>
+        <div className="bg-red-50 text-red-700 px-4 py-2 text-sm flex items-center gap-2 border-b border-red-200">
+          <XCircle size={16} />
+          {error}
+        </div>
+      )}
+
+      {loading && !job && (
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="animate-spin text-primary" size={32} />
         </div>
       )}
 
@@ -166,100 +361,28 @@ export default function JobResultPage() {
       )}
 
       {job?.status === 'done' && !loading && (
-        <>
-          <div className="bg-surface-container-low border-b border-outline-variant px-6 flex items-end h-10 flex-shrink-0">
-            <div className="flex gap-1">
-              {Object.keys(sheets).map((name) => (
-                <button
-                  key={name}
-                  onClick={() => setActiveSheet(name)}
-                  className={`px-4 h-8 flex items-center gap-2 text-sm rounded-t-lg border-t border-x transition-colors ${
-                    activeSheet === name
-                      ? 'bg-white border-outline-variant text-primary font-bold'
-                      : 'hover:bg-surface-container-high text-on-surface-variant font-medium border-transparent'
-                  }`}
-                >
-                  <FileSpreadsheet size={14} />
-                  {name}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex-1 flex overflow-hidden">
-            {sourceUrl && (
-              <div className="w-[420px] border-r border-outline-variant flex flex-col bg-surface-container-low flex-shrink-0">
-                <div className="p-4 flex items-center justify-between border-b border-outline-variant bg-white">
-                  <h3 className="font-bold text-sm text-on-surface flex items-center gap-2">
-                    <span className="text-primary">원본 문서</span>
-                  </h3>
-                  <span className="text-[10px] text-outline font-mono bg-surface px-1.5 py-0.5 rounded border border-outline-variant truncate max-w-[200px]">
-                    {job?.filename}
-                  </span>
-                </div>
-                <div className="flex-1 p-4 overflow-auto custom-scrollbar">
-                  <iframe src={sourceUrl} className="w-full h-full rounded-lg border border-outline-variant bg-white" title="source preview" />
-                </div>
+        <div className="flex-1 flex overflow-hidden min-h-0">
+          {sourceUrl && (
+            <div className="w-[420px] border-r border-outline-variant flex flex-col bg-surface-container-low flex-shrink-0 min-h-0">
+              <div className="p-4 flex items-center justify-between border-b border-outline-variant bg-white flex-shrink-0">
+                <h3 className="font-bold text-sm text-on-surface">원본 문서</h3>
+                <span className="text-[10px] text-outline font-mono bg-surface px-1.5 py-0.5 rounded border border-outline-variant truncate max-w-[200px]">
+                  {job?.filename}
+                </span>
               </div>
-            )}
-
-            <div className="flex-1 flex flex-col bg-white overflow-hidden">
-              <div className="flex-1 overflow-auto custom-scrollbar">
-                <table className="w-full border-collapse table-fixed min-w-[800px]">
-                  <thead className="sticky top-0 z-20">
-                    <tr>
-                      <th className="w-10 bg-slate-100 border-r border-b border-outline-variant text-[10px] text-outline font-bold text-center"></th>
-                      {headers.map((h, i) => (
-                        <th
-                          key={i}
-                          className="px-3 border-r border-b border-outline-variant text-xs font-bold text-on-surface text-left bg-slate-50 h-10 truncate"
-                        >
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row, rowIdx) => (
-                      <tr key={rowIdx} className="h-10 hover:bg-primary-container/5">
-                        <td className="bg-slate-50 border-r border-b border-outline-variant text-[10px] text-outline font-bold text-center">
-                          {rowIdx + 1}
-                        </td>
-                        {row.map((cell, cellIdx) => (
-                          <td
-                            key={cellIdx}
-                            className="px-3 border-r border-b border-outline-variant text-xs text-on-surface truncate font-mono"
-                            title={cell}
-                          >
-                            {cell}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                    {rows.length === 0 && (
-                      <tr>
-                        <td colSpan={headers.length + 1} className="text-center py-12 text-on-surface-variant">
-                          데이터가 없습니다
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-              <div className="h-8 bg-primary border-t border-primary/20 flex items-center justify-between px-4 flex-shrink-0 text-white text-[11px]">
-                <div className="flex gap-4 items-center">
-                  <div className="flex items-center gap-1">
-                    <span className="opacity-70">Rows:</span> <span className="font-bold">{rows.length}</span>
-                  </div>
-                  <div className="h-3 w-px bg-white/20"></div>
-                  <div className="flex items-center gap-1">
-                    <span className="opacity-70">Sheet:</span> <span className="font-bold">{activeSheet}</span>
-                  </div>
-                </div>
+              <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4">
+                <iframe src={sourceUrl} className="w-full h-full rounded-lg border border-outline-variant bg-white" title="source preview" />
               </div>
             </div>
+          )}
+
+          <div className="flex-1 flex flex-col bg-white overflow-hidden min-h-0">
+            <EditorToolbar editor={editor} />
+            <div className="flex-1 min-h-0 overflow-y-auto p-6 custom-scrollbar">
+              <EditorContent editor={editor} className="prose max-w-none focus:outline-none" />
+            </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   )

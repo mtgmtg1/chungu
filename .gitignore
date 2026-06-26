@@ -76,3 +76,4 @@ Thumbs.db
 
 # Misc
 package-lock.json
+.gstack/

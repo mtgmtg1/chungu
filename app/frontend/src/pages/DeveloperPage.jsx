@@ -37,24 +37,33 @@ export default function DeveloperPage() {
     loadAll()
   }, [user, loading, navigate])
 
+  const loadKeys = async () => {
+    try {
+      const k = await api.listApiKeys()
+      setKeys(k)
+    } catch (e) {
+      console.error('API keys 로드 실패:', e)
+      setError((prev) => prev || (e.message || 'API keys를 불러오지 못했습니다'))
+    }
+  }
+
   const loadAll = async () => {
     try {
       setError('')
-      const [acc, prc, k, usg, tx] = await Promise.all([
+      const [acc, prc, usg, tx] = await Promise.all([
         api.devAccount(),
         api.devPricing(),
-        api.listApiKeys(),
         api.devUsage(30),
         api.devTransactions(20),
       ])
       setAccount(acc)
       setPricing(prc)
-      setKeys(k)
       setUsage(usg)
       setTransactions(tx)
     } catch (e) {
       setError(e.message || '데이터를 불러오지 못했습니다')
     }
+    await loadKeys()
   }
 
   const createKey = async () => {
@@ -64,10 +73,16 @@ export default function DeveloperPage() {
       setKeys([res, ...keys])
       setRevealedKey(res)
       setNewKeyName('')
+      await loadKeys()
     } catch (e) {
       setError(e.message || 'key 생성 실패')
     }
   }
+
+  useEffect(() => {
+    if (!user || activeTab !== 'keys') return
+    loadKeys()
+  }, [activeTab, user])
 
   const deleteKey = async (id) => {
     if (!confirm('이 API key를 비활성화하시겠습니까?')) return
@@ -130,6 +145,7 @@ export default function DeveloperPage() {
                 className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
               />
               <button onClick={createKey} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">새 API key 발급</button>
+              <button onClick={loadKeys} className="rounded-lg bg-white border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">새로고침</button>
             </div>
             {revealedKey && (
               <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4">

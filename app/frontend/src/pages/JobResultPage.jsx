@@ -77,7 +77,14 @@ export default function JobResultPage() {
 
   async function downloadXlsx() {
     const { download_url } = await api.downloadJob(jobId, 'xlsx')
-    window.open(download_url, '_blank')
+    const filename = (job?.filename ? job.filename.replace(/\.[^/.]+$/, '') : 'result') + '.xlsx'
+    const a = document.createElement('a')
+    a.href = download_url
+    a.download = filename
+    a.style.display = 'none'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
   }
 
   const pct = job && (job.total_pages || job.total_files)

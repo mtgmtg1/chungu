@@ -37,7 +37,17 @@ export default function DashboardPage() {
 
   async function download(id, type) {
     const { download_url } = await api.downloadJob(id, type)
-    window.open(download_url, '_blank')
+    const job = jobs.find((j) => j.job_id === id)
+    const base = job?.filename ? job.filename.replace(/\.[^/.]+$/, '') : 'result'
+    const ext = type === 'xlsx' ? 'xlsx' : type
+    const filename = `${base}.${ext}`
+    const a = document.createElement('a')
+    a.href = download_url
+    a.download = filename
+    a.style.display = 'none'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
   }
 
   if (authLoading || (!user && !error)) {

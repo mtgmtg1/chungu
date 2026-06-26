@@ -118,7 +118,7 @@ export default function UploadPage() {
             octaveDecay={0.1}
             layerOffset={0}
             colorSpeed={1.0}
-            enableMouseInteraction={true}}
+            enableMouseInteraction={true}
             mouseInfluence={0.25}
           />
         </div>

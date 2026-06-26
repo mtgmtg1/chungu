@@ -11,6 +11,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from openpyxl import load_workbook
 from pypdf import PdfReader
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -291,6 +292,42 @@ def download_job(
         return {"download_url": url}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+
+
+@router.get("/jobs/{job_id}/preview")
+def preview_job(
+    job_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = db.get(Job, job_id)
+    if job is None or str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+    if not job.result_xlsx_storage_path:
+        raise HTTPException(status_code=400, detail="결과 파일이 준비되지 않았습니다")
+
+    try:
+        xlsx_bytes = supabase_client.get_service_client().storage.from_("results").download(job.result_xlsx_storage_path)
+        wb = load_workbook(BytesIO(xlsx_bytes))
+        sheets = {}
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            sheets[sheet_name] = [[cell.value for cell in row] for row in ws.iter_rows()]
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"결과 미리보기 생성 실패: {e}")
+
+    source_url = None
+    if job.pdf_storage_path:
+        try:
+            source_url = supabase_client.get_signed_download_url(job.pdf_storage_path, bucket="pdfs", expires_in=3600)
+        except Exception:
+            pass
+
+    return {
+        "job": _job_summary(job),
+        "sheets": sheets,
+        "source_url": source_url,
+    }
 
 
 @router.get("/admin/jobs")

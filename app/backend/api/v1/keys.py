@@ -77,11 +77,11 @@ def delete_key(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """API key를 비활성화합니다."""
+    """API key를 삭제합니다."""
     key = db.get(ApiKey, key_id)
     if key is None or str(key.user_id) != user.user_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="key를 찾을 수 없습니다")
-    key.is_active = False
+    db.delete(key)
     db.commit()
     return {"ok": True}
 

@@ -33,6 +33,7 @@ export const api = {
   confirmJob: (id) => request(`/api/jobs/${id}/confirm`, { method: 'POST' }),
   getJob: (id) => request(`/api/jobs/${id}`),
   listJobs: () => request('/api/jobs'),
+  previewJob: (id) => request(`/api/jobs/${id}/preview`),
   downloadJob: (id, type) => request(`/api/jobs/${id}/download?type=${type}`),
   downloadUrl: (id, type) => `/api/jobs/${id}/download?type=${type}`,
 

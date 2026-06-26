@@ -85,10 +85,10 @@ export default function DeveloperPage() {
   }, [activeTab, user])
 
   const deleteKey = async (id) => {
-    if (!confirm('이 API key를 비활성화하시겠습니까?')) return
+    if (!confirm('이 API key를 삭제하시겠습니까?')) return
     try {
       await api.deleteApiKey(id)
-      setKeys(keys.map((k) => (k.id === id ? { ...k, is_active: false } : k)))
+      setKeys(keys.filter((k) => k.id !== id))
     } catch (e) {
       setError(e.message || 'key 삭제 실패')
     }
@@ -173,7 +173,7 @@ export default function DeveloperPage() {
                       <td className="px-3 py-2">{k.is_active ? <span className="text-green-600">활성</span> : <span className="text-slate-400">비활성</span>}</td>
                       <td className="px-3 py-2">
                         {k.is_active && (
-                          <button onClick={() => deleteKey(k.id)} className="text-xs text-red-600 hover:underline">비활성화</button>
+                          <button onClick={() => deleteKey(k.id)} className="text-xs text-red-600 hover:underline">삭제</button>
                         )}
                       </td>
                     </tr>

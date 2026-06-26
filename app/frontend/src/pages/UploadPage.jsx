@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { FileUp, Loader2, LogIn, Coins } from 'lucide-react'
+import SoftAurora from '../components/SoftAurora.jsx'
 import { useAuth } from '../AuthContext.jsx'
 import { api } from '../api.js'
 
@@ -18,10 +19,35 @@ export default function UploadPage() {
     api.me().then(setProfile).catch(() => {})
   }, [user])
 
+  async function traverseEntry(entry, collected, basePath = '') {
+    if (entry.isFile) {
+      const file = await new Promise((resolve) => entry.file(resolve))
+      file.webkitRelativePath = basePath + file.name
+      collected.push(file)
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader()
+      const entries = await new Promise((resolve) => reader.readEntries(resolve))
+      for (const child of entries) {
+        await traverseEntry(child, collected, basePath + entry.name + '/')
+      }
+    }
+  }
+
   async function handleDrop(e) {
     e.preventDefault()
-    const dropped = Array.from(e.dataTransfer.files || [])
-    if (dropped.length) setFiles(dropped)
+    const items = Array.from(e.dataTransfer.items || [])
+    if (!items.length) return
+    const collected = []
+    for (const item of items) {
+      const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null
+      if (entry) {
+        await traverseEntry(entry, collected)
+      } else {
+        const file = item.getAsFile ? item.getAsFile() : null
+        if (file) collected.push(file)
+      }
+    }
+    if (collected.length) setFiles(collected)
   }
 
   async function handleUpload(e) {
@@ -77,9 +103,24 @@ export default function UploadPage() {
         </div>
       </nav>
 
-      <main className="flex-grow flex flex-col items-center justify-center bg-grid relative pb-20">
-        <div className="absolute inset-0 pointer-events-none overflow-hidden">
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-primary/5 rounded-full blur-[120px]"></div>
+      <main className="flex-grow flex flex-col items-center justify-center relative pb-20 overflow-hidden">
+        <div className="absolute inset-0 z-0">
+          <SoftAurora
+            speed={0.6}
+            scale={1.5}
+            brightness={1.0}
+            color1="#ffffff"
+            color2="#3b82f6"
+            noiseFrequency={2.5}
+            noiseAmplitude={1.0}
+            bandHeight={0.5}
+            bandSpread={1.0}
+            octaveDecay={0.1}
+            layerOffset={0}
+            colorSpeed={1.0}
+            enableMouseInteraction={false}
+            mouseInfluence={0.25}
+          />
         </div>
 
         <div className="w-full max-w-3xl px-gutter text-center relative z-10">
@@ -100,38 +141,18 @@ export default function UploadPage() {
                 <div className="w-20 h-20 bg-primary-container/10 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
                   <FileUp className="text-primary" size={48} />
                 </div>
-                <h3 className="text-headline-md font-medium text-on-surface mb-2">여기에 파일을 놓으세요</h3>
+                <h3 className="text-headline-md font-medium text-on-surface mb-2">파일 또는 폴더를 놓으세요</h3>
                 <p className="text-body-md text-outline">PDF, 이미지, 오디오, 비디오, 압축 파일</p>
-                <div className="mt-8 flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault()
-                      document.getElementById('file-input').click()
-                    }}
-                    className="px-8 py-3 bg-primary text-on-primary rounded-full font-headline-md hover:bg-primary-container transition-all shadow-md"
-                  >
-                    파일 선택
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault()
-                      document.getElementById('folder-input').click()
-                    }}
-                    className="px-8 py-3 bg-surface-container text-on-surface border border-outline-variant rounded-full font-headline-md hover:bg-surface-container-high transition-all shadow-md"
-                  >
-                    폴더 선택
-                  </button>
-                </div>
-                <input
-                  id="file-input"
-                  type="file"
-                  multiple
-                  className="hidden"
-                  accept=".pdf,.zip,.rar,.7z,.tar.gz,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.mp4,.avi,.mov,.mkv,.webm"
-                  onChange={(e) => setFiles(Array.from(e.target.files || []))}
-                />
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    document.getElementById('folder-input').click()
+                  }}
+                  className="mt-8 px-8 py-3 bg-primary text-on-primary rounded-full font-headline-md hover:bg-primary-container transition-all shadow-md"
+                >
+                  폴더 선택
+                </button>
                 <input
                   id="folder-input"
                   type="file"

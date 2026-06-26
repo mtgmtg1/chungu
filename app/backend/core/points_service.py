@@ -6,8 +6,10 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from sqlalchemy import select
+
 from .. import settings_store
-from ..db.models import PointTransaction, User
+from ..db.models import AdminUser, PointTransaction, User
 
 
 def _get_rate(db: Session) -> dict:
@@ -80,7 +82,24 @@ def charge_points(db: Session, user: User, points: int, description: str) -> Poi
 
 
 def spend_points(db: Session, user: User, points: int, description: str) -> PointTransaction:
-    """포인트를 차감하고 트랜잭션을 기록합니다. 잔액 부족 시 ValueError."""
+    """포인트를 차감하고 트랜잭션을 기록합니다. 잔액 부족 시 ValueError.
+    관리자는 잔액 체크/차감 없이 사용 가능합니다."""
+    is_admin = user.is_admin or (
+        db.execute(select(AdminUser).where(AdminUser.email == user.email)).scalar_one_or_none() is not None
+    )
+    if is_admin:
+        tx = PointTransaction(
+            user_id=user.id,
+            type="spend",
+            amount=0,
+            balance_after=user.points_balance,
+            description=f"[관리자 무료] {description}",
+        )
+        db.add(tx)
+        db.commit()
+        db.refresh(tx)
+        return tx
+
     if user.points_balance < points:
         raise ValueError(f"포인트가 부족합니다 (잔액: {user.points_balance}, 필요: {points})")
     user.points_balance -= points

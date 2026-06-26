@@ -9,7 +9,9 @@ from typing import Annotated
 from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from ..db.models import ApiKey, User
+from sqlalchemy import select
+
+from ..db.models import AdminUser, ApiKey, User
 from ..db.session import get_db
 from .supabase_auth import CurrentUser
 
@@ -60,10 +62,15 @@ def get_current_api_key(
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API key에 연결된 사용자가 없습니다")
 
+    # admin_users 테이블에 등록된 계정은 관리자로 간주
+    is_admin = user.is_admin or (
+        db.execute(select(AdminUser).where(AdminUser.email == user.email)).scalar_one_or_none() is not None
+    )
+
     api_key.last_used_at = datetime.now(timezone.utc)
     db.commit()
 
-    return CurrentUser(str(user.id), user.email, user.is_admin, user.points_balance), api_key
+    return CurrentUser(str(user.id), user.email, is_admin, user.points_balance), api_key
 
 
 def require_api_key(

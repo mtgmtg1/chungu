@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..db.models import User
+from ..db.models import AdminUser, User
 from ..db.session import get_db
 
 
@@ -67,7 +67,12 @@ def get_current_user(
         db.commit()
         db.refresh(user)
 
-    return CurrentUser(str(user.id), user.email, user.is_admin, user.points_balance)
+    # admin_users 테이블에 등록된 계정은 관리자로 간주
+    is_admin = user.is_admin or (
+        db.execute(select(AdminUser).where(AdminUser.email == user.email)).scalar_one_or_none() is not None
+    )
+
+    return CurrentUser(str(user.id), user.email, is_admin, user.points_balance)
 
 
 def get_current_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:

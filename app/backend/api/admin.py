@@ -30,7 +30,7 @@ def login(response: Response, payload: dict = Body(...), db: Session = Depends(g
 
     token = create_token(email)
     response.set_cookie(
-        key=COOKIE_NAME, value=token, httponly=True, samesite="lax",
+        key=COOKIE_NAME, value=token, httponly=True, samesite="lax", path="/",
         max_age=SESSION_HOURS * 3600,
     )
     return {"ok": True, "email": email}
@@ -38,7 +38,7 @@ def login(response: Response, payload: dict = Body(...), db: Session = Depends(g
 
 @router.post("/logout")
 def logout(response: Response):
-    response.delete_cookie(COOKIE_NAME)
+    response.delete_cookie(COOKIE_NAME, path="/")
     return {"ok": True}
 
 

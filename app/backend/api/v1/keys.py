@@ -40,6 +40,7 @@ def create_key(
         "scopes": api_key.scopes,
         "rate_limit_rpm": api_key.rate_limit_rpm,
         "daily_quota": api_key.daily_quota,
+        "is_active": api_key.is_active,
         "created_at": api_key.created_at.isoformat() if api_key.created_at else None,
     }
 

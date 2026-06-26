@@ -17,8 +17,8 @@ def run_vision(
     model: str,
     api_key: str = "",
     extra_prompt: str = "",
-    dpi: int = 150,
-    workers: int = 6,
+    dpi: int = 300,
+    workers: int | None = None,
     max_tokens: int = 10000,
     on_progress: Callable[[int, int], None] | None = None,
     on_error: Callable[[int, str], None] | None = None,
@@ -37,10 +37,11 @@ def run_vision(
     done = 0
 
     def process(page_num: int, img: Path) -> tuple[int, str]:
-        content, _ = ocr_client.call_vision(img, prompt, endpoint, model, api_key, max_tokens)
-        return page_num, ocr_client.extract_markdown_table(content)
+        page_text = ocr_client.extract_pdf_page_text(pdf_path, page_num)
+        content, _ = ocr_client.call_vision(img, prompt, endpoint, model, api_key, max_tokens, page_text=page_text)
+        return page_num, ocr_client.extract_markdown_content(content)
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
+    with ThreadPoolExecutor(max_workers=workers if workers is not None else total) as executor:
         futures = {executor.submit(process, n, p): n for n, p in pages}
         for future in as_completed(futures):
             page_num = futures[future]

@@ -15,8 +15,11 @@ pypdf==5.1.0
 requests==2.32.3
 supabase==2.15.0
 openpyxl==3.1.5
+python-docx==1.1.2
+python-pptx==1.0.2
 rarfile==4.2
 py7zr==0.22.0
 filetype==1.2.0
 Pillow==11.1.0
 ffmpeg-python==0.2.0
+unidecode==1.4.0

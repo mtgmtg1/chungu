@@ -1,45 +1,18 @@
-// [Flow: Step 1 (job ID로 진입) -> Step 2 (작업 상태 폴링) -> Step 3 (완료 시 preview API 호출) -> Step 4 (TipTap 에디터로 마크다운 표시/편집) -> Step 5 (마크다운/Office/CSV 다운로드)]
+// [Flow: Step 1 (job ID로 진입) -> Step 2 (작업 상태 폴링) -> Step 3 (완료 시 preview API 호출) -> Step 4 (100페이지 초과 시 페이지 단위 뷰어, 이하 시 PDF.js + 전체 에디터) -> Step 5 (마크다운/Office/CSV 다운로드)]
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, Check, Download, FileText, Loader2, Save, Table2, XCircle } from 'lucide-react'
-import { useEditor, EditorContent } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
-import { Table } from '@tiptap/extension-table'
-import { TableRow } from '@tiptap/extension-table-row'
-import { TableCell } from '@tiptap/extension-table-cell'
-import { TableHeader } from '@tiptap/extension-table-header'
-import { marked } from 'marked'
-import TurndownService from 'turndown'
+import { ArrowLeft, Check, Download, FileText, Loader2, PanelLeft, PanelLeftClose, Save, Table2, XCircle } from 'lucide-react'
+import PdfViewer from '../components/PdfViewer.jsx'
+import MediaPlayer from '../components/MediaPlayer.jsx'
+import PagedResultViewer from '../components/PagedResultViewer.jsx'
+import SimpleEditor from '../components/SimpleEditor.jsx'
 import { api } from '../api.js'
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 
 const STATUS_LABEL = {
   pending: '결제 대기', queued: '대기 중', rendering: 'PDF 렌더링', ocr: 'OCR 분석 중',
   merging: '표 병합 중', done: '완료', error: '실패',
 }
-
-const turndown = new TurndownService({
-  headingStyle: 'atx',
-  codeBlockStyle: 'fenced',
-  emDelimiter: '_',
-  strongDelimiter: '**',
-})
-
-turndown.addRule('table', {
-  filter: 'table',
-  replacement: function (content, node) {
-    const rows = Array.from(node.querySelectorAll('tr'))
-    if (!rows.length) return ''
-    const lines = []
-    rows.forEach((row, idx) => {
-      const cells = Array.from(row.querySelectorAll('th, td')).map((cell) => cell.textContent.trim().replace(/\|/g, '\\|'))
-      lines.push('| ' + cells.join(' | ') + ' |')
-      if (idx === 0) {
-        lines.push('| ' + cells.map(() => '---').join(' | ') + ' |')
-      }
-    })
-    return '\n\n' + lines.join('\n') + '\n\n'
-  },
-})
 
 function downloadByUrl(url, filename) {
   const a = document.createElement('a')
@@ -49,61 +22,6 @@ function downloadByUrl(url, filename) {
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
-}
-
-function EditorToolbar({ editor }) {
-  if (!editor) return null
-  return (
-    <div className="flex items-center gap-1 px-4 py-2 border-b border-outline-variant bg-surface">
-      <button
-        type="button"
-        onClick={() => editor.chain().focus().toggleBold().run()}
-        className={`px-3 py-1.5 rounded text-sm font-bold ${editor.isActive('bold') ? 'bg-primary text-white' : 'hover:bg-surface-container-high'}`}
-      >
-        B
-      </button>
-      <button
-        type="button"
-        onClick={() => editor.chain().focus().toggleItalic().run()}
-        className={`px-3 py-1.5 rounded text-sm italic ${editor.isActive('italic') ? 'bg-primary text-white' : 'hover:bg-surface-container-high'}`}
-      >
-        I
-      </button>
-      <div className="w-px h-5 bg-outline-variant mx-1"></div>
-      <button
-        type="button"
-        onClick={() => editor.chain().focus().addColumnBefore().run()}
-        disabled={!editor.can().addColumnBefore()}
-        className="px-2 py-1.5 rounded text-sm hover:bg-surface-container-high disabled:opacity-40"
-      >
-        +열
-      </button>
-      <button
-        type="button"
-        onClick={() => editor.chain().focus().addRowAfter().run()}
-        disabled={!editor.can().addRowAfter()}
-        className="px-2 py-1.5 rounded text-sm hover:bg-surface-container-high disabled:opacity-40"
-      >
-        +행
-      </button>
-      <button
-        type="button"
-        onClick={() => editor.chain().focus().deleteColumn().run()}
-        disabled={!editor.can().deleteColumn()}
-        className="px-2 py-1.5 rounded text-sm hover:bg-surface-container-high disabled:opacity-40"
-      >
-        -열
-      </button>
-      <button
-        type="button"
-        onClick={() => editor.chain().focus().deleteRow().run()}
-        disabled={!editor.can().deleteRow()}
-        className="px-2 py-1.5 rounded text-sm hover:bg-surface-container-high disabled:opacity-40"
-      >
-        -행
-      </button>
-    </div>
-  )
 }
 
 export default function JobResultPage() {
@@ -116,28 +34,24 @@ export default function JobResultPage() {
   const [saving, setSaving] = useState(false)
   const [converting, setConverting] = useState(false)
   const [saveMessage, setSaveMessage] = useState('')
+  const [pages, setPages] = useState([])
+  const [sourceType, setSourceType] = useState(null)
+  const [imageUrls, setImageUrls] = useState([])
+  const [currentPdfPage, setCurrentPdfPage] = useState(1)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const pollRef = useRef(null)
+  const editorRef = useRef(null)
 
-  const editor = useEditor({
-    extensions: [StarterKit, Table.configure({ resizable: true }), TableRow, TableHeader, TableCell],
-    content: '',
-    editable: false,
-  })
+  const PAGE_THRESHOLD = 100
+  const needsPagedMode = (j) => (j?.total_pages || 0) > PAGE_THRESHOLD || (j?.total_files || 0) > PAGE_THRESHOLD
 
   useEffect(() => {
     if (!jobId) return
     loadJob()
     return () => {
       clearInterval(pollRef.current)
-      editor?.destroy()
     }
   }, [jobId])
-
-  useEffect(() => {
-    if (!editor || !markdown) return
-    editor.commands.setContent(marked.parse(markdown), false)
-    editor.setEditable(true)
-  }, [editor, markdown])
 
   async function loadJob() {
     try {
@@ -178,8 +92,17 @@ export default function JobResultPage() {
   async function loadPreview() {
     try {
       const preview = await api.previewJob(jobId)
-      setMarkdown(preview.markdown || '')
       setSourceUrl(preview.source_url)
+      setSourceType(preview.source_type)
+      setImageUrls(preview.image_urls || [])
+      if (needsPagedMode(job)) {
+        const meta = await api.previewJobPages(jobId)
+        setPages(meta.pages || [])
+        setMarkdown('')
+      } else {
+        setMarkdown(preview.markdown || '')
+        setPages([])
+      }
     } catch (e) {
       setError(e.message || '결과 미리보기를 불러오지 못했습니다')
     } finally {
@@ -188,9 +111,8 @@ export default function JobResultPage() {
   }
 
   async function saveMarkdown() {
-    if (!editor) return
-    const html = editor.getHTML()
-    const updated = turndown.turndown(html)
+    if (!editorRef.current) return
+    const updated = editorRef.current.getMarkdown()
     setSaving(true)
     setSaveMessage('')
     try {
@@ -256,6 +178,15 @@ export default function JobResultPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {job?.status === 'done' && sourceUrl && (
+            <button
+              onClick={() => setSidebarOpen((v) => !v)}
+              title={sidebarOpen ? '원본/페이지 목록 숨기기' : '원본/페이지 목록 보이기'}
+              className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
+            >
+              {sidebarOpen ? <PanelLeftClose size={16} /> : <PanelLeft size={16} />}
+            </button>
+          )}
           {job?.status === 'done' && (
             <>
               <button
@@ -360,28 +291,73 @@ export default function JobResultPage() {
         </div>
       )}
 
-      {job?.status === 'done' && !loading && (
+      {job?.status === 'done' && !loading && needsPagedMode(job) && (
+        <PagedResultViewer jobId={jobId} pages={pages} sourceUrl={sourceUrl} sourceType={sourceType} sidebarOpen={sidebarOpen} />
+      )}
+
+      {job?.status === 'done' && !loading && !needsPagedMode(job) && (
         <div className="flex-1 flex overflow-hidden min-h-0">
-          {sourceUrl && (
-            <div className="w-[420px] border-r border-outline-variant flex flex-col bg-surface-container-low flex-shrink-0 min-h-0">
-              <div className="p-4 flex items-center justify-between border-b border-outline-variant bg-white flex-shrink-0">
-                <h3 className="font-bold text-sm text-on-surface">원본 문서</h3>
-                <span className="text-[10px] text-outline font-mono bg-surface px-1.5 py-0.5 rounded border border-outline-variant truncate max-w-[200px]">
-                  {job?.filename}
-                </span>
-              </div>
-              <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4">
-                <iframe src={sourceUrl} className="w-full h-full rounded-lg border border-outline-variant bg-white" title="source preview" />
-              </div>
+          {sidebarOpen && sourceUrl ? (
+            <PanelGroup direction="horizontal" className="flex-1 flex">
+              <Panel defaultSize={30} minSize={20} maxSize={60} className="flex flex-col min-h-0">
+                {sourceType === 'pdf' ? (
+                  <div className="flex flex-col h-full border-r border-outline-variant bg-surface-container-low">
+                    <div className="p-4 flex items-center justify-between border-b border-outline-variant bg-white flex-shrink-0">
+                      <h3 className="font-bold text-sm text-on-surface">원본 문서</h3>
+                      <span className="text-[10px] text-outline font-mono bg-surface px-1.5 py-0.5 rounded border border-outline-variant truncate max-w-[200px]">
+                        {job?.filename}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-h-0">
+                      <PdfViewer url={sourceUrl} page={currentPdfPage} onPageChange={setCurrentPdfPage} />
+                    </div>
+                  </div>
+                ) : sourceType === 'images' ? (
+                  <div className="flex flex-col h-full border-r border-outline-variant bg-surface-container-low overflow-hidden">
+                    <div className="p-4 border-b border-outline-variant bg-white flex-shrink-0">
+                      <h3 className="font-bold text-sm text-on-surface">원본 이미지</h3>
+                    </div>
+                    <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
+                      {imageUrls.map((url, idx) => (
+                        <img
+                          key={idx}
+                          src={url}
+                          alt={`원본 이미지 ${idx + 1}`}
+                          className="w-full rounded border border-outline-variant bg-white shadow-sm"
+                          loading="lazy"
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ) : sourceType === 'audio' || sourceType === 'video' ? (
+                  <MediaPlayer sourceType={sourceType} url={sourceUrl} filename={job?.filename} />
+                ) : (
+                  <div className="flex flex-col h-full border-r border-outline-variant bg-surface-container-low p-4">
+                    <h3 className="font-bold text-sm text-on-surface mb-2">원본 파일</h3>
+                    <a
+                      href={sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm text-primary hover:underline truncate"
+                    >
+                      {job?.filename}
+                    </a>
+                    <p className="text-xs text-on-surface-variant mt-2">아카이브 파일은 다운로드 후 확인할 수 있습니다.</p>
+                  </div>
+                )}
+              </Panel>
+              <PanelResizeHandle className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize" />
+              <Panel className="flex flex-col min-h-0">
+                <div className="flex flex-col h-full bg-white overflow-hidden">
+                  <SimpleEditor ref={editorRef} markdown={markdown} editable />
+                </div>
+              </Panel>
+            </PanelGroup>
+          ) : (
+            <div className="flex-1 flex flex-col bg-white overflow-hidden min-h-0">
+              <SimpleEditor ref={editorRef} markdown={markdown} editable />
             </div>
           )}
-
-          <div className="flex-1 flex flex-col bg-white overflow-hidden min-h-0">
-            <EditorToolbar editor={editor} />
-            <div className="flex-1 min-h-0 overflow-y-auto p-6 custom-scrollbar">
-              <EditorContent editor={editor} className="prose max-w-none focus:outline-none" />
-            </div>
-          </div>
         </div>
       )}
     </div>

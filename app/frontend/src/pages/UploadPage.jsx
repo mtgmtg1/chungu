@@ -109,8 +109,8 @@ export default function UploadPage() {
             speed={0.6}
             scale={1.5}
             brightness={0.5}
-            color1="#2e6fef"
-            color2="#f0ff22a4"
+            color1="#ffffff"
+            color2="#2dd2ffa4"
             noiseFrequency={2.5}
             noiseAmplitude={1.0}
             bandHeight={0.5}

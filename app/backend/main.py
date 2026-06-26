@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from . import settings_store
 from .api import admin, auth, jobs, payments
@@ -19,9 +19,34 @@ from .db.session import Base, SessionLocal, engine
 STATIC_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
+def _apply_migrations():
+    """db/migrations/ 아래 SQL 파일을 실행하여 스키마를 최신 상태로 유지한다."""
+    migrations_dir = Path(__file__).resolve().parent / "db" / "migrations"
+    if not migrations_dir.exists():
+        return
+    files = sorted(migrations_dir.glob("*.sql"))
+    if not files:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE IF NOT EXISTS _migration_versions (filename TEXT PRIMARY KEY, applied_at TIMESTAMP DEFAULT NOW())"))
+        applied = {row[0] for row in conn.execute(text("SELECT filename FROM _migration_versions")).fetchall()}
+        for path in files:
+            name = path.name
+            if name in applied:
+                continue
+            sql = path.read_text(encoding="utf-8")
+            for statement in sql.split(";"):
+                stmt = statement.strip()
+                if not stmt:
+                    continue
+                conn.execute(text(stmt))
+            conn.execute(text("INSERT INTO _migration_versions (filename) VALUES (:name)"), {"name": name})
+
+
 def _seed():
-    """최초 부팅: 테이블 생성 + 관리자 계정 + 기본 설정 시드."""
+    """최초 부팅: 테이블 생성 + 마이그레이션 적용 + 관리자 계정 + 기본 설정 시드."""
     Base.metadata.create_all(bind=engine)
+    _apply_migrations()
     db = SessionLocal()
     try:
         existing = db.execute(select(AdminUser).where(AdminUser.email == settings.admin_email)).scalar_one_or_none()

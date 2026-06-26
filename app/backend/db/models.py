@@ -65,11 +65,17 @@ class Job(Base):
     result_csv_storage_path: Mapped[str] = mapped_column(String(1024), default="")
     result_md_storage_path: Mapped[str] = mapped_column(String(1024), default="")
     result_xlsx_storage_path: Mapped[str] = mapped_column(String(1024), default="")
+    result_docx_storage_path: Mapped[str] = mapped_column(String(1024), default="")
+    result_pptx_storage_path: Mapped[str] = mapped_column(String(1024), default="")
+    result_edited_md_storage_path: Mapped[str] = mapped_column(String(1024), default="")
 
     # 하위 호환: 로컬 파일 경로
     result_csv_path: Mapped[str] = mapped_column(String(1024), default="")
     result_md_path: Mapped[str] = mapped_column(String(1024), default="")
     result_xlsx_path: Mapped[str] = mapped_column(String(1024), default="")
+    result_docx_path: Mapped[str] = mapped_column(String(1024), default="")
+    result_pptx_path: Mapped[str] = mapped_column(String(1024), default="")
+    result_edited_md_path: Mapped[str] = mapped_column(String(1024), default="")
     download_token: Mapped[str] = mapped_column(String(64), default="", index=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

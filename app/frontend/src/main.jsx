@@ -14,6 +14,7 @@ import DeveloperPage from './pages/DeveloperPage.jsx'
 import JobsPage from './pages/JobsPage.jsx'
 import JobConfirmPage from './pages/JobConfirmPage.jsx'
 import JobResultPage from './pages/JobResultPage.jsx'
+import SettingsPage from './pages/SettingsPage.jsx'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
@@ -28,6 +29,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
           <Route path="/developer" element={<DeveloperPage />} />
           <Route path="/jobs/:jobId/confirm" element={<JobConfirmPage />} />
           <Route path="/jobs/:jobId" element={<JobResultPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="/admin/login" element={<AdminLogin />} />
           <Route path="/admin" element={<AdminDashboard />} />
         </Routes>

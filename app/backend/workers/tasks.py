@@ -46,6 +46,9 @@ def run_job(job_id: str) -> dict:
         errors: list[str] = []
         tabs: dict[str, list[dict]] = {}
         rows: list[dict] = []
+        page_tables: list[tuple[int, str]] = []
+        results: list[tuple[str, str, str]] = []
+        fmt = ""
 
         # Step 2: PDF 단일 처리
         if job.file_type == "pdf":
@@ -102,6 +105,12 @@ def run_job(job_id: str) -> dict:
                 tmp_path = Path(tmpdir)
                 input_file = tmp_path / (job.original_filename or "input.zip")
                 input_file.write_bytes(input_data)
+
+                # 확장자가 없는 zip 파일도 인식할 수 있도록 보정
+                if not archive_handler.is_archive(input_file.name) and media_loader.detect_file_type(input_file) == "archive":
+                    input_file = input_file.with_suffix(".zip")
+                    input_file.write_bytes(input_data)
+
                 extracted: list[Path] = []
                 if archive_handler.is_archive(input_file.name):
                     archive_dest = tmp_path / "extracted"
@@ -158,6 +167,9 @@ def run_job(job_id: str) -> dict:
                     model,
                     api_key,
                     extra_prompt=job.prompt,
+                    media_endpoint=settings_store.get_setting(db, "media_llm_endpoint") or settings.media_llm_endpoint,
+                    media_model=settings_store.get_setting(db, "media_llm_model") or settings.media_llm_model,
+                    media_api_key=settings_store.get_setting(db, "media_llm_api_key") or settings.media_llm_api_key,
                     on_progress=on_media_progress,
                     on_error=on_media_error,
                 )
@@ -176,51 +188,67 @@ def run_job(job_id: str) -> dict:
                         durations[ftype] += media_loader.get_media_duration_seconds(fp)
                 job.media_duration_seconds = durations["audio"] + durations["video"]
 
-                # 추출 파일 정보 업데이트
-                job.extracted_files = [
-                    {
+                # 추출 파일 정보 업데이트 (이미지는 Storage에 개별 업로드)
+                extracted_info = []
+                for p in extracted:
+                    ftype = media_loader.detect_file_type(p)
+                    info = {
                         "path": str(p.name),
-                        "type": media_loader.detect_file_type(p),
+                        "type": ftype,
                         "size": p.stat().st_size,
-                        "duration": media_loader.get_media_duration_seconds(p) if media_loader.detect_file_type(p) in ("audio", "video") else 0,
+                        "duration": media_loader.get_media_duration_seconds(p) if ftype in ("audio", "video") else 0,
                     }
-                    for p in extracted
-                ]
+                    if ftype == "image":
+                        try:
+                            info["storage_path"] = supabase_client.upload_image(job_id, p, p.name)
+                        except Exception as e:
+                            errors.append(f"{p.name}: 이미지 업로드 실패 {e}")
+                    extracted_info.append(info)
+                job.extracted_files = extracted_info
                 job.total_files = len(extracted)
                 job.done_files = len(extracted)
 
-        # Step 4: Excel + CSV + MD 저장
+        # Step 4: CSV + MD 저장 (xlsx는 별도 LLM 변환으로 제공)
         _set_status(db, job, "merging")
-        xlsx_path = out_dir / "result.xlsx"
         csv_path = out_dir / "result.csv"
         md_path = out_dir / "result.md"
-        if tabs:
-            excel_writer.write_excel(tabs, columns, xlsx_path)
         if rows:
             converter.write_csv(rows, columns, csv_path)
-            converter.write_markdown(rows, columns, md_path)
         else:
-            # 미디어 결과를 CSV/MD로도 변환
+            # 미디어 결과를 CSV로도 변환
             merged_rows: list[dict] = []
             for sheet_rows in tabs.values():
                 merged_rows.extend(sheet_rows)
             if merged_rows:
                 converter.write_csv(merged_rows, columns, csv_path)
+
+        # MD는 원문서 레이아웃을 보존한 마크다운으로 출력 (vision PDF / 미디어)
+        if page_tables and fmt == "markdown":
+            converter.write_layout_markdown(page_tables, md_path)
+        elif rows:
+            converter.write_markdown(rows, columns, md_path)
+        elif results:
+            # 미디어 결과를 페이지별 마크다운으로 변환
+            media_page_tables = [(idx + 1, table or "") for idx, (_, _, table) in enumerate(results)]
+            converter.write_layout_markdown(media_page_tables, md_path)
+        else:
+            merged_rows = []
+            for sheet_rows in tabs.values():
+                merged_rows.extend(sheet_rows)
+            if merged_rows:
                 converter.write_markdown(merged_rows, columns, md_path)
 
         # Step 5: Storage에 결과 업로드
         storage_paths = supabase_client.upload_result(
-            job_id, csv_path=csv_path, md_path=md_path, xlsx_path=xlsx_path
+            job_id, csv_path=csv_path, md_path=md_path
         )
 
         # Step 6: DB 업데이트
         expire_days = int(settings_store.get_setting(db, "download_expire_days") or "7")
         job.result_csv_path = str(csv_path)
         job.result_md_path = str(md_path)
-        job.result_xlsx_path = str(xlsx_path)
         job.result_csv_storage_path = storage_paths.get("csv", "")
         job.result_md_storage_path = storage_paths.get("md", "")
-        job.result_xlsx_storage_path = storage_paths.get("xlsx", "")
         job.download_token = job_id
         job.expires_at = datetime.now(timezone.utc) + timedelta(days=expire_days)
         job.error_log = "\n".join(errors)

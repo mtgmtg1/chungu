@@ -19,7 +19,7 @@ def run_hybrid(
     extra_prompt: str = "",
     dpi: int = 150,
     ocr_workers: int = 4,
-    llm_workers: int = 2,
+    llm_workers: int | None = None,
     max_tokens: int = 4000,
     lang: str = "kor+eng",
     on_progress: Callable[[int, int], None] | None = None,
@@ -68,7 +68,7 @@ def run_hybrid(
             block = ",".join(columns) + "\n" + block
         return page_num, block
 
-    with ThreadPoolExecutor(max_workers=llm_workers) as executor:
+    with ThreadPoolExecutor(max_workers=llm_workers if llm_workers is not None else total) as executor:
         futures = {executor.submit(structure, n): n for n, _ in pages}
         for future in as_completed(futures):
             page_num = futures[future]

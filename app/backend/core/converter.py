@@ -25,3 +25,15 @@ def write_markdown(rows: list[dict], columns: list[str], out_path: Path) -> Path
         lines.append("| " + " | ".join(cells) + " |")
     out_path.write_text("\n".join(lines), encoding="utf-8")
     return out_path
+
+
+def write_layout_markdown(page_contents: list[tuple[int, str]], out_path: Path) -> Path:
+    """페이지별 마크다운 레이아웃을 페이지 구분선과 함께 저장한다."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    parts: list[str] = []
+    for page_num, content in sorted(page_contents, key=lambda x: x[0]):
+        if not content.strip():
+            continue
+        parts.append(f"<!-- 페이지 {page_num} -->\n\n{content.strip()}")
+    out_path.write_text("\n\n---\n\n".join(parts), encoding="utf-8")
+    return out_path

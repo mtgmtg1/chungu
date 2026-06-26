@@ -1,7 +1,7 @@
 // [Flow: Step 1 (인증 확인) -> Step 2 (설정 로드) -> Step 3 (LLM/SMTP 설정 편집/테스트) -> Step 4 (job 모니터)]
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, Save, Mail, Cpu, ListChecks, LogOut, KeyRound, CreditCard } from 'lucide-react'
+import { Loader2, Save, Mail, Cpu, Film, ListChecks, LogOut, KeyRound, CreditCard } from 'lucide-react'
 import { api } from '../api.js'
 
 const STATUS_BADGE = {
@@ -105,6 +105,16 @@ export default function AdminDashboard() {
             {field('default_pipeline', '기본 파이프라인 (vision/hybrid)')}
           </div>
           <button onClick={testLlm} className="text-sm border rounded-lg px-3 py-1.5 hover:bg-slate-50">LLM 연결 테스트</button>
+        </section>
+
+        <section className="bg-white rounded-xl border p-6 space-y-4">
+          <h2 className="font-semibold flex items-center gap-2"><Film size={18} /> 미디어 LLM 설정 (오디오/비디오, OpenAI 호환)</h2>
+          <div className="grid md:grid-cols-2 gap-4">
+            {field('media_llm_endpoint', '엔드포인트 (/v1)')}
+            {field('media_llm_model', '모델')}
+            {field('media_llm_api_key', 'API Key (선택)', 'password')}
+          </div>
+          <p className="text-xs text-slate-500">오디오/비디오 파일은 이 엔드포인트로 전송됩니다. 이미지/PDF는 위의 기본 LLM 설정을 사용합니다.</p>
         </section>
 
         <section className="bg-white rounded-xl border p-6 space-y-4">

@@ -34,9 +34,25 @@ export const api = {
   confirmJob: (id) => request(`/api/jobs/${id}/confirm`, { method: 'POST' }),
   getJob: (id) => request(`/api/jobs/${id}`),
   listJobs: () => request('/api/jobs'),
-  previewJob: (id) => request(`/api/jobs/${id}/preview`),
+  previewJob: (id, startPage = 1, endPage = null) => {
+    const params = new URLSearchParams()
+    params.set('start_page', String(startPage))
+    if (endPage) params.set('end_page', String(endPage))
+    return request(`/api/jobs/${id}/preview?${params.toString()}`)
+  },
+  previewJobPages: (id) => request(`/api/jobs/${id}/preview/pages`),
+  saveResultMarkdown: (id, markdown) =>
+    request(`/api/jobs/${id}/result`, { method: 'PUT', body: JSON.stringify({ markdown }) }),
+  saveResultPage: (id, pageNum, markdown) =>
+    request(`/api/jobs/${id}/result/pages/${pageNum}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ markdown }),
+    }),
+  convertJob: (id, format) =>
+    request(`/api/jobs/${id}/convert`, { method: 'POST', body: JSON.stringify({ format }) }),
   downloadJob: (id, type) => request(`/api/jobs/${id}/download?type=${type}`),
   downloadUrl: (id, type) => `/api/jobs/${id}/download?type=${type}`,
+  deleteJob: (id) => request(`/api/jobs/${id}`, { method: 'DELETE' }),
 
   // 결제
   getPackages: () => request('/api/payments/packages'),

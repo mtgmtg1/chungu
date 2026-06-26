@@ -8,7 +8,7 @@ const navItems = [
   { icon: 'dashboard', label: 'Dashboard', href: '/dashboard' },
   { icon: 'list_alt', label: 'Jobs', href: '/jobs' },
   { icon: 'code', label: 'Developer', href: '/developer' },
-  { icon: 'settings', label: 'Settings', href: '#' },
+  { icon: 'settings', label: 'Settings', href: '/settings' },
 ]
 
 export default function SidebarLayout({ children, title, subtitle }) {
@@ -138,18 +138,8 @@ export default function SidebarLayout({ children, title, subtitle }) {
 
       {/* Top header */}
       <header
-        className={`fixed top-0 right-0 ${headerWidth} z-30 bg-surface/80 backdrop-blur-md border-b border-outline-variant flex justify-between items-center h-16 px-gutter transition-all duration-300 ${marginLeft}`}
+        className={`fixed top-0 right-0 ${headerWidth} z-30 bg-surface/80 backdrop-blur-md border-b border-outline-variant flex justify-end items-center h-16 px-gutter transition-all duration-300 ${marginLeft}`}
       >
-        <div className="flex items-center gap-4 flex-1">
-          <div className="relative w-full max-w-md">
-            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline">search</span>
-            <input
-              className="w-full bg-surface-container-low border-none rounded-full pl-10 pr-4 py-2 text-body-md focus:ring-2 focus:ring-primary/20 focus:outline-none transition-all"
-              placeholder="Search..."
-              type="text"
-            />
-          </div>
-        </div>
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-4 text-on-surface-variant">
             <span className="material-symbols-outlined cursor-pointer hover:text-primary transition-colors">account_balance_wallet</span>

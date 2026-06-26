@@ -37,7 +37,10 @@
     "turndown": "^7.2.4",
     "i18next": "^24.2.3",
     "i18next-browser-languagedetector": "^8.0.4",
-    "react-i18next": "^15.4.1"
+    "react-i18next": "^15.4.1",
+    "three": "^0.184.0",
+    "face-api.js": "^0.22.2",
+    "postprocessing": "^6.35.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",

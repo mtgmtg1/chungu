@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { FileUp, Loader2, LogIn, Coins } from "lucide-react";
-import SoftAurora from "../components/SoftAurora.jsx";
+import GridScan from "../components/GridScan.jsx";
 import { useAuth } from "../AuthContext.jsx";
 import { api } from "../api.js";
 
@@ -112,7 +112,7 @@ export default function UploadPage() {
               className="font-headline-md text-headline-md font-bold text-primary tracking-tight"
               data-oid="m_8vzvl"
             >
-              Chungu
+              Chungu File
             </span>
           </div>
           <div className="flex items-center gap-6" data-oid="87l13er">
@@ -152,21 +152,19 @@ export default function UploadPage() {
         data-oid="2bcntoq"
       >
         <div className="absolute inset-0 z-0" data-oid="ck-pgil">
-          <SoftAurora
-            speed={0.6}
-            scale={1.5}
-            brightness={0.5}
-            color1="#f1f1f1"
-            color2="#2dd2ffa4"
-            noiseFrequency={2.5}
-            noiseAmplitude={1.0}
-            bandHeight={0.5}
-            bandSpread={1.0}
-            octaveDecay={0.1}
-            layerOffset={0}
-            colorSpeed={1.0}
-            enableMouseInteraction={true}
-            mouseInfluence={0.25}
+          <GridScan
+            sensitivity={0.55}
+            lineThickness={1}
+            linesColor="#2f293a"
+            gridScale={0.1}
+            lineJitter={0}
+            scanColor="#3b82f6"
+            scanOpacity={0.4}
+            scanGlow={0.5}
+            scanSoftness={2}
+            enablePost={false}
+            chromaticAberration={0.002}
+            noiseIntensity={0.01}
             data-oid="fb8blku"
           />
         </div>
@@ -368,9 +366,7 @@ export default function UploadPage() {
               {t("page:upload.badgeProcessing")}
             </span>
             <span className="flex items-center gap-1.5" data-oid="qb:09.m">
-              <span className="text-sm" data-oid="_6x3:bb">
-                100+
-              </span>{" "}
+              {" "}
               {t("page:upload.badgeLanguages")}
             </span>
           </div>

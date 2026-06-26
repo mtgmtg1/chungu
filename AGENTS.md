@@ -7,7 +7,7 @@ Chungu is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It 
 ## Tech Stack
 
 - **Backend**: FastAPI + SQLAlchemy + Celery + Redis
-- **Frontend**: React + Vite + Tailwind CSS
+- **Frontend**: React + Vite + Tailwind CSS + react-i18next (en/ko/ja)
 - **Storage**: Supabase Storage (PDFs, inputs, results)
 - **Database**: PostgreSQL via Supabase (`supabase-chungu-db`)
 - **LLM Inference**: vLLM proxy (`192.168.1.69:18080`)
@@ -24,6 +24,9 @@ app/
     db/             SQLAlchemy models and migrations
     workers/        Celery tasks
   frontend/         React SPA
+    src/locales/   i18n translation files (en/ko/ja × common/page)
+    src/i18n.js     i18next configuration
+    src/LanguageContext.jsx  Language provider with Supabase persistence
   Dockerfile.backend
   docker-compose.yml
   .env.example
@@ -75,6 +78,18 @@ bash deploy_a1.sh
 
 This syncs `app/` to the `a1` server, rebuilds Docker images, and restarts containers.
 
+## Internationalization (i18n)
+
+- Frontend uses `react-i18next` with two namespaces: `common` and `page`
+- Translation files: `app/frontend/src/locales/{en,ko,ja}/{common,page}.json`
+- Language detection: browser language → localStorage (`chungu-language`) → Supabase user profile
+- Backend persists user language via `PATCH /api/auth/language`
+- `LanguageSelector` component in sidebar for manual switching
+- `LanguageContext.jsx` provides `useLanguage()` hook for global access
+- API docs translated: `app/API.md` (en), `app/API.ko.md` (ko), `app/API.ja.md` (ja)
+- Admin pages (`AdminDashboard.jsx`, `AdminLogin.jsx`) are not yet internationalized
+- When adding new UI strings, add keys to all three languages and use `t('namespace:key')`
+
 ## API Notes
 
 - Base path: `/api/v1`
@@ -90,3 +105,5 @@ This syncs `app/` to the `a1` server, rebuilds Docker images, and restarts conta
 - Do not commit media files, PDFs, or `node_modules`.
 - Test API changes by creating a temporary API key and running the full upload→confirm→download flow.
 - Keep the workflow-linear code style with flow comments at the top of major functions.
+- When adding UI text, always use i18n translation keys. Never hardcode user-facing strings.
+- Add new translation keys to all three locale files (en/ko/ja) simultaneously.

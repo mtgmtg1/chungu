@@ -1,0 +1,103 @@
+{
+  "app": {
+    "name": "Chungu",
+    "tagline": "Precision Data",
+    "copyright": "© 2026 Chungu AI. Effortless Precision."
+  },
+  "nav": {
+    "dashboard": "대시보드",
+    "jobs": "작업 목록",
+    "developer": "개발자",
+    "settings": "설정",
+    "newConversion": "새 변환",
+    "logout": "로그아웃",
+    "loggedInAs": "로그인 사용자",
+    "collapse": "사이드바 접기",
+    "expand": "사이드바 펼치기"
+  },
+  "footer": {
+    "privacy": "개인정보 처리방침",
+    "terms": "서비스 이용약관",
+    "apiDocs": "API 문서",
+    "contact": "고객 지원"
+  },
+  "language": {
+    "en": "English",
+    "ko": "한국어",
+    "ja": "日本語",
+    "label": "언어"
+  },
+  "actions": {
+    "save": "저장",
+    "cancel": "취소",
+    "confirm": "확인",
+    "delete": "삭제",
+    "edit": "편집",
+    "copy": "복사",
+    "create": "생성",
+    "refresh": "새로고침",
+    "download": "다운로드",
+    "upload": "업로드",
+    "submit": "제출",
+    "back": "뒤로",
+    "next": "다음",
+    "close": "닫기",
+    "view": "보기",
+    "search": "검색",
+    "filter": "필터",
+    "clear": "초기화"
+  },
+  "status": {
+    "pending": "결제 대기",
+    "queued": "대기 중",
+    "ocr": "OCR 중",
+    "merging": "병합 중",
+    "done": "완료",
+    "error": "실패",
+    "active": "진행 중",
+    "all": "전체"
+  },
+  "fileType": {
+    "pdf": "PDF",
+    "image": "이미지",
+    "audio": "오디오",
+    "video": "비디오",
+    "mixed": "혼합 파일",
+    "archive": "압축 파일"
+  },
+  "auth": {
+    "login": "로그인",
+    "signup": "회원가입",
+    "email": "이메일",
+    "password": "비밀번호",
+    "currentPassword": "현재 비밀번호",
+    "newPassword": "새 비밀번호",
+    "confirmPassword": "비밀번호 확인",
+    "forgotPassword": "비밀번호를 잊으셨나요?",
+    "adminLogin": "관리자 로그인",
+    "loginRequired": "로그인이 필요합니다",
+    "goToLogin": "로그인하러 가기",
+    "haveAccount": "이미 계정이 있으신가요?",
+    "noAccount": "계정이 없으신가요?",
+    "checkEmail": "가입 확인 이메일을 확인해주세요.",
+    "logoutSuccess": "로그아웃되었습니다"
+  },
+  "points": {
+    "balance": "보유 포인트",
+    "point": "P",
+    "cost": "비용",
+    "total": "합계"
+  },
+  "date": {
+    "justNow": "방금",
+    "today": "오늘",
+    "yesterday": "어제"
+  },
+  "empty": {
+    "noJobs": "작업이 없습니다",
+    "noResults": "결과를 찾을 수 없습니다",
+    "noData": "데이터가 없습니다"
+  },
+  "loading": "로딩 중...",
+  "error": "오류"
+}

@@ -1,21 +1,24 @@
 // [Flow: Step 1 (인증 확인) -> Step 2 (계정/키/결제 데이터 로드) -> Step 3 (탭별 UI 렌더링) -> Step 4 (API key 관리 및 비밀번호 변경)]
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { api } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
 import { supabase } from '../supabase.js'
+import i18n from '../i18n.js'
 import SidebarLayout from '../components/SidebarLayout.jsx'
-
-const TABS = [
-  { id: 'api', label: 'API Keys', icon: 'key' },
-  { id: 'billing', label: 'Billing & Recharge', icon: 'payments' },
-  { id: 'rate', label: 'Rate Limit', icon: 'speed' },
-  { id: 'account', label: 'Account', icon: 'person' },
-]
 
 export default function SettingsPage() {
   const { user, loading, signOut } = useAuth()
+  const { t } = useTranslation()
   const navigate = useNavigate()
+
+  const tabs = [
+    { id: 'api', label: t('page:settings.apiKeys'), icon: 'key' },
+    { id: 'billing', label: t('page:settings.billing'), icon: 'payments' },
+    { id: 'rate', label: t('page:settings.rateLimit'), icon: 'speed' },
+    { id: 'account', label: t('page:settings.account'), icon: 'person' },
+  ]
   const [activeTab, setActiveTab] = useState('api')
   const [account, setAccount] = useState(null)
   const [keys, setKeys] = useState([])
@@ -52,7 +55,7 @@ export default function SettingsPage() {
       setPayments(p)
       setPackages(pkg?.packages || pkg || [])
     } catch (e) {
-      setError(e.message || '설정 데이터를 불러오지 못했습니다')
+      setError(e.message || t('page:errors.loadFailed'))
     }
   }
 
@@ -67,46 +70,46 @@ export default function SettingsPage() {
       setShowCreate(false)
       await loadAll()
     } catch (e) {
-      setError(e.message || 'API key 생성 실패')
+      setError(e.message || t('page:errors.unknown'))
     }
   }
 
   const deleteKey = async (id) => {
-    if (!confirm('이 API key를 삭제하시겠습니까?')) return
+    if (!confirm(t('page:settings.deleteConfirm', 'Delete this API key?'))) return
     try {
       await api.deleteApiKey(id)
       setKeys(keys.filter((k) => k.id !== id))
     } catch (e) {
-      setError(e.message || 'API key 삭제 실패')
+      setError(e.message || t('page:errors.unknown'))
     }
   }
 
   const rotateKey = async (id) => {
-    if (!confirm('기존 key를 비활성화하고 새 key를 발급하시겠습니까?')) return
+    if (!confirm(t('page:settings.rotateConfirm', 'Rotate this API key?'))) return
     try {
       const res = await api.rotateApiKey(id)
       setKeys(keys.map((k) => (k.id === id ? { ...k, is_active: false } : k)))
       setRevealedKey(res)
       await loadAll()
     } catch (e) {
-      setError(e.message || 'API key 재발급 실패')
+      setError(e.message || t('page:errors.unknown'))
     }
   }
 
   const copyToClipboard = (text) => {
     navigator.clipboard.writeText(text)
-    setMsg('클립보드에 복사했습니다')
+    setMsg(t('page:settings.copied'))
     setTimeout(() => setMsg(''), 2000)
   }
 
   const changePassword = async (e) => {
     e.preventDefault()
     if (pwForm.new !== pwForm.confirm) {
-      setError('새 비밀번호가 일치하지 않습니다')
+      setError(t('page:settings.passwordMismatch'))
       return
     }
     if (pwForm.new.length < 8) {
-      setError('비밀번호는 8자 이상이어야 합니다')
+      setError(t('page:settings.passwordLength'))
       return
     }
     setPwLoading(true)
@@ -116,14 +119,14 @@ export default function SettingsPage() {
         email: user.email,
         password: pwForm.current,
       })
-      if (signInError) throw new Error('현재 비밀번호가 올바르지 않습니다')
+      if (signInError) throw new Error(t('page:settings.currentPasswordWrong'))
       const { error: updateError } = await supabase.auth.updateUser({ password: pwForm.new })
       if (updateError) throw updateError
       setPwForm({ current: '', new: '', confirm: '' })
-      setMsg('비밀번호가 변경되었습니다')
+      setMsg(t('page:settings.passwordChanged'))
       setTimeout(() => setMsg(''), 3000)
     } catch (e) {
-      setError(e.message || '비밀번호 변경 실패')
+      setError(e.message || t('page:settings.passwordChangeFailed'))
     } finally {
       setPwLoading(false)
     }
@@ -135,7 +138,7 @@ export default function SettingsPage() {
   }
 
   const formatDate = (iso) =>
-    iso ? new Date(iso).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' }) : '-'
+    iso ? new Date(iso).toLocaleString(i18n.language, { dateStyle: 'short', timeStyle: 'short' }) : '-'
 
   if (loading || !user) {
     return (
@@ -149,24 +152,24 @@ export default function SettingsPage() {
     <div className="space-y-gutter">
       <div className="glass-panel p-6 rounded-2xl">
         <div className="flex justify-between items-center mb-4">
-          <h3 className="font-headline-md text-headline-md text-on-surface">API Keys</h3>
+          <h3 className="font-headline-md text-headline-md text-on-surface">{t('page:settings.apiKeys')}</h3>
           <button
             onClick={() => setShowCreate(true)}
             className="bg-primary text-on-primary px-4 py-2 rounded-lg flex items-center gap-2 font-body-md hover:bg-primary/90 transition-all"
           >
             <span className="material-symbols-outlined">add</span>
-            New Key
+            {t('page:settings.newKey')}
           </button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-surface-container-low text-on-surface-variant font-label-sm text-label-sm uppercase tracking-wider">
               <tr>
-                <th className="px-4 py-3">Label</th>
-                <th className="px-4 py-3">Prefix</th>
-                <th className="px-4 py-3 text-right">Rate</th>
-                <th className="px-4 py-3 text-right">Created</th>
-                <th className="px-4 py-3 text-right">Actions</th>
+                <th className="px-4 py-3">{t('page:settings.label')}</th>
+                <th className="px-4 py-3">{t('page:settings.prefix')}</th>
+                <th className="px-4 py-3 text-right">{t('page:settings.rate')}</th>
+                <th className="px-4 py-3 text-right">{t('page:settings.created')}</th>
+                <th className="px-4 py-3 text-right">{t('page:settings.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant text-body-md">
@@ -182,13 +185,13 @@ export default function SettingsPage() {
                       className="text-primary text-sm hover:underline mr-3"
                       disabled={!k.is_active}
                     >
-                      Rotate
+                      {t('page:settings.rotate')}
                     </button>
                     <button
                       onClick={() => deleteKey(k.id)}
                       className="text-error text-sm hover:underline"
                     >
-                      Delete
+                      {t('page:settings.delete')}
                     </button>
                   </td>
                 </tr>
@@ -196,7 +199,7 @@ export default function SettingsPage() {
               {keys.length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-4 py-8 text-center text-outline">
-                    API key가 없습니다. 새 key를 생성하세요.
+                    {t('page:settings.noKeys')}
                   </td>
                 </tr>
               )}
@@ -207,11 +210,11 @@ export default function SettingsPage() {
 
       {showCreate && (
         <div className="glass-panel p-6 rounded-2xl">
-          <h3 className="font-headline-md text-headline-md text-on-surface mb-4">Create New API Key</h3>
+          <h3 className="font-headline-md text-headline-md text-on-surface mb-4">{t('page:settings.createKey')}</h3>
           <div className="flex gap-3">
             <input
               type="text"
-              placeholder="Key name"
+              placeholder={t('page:settings.keyName')}
               value={newKeyName}
               onChange={(e) => setNewKeyName(e.target.value)}
               className="flex-1 bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-body-md focus:ring-1 focus:ring-primary focus:outline-none"
@@ -220,13 +223,13 @@ export default function SettingsPage() {
               onClick={createKey}
               className="bg-primary text-on-primary px-4 py-2 rounded-lg font-body-md hover:bg-primary/90"
             >
-              Create
+              {t('page:settings.create')}
             </button>
             <button
               onClick={() => setShowCreate(false)}
               className="border border-outline-variant px-4 py-2 rounded-lg font-body-md text-on-surface hover:bg-surface-container"
             >
-              Cancel
+              {t('page:settings.cancel')}
             </button>
           </div>
         </div>
@@ -234,20 +237,20 @@ export default function SettingsPage() {
 
       {revealedKey && (
         <div className="rounded-2xl border border-amber-300 bg-amber-50 p-6">
-          <p className="text-xs font-semibold text-amber-800 mb-2">아래 키는 한 번만 표시됩니다. 저장해주세요.</p>
+          <p className="text-xs font-semibold text-amber-800 mb-2">{t('page:settings.saveKey')}</p>
           <div className="flex gap-2">
             <pre className="flex-1 rounded bg-white p-3 text-xs break-all text-on-surface">{revealedKey.key}</pre>
             <button
               onClick={() => copyToClipboard(revealedKey.key)}
               className="bg-amber-700 text-white px-3 py-2 rounded-lg text-sm hover:bg-amber-800"
             >
-              Copy
+              {t('page:settings.copy')}
             </button>
             <button
               onClick={() => setRevealedKey(null)}
               className="bg-slate-200 text-slate-700 px-3 py-2 rounded-lg text-sm hover:bg-slate-300"
             >
-              Hide
+              {t('page:settings.hide')}
             </button>
           </div>
         </div>
@@ -260,27 +263,27 @@ export default function SettingsPage() {
       <div className="glass-panel p-6 rounded-2xl">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <p className="text-on-surface-variant text-body-md mb-1">Points Balance</p>
-            <p className="font-headline-lg text-headline-lg text-on-surface">{(account?.points_balance || 0).toLocaleString()}P</p>
+            <p className="text-on-surface-variant text-body-md mb-1">{t('page:settings.pointsBalance')}</p>
+            <p className="font-headline-lg text-headline-lg text-on-surface">{(account?.points_balance || 0).toLocaleString()}{t('common:points.point')}</p>
           </div>
           <button
             onClick={() => navigate('/payment')}
             className="bg-primary text-on-primary px-6 py-3 rounded-xl font-body-md hover:bg-primary/90 transition-all"
           >
-            충전하기
+            {t('page:settings.recharge')}
           </button>
         </div>
         <div className="h-px bg-outline-variant/40 mb-6"></div>
-        <h3 className="font-headline-md text-headline-md text-on-surface mb-4">Payment History</h3>
+        <h3 className="font-headline-md text-headline-md text-on-surface mb-4">{t('page:settings.paymentHistory')}</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-surface-container-low text-on-surface-variant font-label-sm text-label-sm uppercase tracking-wider">
               <tr>
-                <th className="px-4 py-3">Date</th>
-                <th className="px-4 py-3">Provider</th>
-                <th className="px-4 py-3">Amount</th>
-                <th className="px-4 py-3">Points</th>
-                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">{t('page:settings.date')}</th>
+                <th className="px-4 py-3">{t('page:settings.provider')}</th>
+                <th className="px-4 py-3">{t('page:settings.amount')}</th>
+                <th className="px-4 py-3">{t('page:settings.points')}</th>
+                <th className="px-4 py-3">{t('page:settings.status')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant text-body-md">
@@ -302,7 +305,7 @@ export default function SettingsPage() {
               })}
               {payments.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-outline">결제 내역이 없습니다</td>
+                  <td colSpan={5} className="px-4 py-8 text-center text-outline">{t('page:settings.noPayments')}</td>
                 </tr>
               )}
             </tbody>
@@ -311,7 +314,7 @@ export default function SettingsPage() {
       </div>
 
       <div className="glass-panel p-6 rounded-2xl">
-        <h3 className="font-headline-md text-headline-md text-on-surface mb-4">Recharge Packages</h3>
+        <h3 className="font-headline-md text-headline-md text-on-surface mb-4">{t('page:settings.rechargePackages')}</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-gutter">
           {packages.map((pkg) => {
             const points = pkg.points || 0
@@ -325,13 +328,13 @@ export default function SettingsPage() {
                   onClick={() => navigate('/payment', { state: { selectedPackage: pkg } })}
                   className="mt-auto w-full bg-primary text-on-primary py-2 rounded-lg font-body-md hover:bg-primary/90"
                 >
-                  선택
+                  {t('page:settings.select')}
                 </button>
               </div>
             )
           })}
           {packages.length === 0 && (
-            <p className="text-outline col-span-full">패키지 정보를 불러오지 못했습니다</p>
+            <p className="text-outline col-span-full">{t('page:settings.noPackages')}</p>
           )}
         </div>
       </div>
@@ -345,25 +348,25 @@ export default function SettingsPage() {
     return (
       <div className="space-y-gutter">
         <div className="glass-panel p-6 rounded-2xl">
-          <h3 className="font-headline-md text-headline-md text-on-surface mb-6">Rate Limit</h3>
+          <h3 className="font-headline-md text-headline-md text-on-surface mb-6">{t('page:settings.rateLimit')}</h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-gutter">
             <div className="bg-surface-container-low rounded-xl p-4">
-              <p className="text-on-surface-variant text-label-sm mb-1">Requests per minute</p>
+              <p className="text-on-surface-variant text-label-sm mb-1">{t('page:settings.requestsPerMinute')}</p>
               <p className="font-headline-md text-headline-md text-on-surface">{limit}</p>
             </div>
             <div className="bg-surface-container-low rounded-xl p-4">
-              <p className="text-on-surface-variant text-label-sm mb-1">Daily quota</p>
-              <p className="font-headline-md text-headline-md text-on-surface">{quota ? `${quota.toLocaleString()}P` : 'Unlimited'}</p>
+              <p className="text-on-surface-variant text-label-sm mb-1">{t('page:settings.dailyQuota')}</p>
+              <p className="font-headline-md text-headline-md text-on-surface">{quota ? `${quota.toLocaleString()}${t('common:points.point')}` : t('page:settings.unlimited')}</p>
             </div>
             <div className="bg-surface-container-low rounded-xl p-4">
-              <p className="text-on-surface-variant text-label-sm mb-1">Daily spent</p>
-              <p className="font-headline-md text-headline-md text-on-surface">{spent.toLocaleString()}P</p>
+              <p className="text-on-surface-variant text-label-sm mb-1">{t('page:settings.dailySpent')}</p>
+              <p className="font-headline-md text-headline-md text-on-surface">{spent.toLocaleString()}{t('common:points.point')}</p>
             </div>
           </div>
           {quota && (
             <div className="mt-6">
               <div className="flex justify-between text-body-md mb-2">
-                <span className="text-on-surface-variant">Daily quota usage</span>
+                <span className="text-on-surface-variant">{t('page:settings.dailyQuotaUsage')}</span>
                 <span className="text-on-surface">{Math.min(100, Math.round((spent / quota) * 100))}%</span>
               </div>
               <div className="h-2 bg-surface-container-low rounded-full overflow-hidden">
@@ -382,24 +385,24 @@ export default function SettingsPage() {
   const renderAccount = () => (
     <div className="space-y-gutter">
       <div className="glass-panel p-6 rounded-2xl">
-        <h3 className="font-headline-md text-headline-md text-on-surface mb-4">Account</h3>
+        <h3 className="font-headline-md text-headline-md text-on-surface mb-4">{t('page:settings.account')}</h3>
         <div className="mb-6">
-          <p className="text-on-surface-variant text-label-sm mb-1">Email</p>
+          <p className="text-on-surface-variant text-label-sm mb-1">{t('page:settings.email')}</p>
           <p className="text-on-surface text-body-md">{user.email}</p>
         </div>
         <button
           onClick={handleLogout}
           className="border border-outline-variant text-on-surface px-4 py-2 rounded-lg font-body-md hover:bg-surface-container transition-colors"
         >
-          로그아웃
+          {t('page:settings.logout')}
         </button>
       </div>
 
       <div className="glass-panel p-6 rounded-2xl">
-        <h3 className="font-headline-md text-headline-md text-on-surface mb-4">Change Password</h3>
+        <h3 className="font-headline-md text-headline-md text-on-surface mb-4">{t('page:settings.changePassword')}</h3>
         <form onSubmit={changePassword} className="space-y-4 max-w-md">
           <div>
-            <label className="block text-on-surface-variant text-label-sm mb-1">Current password</label>
+            <label className="block text-on-surface-variant text-label-sm mb-1">{t('page:settings.currentPassword')}</label>
             <input
               type="password"
               value={pwForm.current}
@@ -409,7 +412,7 @@ export default function SettingsPage() {
             />
           </div>
           <div>
-            <label className="block text-on-surface-variant text-label-sm mb-1">New password</label>
+            <label className="block text-on-surface-variant text-label-sm mb-1">{t('page:settings.newPassword')}</label>
             <input
               type="password"
               value={pwForm.new}
@@ -420,7 +423,7 @@ export default function SettingsPage() {
             />
           </div>
           <div>
-            <label className="block text-on-surface-variant text-label-sm mb-1">Confirm new password</label>
+            <label className="block text-on-surface-variant text-label-sm mb-1">{t('page:settings.confirmPassword')}</label>
             <input
               type="password"
               value={pwForm.confirm}
@@ -435,7 +438,7 @@ export default function SettingsPage() {
             disabled={pwLoading}
             className="bg-primary text-on-primary px-4 py-2 rounded-lg font-body-md hover:bg-primary/90 disabled:opacity-50"
           >
-            {pwLoading ? '변경 중…' : '비밀번호 변경'}
+            {pwLoading ? t('page:settings.changing') : t('page:settings.change')}
           </button>
         </form>
       </div>
@@ -450,7 +453,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <SidebarLayout title="Settings" subtitle="Manage your API keys, billing, rate limits, and account">
+    <SidebarLayout title={t('page:settings.title')} subtitle={t('page:settings.subtitle')}>
       {(error || msg) && (
         <div
           className={`px-4 py-3 rounded-xl text-sm border mb-8 ${
@@ -465,7 +468,7 @@ export default function SettingsPage() {
 
       <div className="flex flex-col md:flex-row gap-gutter">
         <nav className="md:w-56 shrink-0 space-y-1">
-          {TABS.map((tab) => (
+          {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}

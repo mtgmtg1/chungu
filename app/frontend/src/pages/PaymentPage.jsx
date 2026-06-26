@@ -1,12 +1,14 @@
 // [Flow: Step 1 (패키지 조회) -> Step 2 (Toss/Paddle 선택) -> Step 3 (결제 진행) -> Step 4 (검증/포인트 충전)]
 import { useEffect, useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Coins, CreditCard, ArrowLeft, Loader2, CheckCircle2 } from 'lucide-react'
 import { api } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
 
 export default function PaymentPage() {
   const { user } = useAuth()
+  const { t } = useTranslation()
   const [packages, setPackages] = useState([])
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -40,10 +42,10 @@ export default function PaymentPage() {
       // Toss SDK가 로드되어 있지 않으면 테스트용 수동 결제창은 대체로 처리합니다.
       if (window.TossPayments) {
         const toss = window.TossPayments(order.client_key || '')
-        toss.requestPayment('카드', {
+        toss.requestPayment(t('page:payment.card'), {
           amount: order.amount,
           orderId: order.order_id,
-          orderName: `${pkg.points}P 충전`,
+          orderName: t('page:payment.orderName', { points: pkg.points }),
           customerEmail: profile?.email || '',
           successUrl: `${window.location.origin}/payment?toss=success&orderId=${order.order_id}`,
           failUrl: `${window.location.origin}/payment?toss=fail&orderId=${order.order_id}`,
@@ -78,8 +80,8 @@ export default function PaymentPage() {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <p>로그인이 필요합니다</p>
-          <button onClick={() => nav('/login')} className="bg-blue-600 text-white px-4 py-2 rounded-lg mt-4">로그인</button>
+          <p>{t('page:payment.loginRequired')}</p>
+          <button onClick={() => nav('/login')} className="bg-blue-600 text-white px-4 py-2 rounded-lg mt-4">{t('page:payment.login')}</button>
         </div>
       </div>
     )
@@ -91,11 +93,11 @@ export default function PaymentPage() {
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Link to="/dashboard" className="text-slate-500 hover:text-slate-800"><ArrowLeft size={20} /></Link>
-            <h1 className="text-xl font-bold">포인트 충전</h1>
+            <h1 className="text-xl font-bold">{t('page:payment.title')}</h1>
           </div>
           <div className="flex items-center gap-2 text-sm">
             <Coins size={18} className="text-yellow-500" />
-            <span>잔액: <b>{profile?.points_balance ?? '-'} P</b></span>
+            <span>{t('page:payment.balance', { points: profile?.points_balance ?? '-' })}</span>
           </div>
         </div>
       </header>
@@ -103,7 +105,7 @@ export default function PaymentPage() {
       <main className="max-w-5xl mx-auto px-6 py-8">
         {success && (
           <div className="bg-green-50 text-green-700 rounded-lg p-4 mb-6 flex items-center gap-2">
-            <CheckCircle2 size={20} /> 충전이 완료되었습니다.
+            <CheckCircle2 size={20} /> {t('page:payment.rechargeComplete')}
           </div>
         )}
         {error && <p className="text-red-600 text-sm mb-6">{error}</p>}
@@ -118,11 +120,11 @@ export default function PaymentPage() {
                 <div className="mt-auto space-y-2">
                   <button onClick={() => payWithToss(pkg)} disabled={paying}
                     className="w-full bg-blue-600 text-white rounded-lg py-2 font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2">
-                    {paying ? <Loader2 className="animate-spin" size={16} /> : <><CreditCard size={16} /> 카드 결제 (KRW)</>}
+                    {paying ? <Loader2 className="animate-spin" size={16} /> : <><CreditCard size={16} /> {t('page:payment.cardKrw')}</>}
                   </button>
                   <button onClick={() => payWithPaddle(pkg)} disabled={paying}
                     className="w-full bg-slate-800 text-white rounded-lg py-2 font-medium hover:bg-slate-900 disabled:opacity-50">
-                    PayPal/Card (USD)
+                    {t('page:payment.paypalUsd')}
                   </button>
                 </div>
               </div>

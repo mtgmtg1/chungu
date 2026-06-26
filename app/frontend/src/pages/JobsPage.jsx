@@ -1,28 +1,12 @@
 // [Flow: Step 1 (사용자 확인 + 작업 목록 로드) -> Step 2 (검색/필터 상태) -> Step 3 (테이블 렌더링 + Actions) -> Step 4 (페이지네이션)]
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Eye, Download, Trash2, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useAuth } from '../AuthContext.jsx'
 import { api } from '../api.js'
+import i18n from '../i18n.js'
 import SidebarLayout from '../components/SidebarLayout.jsx'
-
-const STATUS_LABEL = {
-  pending: '결제 대기',
-  queued: '대기 중',
-  ocr: 'OCR 중',
-  merging: '병합 중',
-  done: '완료',
-  error: '실패',
-}
-
-const FILE_TYPE_LABEL = {
-  pdf: 'PDF',
-  image: '이미지',
-  audio: '오디오',
-  video: '비디오',
-  mixed: '혼합 파일',
-  archive: '압축 파일',
-}
 
 const STATUS_CHIP = {
   pending: { bg: 'bg-surface-container-high', text: 'text-on-surface-variant', icon: 'hourglass_empty' },
@@ -37,6 +21,7 @@ const PAGE_SIZE = 10
 
 export default function JobsPage() {
   const { user, loading: authLoading } = useAuth()
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -52,6 +37,9 @@ export default function JobsPage() {
   const [deleteModal, setDeleteModal] = useState({ open: false, job: null })
   const [deleting, setDeleting] = useState({})
 
+  const statusLabel = (status) => t(`common:status.${status}`) || status
+  const fileTypeLabel = (type) => t(`common:fileType.${type}`) || type
+
   useEffect(() => {
     if (!user) return
     load()
@@ -63,7 +51,7 @@ export default function JobsPage() {
       const list = await api.listJobs()
       setJobs(list)
     } catch (e) {
-      setError(e.message || '작업 목록을 불러오지 못했습니다')
+      setError(e.message || t('page:errors.loadFailed'))
     } finally {
       setLoading(false)
     }
@@ -72,14 +60,14 @@ export default function JobsPage() {
   function formatDate(dateStr) {
     if (!dateStr) return '-'
     const d = new Date(dateStr)
-    return d.toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    return d.toLocaleString(i18n.language, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
   }
 
   function daysLeft(expiresAt) {
-    if (!expiresAt) return '만료 정보 없음'
+    if (!expiresAt) return t('page:jobs.noExpiry')
     const diff = Math.ceil((new Date(expiresAt) - new Date()) / (1000 * 60 * 60 * 24))
-    if (diff <= 0) return 'Expired'
-    return `${diff} days left`
+    if (diff <= 0) return t('page:jobs.expired')
+    return t('page:jobs.daysLeft', { days: diff })
   }
 
   function fileSize(bytes) {
@@ -117,7 +105,7 @@ export default function JobsPage() {
       a.click()
       document.body.removeChild(a)
     } catch (e) {
-      setError(e.message || '변환에 실패했습니다')
+      setError(e.message || t('page:errors.unknown'))
     } finally {
       setConverting((prev) => ({ ...prev, [id]: false }))
     }
@@ -140,7 +128,7 @@ export default function JobsPage() {
       setJobs((prev) => prev.filter((j) => j.job_id !== job.job_id))
       closeDeleteModal()
     } catch (e) {
-      setError(e.message || '삭제에 실패했습니다')
+      setError(e.message || t('page:errors.unknown'))
     } finally {
       setDeleting((prev) => ({ ...prev, [job.job_id]: false }))
     }
@@ -188,25 +176,25 @@ export default function JobsPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="text-center">
-          <p className="mb-4 text-on-surface-variant">로그인이 필요합니다</p>
-          <button onClick={() => navigate('/login')} className="bg-primary text-on-primary px-4 py-2 rounded-lg">로그인</button>
+          <p className="mb-4 text-on-surface-variant">{t('common:auth.loginRequired')}</p>
+          <button onClick={() => navigate('/login')} className="bg-primary text-on-primary px-4 py-2 rounded-lg">{t('page:auth.loginButton')}</button>
         </div>
       </div>
     )
   }
 
   return (
-    <SidebarLayout title="Conversion Jobs" subtitle="Track and manage all your file conversion jobs">
+    <SidebarLayout title={t('page:jobs.title')} subtitle={t('page:jobs.subtitle')}>
       {/* Header chips */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-gutter mb-stack-lg">
         <div className="flex gap-4">
           <div className="flex items-center gap-2 px-3 py-1 bg-surface-container rounded-full">
             <span className="w-2 h-2 rounded-full bg-primary status-pulse"></span>
-            <span className="font-label-sm text-label-sm text-on-surface-variant">{activeCount} Active Tasks</span>
+            <span className="font-label-sm text-label-sm text-on-surface-variant">{activeCount} {t('page:jobs.activeTasks')}</span>
           </div>
           <div className="flex items-center gap-2 px-3 py-1 bg-surface-container rounded-full">
             <span className="material-symbols-outlined text-green-600 text-[14px]">check_circle</span>
-            <span className="font-label-sm text-label-sm text-on-surface-variant">{completedCount} Completed</span>
+            <span className="font-label-sm text-label-sm text-on-surface-variant">{completedCount} {t('page:jobs.completedTasks')}</span>
           </div>
         </div>
         <div className="flex items-center gap-3 relative">
@@ -215,7 +203,7 @@ export default function JobsPage() {
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-on-primary font-body-md text-body-md font-medium hover:opacity-90 transition-all shadow-sm"
           >
             <span className="material-symbols-outlined">upload</span>
-            Upload Files
+            {t('page:jobs.uploadFiles')}
           </Link>
           <div className="relative">
             <button
@@ -223,33 +211,33 @@ export default function JobsPage() {
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border border-outline-variant font-body-md text-body-md transition-all ${filterOpen ? 'bg-surface-container text-primary' : 'text-on-surface-variant hover:bg-surface-container-low'}`}
             >
               <span className="material-symbols-outlined">filter_list</span>
-              Filters
+              {t('page:jobs.filters')}
             </button>
             {filterOpen && (
               <div className="absolute right-0 top-full mt-2 w-56 bg-surface rounded-xl shadow-lg border border-outline-variant z-50 p-4">
                 <div className="mb-4">
-                  <label className="block font-label-sm text-label-sm text-on-surface-variant mb-1.5">상태</label>
+                  <label className="block font-label-sm text-label-sm text-on-surface-variant mb-1.5">{t('page:jobs.status')}</label>
                   <select
                     value={statusFilter}
                     onChange={(e) => setStatusFilter(e.target.value)}
                     className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-body-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/20"
                   >
-                    <option value="all">전체</option>
-                    {Object.entries(STATUS_LABEL).map(([k, v]) => (
-                      <option key={k} value={k}>{v}</option>
+                    <option value="all">{t('page:jobs.all')}</option>
+                    {['pending', 'queued', 'ocr', 'merging', 'done', 'error'].map((k) => (
+                      <option key={k} value={k}>{statusLabel(k)}</option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block font-label-sm text-label-sm text-on-surface-variant mb-1.5">파일 형식</label>
+                  <label className="block font-label-sm text-label-sm text-on-surface-variant mb-1.5">{t('page:jobs.fileType')}</label>
                   <select
                     value={fileTypeFilter}
                     onChange={(e) => setFileTypeFilter(e.target.value)}
                     className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-body-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/20"
                   >
-                    <option value="all">전체</option>
-                    {Object.entries(FILE_TYPE_LABEL).map(([k, v]) => (
-                      <option key={k} value={k}>{v}</option>
+                    <option value="all">{t('page:jobs.all')}</option>
+                    {['pdf', 'image', 'audio', 'video', 'mixed', 'archive'].map((k) => (
+                      <option key={k} value={k}>{fileTypeLabel(k)}</option>
                     ))}
                   </select>
                 </div>
@@ -257,7 +245,7 @@ export default function JobsPage() {
                   onClick={() => { setStatusFilter('all'); setFileTypeFilter('all'); }}
                   className="mt-4 w-full text-left text-sm text-outline hover:text-primary transition-colors"
                 >
-                  필터 초기화
+                  {t('page:jobs.resetFilters')}
                 </button>
               </div>
             )}
@@ -268,12 +256,12 @@ export default function JobsPage() {
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border border-outline-variant font-body-md text-body-md transition-all ${dateOpen ? 'bg-surface-container text-primary' : 'text-on-surface-variant hover:bg-surface-container-low'}`}
             >
               <span className="material-symbols-outlined">calendar_today</span>
-              Date Range
+              {t('page:jobs.dateRange')}
             </button>
             {dateOpen && (
               <div className="absolute right-0 top-full mt-2 w-64 bg-surface rounded-xl shadow-lg border border-outline-variant z-50 p-4">
                 <div className="mb-3">
-                  <label className="block font-label-sm text-label-sm text-on-surface-variant mb-1.5">시작일</label>
+                  <label className="block font-label-sm text-label-sm text-on-surface-variant mb-1.5">{t('page:jobs.startDate')}</label>
                   <input
                     type="date"
                     value={dateFrom}
@@ -282,7 +270,7 @@ export default function JobsPage() {
                   />
                 </div>
                 <div className="mb-3">
-                  <label className="block font-label-sm text-label-sm text-on-surface-variant mb-1.5">종료일</label>
+                  <label className="block font-label-sm text-label-sm text-on-surface-variant mb-1.5">{t('page:jobs.endDate')}</label>
                   <input
                     type="date"
                     value={dateTo}
@@ -294,7 +282,7 @@ export default function JobsPage() {
                   onClick={() => { setDateFrom(''); setDateTo(''); }}
                   className="w-full text-left text-sm text-outline hover:text-primary transition-colors"
                 >
-                  날짜 초기화
+                  {t('page:jobs.resetDate')}
                 </button>
               </div>
             )}
@@ -315,16 +303,16 @@ export default function JobsPage() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-surface-container-low/50 border-b border-outline-variant">
-                <th className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">File Name</th>
-                <th className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Status</th>
-                <th className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Date Created</th>
+                <th className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">{t('page:jobs.fileName')}</th>
+                <th className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">{t('page:jobs.status')}</th>
+                <th className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">{t('page:jobs.dateCreated')}</th>
                 <th className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">
                   <div className="flex items-center gap-1">
-                    EXPIRES IN
-                    <span className="material-symbols-outlined text-[14px] cursor-help" title="Data is stored for 30 days after conversion.">info</span>
+                    {t('page:jobs.expiresIn')}
+                    <span className="material-symbols-outlined text-[14px] cursor-help" title={t('page:jobs.expiresInfo')}>info</span>
                   </div>
                 </th>
-                <th className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider text-right">Actions</th>
+                <th className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider text-right">{t('page:jobs.actions')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant/50">
@@ -354,7 +342,7 @@ export default function JobsPage() {
                       <td className="px-gutter py-5">
                         <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border border-inherit ${chip.bg} ${chip.text}`}>
                           <span className={`material-symbols-outlined text-[16px] ${j.status === 'ocr' || j.status === 'merging' || j.status === 'queued' ? 'animate-spin' : ''}`}>{chip.icon}</span>
-                          <span className="font-label-sm text-label-sm font-semibold">{STATUS_LABEL[j.status] || j.status}</span>
+                          <span className="font-label-sm text-label-sm font-semibold">{statusLabel(j.status)}</span>
                         </div>
                       </td>
                       <td className="px-gutter py-5 font-body-md text-body-md text-on-surface-variant">{formatDate(j.created_at)}</td>
@@ -366,21 +354,21 @@ export default function JobsPage() {
                               <Link
                                 to={`/jobs/${j.job_id}`}
                                 className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-primary transition-colors"
-                                title={`${FILE_TYPE_LABEL[j.file_type] || j.file_type} 보기`}
+                                title={`${fileTypeLabel(j.file_type)} ${t('page:jobs.view')}`}
                               >
                                 <Eye size={18} />
                               </Link>
                               <button
                                 onClick={() => openDeleteModal(j)}
                                 className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
-                                title={`${FILE_TYPE_LABEL[j.file_type] || j.file_type} 삭제`}
+                                title={`${fileTypeLabel(j.file_type)} ${t('page:jobs.delete')}`}
                               >
                                 <Trash2 size={18} />
                               </button>
                               <div className="relative group">
                                 <button
                                   className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-primary transition-colors"
-                                  title={`${FILE_TYPE_LABEL[j.file_type] || j.file_type} 다운로드`}
+                                  title={`${fileTypeLabel(j.file_type)} ${t('page:jobs.download')}`}
                                 >
                                   <Download size={18} />
                                 </button>
@@ -389,34 +377,34 @@ export default function JobsPage() {
                                     onClick={() => download(j.job_id, 'md')}
                                     className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
                                   >
-                                    Markdown (.md) - 무료
+                                    {t('page:jobs.markdownFree')}
                                   </button>
                                   <button
                                     onClick={() => download(j.job_id, 'csv')}
                                     className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
                                   >
-                                    CSV (.csv) - Excel 변환 포함
+                                    {t('page:jobs.csvExcel')}
                                   </button>
                                   <button
                                     onClick={() => convertAndDownload(j.job_id, 'xlsx')}
                                     disabled={converting[j.job_id]}
                                     className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
                                   >
-                                    Excel (.xlsx) - {xlsxCost(j).toLocaleString()}P
+                                    {t('page:jobs.excelCost', { cost: xlsxCost(j).toLocaleString() })}
                                   </button>
                                   <button
                                     onClick={() => convertAndDownload(j.job_id, 'docx')}
                                     disabled={converting[j.job_id]}
                                     className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
                                   >
-                                    Word (.docx) - 무료
+                                    {t('page:jobs.wordFree')}
                                   </button>
                                   <button
                                     onClick={() => convertAndDownload(j.job_id, 'pptx')}
                                     disabled={converting[j.job_id]}
                                     className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
                                   >
-                                    PowerPoint (.pptx) - 무료
+                                    {t('page:jobs.pptFree')}
                                   </button>
                                 </div>
                               </div>
@@ -425,7 +413,7 @@ export default function JobsPage() {
                             <button
                               onClick={() => openDeleteModal(j)}
                               className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
-                              title={`${FILE_TYPE_LABEL[j.file_type] || j.file_type} 삭제`}
+                              title={`${fileTypeLabel(j.file_type)} ${t('page:jobs.delete')}`}
                             >
                               <Trash2 size={18} />
                             </button>
@@ -439,8 +427,8 @@ export default function JobsPage() {
               {!loading && pageJobs.length === 0 && (
                 <tr>
                   <td colSpan={5} className="text-center py-12 text-on-surface-variant">
-                    <p>작업 내역이 없습니다.</p>
-                    <Link to="/" className="text-primary hover:underline mt-2 inline-block">첫 파일 업로드하기</Link>
+                    <p>{t('page:jobs.noJobs')}</p>
+                    <Link to="/" className="text-primary hover:underline mt-2 inline-block">{t('page:jobs.firstUpload')}</Link>
                   </td>
                 </tr>
               )}
@@ -451,7 +439,7 @@ export default function JobsPage() {
         {/* Pagination */}
         <div className="px-gutter py-4 border-t border-outline-variant flex flex-col md:flex-row items-center justify-between gap-3 bg-surface-container-lowest">
           <p className="font-label-sm text-label-sm text-on-surface-variant">
-            Showing {(page - 1) * PAGE_SIZE + 1} to {Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length} results
+            {t('page:jobs.showing', { from: (page - 1) * PAGE_SIZE + 1, to: Math.min(page * PAGE_SIZE, filtered.length), total: filtered.length })}
           </p>
           <div className="flex items-center gap-1">
             <button
@@ -488,12 +476,12 @@ export default function JobsPage() {
             <span className="material-symbols-outlined">lightbulb</span>
           </div>
           <div>
-            <h4 className="font-headline-md text-headline-md text-primary mb-2">Automate with API</h4>
+            <h4 className="font-headline-md text-headline-md text-primary mb-2">{t('page:jobs.apiPromoTitle')}</h4>
             <p className="font-body-md text-body-md text-on-surface-variant max-w-xl">
-              Stop manual uploads. Connect your data pipeline directly to our API for seamless, real-time conversion and validation.
+              {t('page:jobs.apiPromoDesc')}
             </p>
             <Link to="/developer" className="mt-4 text-primary font-body-md text-body-md font-bold hover:underline inline-block">
-              View API documentation →
+              {t('page:jobs.apiPromoLink')} →
             </Link>
           </div>
         </div>
@@ -503,23 +491,23 @@ export default function JobsPage() {
       {deleteModal.open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-sm bg-surface-container rounded-2xl shadow-xl border border-outline-variant p-6">
-            <h3 className="font-headline-sm text-headline-sm text-on-surface mb-2">작업을 삭제할까요?</h3>
+            <h3 className="font-headline-sm text-headline-sm text-on-surface mb-2">{t('page:jobs.deleteConfirmTitle')}</h3>
             <p className="font-body-md text-body-md text-on-surface-variant mb-6">
-              {deleteModal.job?.filename} 작업을 삭제하면 복구할 수 없습니다.
+              {t('page:jobs.deleteConfirmDesc', { filename: deleteModal.job?.filename })}
             </p>
             <div className="flex justify-end gap-3">
               <button
                 onClick={closeDeleteModal}
                 className="px-4 py-2 rounded-xl border border-outline-variant font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-high transition-colors"
               >
-                취소
+                {t('page:jobs.cancel')}
               </button>
               <button
                 onClick={confirmDelete}
                 disabled={deleting[deleteModal.job?.job_id]}
                 className="px-4 py-2 rounded-xl bg-red-600 text-white font-body-md text-body-md font-medium hover:bg-red-700 transition-colors disabled:opacity-50"
               >
-                {deleting[deleteModal.job?.job_id] ? '삭제 중...' : '삭제'}
+                {deleting[deleteModal.job?.job_id] ? t('page:jobs.deleting') : t('page:jobs.delete')}
               </button>
             </div>
           </div>

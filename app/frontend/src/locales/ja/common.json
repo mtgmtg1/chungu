@@ -1,0 +1,103 @@
+{
+  "app": {
+    "name": "Chungu",
+    "tagline": "Precision Data",
+    "copyright": "© 2026 Chungu AI. Effortless Precision."
+  },
+  "nav": {
+    "dashboard": "ダッシュボード",
+    "jobs": "ジョブ一覧",
+    "developer": "開発者",
+    "settings": "設定",
+    "newConversion": "新規変換",
+    "logout": "ログアウト",
+    "loggedInAs": "ログイン中",
+    "collapse": "サイドバーを折りたたむ",
+    "expand": "サイドバーを広げる"
+  },
+  "footer": {
+    "privacy": "プライバシーポリシー",
+    "terms": "利用規約",
+    "apiDocs": "APIドキュメント",
+    "contact": "サポートへ問い合わせ"
+  },
+  "language": {
+    "en": "English",
+    "ko": "한국어",
+    "ja": "日本語",
+    "label": "言語"
+  },
+  "actions": {
+    "save": "保存",
+    "cancel": "キャンセル",
+    "confirm": "確認",
+    "delete": "削除",
+    "edit": "編集",
+    "copy": "コピー",
+    "create": "作成",
+    "refresh": "更新",
+    "download": "ダウンロード",
+    "upload": "アップロード",
+    "submit": "送信",
+    "back": "戻る",
+    "next": "次へ",
+    "close": "閉じる",
+    "view": "表示",
+    "search": "検索",
+    "filter": "フィルター",
+    "clear": "クリア"
+  },
+  "status": {
+    "pending": "支払い待ち",
+    "queued": "待機中",
+    "ocr": "OCR処理中",
+    "merging": "マージ中",
+    "done": "完了",
+    "error": "エラー",
+    "active": "進行中",
+    "all": "すべて"
+  },
+  "fileType": {
+    "pdf": "PDF",
+    "image": "画像",
+    "audio": "音声",
+    "video": "動画",
+    "mixed": "混合ファイル",
+    "archive": "圧縮ファイル"
+  },
+  "auth": {
+    "login": "ログイン",
+    "signup": "新規登録",
+    "email": "メールアドレス",
+    "password": "パスワード",
+    "currentPassword": "現在のパスワード",
+    "newPassword": "新しいパスワード",
+    "confirmPassword": "パスワード確認",
+    "forgotPassword": "パスワードを忘れましたか？",
+    "adminLogin": "管理者ログイン",
+    "loginRequired": "ログインが必要です",
+    "goToLogin": "ログインへ",
+    "haveAccount": "すでにアカウントをお持ちですか？",
+    "noAccount": "アカウントをお持ちでないですか？",
+    "checkEmail": "確認メールをご確認ください。",
+    "logoutSuccess": "ログアウトしました"
+  },
+  "points": {
+    "balance": "保有ポイント",
+    "point": "P",
+    "cost": "費用",
+    "total": "合計"
+  },
+  "date": {
+    "justNow": "たった今",
+    "today": "今日",
+    "yesterday": "昨日"
+  },
+  "empty": {
+    "noJobs": "ジョブがありません",
+    "noResults": "結果が見つかりません",
+    "noData": "データがありません"
+  },
+  "loading": "読み込み中...",
+  "error": "エラー"
+}

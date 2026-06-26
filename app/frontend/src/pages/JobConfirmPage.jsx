@@ -1,12 +1,14 @@
 // [Flow: Step 1 (job ID로 진입) -> Step 2 (작업 정보 로드) -> Step 3 (비용 확인 + 고급 옵션) -> Step 4 (승인 -> 결과 페이지 이동)]
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { ArrowLeft, Loader2, CreditCard, Settings2 } from 'lucide-react'
 import { api } from '../api.js'
 
 export default function JobConfirmPage() {
   const { jobId } = useParams()
   const nav = useNavigate()
+  const { t } = useTranslation()
   const [job, setJob] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -15,6 +17,11 @@ export default function JobConfirmPage() {
   const [pipeline, setPipeline] = useState('vision')
   const [columns, setColumns] = useState('')
   const [prompt, setPrompt] = useState('')
+
+  const pipelineOptions = [
+    { value: 'vision', label: t('page:confirm.vision') },
+    { value: 'hybrid', label: t('page:confirm.hybrid') },
+  ]
 
   useEffect(() => {
     if (!jobId) return
@@ -28,7 +35,7 @@ export default function JobConfirmPage() {
       setProfile(me)
       setPipeline(jobData.pipeline || 'vision')
     } catch (e) {
-      setError(e.message || '작업 정보를 불러오지 못했습니다')
+      setError(e.message || t('page:confirm.loadError'))
     } finally {
       setLoading(false)
     }
@@ -42,8 +49,8 @@ export default function JobConfirmPage() {
       await api.confirmJob(jobId)
       nav(`/jobs/${jobId}`)
     } catch (e) {
-      setError(e.message || '승인 실패')
-      if (e.message && e.message.includes('포인트')) nav('/payment')
+      setError(e.message || t('page:errors.unknown'))
+      if (e.message && e.message.includes('point')) nav('/payment')
     } finally {
       setSubmitting(false)
     }
@@ -61,8 +68,8 @@ export default function JobConfirmPage() {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
-          <p className="text-on-surface-variant mb-4">{error || '작업을 찾을 수 없습니다'}</p>
-          <Link to="/" className="text-primary hover:underline">홈으로</Link>
+          <p className="text-on-surface-variant mb-4">{error || t('page:confirm.notFound')}</p>
+          <Link to="/" className="text-primary hover:underline">{t('page:confirm.home')}</Link>
         </div>
       </div>
     )
@@ -86,84 +93,84 @@ export default function JobConfirmPage() {
             <Link to="/" className="text-on-surface-variant hover:text-primary transition-colors">
               <ArrowLeft size={20} />
             </Link>
-            <h1 className="text-headline-lg font-bold text-on-surface">변환 비용 확인</h1>
+            <h1 className="text-headline-lg font-bold text-on-surface">{t('page:confirm.title')}</h1>
           </div>
 
           <p className="text-body-md text-on-surface-variant mb-6">{job.filename}</p>
 
           <div className="bg-surface-container-low rounded-2xl p-6 space-y-3 mb-6">
             <div className="flex justify-between text-body-md">
-              <span className="text-on-surface-variant">파일 유형</span>
+              <span className="text-on-surface-variant">{t('page:confirm.fileType')}</span>
               <span className="font-medium text-on-surface">{job.file_type}</span>
             </div>
             {job.total_pages > 0 && (
               <div className="flex justify-between text-body-md">
-                <span className="text-on-surface-variant">총 페이지</span>
+                <span className="text-on-surface-variant">{t('page:confirm.totalPages')}</span>
                 <span className="font-medium text-on-surface">{job.total_pages}</span>
               </div>
             )}
             {job.total_files > 0 && (
               <div className="flex justify-between text-body-md">
-                <span className="text-on-surface-variant">총 파일 수</span>
+                <span className="text-on-surface-variant">{t('page:confirm.totalFiles')}</span>
                 <span className="font-medium text-on-surface">{job.total_files}</span>
               </div>
             )}
             {job.media_duration_seconds > 0 && (
               <div className="flex justify-between text-body-md">
-                <span className="text-on-surface-variant">미디어 길이</span>
-                <span className="font-medium text-on-surface">{job.media_duration_seconds}초</span>
+                <span className="text-on-surface-variant">{t('page:confirm.mediaDuration')}</span>
+                <span className="font-medium text-on-surface">{job.media_duration_seconds}{t('page:confirm.seconds')}</span>
               </div>
             )}
             <div className="h-px bg-outline-variant/40 my-2"></div>
             <div className="flex justify-between text-body-md">
-              <span className="text-on-surface-variant">필요 포인트</span>
-              <span className="font-bold text-primary">{cost} P</span>
+              <span className="text-on-surface-variant">{t('page:confirm.requiredPoints')}</span>
+              <span className="font-bold text-primary">{cost} {t('common:points.point')}</span>
             </div>
             <div className="flex justify-between text-body-md">
-              <span className="text-on-surface-variant">내 잔액</span>
-              <span className="font-medium text-on-surface">{balance} P</span>
+              <span className="text-on-surface-variant">{t('page:confirm.myBalance')}</span>
+              <span className="font-medium text-on-surface">{balance} {t('common:points.point')}</span>
             </div>
           </div>
 
           <details className="mb-6 group">
             <summary className="flex items-center gap-2 cursor-pointer text-body-md text-on-surface-variant hover:text-primary transition-colors">
               <Settings2 size={18} />
-              <span>고급 옵션</span>
+              <span>{t('page:confirm.advancedOptions')}</span>
             </summary>
             <div className="mt-4 space-y-4 bg-surface-container-low rounded-2xl p-5">
               <div>
-                <label className="block text-sm font-medium text-on-surface mb-2">분석 방식</label>
+                <label className="block text-sm font-medium text-on-surface mb-2">{t('page:confirm.analysisMode')}</label>
                 <div className="flex gap-3">
-                  {[['vision', 'Vision (정확도 높음)'], ['hybrid', 'Hybrid (저렴)']].map(([v, label]) => (
+                  {pipelineOptions.map((opt) => (
                     <button
-                      key={v}
+                      key={opt.value}
                       type="button"
-                      onClick={() => setPipeline(v)}
+                      onClick={() => setPipeline(opt.value)}
                       className={`flex-1 border rounded-lg px-3 py-2 text-sm text-left transition-colors ${
-                        pipeline === v ? 'border-primary bg-primary/5 text-primary' : 'border-outline-variant text-on-surface'
+                        pipeline === opt.value ? 'border-primary bg-primary/5 text-primary' : 'border-outline-variant text-on-surface'
                       }`}
                     >
-                      {label}
+                      {opt.label}
                     </button>
                   ))}
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-on-surface mb-1">추출 컬럼 (콤마 구분)</label>
+                <label className="block text-sm font-medium text-on-surface mb-1">{t('page:confirm.extractColumns')}</label>
                 <input
                   value={columns}
                   onChange={(e) => setColumns(e.target.value)}
-                  placeholder="연번, 거래일자, 출금금액, 입금금액, 적요"
+                  placeholder={t('page:confirm.extractColumnsPlaceholder')}
                   className="w-full border border-outline-variant rounded-lg px-3 py-2 bg-white"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-on-surface mb-1">추가 지시 (선택)</label>
+                <label className="block text-sm font-medium text-on-surface mb-1">{t('page:confirm.additionalPrompt')}</label>
                 <textarea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   rows={2}
-                  placeholder="예: 합계 행은 제외하세요."
+                  placeholder={t('page:confirm.additionalPromptPlaceholder')}
                   className="w-full border border-outline-variant rounded-lg px-3 py-2 bg-white"
                 />
               </div>
@@ -172,9 +179,9 @@ export default function JobConfirmPage() {
 
           {insufficient && (
             <div className="mb-6 p-4 bg-red-50 text-red-700 rounded-xl border border-red-200 text-sm">
-              <p className="font-medium mb-2">포인트가 부족합니다</p>
+              <p className="font-medium mb-2">{t('page:confirm.insufficient')}</p>
               <Link to="/payment" className="inline-flex items-center gap-1 underline">
-                <CreditCard size={14} /> 포인트 충전하기
+                <CreditCard size={14} /> {t('page:confirm.recharge')}
               </Link>
             </div>
           )}
@@ -183,14 +190,14 @@ export default function JobConfirmPage() {
 
           <div className="flex gap-3">
             <Link to="/" className="flex-1 border border-outline-variant rounded-xl py-3 text-center font-medium text-on-surface hover:bg-surface-container transition-colors">
-              취소
+              {t('page:confirm.cancel')}
             </Link>
             <button
               onClick={confirm}
               disabled={submitting || insufficient}
               className="flex-1 bg-primary text-on-primary rounded-xl py-3 font-medium hover:bg-primary-container transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {submitting ? <><Loader2 className="animate-spin" size={18} /> 처리 중…</> : `${cost}P 차감하고 시작`}
+              {submitting ? <><Loader2 className="animate-spin" size={18} /> {t('page:confirm.processing')}</> : t('page:confirm.startWithCost', { cost })}
             </button>
           </div>
         </div>

@@ -1,5 +1,6 @@
 // [Flow: Step 1 (url/page prop 수신) -> Step 2 (PDF.js로 문서 로드) -> Step 3 (현재 페이지를 canvas에 렌더링) -> Step 4 (페이지 변경/줌 UI 노출)]
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import * as pdfjs from 'pdfjs-dist'
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from 'lucide-react'
@@ -7,6 +8,7 @@ import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from 'lucide-react'
 pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker
 
 export default function PdfViewer({ url, page = 1, onPageChange }) {
+  const { t } = useTranslation()
   const canvasRef = useRef(null)
   const containerRef = useRef(null)
   const pdfRef = useRef(null)
@@ -38,7 +40,7 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
       })
       .catch((e) => {
         if (cancelled) return
-        setError('PDF를 불러오지 못했습니다')
+        setError(t('page:errors.loadFailed'))
         setLoading(false)
       })
     return () => {
@@ -68,7 +70,7 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
         renderTask = task
         await task.promise
       } catch (e) {
-        setError('페이지 렌더링 실패')
+        setError(t('page:errors.unknown'))
       }
     }
     render()
@@ -89,7 +91,7 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
   if (!url) {
     return (
       <div className="flex-1 flex items-center justify-center text-on-surface-variant text-sm">
-        원본 문서 URL이 없습니다
+        {t('page:errors.loadFailed')}
       </div>
     )
   }

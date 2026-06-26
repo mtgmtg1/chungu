@@ -1,8 +1,10 @@
 // [Flow: Step 1 (로그인/개발자 권한 확인) -> Step 2 (계정/키/사용량 데이터 로드) -> Step 3 (키 발급/삭제/복사 UI) -> Step 4 (사용량 차트 + Docs 렌더링)]
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { api } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
+import i18n from '../i18n.js'
 import SidebarLayout from '../components/SidebarLayout.jsx'
 
 const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
@@ -14,6 +16,7 @@ const curlExample = `curl -X POST ${baseUrl}/api/v1/jobs/upload \\
 
 export default function DeveloperPage() {
   const { user, loading } = useAuth()
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const [account, setAccount] = useState(null)
   const [keys, setKeys] = useState([])
@@ -46,7 +49,7 @@ export default function DeveloperPage() {
       setKeys(k)
     } catch (e) {
       console.error('API keys 로드 실패:', e)
-      setError((prev) => prev || (e.message || 'API keys를 불러오지 못했습니다'))
+      setError((prev) => prev || (e.message || t('page:errors.loadFailed')))
     }
   }
 
@@ -71,7 +74,7 @@ export default function DeveloperPage() {
       setPricing(prc)
       setTransactions(tx)
     } catch (e) {
-      setError(e.message || '데이터를 불러오지 못했습니다')
+      setError(e.message || t('page:errors.loadFailed'))
     }
     await loadKeys()
   }
@@ -86,17 +89,17 @@ export default function DeveloperPage() {
       setShowCreate(false)
       await loadKeys()
     } catch (e) {
-      setError(e.message || 'key 생성 실패')
+      setError(e.message || t('page:errors.unknown'))
     }
   }
 
   const deleteKey = async (id) => {
-    if (!confirm('이 API key를 삭제하시겠습니까?')) return
+    if (!confirm(t('page:developer.deleteConfirm', 'Delete this API key?'))) return
     try {
       await api.deleteApiKey(id)
       setKeys(keys.filter((k) => k.id !== id))
     } catch (e) {
-      setError(e.message || 'key 삭제 실패')
+      setError(e.message || t('page:errors.unknown'))
     }
   }
 
@@ -119,7 +122,7 @@ export default function DeveloperPage() {
   }
 
   return (
-    <SidebarLayout title="Developer Portal" subtitle="Manage your API keys, track usage, and explore the documentation">
+    <SidebarLayout title={t('page:developer.title')} subtitle={t('page:developer.subtitle')}>
       {error && (
         <div className="bg-error-container text-error px-4 py-3 rounded-xl text-sm border border-error/10 mb-8">
           {error}
@@ -133,7 +136,7 @@ export default function DeveloperPage() {
           className="bg-primary text-white px-6 py-2.5 rounded-lg flex items-center gap-2 font-body-md hover:bg-primary/90 transition-all shadow-sm"
         >
           <span className="material-symbols-outlined text-xl">add</span>
-          Create New Key
+          {t('page:developer.createKey')}
         </button>
       </div>
 
@@ -141,14 +144,14 @@ export default function DeveloperPage() {
         <div className="lg:col-span-8 space-y-gutter">
           <div className="glass-panel p-6 rounded-2xl">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="font-headline-md text-headline-md text-on-surface">Usage Analytics</h3>
+              <h3 className="font-headline-md text-headline-md text-on-surface">{t('page:developer.usageAnalytics')}</h3>
               <select
                 value={period}
                 onChange={(e) => setPeriod(e.target.value)}
                 className="bg-surface-container-low border-none rounded-lg text-label-sm py-1 pl-2 pr-8 focus:ring-1 focus:ring-primary focus:outline-none"
               >
-                <option value="7">Last 7 Days</option>
-                <option value="30">Last 30 Days</option>
+                <option value="7">{t('page:developer.last7Days')}</option>
+                <option value="30">{t('page:developer.last30Days')}</option>
               </select>
             </div>
             <div className="h-64 flex items-end gap-1 px-2 relative">
@@ -164,18 +167,18 @@ export default function DeveloperPage() {
                       style={{ height: `${Math.max(4, pct)}%` }}
                     >
                       <div className="hidden group-hover:block absolute -top-8 left-1/2 -translate-x-1/2 bg-on-surface text-white text-[10px] py-1 px-2 rounded whitespace-nowrap">
-                        {(u.points_spent || 0).toLocaleString()}P
+                        {(u.points_spent || 0).toLocaleString()}{t('common:points.point')}
                       </div>
                     </div>
                     <span className="text-[10px] text-outline mt-2">
-                      {u.day ? new Date(u.day).toLocaleDateString('ko-KR', { weekday: 'short' }) : '-'}
+                      {u.day ? new Date(u.day).toLocaleDateString(i18n.language, { weekday: 'short' }) : '-'}
                     </span>
                   </div>
                 )
               })}
               {usage.length === 0 && (
                 <div className="absolute inset-0 flex items-center justify-center text-outline text-sm">
-                  No usage data yet
+                  {t('page:developer.noUsage')}
                 </div>
               )}
             </div>
@@ -183,16 +186,16 @@ export default function DeveloperPage() {
 
           <div className="glass-panel rounded-2xl overflow-hidden">
             <div className="p-6 border-b border-outline-variant flex justify-between items-center">
-              <h3 className="font-headline-md text-headline-md text-on-surface">API Keys</h3>
+              <h3 className="font-headline-md text-headline-md text-on-surface">{t('page:developer.apiKeys')}</h3>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead className="bg-surface-container-low text-on-surface-variant font-label-sm text-label-sm uppercase tracking-wider">
                   <tr>
-                    <th className="px-6 py-4">Label</th>
-                    <th className="px-6 py-4">API Key</th>
-                    <th className="px-6 py-4 text-right">Rate</th>
-                    <th className="px-6 py-4 text-right">Created</th>
+                    <th className="px-6 py-4">{t('page:developer.apiKey')}</th>
+                    <th className="px-6 py-4">{t('page:developer.apiKey')}</th>
+                    <th className="px-6 py-4 text-right">{t('page:developer.rate')}</th>
+                    <th className="px-6 py-4 text-right">{t('page:developer.created')}</th>
                     <th className="px-6 py-4 w-10"></th>
                   </tr>
                 </thead>
@@ -208,7 +211,7 @@ export default function DeveloperPage() {
                           <button
                             onClick={() => copyToClipboard(k.prefix + '••••••••••••••••')}
                             className="text-outline hover:text-primary transition-colors"
-                            title="Copy"
+                            title={t('page:developer.copy')}
                           >
                             <span className="material-symbols-outlined text-lg">content_copy</span>
                           </button>
@@ -216,13 +219,13 @@ export default function DeveloperPage() {
                       </td>
                       <td className="px-6 py-4 text-right text-on-surface-variant">{k.rate_limit_rpm}/min</td>
                       <td className="px-6 py-4 text-right text-on-surface-variant">
-                        {k.created_at ? new Date(k.created_at).toLocaleDateString('ko-KR') : '-'}
+                        {k.created_at ? new Date(k.created_at).toLocaleDateString(i18n.language) : '-'}
                       </td>
                       <td className="px-6 py-4">
                         <button
                           onClick={() => deleteKey(k.id)}
                           className="text-outline hover:text-error transition-colors"
-                          title="Delete"
+                          title={t('page:developer.delete')}
                         >
                           <span className="material-symbols-outlined text-lg">delete</span>
                         </button>
@@ -239,15 +242,15 @@ export default function DeveloperPage() {
           <div className="glass-panel p-6 rounded-2xl">
             <div className="flex items-center gap-3 mb-6">
               <span className="material-symbols-outlined text-primary bg-primary/10 p-2 rounded-lg">speed</span>
-              <h3 className="font-headline-md text-headline-md text-on-surface">Rate Limit</h3>
+              <h3 className="font-headline-md text-headline-md text-on-surface">{t('page:developer.rateLimit')}</h3>
             </div>
             <div className="space-y-4">
               <div className="flex justify-between items-end">
                 <div>
                   <p className="text-3xl font-bold text-on-surface">{totalUsage.toLocaleString()}</p>
-                  <p className="text-on-surface-variant text-label-sm">Monthly API Calls</p>
+                  <p className="text-on-surface-variant text-label-sm">{t('page:developer.monthlyCalls')}</p>
                 </div>
-                <p className="text-outline text-label-sm">Limit: {limit.toLocaleString()}</p>
+                <p className="text-outline text-label-sm">{t('page:developer.limit', { limit: limit.toLocaleString() })}</p>
               </div>
               <div className="w-full bg-outline-variant/30 rounded-full h-3 overflow-hidden">
                 <div className="bg-primary h-full rounded-full transition-all duration-1000 ease-out" style={{ width: `${usagePct}%` }}></div>
@@ -255,7 +258,7 @@ export default function DeveloperPage() {
               <div className="p-3 bg-secondary-container/30 border border-secondary/10 rounded-lg flex items-start gap-2">
                 <span className="material-symbols-outlined text-secondary text-sm mt-0.5">info</span>
                 <p className="text-[12px] text-on-secondary-fixed-variant leading-relaxed">
-                  Your usage resets daily. Points balance: {balance.toLocaleString()}P.
+                  {t('page:developer.usageResets', { points: balance.toLocaleString() })}
                 </p>
               </div>
             </div>
@@ -263,26 +266,26 @@ export default function DeveloperPage() {
 
           <div className="glass-panel rounded-2xl overflow-hidden">
             <div className="p-6 border-b border-outline-variant">
-              <h3 className="font-headline-md text-headline-md text-on-surface">Quick Start</h3>
+              <h3 className="font-headline-md text-headline-md text-on-surface">{t('page:developer.quickStart')}</h3>
             </div>
             <div className="p-6 space-y-6">
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
-                  <span className="text-label-sm font-bold text-outline">ENDPOINT</span>
+                  <span className="text-label-sm font-bold text-outline">{t('page:developer.endpoint')}</span>
                   <span className="text-label-sm px-2 py-0.5 bg-primary-container text-white rounded uppercase">POST</span>
                 </div>
                 <code className="block bg-surface-container-low p-2 rounded font-mono text-sm text-primary">/api/v1/jobs/upload</code>
               </div>
               <div className="space-y-4">
                 <div className="flex border-b border-outline-variant">
-                  <button className="px-4 py-2 text-primary border-b-2 border-primary font-label-sm">cURL</button>
+                  <button className="px-4 py-2 text-primary border-b-2 border-primary font-label-sm">{t('page:developer.curl')}</button>
                 </div>
                 <div className="code-block p-4 rounded-xl text-sm overflow-x-auto">
                   <pre><code>{curlExample}</code></pre>
                 </div>
               </div>
               <a href={`${baseUrl}/api/v1/docs`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary font-body-md hover:underline">
-                View full API reference
+                {t('page:developer.viewFullReference')}
                 <span className="material-symbols-outlined text-sm">arrow_forward</span>
               </a>
             </div>
@@ -291,29 +294,29 @@ export default function DeveloperPage() {
           <div className="glass-panel p-6 rounded-2xl">
             <div className="flex items-center gap-3 mb-4">
               <span className="material-symbols-outlined text-primary bg-primary/10 p-2 rounded-lg">payments</span>
-              <h3 className="font-headline-md text-headline-md text-on-surface">Billing</h3>
+              <h3 className="font-headline-md text-headline-md text-on-surface">{t('page:developer.billing')}</h3>
             </div>
             <div className="space-y-3">
               <div className="flex justify-between text-body-md">
-                <span className="text-on-surface-variant">Points balance</span>
-                <span className="font-bold text-on-surface">{balance.toLocaleString()}P</span>
+                <span className="text-on-surface-variant">{t('page:developer.pointsBalance')}</span>
+                <span className="font-bold text-on-surface">{balance.toLocaleString()}{t('common:points.point')}</span>
               </div>
               <div className="flex justify-between text-body-md">
-                <span className="text-on-surface-variant">Today usage</span>
-                <span className="font-bold text-on-surface">{account?.today_usage?.points_spent?.toLocaleString() || 0}P</span>
+                <span className="text-on-surface-variant">{t('page:developer.todayUsage')}</span>
+                <span className="font-bold text-on-surface">{account?.today_usage?.points_spent?.toLocaleString() || 0}{t('common:points.point')}</span>
               </div>
               <div className="h-px bg-outline-variant/40 my-2"></div>
               <div className="space-y-1 text-[12px] text-on-surface-variant">
-                <p>PDF page: {pricing?.rates?.krw_per_page || '-'}P</p>
-                <p>Image: {pricing?.rates?.krw_per_image || '-'}P</p>
-                <p>Audio/sec: {pricing?.rates?.krw_per_audio_second || '-'}P</p>
-                <p>Video/sec: {pricing?.rates?.krw_per_video_second || '-'}P</p>
+                <p>{t('page:developer.pdfPage')}: {pricing?.rates?.krw_per_page || '-'}{t('common:points.point')}</p>
+                <p>{t('page:developer.image')}: {pricing?.rates?.krw_per_image || '-'}{t('common:points.point')}</p>
+                <p>{t('page:developer.audioSec')}: {pricing?.rates?.krw_per_audio_second || '-'}{t('common:points.point')}</p>
+                <p>{t('page:developer.videoSec')}: {pricing?.rates?.krw_per_video_second || '-'}{t('common:points.point')}</p>
               </div>
               <button
                 onClick={() => navigate('/payment')}
                 className="w-full mt-2 bg-primary text-white rounded-lg py-2.5 font-body-md hover:bg-primary/90 transition-colors"
               >
-                충전하기
+                {t('page:developer.recharge')}
               </button>
             </div>
           </div>
@@ -323,30 +326,30 @@ export default function DeveloperPage() {
       {showCreate && (
         <div className="fixed inset-0 z-[60] bg-on-surface/30 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl border border-outline-variant shadow-2xl w-full max-w-md p-6">
-            <h3 className="font-headline-md text-headline-md text-on-surface mb-4">Create New API Key</h3>
+            <h3 className="font-headline-md text-headline-md text-on-surface mb-4">{t('page:developer.createKeyTitle')}</h3>
             <input
               type="text"
-              placeholder="Key name (e.g., production)"
+              placeholder={t('page:developer.keyNamePlaceholder')}
               value={newKeyName}
               onChange={(e) => setNewKeyName(e.target.value)}
               className="w-full border border-outline-variant rounded-lg px-3 py-2.5 text-body-md mb-4 focus:ring-1 focus:ring-primary focus:outline-none"
             />
             {revealedKey && (
               <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3">
-                <p className="text-xs font-semibold text-amber-800 mb-2">Save this key now. It will not be shown again.</p>
+                <p className="text-xs font-semibold text-amber-800 mb-2">{t('page:developer.saveKeyWarning')}</p>
                 <pre className="rounded bg-white p-2 text-xs break-all text-on-surface">{revealedKey.key}</pre>
                 <div className="flex gap-2 mt-2">
-                  <button onClick={() => copyToClipboard(revealedKey.key)} className="rounded bg-amber-700 px-3 py-1 text-xs text-white hover:bg-amber-800">Copy</button>
-                  <button onClick={() => setRevealedKey(null)} className="rounded bg-slate-200 px-3 py-1 text-xs text-slate-700 hover:bg-slate-300">Hide</button>
+                  <button onClick={() => copyToClipboard(revealedKey.key)} className="rounded bg-amber-700 px-3 py-1 text-xs text-white hover:bg-amber-800">{t('page:developer.copy')}</button>
+                  <button onClick={() => setRevealedKey(null)} className="rounded bg-slate-200 px-3 py-1 text-xs text-slate-700 hover:bg-slate-300">{t('page:developer.cancel')}</button>
                 </div>
               </div>
             )}
             <div className="flex gap-3">
               <button onClick={() => setShowCreate(false)} className="flex-1 border border-outline-variant rounded-lg py-2.5 font-body-md text-on-surface hover:bg-surface-container transition-colors">
-                Cancel
+                {t('page:developer.cancel')}
               </button>
               <button onClick={createKey} className="flex-1 bg-primary text-white rounded-lg py-2.5 font-body-md hover:bg-primary/90 transition-colors">
-                Create
+                {t('page:developer.create')}
               </button>
             </div>
           </div>

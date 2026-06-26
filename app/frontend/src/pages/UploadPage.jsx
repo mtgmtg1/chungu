@@ -1,6 +1,7 @@
 // [Flow: Step 1 (로그인 확인) -> Step 2 (중앙 업로드 영역) -> Step 3 (업로드 -> 비용 확인 페이지 이동) -> Step 4 (승인 -> 결과 페이지 이동)]
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { FileUp, Loader2, LogIn, Coins } from 'lucide-react'
 import SoftAurora from '../components/SoftAurora.jsx'
 import { useAuth } from '../AuthContext.jsx'
@@ -8,6 +9,7 @@ import { api } from '../api.js'
 
 export default function UploadPage() {
   const { user, loading: authLoading } = useAuth()
+  const { t } = useTranslation()
   const nav = useNavigate()
   const [files, setFiles] = useState([])
   const [submitting, setSubmitting] = useState(false)
@@ -54,7 +56,7 @@ export default function UploadPage() {
     e.preventDefault()
     setError('')
     if (!user) return nav('/login')
-    if (!files.length) return setError('파일을 선택하세요')
+    if (!files.length) return setError(t('page:upload.selectFile'))
 
     const fd = new FormData()
     const relativePaths = []
@@ -93,11 +95,11 @@ export default function UploadPage() {
           <div className="flex items-center gap-6">
             {user ? (
               <>
-                <Link to="/dashboard" className="text-body-md text-on-surface-variant hover:text-primary transition-colors font-medium">내 작업</Link>
-                <Link to="/payment" className="text-body-md flex items-center gap-1 text-primary hover:underline font-medium"><Coins size={18} /> {profile?.points_balance ?? '-'} P</Link>
+                <Link to="/dashboard" className="text-body-md text-on-surface-variant hover:text-primary transition-colors font-medium">{t('page:upload.myJobs')}</Link>
+                <Link to="/payment" className="text-body-md flex items-center gap-1 text-primary hover:underline font-medium"><Coins size={18} /> {profile?.points_balance ?? '-'} {t('page:upload.points')}</Link>
               </>
             ) : (
-              <Link to="/login" className="text-body-md flex items-center gap-1 text-on-surface-variant hover:text-primary transition-colors font-medium"><LogIn size={18} /> 로그인</Link>
+              <Link to="/login" className="text-body-md flex items-center gap-1 text-on-surface-variant hover:text-primary transition-colors font-medium"><LogIn size={18} /> {t('common:auth.login')}</Link>
             )}
           </div>
         </div>
@@ -125,10 +127,10 @@ export default function UploadPage() {
 
         <div className="w-full max-w-3xl px-gutter text-center relative z-10">
           <h1 className="text-display font-display text-on-surface mb-4 tracking-tight">
-            파일을 <span className="text-primary">정밀 데이터</span>로 변환
+            <span className="text-primary">{t('page:upload.title')}</span>
           </h1>
           <p className="text-body-lg text-on-surface-variant mb-12 opacity-80">
-            AI로 PDF, 이미지, 오디오에서 표를 자동 추출합니다
+            {t('page:upload.subtitle')}
           </p>
 
           <form onSubmit={handleUpload}>
@@ -141,8 +143,8 @@ export default function UploadPage() {
                 <div className="w-20 h-20 bg-primary-container/10 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
                   <FileUp className="text-primary" size={48} />
                 </div>
-                <h3 className="text-headline-md font-medium text-on-surface mb-2">파일 또는 폴더를 놓으세요</h3>
-                <p className="text-body-md text-outline">PDF, 이미지, 오디오, 비디오, 압축 파일</p>
+                <h3 className="text-headline-md font-medium text-on-surface mb-2">{t('page:upload.dropText')}</h3>
+                <p className="text-body-md text-outline">{t('page:upload.fileTypes')}</p>
                 <button
                   type="button"
                   onClick={(e) => {
@@ -151,7 +153,7 @@ export default function UploadPage() {
                   }}
                   className="mt-8 px-8 py-3 bg-primary text-on-primary rounded-full font-headline-md hover:bg-primary-container transition-all shadow-md"
                 >
-                  폴더 선택
+                  {t('page:upload.selectFolder')}
                 </button>
                 <input
                   id="folder-input"
@@ -168,7 +170,7 @@ export default function UploadPage() {
 
             {files.length > 0 && (
               <div className="mt-4 bg-white rounded-xl border border-outline-variant p-4 text-left max-w-xl mx-auto">
-                <p className="text-sm font-medium text-on-surface mb-2">선택된 파일</p>
+                <p className="text-sm font-medium text-on-surface mb-2">{t('page:upload.selectedFiles')}</p>
                 <ul className="text-sm text-on-surface-variant space-y-1">
                   {files.map((f, i) => (
                     <li key={i} className="flex items-center gap-2">
@@ -183,11 +185,11 @@ export default function UploadPage() {
                 {error && <p className="text-red-600 text-sm mt-3">{error}</p>}
                 <div className="flex gap-3 mt-4">
                   <button type="button" onClick={() => setFiles([])} className="flex-1 border border-outline-variant rounded-lg py-2.5 text-sm font-medium hover:bg-surface-container transition-colors">
-                    취소
+                    {t('page:upload.cancel')}
                   </button>
                   <button type="submit" disabled={submitting}
                     className="flex-1 bg-primary text-on-primary rounded-lg py-2.5 font-medium hover:bg-primary-container transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
-                    {submitting ? <><Loader2 className="animate-spin" size={18} /> 업로드 중…</> : '변환 시작'}
+                    {submitting ? <><Loader2 className="animate-spin" size={18} /> {t('page:upload.uploading')}</> : t('page:upload.start')}
                   </button>
                 </div>
               </div>
@@ -195,9 +197,9 @@ export default function UploadPage() {
           </form>
 
           <div className="mt-8 flex justify-center gap-8 text-label-sm text-outline font-medium uppercase tracking-widest opacity-60">
-            <span className="flex items-center gap-1.5"><span className="text-sm">보안</span> 암호화</span>
-            <span className="flex items-center gap-1.5"><span className="text-sm">즉시</span> 처리</span>
-            <span className="flex items-center gap-1.5"><span className="text-sm">100+</span> 언어</span>
+            <span className="flex items-center gap-1.5"><span className="text-sm">{t('page:upload.badgeSecurity')}</span> {t('page:upload.badgeEncrypted')}</span>
+            <span className="flex items-center gap-1.5"><span className="text-sm">{t('page:upload.badgeInstant')}</span> {t('page:upload.badgeProcessing')}</span>
+            <span className="flex items-center gap-1.5"><span className="text-sm">100+</span> {t('page:upload.badgeLanguages')}</span>
           </div>
         </div>
       </main>
@@ -205,11 +207,11 @@ export default function UploadPage() {
       <footer className="w-full py-8 border-t border-outline-variant/20">
         <div className="max-w-container-max mx-auto px-gutter flex flex-col md:flex-row justify-between items-center gap-4 text-label-sm text-outline">
           <div className="flex items-center gap-4">
-            <p>© 2024 Chungu Technologies</p>
+            <p>{t('page:upload.copyright')}</p>
           </div>
           <div className="flex items-center gap-6">
-            <Link to="/developer" className="hover:text-primary transition-colors">API</Link>
-            <a href="/admin" className="hover:text-primary transition-colors">관리자</a>
+            <Link to="/developer" className="hover:text-primary transition-colors">{t('page:upload.api')}</Link>
+            <a href="/admin" className="hover:text-primary transition-colors">{t('page:upload.admin')}</a>
           </div>
         </div>
       </footer>

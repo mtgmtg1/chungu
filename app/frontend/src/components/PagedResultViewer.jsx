@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Virtuoso } from 'react-virtuoso'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
+import { useTranslation } from 'react-i18next'
 import { ChevronLeft, ChevronRight, Save, Loader2, Check, FileText, ImageIcon } from 'lucide-react'
 import { api } from '../api.js'
 import PdfViewer from './PdfViewer.jsx'
@@ -9,6 +10,7 @@ import MediaPlayer from './MediaPlayer.jsx'
 import SimpleEditor from './SimpleEditor.jsx'
 
 export default function PagedResultViewer({ jobId, pages, sourceUrl, sourceType, sidebarOpen = true }) {
+  const { t } = useTranslation()
   const [currentPage, setCurrentPage] = useState(pages[0]?.page_num || 1)
   const [pageMarkdown, setPageMarkdown] = useState('')
   const [loadingPage, setLoadingPage] = useState(false)
@@ -28,7 +30,7 @@ export default function PagedResultViewer({ jobId, pages, sourceUrl, sourceType,
       setPageMarkdown(preview.markdown || '')
       setCurrentPage(preview.start_page || pageNum)
     } catch (e) {
-      setError(e.message || '페이지를 불러오지 못했습니다')
+      setError(e.message || t('page:errors.loadFailed'))
     } finally {
       setLoadingPage(false)
     }
@@ -46,10 +48,10 @@ export default function PagedResultViewer({ jobId, pages, sourceUrl, sourceType,
     setError('')
     try {
       await api.saveResultPage(jobId, currentPage, updated)
-      setSaveMessage('저장되었습니다')
+      setSaveMessage(t('page:result.saved'))
       setTimeout(() => setSaveMessage(''), 2000)
     } catch (e) {
-      setError(e.message || '저장에 실패했습니다')
+      setError(e.message || t('page:errors.unknown'))
     } finally {
       setSaving(false)
     }
@@ -73,12 +75,12 @@ export default function PagedResultViewer({ jobId, pages, sourceUrl, sourceType,
         <div className="flex-1 flex flex-col overflow-hidden bg-surface-container-low">
           <div className="h-12 border-b border-outline-variant bg-white flex items-center px-3 flex-shrink-0">
             <ImageIcon size={16} className="text-outline mr-2" />
-            <span className="text-sm font-medium text-on-surface truncate">원본 이미지</span>
+            <span className="text-sm font-medium text-on-surface truncate">{t('page:components.originalImage')}</span>
           </div>
           <div className="flex-1 overflow-auto custom-scrollbar p-4 flex items-center justify-center">
             <img
               src={imageUrl}
-              alt={`페이지 ${currentPage}`}
+              alt={t('page:components.originalImage', { number: currentPage })}
               className="max-w-full max-h-full object-contain shadow-lg rounded border border-outline-variant bg-white"
             />
           </div>
@@ -90,7 +92,7 @@ export default function PagedResultViewer({ jobId, pages, sourceUrl, sourceType,
     }
     return (
       <div className="flex-1 flex items-center justify-center text-on-surface-variant text-sm p-4">
-        원본 파일을 표시할 수 없습니다
+        {t('page:components.cannotDisplaySource')}
       </div>
     )
   }
@@ -104,8 +106,8 @@ export default function PagedResultViewer({ jobId, pages, sourceUrl, sourceType,
           <>
             <Panel defaultSize={20} minSize={15} maxSize={35} className="border-r border-outline-variant bg-surface flex flex-col">
               <div className="p-3 border-b border-outline-variant bg-surface-container-low">
-                <p className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">페이지 목록</p>
-                <p className="text-xs text-outline mt-1">총 {totalPages}페이지</p>
+                <p className="text-xs font-bold text-on-surface-variant uppercase tracking-wider">{t('page:result.pageList')}</p>
+                <p className="text-xs text-outline mt-1">{t('page:result.totalPages', { total: totalPages })}</p>
               </div>
               <div className="flex-1 overflow-hidden">
                 <Virtuoso
@@ -119,7 +121,7 @@ export default function PagedResultViewer({ jobId, pages, sourceUrl, sourceType,
                     >
                       <div className="flex items-center gap-2">
                         <FileText size={14} className="text-outline flex-shrink-0" />
-                        <span className="truncate">{page.page_num}페이지</span>
+                        <span className="truncate">{t('page:components.pdfPage', { page: page.page_num })}</span>
                       </div>
                       <p className="text-xs text-outline truncate mt-0.5 pl-5">{page.preview}</p>
                     </button>
@@ -163,7 +165,7 @@ export default function PagedResultViewer({ jobId, pages, sourceUrl, sourceType,
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-bold hover:opacity-90 disabled:opacity-50"
               >
                 {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                저장
+                {t('page:result.save')}
               </button>
             </div>
           </div>

@@ -1,20 +1,24 @@
 // [Flow: Step 1 (현재 경로 확인) -> Step 2 (사이드바 토글 상태) -> Step 3 (네비게이션 렌더링) -> Step 4 (메인/푸터 콘텐츠 렌더링)]
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Menu, X, LogOut } from 'lucide-react'
 import { useAuth } from '../AuthContext.jsx'
+import LanguageSelector from './LanguageSelector.jsx'
 
-const navItems = [
-  { icon: 'dashboard', label: 'Dashboard', href: '/dashboard' },
-  { icon: 'list_alt', label: 'Jobs', href: '/jobs' },
-  { icon: 'code', label: 'Developer', href: '/developer' },
-  { icon: 'settings', label: 'Settings', href: '/settings' },
+const getNavItems = (t) => [
+  { icon: 'dashboard', label: t('nav.dashboard'), href: '/dashboard' },
+  { icon: 'list_alt', label: t('nav.jobs'), href: '/jobs' },
+  { icon: 'code', label: t('nav.developer'), href: '/developer' },
+  { icon: 'settings', label: t('nav.settings'), href: '/settings' },
 ]
 
 export default function SidebarLayout({ children, title, subtitle }) {
   const { pathname } = useLocation()
   const navigate = useNavigate()
   const { user, signOut } = useAuth()
+  const { t } = useTranslation()
+  const navItems = getNavItems(t)
   const [expanded, setExpanded] = useState(true)
   const [mobileOpen, setMobileOpen] = useState(false)
 
@@ -98,19 +102,19 @@ export default function SidebarLayout({ children, title, subtitle }) {
             className={`w-full bg-primary text-on-primary py-3 px-4 rounded-xl font-body-md text-body-md font-medium shadow-md hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 ${expanded ? '' : 'px-0'}`}
           >
             <span className="material-symbols-outlined">add</span>
-            {expanded && 'New Conversion'}
+            {expanded && t('nav.newConversion')}
           </Link>
 
           {expanded && user && (
             <div className="p-4 glass-panel rounded-xl border border-primary/10">
-              <p className="font-label-sm text-label-sm text-on-surface-variant mb-2">Logged in as</p>
+              <p className="font-label-sm text-label-sm text-on-surface-variant mb-2">{t('nav.loggedInAs')}</p>
               <p className="text-xs text-on-surface truncate">{user.email}</p>
               <button
                 onClick={() => signOut()}
                 className="mt-2 w-full flex items-center justify-center gap-1 text-xs text-outline hover:text-error transition-colors"
               >
                 <LogOut size={14} />
-                로그아웃
+                {t('nav.logout')}
               </button>
             </div>
           )}
@@ -129,7 +133,7 @@ export default function SidebarLayout({ children, title, subtitle }) {
       <button
         onClick={() => setExpanded(!expanded)}
         className="hidden md:flex fixed bottom-6 left-4 z-50 w-8 h-8 items-center justify-center rounded-full bg-surface border border-outline-variant shadow-sm hover:bg-surface-container-high transition-colors"
-        title={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+        title={expanded ? t('nav.collapse') : t('nav.expand')}
       >
         <span className="material-symbols-outlined text-sm text-outline">
           {expanded ? 'chevron_left' : 'chevron_right'}
@@ -144,6 +148,7 @@ export default function SidebarLayout({ children, title, subtitle }) {
           <div className="flex items-center gap-4 text-on-surface-variant">
             <span className="material-symbols-outlined cursor-pointer hover:text-primary transition-colors">account_balance_wallet</span>
           </div>
+          <LanguageSelector />
           <div className="w-8 h-8 rounded-full bg-primary-fixed-dim border border-primary/20 flex items-center justify-center overflow-hidden">
             <span className="material-symbols-outlined text-primary text-sm">person</span>
           </div>
@@ -168,12 +173,12 @@ export default function SidebarLayout({ children, title, subtitle }) {
       {/* Footer */}
       <footer className={`bg-surface border-t border-outline-variant py-stack-md transition-all duration-300 ${marginLeft}`}>
         <div className="max-w-container-max mx-auto flex flex-col md:flex-row justify-between items-center px-margin-desktop">
-          <p className="font-label-sm text-label-sm text-on-surface-variant">© 2026 Chungu AI. Effortless Precision.</p>
+          <p className="font-label-sm text-label-sm text-on-surface-variant">{t('app.copyright')}</p>
           <div className="flex gap-6 mt-4 md:mt-0">
-            <a href="#" className="font-label-sm text-label-sm text-on-surface-variant hover:underline decoration-primary">Privacy Policy</a>
-            <a href="#" className="font-label-sm text-label-sm text-on-surface-variant hover:underline decoration-primary">Terms of Service</a>
-            <a href="#" className="font-label-sm text-label-sm text-on-surface-variant hover:underline decoration-primary">API Docs</a>
-            <a href="#" className="font-label-sm text-label-sm text-on-surface-variant hover:underline decoration-primary">Contact Support</a>
+            <a href="#" className="font-label-sm text-label-sm text-on-surface-variant hover:underline decoration-primary">{t('footer.privacy')}</a>
+            <a href="#" className="font-label-sm text-label-sm text-on-surface-variant hover:underline decoration-primary">{t('footer.terms')}</a>
+            <a href="#" className="font-label-sm text-label-sm text-on-surface-variant hover:underline decoration-primary">{t('footer.apiDocs')}</a>
+            <a href="#" className="font-label-sm text-label-sm text-on-surface-variant hover:underline decoration-primary">{t('footer.contact')}</a>
           </div>
         </div>
       </footer>

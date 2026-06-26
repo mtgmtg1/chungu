@@ -1,5 +1,6 @@
 // [Flow: Step 1 (access token 획득) -> Step 2 (fetch 래퍼) -> Step 3 (JSON 파싱 + 에러 throw)]
 import { supabase } from './supabase.js'
+import i18n from './i18n.js'
 
 async function getToken() {
   const { data } = await supabase.auth.getSession()
@@ -19,7 +20,7 @@ async function request(path, options = {}) {
   const body = isJson ? await res.json() : await res.text()
   if (!res.ok) {
     const detail = isJson ? body.detail : body
-    throw new Error(detail || `요청 실패 (${res.status})`)
+    throw new Error(detail || i18n.t('page:errors.requestFailed', { status: res.status }))
   }
   return body
 }
@@ -27,6 +28,11 @@ async function request(path, options = {}) {
 export const api = {
   // 사용자 인증/프로필
   me: () => request('/api/auth/me'),
+  updateLanguage: (payload) =>
+    request('/api/auth/language', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
 
   // 작업
   uploadJob: (formData) => request('/api/jobs/upload', { method: 'POST', body: formData }),

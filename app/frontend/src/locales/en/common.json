@@ -1,0 +1,103 @@
+{
+  "app": {
+    "name": "Chungu",
+    "tagline": "Precision Data",
+    "copyright": "© 2026 Chungu AI. Effortless Precision."
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "jobs": "Jobs",
+    "developer": "Developer",
+    "settings": "Settings",
+    "newConversion": "New Conversion",
+    "logout": "Log out",
+    "loggedInAs": "Logged in as",
+    "collapse": "Collapse sidebar",
+    "expand": "Expand sidebar"
+  },
+  "footer": {
+    "privacy": "Privacy Policy",
+    "terms": "Terms of Service",
+    "apiDocs": "API Docs",
+    "contact": "Contact Support"
+  },
+  "language": {
+    "en": "English",
+    "ko": "한국어",
+    "ja": "日本語",
+    "label": "Language"
+  },
+  "actions": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "delete": "Delete",
+    "edit": "Edit",
+    "copy": "Copy",
+    "create": "Create",
+    "refresh": "Refresh",
+    "download": "Download",
+    "upload": "Upload",
+    "submit": "Submit",
+    "back": "Back",
+    "next": "Next",
+    "close": "Close",
+    "view": "View",
+    "search": "Search",
+    "filter": "Filter",
+    "clear": "Clear"
+  },
+  "status": {
+    "pending": "Payment Pending",
+    "queued": "Queued",
+    "ocr": "OCR in Progress",
+    "merging": "Merging",
+    "done": "Done",
+    "error": "Error",
+    "active": "Active",
+    "all": "All"
+  },
+  "fileType": {
+    "pdf": "PDF",
+    "image": "Image",
+    "audio": "Audio",
+    "video": "Video",
+    "mixed": "Mixed Files",
+    "archive": "Archive"
+  },
+  "auth": {
+    "login": "Log in",
+    "signup": "Sign up",
+    "email": "Email",
+    "password": "Password",
+    "currentPassword": "Current Password",
+    "newPassword": "New Password",
+    "confirmPassword": "Confirm Password",
+    "forgotPassword": "Forgot password?",
+    "adminLogin": "Admin Login",
+    "loginRequired": "Login required",
+    "goToLogin": "Go to login",
+    "haveAccount": "Already have an account?",
+    "noAccount": "Don't have an account?",
+    "checkEmail": "Please check your confirmation email.",
+    "logoutSuccess": "Logged out successfully"
+  },
+  "points": {
+    "balance": "Points Balance",
+    "point": "P",
+    "cost": "Cost",
+    "total": "Total"
+  },
+  "date": {
+    "justNow": "Just now",
+    "today": "Today",
+    "yesterday": "Yesterday"
+  },
+  "empty": {
+    "noJobs": "No jobs yet",
+    "noResults": "No results found",
+    "noData": "No data available"
+  },
+  "loading": "Loading...",
+  "error": "Error"
+}

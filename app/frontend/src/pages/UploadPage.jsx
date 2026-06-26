@@ -108,9 +108,9 @@ export default function UploadPage() {
           <SoftAurora
             speed={0.6}
             scale={1.5}
-            brightness={1.0}
-            color1="#ffffff"
-            color2="#3b82f6"
+            brightness={0.5}
+            color1="#2e6fef"
+            color2="#f0ff22a4"
             noiseFrequency={2.5}
             noiseAmplitude={1.0}
             bandHeight={0.5}

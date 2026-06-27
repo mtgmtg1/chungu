@@ -6,6 +6,7 @@ import tempfile
 import threading
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import filetype
@@ -19,18 +20,16 @@ from docling.datamodel.document import ConversionResult
 from docling.datamodel.pipeline_options import AcceleratorDevice, AcceleratorOptions, PdfPipelineOptions
 from docling_core.types.doc import ImageRefMode
 
+from docling_surya import SuryaOcrOptions
+
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="Chungu Docling Preprocessing Service")
 
-# NUMA-aware VNNI 최적화 환경 변수
-DOCLING_NUM_THREADS = int(os.environ.get("DOCLING_NUM_THREADS", "20"))
-DOCLING_LAYOUT_BATCH_SIZE = int(os.environ.get("DOCLING_LAYOUT_BATCH_SIZE", "16"))
-DOCLING_TABLE_BATCH_SIZE = int(os.environ.get("DOCLING_TABLE_BATCH_SIZE", "4"))
-DOCLING_OCR_BATCH_SIZE = int(os.environ.get("DOCLING_OCR_BATCH_SIZE", "4"))
-
+# 1요청당 2스레드, 총 40스레드 = 20 동시성 허용
+DOCLING_NUM_THREADS = int(os.environ.get("DOCLING_NUM_THREADS", "40"))
 
 # 확장자 -> InputFormat 매핑
 EXTENSION_TO_FORMAT: dict[str, InputFormat] = {
@@ -90,13 +89,13 @@ def _build_converter() -> DocumentConverter:
         num_threads=DOCLING_NUM_THREADS,
         device=AcceleratorDevice.CPU,
     )
-    pdf_options.do_ocr = False
+    pdf_options.do_ocr = True
+    pdf_options.allow_external_plugins = True
+    pdf_options.ocr_options = SuryaOcrOptions()
+    pdf_options.ocr_options.lang = ["ko", "en", "ja"]
     pdf_options.do_table_structure = True
     pdf_options.generate_picture_images = True
     pdf_options.generate_page_images = True
-    pdf_options.layout_batch_size = DOCLING_LAYOUT_BATCH_SIZE
-    pdf_options.table_batch_size = DOCLING_TABLE_BATCH_SIZE
-    pdf_options.ocr_batch_size = DOCLING_OCR_BATCH_SIZE
 
     converter = DocumentConverter(
         allowed_formats=list(InputFormat),
@@ -140,7 +139,7 @@ def _warmup_and_apply_ipex(converter: DocumentConverter) -> None:
 
 
 def _apply_ipex(converter: DocumentConverter) -> None:
-    """캐시된 PDF 파이프라인 모델에 IPEX CPU 최적화를 시도한다."""
+    """캐시된 PDF 파이프라인 모델에 IPEX INT8 동적 양자화 + CPU 최적화를 적용한다."""
     try:
         import intel_extension_for_pytorch as ipex
         import torch
@@ -148,42 +147,320 @@ def _apply_ipex(converter: DocumentConverter) -> None:
         logger.info(f"[ipex] IPEX 초기화 실패, 최적화 생략: {e}")
         return
 
+    # CPU에서 bfloat16 에뮬레이션은 매우 느리므로 autocast를 float32로 패치
+    _original_autocast = torch.autocast
+
+    def _patched_autocast(device_type, **kwargs):
+        if device_type == "cpu":
+            kwargs["dtype"] = torch.float32
+        return _original_autocast(device_type, **kwargs)
+
+    torch.autocast = _patched_autocast
+    logger.info("[ipex] torch.autocast를 CPU float32로 패치 완료")
+
+    # 1요청당 2스레드: 각 추론은 2코어 사용, 총 40스레드 = 20 동시성 허용
+    torch.set_num_threads(2)
+    logger.info("[ipex] torch.set_num_threads(2) 적용 (1요청당 2스레드)")
+
     for pipeline in converter.initialized_pipelines.values():
-        if not hasattr(pipeline, "layout_model") and not hasattr(pipeline, "table_structure_model"):
+        if not hasattr(pipeline, "layout_model") and not hasattr(pipeline, "table_model"):
             continue
-        for attr in ("layout_model", "table_structure_model", "ocr_model"):
+        for attr in ("layout_model", "table_model", "ocr_model"):
             model = getattr(pipeline, attr, None)
             if model is None:
                 continue
-            try:
-                target = _unwrap_torch_module(model)
-                if isinstance(target, torch.nn.Module):
-                    optimized = ipex.optimize(target, dtype=torch.int8)
-                    _assign_torch_module(model, optimized)
-                    logger.info(f"[ipex] {attr} INT8 최적화 적용")
-            except Exception as e:
-                logger.warning(f"[ipex] {attr} 최적화 실패: {e}")
+            _quantize_model_recursive(model, attr, ipex, torch)
 
 
-def _unwrap_torch_module(model: Any) -> Any:
-    """Docling 모델 래퍼에서 실제 torch.nn.Module을 꺼낸다."""
-    if hasattr(model, "model"):
-        return model.model
-    if hasattr(model, "predictor"):
-        return model.predictor
-    if hasattr(model, "_model"):
-        return model._model
-    return model
+def _quantize_model_recursive(model: Any, label: str, ipex, torch) -> None:
+    """모델 래퍼 내의 모든 torch.nn.Module을 찾아 최적화한다.
+    - SuryaModel (recognition): torch.quantize_dynamic (Linear INT8)
+    - EfficientViT (detection): OpenVINO INT8 양자화
+    - RTDetrV2 (layout): OpenVINO INT8 양자화
+    """
+    targets = _find_all_nn_modules(model)
+    if not targets:
+        logger.warning(f"[ipex] {label}: torch.nn.Module을 찾지 못함")
+        return
+
+    logger.info(f"[ipex] {label}: {len(targets)}개 모덈 발견")
+    for parent, attr_name, nn_module in targets:
+        sub_label = f"{label}.{attr_name}"
+        try:
+            nn_module.eval()
+            model_type = type(nn_module).__name__
+
+            # SuryaModel (recognition): torch.quantize_dynamic (Linear INT8)
+            if "SuryaModel" in model_type:
+                try:
+                    quantized = torch.quantization.quantize_dynamic(
+                        nn_module, {torch.nn.Linear}, dtype=torch.qint8
+                    )
+                    setattr(parent, attr_name, quantized)
+                    logger.info(f"[ipex] {sub_label} ({model_type}) Linear INT8 동적 양자화 적용")
+                except Exception as qe:
+                    logger.warning(f"[ipex] {sub_label} ({model_type}) 양자화 실패, 원본 유지: {qe}")
+
+            # EfficientViT (detection): torch.quantize_dynamic (Linear INT8)
+            # ov.convert_model과 torch.jit.trace 모두 EfficientViT에서 hang됨
+            elif "EfficientViT" in model_type:
+                try:
+                    quantized = torch.quantization.quantize_dynamic(
+                        nn_module, {torch.nn.Linear}, dtype=torch.qint8
+                    )
+                    setattr(parent, attr_name, quantized)
+                    logger.info(f"[ipex] {sub_label} ({model_type}) Linear INT8 동적 양자화 적용")
+                except Exception as qe:
+                    logger.warning(f"[ipex] {sub_label} ({model_type}) 양자화 실패, 원본 유지: {qe}")
+
+            # RTDetrV2 (layout): OpenVINO NNCF INT8 양자화
+            elif "RTDetr" in model_type:
+                try:
+                    wrapper = _convert_to_openvino(nn_module, model_type, "layout", model)
+                    if wrapper is not None:
+                        setattr(parent, attr_name, wrapper)
+                        logger.info(f"[ov] {sub_label} ({model_type}) OpenVINO NNCF INT8 양자화 적용")
+                except Exception as ove:
+                    logger.warning(f"[ov] {sub_label} ({model_type}) OpenVINO 변환 실패, 원본 유지: {ove}")
+
+            # TableModel04_rs (table structure): torch.quantize_dynamic (Linear INT8)
+            # autoregressive 모델이라 OpenVINO 변환 불가, 모듈 구조 유지 필요
+            elif "TableModel" in model_type:
+                try:
+                    quantized = torch.quantization.quantize_dynamic(
+                        nn_module, {torch.nn.Linear}, dtype=torch.qint8
+                    )
+                    setattr(parent, attr_name, quantized)
+                    logger.info(f"[ipex] {sub_label} ({model_type}) Linear INT8 동적 양자화 적용")
+                except Exception as qe:
+                    logger.warning(f"[ipex] {sub_label} ({model_type}) 양자화 실패, 원본 유지: {qe}")
+
+            else:
+                logger.info(f"[ipex] {sub_label} ({model_type}) 최적화 생략")
+        except Exception as e:
+            logger.warning(f"[ipex] {sub_label} 최적화 실패: {e}")
 
 
-def _assign_torch_module(model: Any, target: Any) -> None:
-    """최적화된 모듈을 원래 래퍼에 다시 할당한다."""
-    if hasattr(model, "model"):
-        model.model = target
-    elif hasattr(model, "predictor"):
-        model.predictor = target
-    elif hasattr(model, "_model"):
-        model._model = target
+_OV_CACHE_DIR = Path("/data/ov_cache")
+
+
+def _convert_to_openvino(
+    nn_module: Any,
+    model_type: str,
+    output_kind: str,
+    parent_wrapper: Any,
+) -> Any:
+    """PyTorch 모델을 OpenVINO INT8로 변환하여 래퍼를 반환한다.
+
+    [Flow: Step 1 (입력 크기 추출) -> Step 2 (Export wrapper 생성) -> Step 3 (캐시 확인) ->
+     Step 4 (OpenVINO 변환 + NNCF 양자화 or 캐시 로드) -> Step 5 (CPU 컴파일) -> Step 6 (래퍼 반환)]
+    """
+    import openvino as ov
+    import torch
+
+    # Step 1: 입력 크기 추출
+    if output_kind == "detection":
+        predictor = getattr(parent_wrapper, "detection_predictor", None)
+        if predictor is None or not hasattr(predictor, "processor"):
+            return None
+        size = predictor.processor.size
+        h, w = size["height"], size["width"]
+    else:
+        predictor = getattr(parent_wrapper, "layout_predictor", None)
+        if predictor is None or not hasattr(predictor, "_image_processor"):
+            return None
+        size = predictor._image_processor.size
+        h, w = size["height"], size["width"]
+
+    # Step 2: Export wrapper 생성 (출력을 tensor tuple로 단순화)
+    if output_kind == "detection":
+        class _DetWrapper(torch.nn.Module):
+            def __init__(self, m):
+                super().__init__()
+                self.m = m
+            def forward(self, pixel_values):
+                return self.m(pixel_values=pixel_values).logits
+        export_wrapper = _DetWrapper(nn_module)
+        example_input = torch.randn(1, 3, h, w)
+        ov_input = {"pixel_values": (1, 3, h, w)}
+    else:
+        class _LayoutWrapper(torch.nn.Module):
+            def __init__(self, m):
+                super().__init__()
+                self.m = m
+            def forward(self, pixel_values, pixel_mask):
+                out = self.m(pixel_values=pixel_values, pixel_mask=pixel_mask)
+                return out.logits, out.pred_boxes
+        export_wrapper = _LayoutWrapper(nn_module)
+        example_input = (torch.randn(1, 3, h, w), torch.ones(1, h, w, dtype=torch.long))
+        ov_input = {"pixel_values": (1, 3, h, w), "pixel_mask": (1, h, w)}
+
+    # Step 3: 캐시 확인
+    _OV_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_key = f"{model_type}_{h}x{w}"
+    xml_path = _OV_CACHE_DIR / f"{cache_key}.xml"
+    bin_path = _OV_CACHE_DIR / f"{cache_key}.bin"
+
+    if xml_path.exists() and bin_path.exists():
+        # Step 4a: 캐시 로드
+        core = ov.Core()
+        ov_model = core.read_model(str(xml_path), str(bin_path))
+        logger.info(f"[ov] {model_type} 캐시에서 로드: {xml_path}")
+    else:
+        # Step 4b: OpenVINO 변환 + NNCF INT8 양자화
+        logger.info(f"[ov] {model_type} 변환 시작 (input={ov_input})...")
+        with torch.inference_mode():
+            if output_kind == "detection":
+                ov_model = ov.convert_model(export_wrapper, input=ov_input)
+            else:
+                traced = torch.jit.trace(export_wrapper, example_input, strict=False)
+                ov_model = ov.convert_model(traced, example_input=example_input)
+        # NNCF INT8 양자화 (Fast Bias Correction)
+        import nncf
+        calib_data = []
+        for _ in range(8):
+            if output_kind == "detection":
+                calib_data.append({"pixel_values": torch.randn(1, 3, h, w)})
+            else:
+                calib_data.append({
+                    "pixel_values": torch.randn(1, 3, h, w),
+                    "pixel_mask": torch.ones(1, h, w, dtype=torch.long),
+                })
+        quantized_dataset = nncf.Dataset(calib_data)
+        ov_model = nncf.quantize(ov_model, quantized_dataset)
+        ov.save_model(ov_model, str(xml_path))
+        logger.info(f"[ov] {model_type} OpenVINO NNCF INT8 양자화 완료, 캐시 저장: {xml_path}")
+
+    # Step 5: CPU 컴파일 (1요청당 2스레드, 총 40스레드 = 20 동시성 허용)
+    core = ov.Core()
+    compiled = core.compile_model(
+        ov_model, "CPU",
+        {"INFERENCE_NUM_THREADS": "2"},
+    )
+
+    # Step 6: 래퍼 반환
+    return _OpenVINOModelWrapper(nn_module, compiled, output_kind)
+
+
+class _OpenVINOModelWrapper:
+    """OpenVINO 컴파일된 모델을 PyTorch 모델 인터페이스로 래핑한다.
+
+    - 원본 모델의 속성(config, dtype, device 등)을 그대로 노출
+    - __call__ 시 OpenVINO 추론 후 torch tensor로 변환하여 반환
+    """
+
+    def __init__(self, original_model: Any, compiled_model: Any, output_kind: str):
+        self._original = original_model
+        self._compiled = compiled_model
+        self._output_kind = output_kind
+
+    @property
+    def config(self):
+        return self._original.config
+
+    @property
+    def dtype(self):
+        import torch
+        return torch.float32
+
+    @property
+    def device(self):
+        import torch
+        return torch.device("cpu")
+
+    def eval(self):
+        pass
+
+    def __call__(self, pixel_values=None, **kwargs):
+        import numpy as np
+        import torch
+
+        # 입력 준비: torch tensor → numpy
+        inputs = {}
+        if pixel_values is not None:
+            if isinstance(pixel_values, torch.Tensor):
+                inputs["pixel_values"] = pixel_values.detach().cpu().numpy()
+            else:
+                inputs["pixel_values"] = np.asarray(pixel_values, dtype=np.float32)
+
+        if "pixel_mask" in kwargs and kwargs["pixel_mask"] is not None:
+            pm = kwargs["pixel_mask"]
+            if isinstance(pm, torch.Tensor):
+                inputs["pixel_mask"] = pm.detach().cpu().numpy()
+            else:
+                inputs["pixel_mask"] = np.asarray(pm, dtype=np.int64)
+
+        # OpenVINO 입력 이름 매핑
+        input_names = [inp.get_any_name() for inp in self._compiled.inputs]
+        if len(input_names) == len(inputs):
+            # 이름이 다를 수 있으므로 순서대로 매핑
+            sorted_keys = list(inputs.keys())
+            ov_inputs = {input_names[i]: inputs[sorted_keys[i]] for i in range(len(input_names))}
+        else:
+            ov_inputs = inputs
+
+        # OpenVINO 추론
+        results = self._compiled(ov_inputs)
+        output_values = list(results.values())
+
+        # 출력을 torch tensor로 변환
+        if self._output_kind == "detection":
+            logits = torch.from_numpy(np.array(output_values[0]))
+            return SimpleNamespace(loss=None, logits=logits, hidden_states=None)
+        else:
+            logits = torch.from_numpy(np.array(output_values[0]))
+            pred_boxes = torch.from_numpy(np.array(output_values[1]))
+            return SimpleNamespace(
+                loss=None, logits=logits, pred_boxes=pred_boxes,
+                hidden_states=None, attentions=None,
+            )
+
+
+def _find_all_nn_modules(obj: Any, _depth: int = 0) -> list[tuple[Any, str, Any]]:
+    """객체 내에서 모든 torch.nn.Module을 (parent, attr_name, module) 튜플로 반환한다."""
+    import torch
+    if _depth > 5:
+        return []
+
+    results = []
+    # 직접 nn.Module인 경우
+    if isinstance(obj, torch.nn.Module):
+        results.append((None, None, obj))
+        return results
+
+    # SuryaOcrModel: recognition_predictor.foundation_predictor.model + detection_predictor.model
+    if hasattr(obj, "recognition_predictor"):
+        rp = obj.recognition_predictor
+        if hasattr(rp, "foundation_predictor"):
+            fp = rp.foundation_predictor
+            if hasattr(fp, "model") and isinstance(fp.model, torch.nn.Module):
+                results.append((fp, "model", fp.model))
+    if hasattr(obj, "detection_predictor"):
+        dp = obj.detection_predictor
+        if hasattr(dp, "model") and isinstance(dp.model, torch.nn.Module):
+            results.append((dp, "model", dp.model))
+
+    # LayoutModel: layout_predictor._model
+    if hasattr(obj, "layout_predictor"):
+        lp = obj.layout_predictor
+        if hasattr(lp, "_model") and isinstance(lp._model, torch.nn.Module):
+            results.append((lp, "_model", lp._model))
+
+    # TableStructureModel: tf_predictor._model (TableModel04_rs)
+    if hasattr(obj, "tf_predictor"):
+        tfp = obj.tf_predictor
+        if hasattr(tfp, "_model") and isinstance(tfp._model, torch.nn.Module):
+            results.append((tfp, "_model", tfp._model))
+
+    # 일반 래퍼: .model, ._model
+    for attr in ("model", "_model"):
+        child = getattr(obj, attr, None)
+        if isinstance(child, torch.nn.Module) and not any(t[2] is child for t in results):
+            results.append((obj, attr, child))
+
+    return results
+
+
 
 
 # 전역 싱글톤 (Docling 모델 로딩 비용이 크므로)

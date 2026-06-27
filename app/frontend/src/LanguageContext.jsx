@@ -46,9 +46,9 @@ export function LanguageProvider({ children }) {
     try {
       await api.updateLanguage({ language: next });
     } catch {
+
       // Ignore network errors for language persistence
-    }
-  };
+    }};
 
   return (
     <LanguageContext.Provider
@@ -56,13 +56,13 @@ export function LanguageProvider({ children }) {
         language,
         setLanguage,
         loading,
-        supportedLanguages: SUPPORTED_LANGUAGES,
+        supportedLanguages: SUPPORTED_LANGUAGES
       }}
-      data-oid="dt6ognq"
-    >
+      data-oid="dt6ognq">
+
       {children}
-    </LanguageContext.Provider>
-  );
+    </LanguageContext.Provider>);
+
 }
 
 export const useLanguage = () => useContext(LanguageContext);

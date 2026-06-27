@@ -28,13 +28,13 @@ export default function AdminLogin() {
   return (
     <div
       className="min-h-screen flex items-center justify-center"
-      data-oid="vcjtn4x"
-    >
+      data-oid="vcjtn4x">
+
       <form
         onSubmit={handleSubmit}
         className="bg-white rounded-xl shadow-sm border p-8 w-full max-w-sm space-y-5"
-        data-oid="ua4-gq-"
-      >
+        data-oid="ua4-gq-">
+
         <div className="text-center" data-oid="7k_y3d_">
           <Lock className="mx-auto text-blue-600 mb-2" data-oid="as4yzch" />
           <h1 className="text-lg font-bold" data-oid="_jreo-v">
@@ -47,8 +47,8 @@ export default function AdminLogin() {
           onChange={(e) => setEmail(e.target.value)}
           placeholder="이메일"
           className="w-full border rounded-lg px-3 py-2"
-          data-oid="wsegj5g"
-        />
+          data-oid="wsegj5g" />
+
 
         <input
           type="password"
@@ -56,27 +56,27 @@ export default function AdminLogin() {
           onChange={(e) => setPassword(e.target.value)}
           placeholder="비밀번호"
           className="w-full border rounded-lg px-3 py-2"
-          data-oid=":kgaarx"
-        />
+          data-oid=":kgaarx" />
 
-        {error && (
-          <p className="text-red-600 text-sm" data-oid="nfc1c58">
+
+        {error &&
+        <p className="text-red-600 text-sm" data-oid="nfc1c58">
             {error}
           </p>
-        )}
+        }
         <button
           type="submit"
           disabled={loading}
           className="w-full bg-blue-600 text-white rounded-lg py-2.5 font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
-          data-oid="t5cjf98"
-        >
-          {loading ? (
-            <Loader2 className="animate-spin" size={18} data-oid="mswupuq" />
-          ) : (
-            "로그인"
-          )}
+          data-oid="t5cjf98">
+
+          {loading ?
+          <Loader2 className="animate-spin" size={18} data-oid="mswupuq" /> :
+
+          "로그인"
+          }
         </button>
       </form>
-    </div>
-  );
+    </div>);
+
 }

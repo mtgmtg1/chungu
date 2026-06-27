@@ -39,22 +39,22 @@ export default function AuthPage() {
   return (
     <div
       className="min-h-screen flex items-center justify-center bg-slate-50"
-      data-oid="yel_p-w"
-    >
+      data-oid="yel_p-w">
+
       <form
         onSubmit={handleSubmit}
         className="bg-white rounded-xl shadow-sm border p-8 w-full max-w-sm space-y-5"
-        data-oid="xpfks5y"
-      >
+        data-oid="xpfks5y">
+
         <div className="text-center" data-oid="d46vz5f">
-          {isSignUp ? (
-            <UserPlus
-              className="mx-auto text-blue-600 mb-2"
-              data-oid="kfkwh8:"
-            />
-          ) : (
-            <LogIn className="mx-auto text-blue-600 mb-2" data-oid="2p:4802" />
-          )}
+          {isSignUp ?
+          <UserPlus
+            className="mx-auto text-blue-600 mb-2"
+            data-oid="kfkwh8:" /> :
+
+
+          <LogIn className="mx-auto text-blue-600 mb-2" data-oid="2p:4802" />
+          }
           <h1 className="text-lg font-bold" data-oid="pr:mnop">
             {isSignUp ? t("page:auth.signupTitle") : t("page:auth.loginTitle")}
           </h1>
@@ -67,8 +67,8 @@ export default function AuthPage() {
           <Mail
             className="absolute left-3 top-2.5 text-slate-400"
             size={18}
-            data-oid="pksi5kx"
-          />
+            data-oid="pksi5kx" />
+
 
           <input
             type="email"
@@ -77,15 +77,15 @@ export default function AuthPage() {
             placeholder={t("page:auth.emailPlaceholder")}
             className="w-full border rounded-lg pl-10 pr-3 py-2"
             required
-            data-oid="li.23zo"
-          />
+            data-oid="li.23zo" />
+
         </div>
         <div className="relative" data-oid="xlxabbb">
           <Lock
             className="absolute left-3 top-2.5 text-slate-400"
             size={18}
-            data-oid="ggti-5r"
-          />
+            data-oid="ggti-5r" />
+
 
           <input
             type="password"
@@ -94,29 +94,29 @@ export default function AuthPage() {
             placeholder={t("page:auth.passwordPlaceholder")}
             className="w-full border rounded-lg pl-10 pr-3 py-2"
             required
-            data-oid="q683z2v"
-          />
+            data-oid="q683z2v" />
+
         </div>
 
-        {error && (
-          <p className="text-red-600 text-sm" data-oid="h7krp8j">
+        {error &&
+        <p className="text-red-600 text-sm" data-oid="h7krp8j">
             {error}
           </p>
-        )}
+        }
 
         <button
           type="submit"
           disabled={loading}
           className="w-full bg-blue-600 text-white rounded-lg py-2.5 font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
-          data-oid="uxs79pg"
-        >
-          {loading ? (
-            <Loader2 className="animate-spin" size={18} data-oid="rxx5uwq" />
-          ) : isSignUp ? (
-            t("page:auth.signupButton")
-          ) : (
-            t("page:auth.loginButton")
-          )}
+          data-oid="uxs79pg">
+
+          {loading ?
+          <Loader2 className="animate-spin" size={18} data-oid="rxx5uwq" /> :
+          isSignUp ?
+          t("page:auth.signupButton") :
+
+          t("page:auth.loginButton")
+          }
         </button>
 
         <div className="text-center text-sm text-slate-500" data-oid="ec952ox">
@@ -125,8 +125,8 @@ export default function AuthPage() {
             type="button"
             onClick={() => setIsSignUp(!isSignUp)}
             className="text-blue-600 hover:underline"
-            data-oid="l3vfmri"
-          >
+            data-oid="l3vfmri">
+
             {isSignUp ? t("page:auth.loginLink") : t("page:auth.signupLink")}
           </button>
         </div>
@@ -135,12 +135,12 @@ export default function AuthPage() {
           <Link
             to="/admin/login"
             className="hover:underline"
-            data-oid="t3kpkfp"
-          >
+            data-oid="t3kpkfp">
+
             {t("page:auth.adminLogin")}
           </Link>
         </p>
       </form>
-    </div>
-  );
+    </div>);
+
 }

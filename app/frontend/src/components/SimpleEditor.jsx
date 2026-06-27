@@ -38,14 +38,14 @@ import {
   Heading1,
   Heading2,
   Heading3,
-  Heading4,
-} from "lucide-react";
+  Heading4 } from
+"lucide-react";
 
 const turndown = new TurndownService({
   headingStyle: "atx",
   codeBlockStyle: "fenced",
   emDelimiter: "_",
-  strongDelimiter: "**",
+  strongDelimiter: "**"
 });
 
 turndown.addRule("table", {
@@ -56,7 +56,7 @@ turndown.addRule("table", {
     const lines = [];
     rows.forEach((row, idx) => {
       const cells = Array.from(row.querySelectorAll("th, td")).map((cell) =>
-        cell.textContent.trim().replace(/\|/g, "\\|"),
+      cell.textContent.trim().replace(/\|/g, "\\|")
       );
       lines.push("| " + cells.join(" | ") + " |");
       if (idx === 0) {
@@ -64,7 +64,7 @@ turndown.addRule("table", {
       }
     });
     return "\n\n" + lines.join("\n") + "\n\n";
-  },
+  }
 });
 
 function ToolbarButton({ onClick, active, disabled, children, title }) {
@@ -75,51 +75,51 @@ function ToolbarButton({ onClick, active, disabled, children, title }) {
       disabled={disabled}
       title={title}
       className={`p-1.5 rounded-md transition-colors ${
-        active
-          ? "bg-primary text-white"
-          : "hover:bg-surface-container-high text-on-surface"
-      } disabled:opacity-40`}
-      data-oid="x3atm-5"
-    >
+      active ?
+      "bg-primary text-white" :
+      "hover:bg-surface-container-high text-on-surface"} disabled:opacity-40`
+      }
+      data-oid="x3atm-5">
+
       {children}
-    </button>
-  );
+    </button>);
+
 }
 
 function ToolbarDivider() {
   return (
-    <div className="w-px h-5 bg-outline-variant mx-1" data-oid="lxjp-4z"></div>
-  );
+    <div className="w-px h-5 bg-outline-variant mx-1" data-oid="lxjp-4z"></div>);
+
 }
 
 const SimpleEditor = forwardRef(function SimpleEditor(
-  { markdown, editable = true },
-  ref,
-) {
+{ markdown, editable = true },
+ref)
+{
   const { t } = useTranslation();
   const [headingOpen, setHeadingOpen] = useState(false);
 
   const editor = useEditor({
     extensions: [
-      StarterKit,
-      Table.configure({ resizable: true }),
-      TableRow,
-      TableHeader,
-      TableCell,
-      Underline,
-      Highlight,
-      TextAlign.configure({ types: ["heading", "paragraph"] }),
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      Link.configure({ openOnClick: false, autolink: true }),
-      Image,
-      Placeholder.configure({
-        placeholder: t("page:components.editorPlaceholder"),
-      }),
-    ],
+    StarterKit,
+    Table.configure({ resizable: true }),
+    TableRow,
+    TableHeader,
+    TableCell,
+    Underline,
+    Highlight,
+    TextAlign.configure({ types: ["heading", "paragraph"] }),
+    TaskList,
+    TaskItem.configure({ nested: true }),
+    Link.configure({ openOnClick: false, autolink: true }),
+    Image,
+    Placeholder.configure({
+      placeholder: t("page:components.editorPlaceholder")
+    })],
+
 
     content: "",
-    editable,
+    editable
   });
 
   useEffect(() => {
@@ -130,9 +130,9 @@ const SimpleEditor = forwardRef(function SimpleEditor(
   useImperativeHandle(
     ref,
     () => ({
-      getMarkdown: () => (editor ? turndown.turndown(editor.getHTML()) : ""),
+      getMarkdown: () => editor ? turndown.turndown(editor.getHTML()) : ""
     }),
-    [editor],
+    [editor]
   );
 
   if (!editor) return null;
@@ -152,20 +152,20 @@ const SimpleEditor = forwardRef(function SimpleEditor(
   };
 
   const addTable = () => {
-    editor
-      .chain()
-      .focus()
-      .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
-      .run();
+    editor.
+    chain().
+    focus().
+    insertTable({ rows: 3, cols: 3, withHeaderRow: true }).
+    run();
   };
 
-  const headingIcon = editor.isActive("heading", { level: 1 })
-    ? Heading1
-    : editor.isActive("heading", { level: 2 })
-      ? Heading2
-      : editor.isActive("heading", { level: 3 })
-        ? Heading3
-        : Heading4;
+  const headingIcon = editor.isActive("heading", { level: 1 }) ?
+  Heading1 :
+  editor.isActive("heading", { level: 2 }) ?
+  Heading2 :
+  editor.isActive("heading", { level: 3 }) ?
+  Heading3 :
+  Heading4;
 
   const HeadingIcon = headingIcon;
 
@@ -173,22 +173,22 @@ const SimpleEditor = forwardRef(function SimpleEditor(
     <div className="flex flex-col h-full bg-white" data-oid="i28xau9">
       <div
         className="flex items-center gap-1 px-3 py-2 border-b border-outline-variant bg-surface flex-wrap"
-        data-oid="44c5xqu"
-      >
+        data-oid="44c5xqu">
+
         <ToolbarButton
           onClick={() => editor.chain().focus().undo().run()}
           disabled={!editor.can().undo()}
           title={t("page:components.undo")}
-          data-oid="3cjvnmo"
-        >
+          data-oid="3cjvnmo">
+
           <Undo size={18} data-oid="x2kv.xh" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().redo().run()}
           disabled={!editor.can().redo()}
           title={t("page:components.redo")}
-          data-oid=":h.0vku"
-        >
+          data-oid=":h.0vku">
+
           <Redo size={18} data-oid=".7dxqt_" />
         </ToolbarButton>
         <ToolbarDivider data-oid="hw-mdtw" />
@@ -198,46 +198,46 @@ const SimpleEditor = forwardRef(function SimpleEditor(
             onClick={() => setHeadingOpen((v) => !v)}
             active={editor.isActive("heading")}
             title={t("page:components.heading")}
-            data-oid="7d992de"
-          >
+            data-oid="7d992de">
+
             <HeadingIcon size={18} data-oid="xuvv95x" />
           </ToolbarButton>
-          {headingOpen && (
-            <div
-              className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-outline-variant p-1 z-50 flex flex-col gap-0.5"
-              data-oid="mylyfxl"
-            >
-              {[1, 2, 3, 4].map((level) => (
-                <button
-                  key={level}
-                  type="button"
-                  onClick={() => {
-                    editor.chain().focus().toggleHeading({ level }).run();
-                    setHeadingOpen(false);
-                  }}
-                  className={`px-3 py-1.5 rounded text-sm text-left hover:bg-surface-container-high ${
-                    editor.isActive("heading", { level })
-                      ? "bg-primary-container/10 text-primary font-bold"
-                      : "text-on-surface"
-                  }`}
-                  data-oid="d-3z5sx"
-                >
+          {headingOpen &&
+          <div
+            className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-outline-variant p-1 z-50 flex flex-col gap-0.5"
+            data-oid="mylyfxl">
+
+              {[1, 2, 3, 4].map((level) =>
+            <button
+              key={level}
+              type="button"
+              onClick={() => {
+                editor.chain().focus().toggleHeading({ level }).run();
+                setHeadingOpen(false);
+              }}
+              className={`px-3 py-1.5 rounded text-sm text-left hover:bg-surface-container-high ${
+              editor.isActive("heading", { level }) ?
+              "bg-primary-container/10 text-primary font-bold" :
+              "text-on-surface"}`
+              }
+              data-oid="d-3z5sx">
+
                   {t("page:components.headingN", { level })}
                 </button>
-              ))}
+            )}
               <button
-                type="button"
-                onClick={() => {
-                  editor.chain().focus().setParagraph().run();
-                  setHeadingOpen(false);
-                }}
-                className="px-3 py-1.5 rounded text-sm text-left hover:bg-surface-container-high text-on-surface"
-                data-oid="aw5:3ha"
-              >
+              type="button"
+              onClick={() => {
+                editor.chain().focus().setParagraph().run();
+                setHeadingOpen(false);
+              }}
+              className="px-3 py-1.5 rounded text-sm text-left hover:bg-surface-container-high text-on-surface"
+              data-oid="aw5:3ha">
+
                 {t("page:components.paragraph")}
               </button>
             </div>
-          )}
+          }
         </div>
         <ToolbarDivider data-oid="pwj6-sh" />
 
@@ -245,40 +245,40 @@ const SimpleEditor = forwardRef(function SimpleEditor(
           onClick={() => editor.chain().focus().toggleBold().run()}
           active={editor.isActive("bold")}
           title={t("page:components.bold")}
-          data-oid=":a6xd9h"
-        >
+          data-oid=":a6xd9h">
+
           <Bold size={18} data-oid="wvk9x-o" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleItalic().run()}
           active={editor.isActive("italic")}
           title={t("page:components.italic")}
-          data-oid="s2zecw5"
-        >
+          data-oid="s2zecw5">
+
           <Italic size={18} data-oid="5rt7qq:" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleUnderline().run()}
           active={editor.isActive("underline")}
           title={t("page:components.underline")}
-          data-oid="td5et.g"
-        >
+          data-oid="td5et.g">
+
           <UnderlineIcon size={18} data-oid="li:m9iu" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleStrike().run()}
           active={editor.isActive("strike")}
           title={t("page:components.strikethrough")}
-          data-oid="zml36x:"
-        >
+          data-oid="zml36x:">
+
           <Strikethrough size={18} data-oid="m:wguu2" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleHighlight().run()}
           active={editor.isActive("highlight")}
           title={t("page:components.highlight")}
-          data-oid="jeojw-m"
-        >
+          data-oid="jeojw-m">
+
           <Highlighter size={18} data-oid="4up0fme" />
         </ToolbarButton>
         <ToolbarDivider data-oid="dk-tgwp" />
@@ -287,32 +287,32 @@ const SimpleEditor = forwardRef(function SimpleEditor(
           onClick={() => editor.chain().focus().setTextAlign("left").run()}
           active={editor.isActive({ textAlign: "left" })}
           title={t("page:components.alignLeft")}
-          data-oid="toi.nlh"
-        >
+          data-oid="toi.nlh">
+
           <AlignLeft size={18} data-oid="a57ewqz" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().setTextAlign("center").run()}
           active={editor.isActive({ textAlign: "center" })}
           title={t("page:components.alignCenter")}
-          data-oid="u3:3bw3"
-        >
+          data-oid="u3:3bw3">
+
           <AlignCenter size={18} data-oid="4oqegh5" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().setTextAlign("right").run()}
           active={editor.isActive({ textAlign: "right" })}
           title={t("page:components.alignRight")}
-          data-oid="toiant1"
-        >
+          data-oid="toiant1">
+
           <AlignRight size={18} data-oid="b13nn9a" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().setTextAlign("justify").run()}
           active={editor.isActive({ textAlign: "justify" })}
           title={t("page:components.alignJustify")}
-          data-oid="xzayz42"
-        >
+          data-oid="xzayz42">
+
           <AlignJustify size={18} data-oid="k-6k0sh" />
         </ToolbarButton>
         <ToolbarDivider data-oid="0g.d7w_" />
@@ -321,24 +321,24 @@ const SimpleEditor = forwardRef(function SimpleEditor(
           onClick={() => editor.chain().focus().toggleBulletList().run()}
           active={editor.isActive("bulletList")}
           title={t("page:components.bulletList")}
-          data-oid="v0d3mu8"
-        >
+          data-oid="v0d3mu8">
+
           <List size={18} data-oid="6xwxur4" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleOrderedList().run()}
           active={editor.isActive("orderedList")}
           title={t("page:components.orderedList")}
-          data-oid="h76nzt:"
-        >
+          data-oid="h76nzt:">
+
           <ListOrdered size={18} data-oid="y0pjv15" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleTaskList().run()}
           active={editor.isActive("taskList")}
           title={t("page:components.taskList")}
-          data-oid="_dh0ip4"
-        >
+          data-oid="_dh0ip4">
+
           <ListTodo size={18} data-oid="ut6hju7" />
         </ToolbarButton>
         <ToolbarDivider data-oid="k3gd.63" />
@@ -347,38 +347,38 @@ const SimpleEditor = forwardRef(function SimpleEditor(
           onClick={toggleLink}
           active={editor.isActive("link")}
           title={t("page:components.link")}
-          data-oid="ls_yew0"
-        >
+          data-oid="ls_yew0">
+
           <LinkIcon size={18} data-oid="3oixvfi" />
         </ToolbarButton>
         <ToolbarButton
           onClick={addImage}
           title={t("page:components.image")}
-          data-oid="8z-1uw0"
-        >
+          data-oid="8z-1uw0">
+
           <ImageIcon size={18} data-oid="dgmdr-8" />
         </ToolbarButton>
         <ToolbarButton
           onClick={addTable}
           active={editor.isActive("table")}
           title={t("page:components.table")}
-          data-oid="5ow0_b6"
-        >
+          data-oid="5ow0_b6">
+
           <TableIcon size={18} data-oid="k-unaiu" />
         </ToolbarButton>
       </div>
       <div
         className="flex-1 overflow-y-auto p-6 custom-scrollbar"
-        data-oid="qjrci2n"
-      >
+        data-oid="qjrci2n">
+
         <EditorContent
           editor={editor}
           className="prose max-w-none focus:outline-none"
-          data-oid="adafms."
-        />
+          data-oid="adafms." />
+
       </div>
-    </div>
-  );
+    </div>);
+
 });
 
 export default SimpleEditor;

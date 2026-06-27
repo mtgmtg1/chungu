@@ -7,8 +7,8 @@ import {
   CreditCard,
   ArrowLeft,
   Loader2,
-  CheckCircle2,
-} from "lucide-react";
+  CheckCircle2 } from
+"lucide-react";
 import { api } from "../api.js";
 import { useAuth } from "../AuthContext.jsx";
 
@@ -54,14 +54,14 @@ export default function PaymentPage() {
           orderName: t("page:payment.orderName", { points: pkg.points }),
           customerEmail: profile?.email || "",
           successUrl: `${window.location.origin}/payment?toss=success&orderId=${order.order_id}`,
-          failUrl: `${window.location.origin}/payment?toss=fail&orderId=${order.order_id}`,
+          failUrl: `${window.location.origin}/payment?toss=fail&orderId=${order.order_id}`
         });
       } else {
         // SDK가 없으면 백엔드 검증만 수동 시뮬레이션 (개발/테스트용)
         await api.verifyToss({
           paymentKey: "test-" + order.order_id,
           orderId: order.order_id,
-          amount: order.amount,
+          amount: order.amount
         });
         setSuccess(true);
         await load();
@@ -88,97 +88,97 @@ export default function PaymentPage() {
 
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <p>{t("page:payment.loginRequired")}</p>
+      <div className="min-h-screen flex items-center justify-center" data-oid="mjx7mna">
+        <div className="text-center" data-oid="t.p7jw0">
+          <p data-oid="sh:71dz">{t("page:payment.loginRequired")}</p>
           <button
             onClick={() => nav("/login")}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg mt-4"
-          >
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg mt-4" data-oid="f7tjrz_">
+
             {t("page:payment.login")}
           </button>
         </div>
-      </div>
-    );
+      </div>);
+
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="border-b bg-white">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+    <div className="min-h-screen bg-slate-50" data-oid="ti5b7jd">
+      <header className="border-b bg-white" data-oid="u5:vv96">
+        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between" data-oid="1c44p8h">
+          <div className="flex items-center gap-2" data-oid="wunuvs3">
             <Link
               to="/dashboard"
-              className="text-slate-500 hover:text-slate-800"
-            >
-              <ArrowLeft size={20} />
+              className="text-slate-500 hover:text-slate-800" data-oid="q2-gs61">
+
+              <ArrowLeft size={20} data-oid="84tplgv" />
             </Link>
-            <h1 className="text-xl font-bold">{t("page:payment.title")}</h1>
+            <h1 className="text-xl font-bold" data-oid="vx2ugc2">{t("page:payment.title")}</h1>
           </div>
-          <div className="flex items-center gap-2 text-sm">
-            <Coins size={18} className="text-yellow-500" />
-            <span>
+          <div className="flex items-center gap-2 text-sm" data-oid="o1fv93u">
+            <Coins size={18} className="text-yellow-500" data-oid="5qemmsy" />
+            <span data-oid="xkf9k4_">
               {t("page:payment.balance", {
-                points: profile?.points_balance ?? "-",
+                points: profile?.points_balance ?? "-"
               })}
             </span>
           </div>
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-6 py-8">
-        {success && (
-          <div className="bg-green-50 text-green-700 rounded-lg p-4 mb-6 flex items-center gap-2">
-            <CheckCircle2 size={20} /> {t("page:payment.rechargeComplete")}
+      <main className="max-w-5xl mx-auto px-6 py-8" data-oid="re0ndhu">
+        {success &&
+        <div className="bg-green-50 text-green-700 rounded-lg p-4 mb-6 flex items-center gap-2" data-oid="uky.q5p">
+            <CheckCircle2 size={20} data-oid="9pf.6q0" /> {t("page:payment.rechargeComplete")}
           </div>
-        )}
-        {error && <p className="text-red-600 text-sm mb-6">{error}</p>}
+        }
+        {error && <p className="text-red-600 text-sm mb-6" data-oid="kqiknzg">{error}</p>}
 
-        {loading ? (
-          <div className="text-center py-12">
-            <Loader2 className="animate-spin mx-auto" />
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {packages.map((pkg) => (
-              <div
-                key={pkg.name}
-                className="bg-white rounded-xl border p-6 flex flex-col"
-              >
-                <h2 className="text-lg font-bold mb-1">{pkg.name}</h2>
-                <p className="text-3xl font-bold text-blue-600 mb-4">
+        {loading ?
+        <div className="text-center py-12" data-oid="_puqmv1">
+            <Loader2 className="animate-spin mx-auto" data-oid="vj-pv36" />
+          </div> :
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6" data-oid="8m4cd1y">
+            {packages.map((pkg) =>
+          <div
+            key={pkg.name}
+            className="bg-white rounded-xl border p-6 flex flex-col" data-oid="7h4o0ni">
+
+                <h2 className="text-lg font-bold mb-1" data-oid="t9ga6p.">{pkg.name}</h2>
+                <p className="text-3xl font-bold text-blue-600 mb-4" data-oid="0ghf_1q">
                   {pkg.points.toLocaleString()} P
                 </p>
-                <p className="text-sm text-slate-500 mb-6">
+                <p className="text-sm text-slate-500 mb-6" data-oid="l9sdgtu">
                   ₩{pkg.krw.toLocaleString()} / ${pkg.usd}
                 </p>
-                <div className="mt-auto space-y-2">
+                <div className="mt-auto space-y-2" data-oid="qozi_ph">
                   <button
-                    onClick={() => payWithToss(pkg)}
-                    disabled={paying}
-                    className="w-full bg-blue-600 text-white rounded-lg py-2 font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    {paying ? (
-                      <Loader2 className="animate-spin" size={16} />
-                    ) : (
-                      <>
-                        <CreditCard size={16} /> {t("page:payment.cardKrw")}
+                onClick={() => payWithToss(pkg)}
+                disabled={paying}
+                className="w-full bg-blue-600 text-white rounded-lg py-2 font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2" data-oid="s22k1.l">
+
+                    {paying ?
+                <Loader2 className="animate-spin" size={16} data-oid="6teove6" /> :
+
+                <>
+                        <CreditCard size={16} data-oid="ta8u39y" /> {t("page:payment.cardKrw")}
                       </>
-                    )}
+                }
                   </button>
                   <button
-                    onClick={() => payWithPaddle(pkg)}
-                    disabled={paying}
-                    className="w-full bg-slate-800 text-white rounded-lg py-2 font-medium hover:bg-slate-900 disabled:opacity-50"
-                  >
+                onClick={() => payWithPaddle(pkg)}
+                disabled={paying}
+                className="w-full bg-slate-800 text-white rounded-lg py-2 font-medium hover:bg-slate-900 disabled:opacity-50" data-oid=".oou1a9">
+
                     {t("page:payment.paypalUsd")}
                   </button>
                 </div>
               </div>
-            ))}
+          )}
           </div>
-        )}
+        }
       </main>
-    </div>
-  );
+    </div>);
+
 }

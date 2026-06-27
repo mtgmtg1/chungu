@@ -23,7 +23,7 @@ export function AuthProvider({ children }) {
       (_event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
-      },
+      }
     );
 
     return () => listener.subscription.unsubscribe();
@@ -31,29 +31,29 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     if (!session?.access_token) return;
-    api
-      .me()
-      .then((profile) => {
-        if (profile?.language) {
-          setLanguage(profile.language);
-        }
-      })
-      .catch(() => {});
+    api.
+    me().
+    then((profile) => {
+      if (profile?.language) {
+        setLanguage(profile.language);
+      }
+    }).
+    catch(() => {});
   }, [session, setLanguage]);
 
   const signIn = (email, password) =>
-    supabase.auth.signInWithPassword({ email, password });
+  supabase.auth.signInWithPassword({ email, password });
   const signUp = (email, password) => supabase.auth.signUp({ email, password });
   const signOut = () => supabase.auth.signOut();
 
   return (
     <AuthContext.Provider
       value={{ user, session, loading, signIn, signUp, signOut }}
-      data-oid="-hsew:k"
-    >
+      data-oid="-hsew:k">
+
       {children}
-    </AuthContext.Provider>
-  );
+    </AuthContext.Provider>);
+
 }
 
 export const useAuth = () => useContext(AuthContext);

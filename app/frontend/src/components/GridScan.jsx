@@ -4,8 +4,8 @@ import {
   ChromaticAberrationEffect,
   EffectComposer,
   EffectPass,
-  RenderPass,
-} from "postprocessing";
+  RenderPass } from
+"postprocessing";
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import "./GridScan.css";
@@ -305,7 +305,7 @@ export default function GridScan({
   scanOnClick = false,
   snapBackDelay = 250,
   className,
-  style,
+  style
 }) {
   const containerRef = useRef(null);
   const videoRef = useRef(null);
@@ -374,19 +374,19 @@ export default function GridScan({
         leaveTimer = null;
       }
       const rect = el.getBoundingClientRect();
-      const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      const ny = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+      const nx = (e.clientX - rect.left) / rect.width * 2 - 1;
+      const ny = -((e.clientY - rect.top) / rect.height * 2 - 1);
       lookTarget.current.set(nx, ny);
     };
     const onClick = async () => {
       const nowSec = performance.now() / 1000;
       if (scanOnClick) pushScan(nowSec);
       if (
-        enableGyro &&
-        typeof window !== "undefined" &&
-        window.DeviceOrientationEvent &&
-        DeviceOrientationEvent.requestPermission
-      ) {
+      enableGyro &&
+      typeof window !== "undefined" &&
+      window.DeviceOrientationEvent &&
+      DeviceOrientationEvent.requestPermission)
+      {
         try {
           await DeviceOrientationEvent.requestPermission();
         } catch {}
@@ -407,7 +407,7 @@ export default function GridScan({
           tiltTarget.current = 0;
           yawTarget.current = 0;
         },
-        Math.max(0, snapBackDelay || 0),
+        Math.max(0, snapBackDelay || 0)
       );
     };
     el.addEventListener("mousemove", onMove);
@@ -442,8 +442,8 @@ export default function GridScan({
         value: new THREE.Vector3(
           container.clientWidth,
           container.clientHeight,
-          renderer.getPixelRatio(),
-        ),
+          renderer.getPixelRatio()
+        )
       },
       iTime: { value: 0 },
       uSkew: { value: new THREE.Vector2(0, 0) },
@@ -454,7 +454,7 @@ export default function GridScan({
       uScanColor: { value: srgbColor(scanColor) },
       uGridScale: { value: gridScale },
       uLineStyle: {
-        value: lineStyle === "dashed" ? 1 : lineStyle === "dotted" ? 2 : 0,
+        value: lineStyle === "dashed" ? 1 : lineStyle === "dotted" ? 2 : 0
       },
       uLineJitter: { value: Math.max(0, Math.min(1, lineJitter || 0)) },
       uScanOpacity: { value: scanOpacity },
@@ -467,14 +467,14 @@ export default function GridScan({
       uScanDelay: { value: scanDelay },
       uScanDirection: {
         value:
-          scanDirection === "backward"
-            ? 1
-            : scanDirection === "pingpong"
-              ? 2
-              : 0,
+        scanDirection === "backward" ?
+        1 :
+        scanDirection === "pingpong" ?
+        2 :
+        0
       },
       uScanStarts: { value: new Array(MAX_SCANS).fill(0) },
-      uScanCount: { value: 0 },
+      uScanCount: { value: 0 }
     };
 
     const material = new THREE.ShaderMaterial({
@@ -483,7 +483,7 @@ export default function GridScan({
       fragmentShader: frag,
       transparent: true,
       depthWrite: false,
-      depthTest: false,
+      depthTest: false
     });
     materialRef.current = material;
 
@@ -502,7 +502,7 @@ export default function GridScan({
       const bloom = new BloomEffect({
         intensity: 1.0,
         luminanceThreshold: bloomThreshold,
-        luminanceSmoothing: bloomSmoothing,
+        luminanceSmoothing: bloomSmoothing
       });
       bloom.blendMode.opacity.value = Math.max(0, bloomIntensity);
       bloomRef.current = bloom;
@@ -510,7 +510,7 @@ export default function GridScan({
       const chroma = new ChromaticAberrationEffect({
         offset: new THREE.Vector2(chromaticAberration, chromaticAberration),
         radialModulation: true,
-        modulationOffset: 0.0,
+        modulationOffset: 0.0
       });
       chromaRef.current = chroma;
 
@@ -524,13 +524,13 @@ export default function GridScan({
       material.uniforms.iResolution.value.set(
         container.clientWidth,
         container.clientHeight,
-        renderer.getPixelRatio(),
+        renderer.getPixelRatio()
       );
       if (composerRef.current)
-        composerRef.current.setSize(
-          container.clientWidth,
-          container.clientHeight,
-        );
+      composerRef.current.setSize(
+        container.clientWidth,
+        container.clientHeight
+      );
     };
     window.addEventListener("resize", onResize);
 
@@ -547,8 +547,8 @@ export default function GridScan({
           lookVel.current,
           smoothTime,
           maxSpeed,
-          dt,
-        ),
+          dt
+        )
       );
 
       const tiltSm = smoothDampFloat(
@@ -557,7 +557,7 @@ export default function GridScan({
         { v: tiltVel.current },
         smoothTime,
         maxSpeed,
-        dt,
+        dt
       );
       tiltCurrent.current = tiltSm.value;
       tiltVel.current = tiltSm.v;
@@ -568,21 +568,21 @@ export default function GridScan({
         { v: yawVel.current },
         smoothTime,
         maxSpeed,
-        dt,
+        dt
       );
       yawCurrent.current = yawSm.value;
       yawVel.current = yawSm.v;
 
       const skew = new THREE.Vector2(
         lookCurrent.current.x * skewScale,
-        -lookCurrent.current.y * yBoost * skewScale,
+        -lookCurrent.current.y * yBoost * skewScale
       );
       material.uniforms.uSkew.value.set(skew.x, skew.y);
       material.uniforms.uTilt.value = tiltCurrent.current * tiltScale;
       material.uniforms.uYaw.value = THREE.MathUtils.clamp(
         yawCurrent.current * yawScale,
         -0.6,
-        0.6,
+        0.6
       );
 
       material.uniforms.iTime.value = now / 1000;
@@ -610,17 +610,17 @@ export default function GridScan({
       container.removeChild(renderer.domElement);
     };
   }, [
-    sensitivity,
-    lineThickness,
-    linesColor,
-    scanColor,
-    scanOpacity,
-    gridScale,
-    lineStyle,
-    lineJitter,
-    scanDirection,
-    enablePost,
-  ]);
+  sensitivity,
+  lineThickness,
+  linesColor,
+  scanColor,
+  scanOpacity,
+  gridScale,
+  lineStyle,
+  lineJitter,
+  scanDirection,
+  enablePost]
+  );
 
   useEffect(() => {
     const m = materialRef.current;
@@ -631,14 +631,14 @@ export default function GridScan({
     u.uScanColor.value.copy(srgbColor(scanColor));
     u.uGridScale.value = gridScale;
     u.uLineStyle.value =
-      lineStyle === "dashed" ? 1 : lineStyle === "dotted" ? 2 : 0;
+    lineStyle === "dashed" ? 1 : lineStyle === "dotted" ? 2 : 0;
     u.uLineJitter.value = Math.max(0, Math.min(1, lineJitter || 0));
     u.uBloomOpacity.value = Math.max(0, bloomIntensity);
     u.uNoise.value = Math.max(0, noiseIntensity);
     u.uScanGlow.value = scanGlow;
     u.uScanOpacity.value = Math.max(0, Math.min(1, scanOpacity));
     u.uScanDirection.value =
-      scanDirection === "backward" ? 1 : scanDirection === "pingpong" ? 2 : 0;
+    scanDirection === "backward" ? 1 : scanDirection === "pingpong" ? 2 : 0;
     u.uScanSoftness.value = scanSoftness;
     u.uPhaseTaper.value = scanPhaseTaper;
     u.uScanDuration.value = Math.max(0.05, scanDuration);
@@ -655,25 +655,25 @@ export default function GridScan({
       chromaRef.current.offset.set(chromaticAberration, chromaticAberration);
     }
   }, [
-    lineThickness,
-    linesColor,
-    scanColor,
-    gridScale,
-    lineStyle,
-    lineJitter,
-    bloomIntensity,
-    bloomThreshold,
-    bloomSmoothing,
-    chromaticAberration,
-    noiseIntensity,
-    scanGlow,
-    scanOpacity,
-    scanDirection,
-    scanSoftness,
-    scanPhaseTaper,
-    scanDuration,
-    scanDelay,
-  ]);
+  lineThickness,
+  linesColor,
+  scanColor,
+  gridScale,
+  lineStyle,
+  lineJitter,
+  bloomIntensity,
+  bloomThreshold,
+  bloomSmoothing,
+  chromaticAberration,
+  noiseIntensity,
+  scanGlow,
+  scanOpacity,
+  scanDirection,
+  scanSoftness,
+  scanPhaseTaper,
+  scanDuration,
+  scanDelay]
+  );
 
   useEffect(() => {
     if (!enableGyro) return;
@@ -699,9 +699,9 @@ export default function GridScan({
       try {
         const faceapi = await loadFaceApi();
         await Promise.all([
-          faceapi.nets.tinyFaceDetector.loadFromUri(modelsPath),
-          faceapi.nets.faceLandmark68TinyNet.loadFromUri(modelsPath),
-        ]);
+        faceapi.nets.tinyFaceDetector.loadFromUri(modelsPath),
+        faceapi.nets.faceLandmark68TinyNet.loadFromUri(modelsPath)]
+        );
         if (!canceled) setModelsReady(true);
       } catch {
         if (!canceled) setModelsReady(false);
@@ -728,9 +728,9 @@ export default function GridScan({
           video: {
             facingMode: "user",
             width: { ideal: 1280 },
-            height: { ideal: 720 },
+            height: { ideal: 720 }
           },
-          audio: false,
+          audio: false
         });
         video.srcObject = stream;
         await video.play();
@@ -741,7 +741,7 @@ export default function GridScan({
       const faceapi = await loadFaceApi();
       const opts = new faceapi.TinyFaceDetectorOptions({
         inputSize: 320,
-        scoreThreshold: 0.5,
+        scoreThreshold: 0.5
       });
 
       const detect = async (ts) => {
@@ -750,9 +750,9 @@ export default function GridScan({
         if (ts - lastDetect >= 33) {
           lastDetect = ts;
           try {
-            const res = await faceapi
-              .detectSingleFace(video, opts)
-              .withFaceLandmarks(true);
+            const res = await faceapi.
+            detectSingleFace(video, opts).
+            withFaceLandmarks(true);
             if (res && res.detection) {
               const det = res.detection;
               const box = det.box;
@@ -761,8 +761,8 @@ export default function GridScan({
 
               const cx = box.x + box.width * 0.5;
               const cy = box.y + box.height * 0.5;
-              const nx = (cx / vw) * 2 - 1;
-              const ny = (cy / vh) * 2 - 1;
+              const nx = cx / vw * 2 - 1;
+              const ny = cy / vh * 2 - 1;
               medianPush(bufX.current, nx, 5);
               medianPush(bufY.current, ny, 5);
               const nxm = median(bufX.current);
@@ -772,7 +772,7 @@ export default function GridScan({
 
               const faceSize = Math.min(
                 1,
-                Math.hypot(box.width / vw, box.height / vh),
+                Math.hypot(box.width / vw, box.height / vh)
               );
               const depthScale = 1 + depthResponse * (faceSize - 0.25);
               lookTarget.current.copy(look.multiplyScalar(depthScale));
@@ -787,7 +787,7 @@ export default function GridScan({
 
               const nose = res.landmarks.getNose();
               const tip =
-                nose[nose.length - 1] || nose[Math.floor(nose.length / 2)];
+              nose[nose.length - 1] || nose[Math.floor(nose.length / 2)];
               const jaw = res.landmarks.getJawOutline();
               const leftCheek = jaw[3] || jaw[2];
               const rightCheek = jaw[13] || jaw[14];
@@ -797,7 +797,7 @@ export default function GridScan({
               let yawSignal = THREE.MathUtils.clamp(
                 (dR - dL) / (eyeDist * 1.6),
                 -1,
-                1,
+                1
               );
               yawSignal = Math.tanh(yawSignal);
               medianPush(bufYaw.current, yawSignal, 5);
@@ -841,32 +841,32 @@ export default function GridScan({
       ref={containerRef}
       className={`gridscan${className ? ` ${className}` : ""}`}
       style={style}
-      data-oid="z8-furf"
-    >
-      {showPreview && (
-        <div className="gridscan__preview" data-oid="n3:0_1:">
+      data-oid="z8-furf">
+
+      {showPreview &&
+      <div className="gridscan__preview" data-oid="n3:0_1:">
           <video
-            ref={videoRef}
-            muted
-            playsInline
-            autoPlay
-            className="gridscan__video"
-            data-oid="ifj86pj"
-          />
+          ref={videoRef}
+          muted
+          playsInline
+          autoPlay
+          className="gridscan__video"
+          data-oid="ifj86pj" />
+
 
           <div className="gridscan__badge" data-oid="cr69kif">
-            {enableWebcam
-              ? modelsReady
-                ? uiFaceActive
-                  ? "Face: tracking"
-                  : "Face: searching"
-                : "Loading models"
-              : "Webcam disabled"}
+            {enableWebcam ?
+          modelsReady ?
+          uiFaceActive ?
+          "Face: tracking" :
+          "Face: searching" :
+          "Loading models" :
+          "Webcam disabled"}
           </div>
         </div>
-      )}
-    </div>
-  );
+      }
+    </div>);
+
 }
 
 function srgbColor(hex) {
@@ -875,13 +875,13 @@ function srgbColor(hex) {
 }
 
 function smoothDampVec2(
-  current,
-  target,
-  currentVelocity,
-  smoothTime,
-  maxSpeed,
-  deltaTime,
-) {
+current,
+target,
+currentVelocity,
+smoothTime,
+maxSpeed,
+deltaTime)
+{
   const out = current.clone();
   smoothTime = Math.max(0.0001, smoothTime);
   const omega = 2 / smoothTime;
@@ -895,10 +895,10 @@ function smoothDampVec2(
   if (change.length() > maxChange) change.setLength(maxChange);
 
   target = current.clone().sub(change);
-  const temp = currentVelocity
-    .clone()
-    .addScaledVector(change, omega)
-    .multiplyScalar(deltaTime);
+  const temp = currentVelocity.
+  clone().
+  addScaledVector(change, omega).
+  multiplyScalar(deltaTime);
   currentVelocity.sub(temp.clone().multiplyScalar(omega));
   currentVelocity.multiplyScalar(exp);
 
@@ -914,13 +914,13 @@ function smoothDampVec2(
 }
 
 function smoothDampFloat(
-  current,
-  target,
-  velRef,
-  smoothTime,
-  maxSpeed,
-  deltaTime,
-) {
+current,
+target,
+velRef,
+smoothTime,
+maxSpeed,
+deltaTime)
+{
   smoothTime = Math.max(0.0001, smoothTime);
   const omega = 2 / smoothTime;
   const x = omega * deltaTime;

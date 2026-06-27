@@ -10,14 +10,14 @@ import {
   ListChecks,
   LogOut,
   KeyRound,
-  CreditCard,
-} from "lucide-react";
+  CreditCard } from
+"lucide-react";
 import { api } from "../api.js";
 
 const STATUS_BADGE = {
   done: "bg-green-100 text-green-700",
   error: "bg-red-100 text-red-700",
-  queued: "bg-slate-100 text-slate-600",
+  queued: "bg-slate-100 text-slate-600"
 };
 
 export default function AdminDashboard() {
@@ -32,9 +32,9 @@ export default function AdminDashboard() {
       try {
         await api.adminMe();
         const [s, j] = await Promise.all([
-          api.getSettings(),
-          api.adminListJobs(),
-        ]);
+        api.getSettings(),
+        api.adminListJobs()]
+        );
         setSettings(s);
         setJobs(j);
       } catch (e) {
@@ -104,35 +104,35 @@ export default function AdminDashboard() {
     return (
       <div
         className="min-h-screen flex items-center justify-center"
-        data-oid="pfa992z"
-      >
+        data-oid="pfa992z">
+
         <Loader2 className="animate-spin text-blue-600" data-oid="ou2jlx9" />
-      </div>
-    );
+      </div>);
+
   }
 
-  const field = (key, label, type = "text") => (
-    <div data-oid="xkd_chd">
+  const field = (key, label, type = "text") =>
+  <div data-oid="xkd_chd">
       <label className="block text-sm font-medium mb-1" data-oid="fie3mrm">
         {label}
       </label>
       <input
-        type={type}
-        value={settings[key] ?? ""}
-        onChange={(e) => update(key, e.target.value)}
-        className="w-full border rounded-lg px-3 py-2 text-sm"
-        data-oid="whfqxce"
-      />
-    </div>
-  );
+      type={type}
+      value={settings[key] ?? ""}
+      onChange={(e) => update(key, e.target.value)}
+      className="w-full border rounded-lg px-3 py-2 text-sm"
+      data-oid="whfqxce" />
+
+    </div>;
+
 
   return (
     <div className="min-h-screen" data-oid="jbskpmx">
       <header className="border-b bg-white" data-oid="pnmg02e">
         <div
           className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between"
-          data-oid="q7f.es."
-        >
+          data-oid="q7f.es.">
+
           <h1 className="text-xl font-bold" data-oid="fgxpadk">
             관리자 대시보드
           </h1>
@@ -140,15 +140,15 @@ export default function AdminDashboard() {
             <button
               onClick={changePw}
               className="text-sm text-slate-500 hover:text-slate-800 flex items-center gap-1"
-              data-oid="fnblwgt"
-            >
+              data-oid="fnblwgt">
+
               <KeyRound size={16} data-oid="jtp957p" /> 비밀번호
             </button>
             <button
               onClick={logout}
               className="text-sm text-slate-500 hover:text-slate-800 flex items-center gap-1"
-              data-oid="5:-u_68"
-            >
+              data-oid="5:-u_68">
+
               <LogOut size={16} data-oid="4h5:ami" /> 로그아웃
             </button>
           </div>
@@ -157,25 +157,25 @@ export default function AdminDashboard() {
 
       <main
         className="max-w-5xl mx-auto px-6 py-8 space-y-8"
-        data-oid="gzx:lhq"
-      >
-        {msg && (
-          <div
-            className="bg-blue-50 text-blue-700 text-sm px-4 py-2 rounded-lg"
-            data-oid="r8n-c_6"
-          >
+        data-oid="gzx:lhq">
+
+        {msg &&
+        <div
+          className="bg-blue-50 text-blue-700 text-sm px-4 py-2 rounded-lg"
+          data-oid="r8n-c_6">
+
             {msg}
           </div>
-        )}
+        }
 
         <section
           className="bg-white rounded-xl border p-6 space-y-4"
-          data-oid="hie.gpf"
-        >
+          data-oid="hie.gpf">
+
           <h2
             className="font-semibold flex items-center gap-2"
-            data-oid="eu:i2cb"
-          >
+            data-oid="eu:i2cb">
+
             <Cpu size={18} data-oid="ohagzmf" /> LLM 설정 (OpenAI 호환)
           </h2>
           <div className="grid md:grid-cols-2 gap-4" data-oid="_5_8p:7">
@@ -187,20 +187,20 @@ export default function AdminDashboard() {
           <button
             onClick={testLlm}
             className="text-sm border rounded-lg px-3 py-1.5 hover:bg-slate-50"
-            data-oid="tcsxd5e"
-          >
+            data-oid="tcsxd5e">
+
             LLM 연결 테스트
           </button>
         </section>
 
         <section
           className="bg-white rounded-xl border p-6 space-y-4"
-          data-oid="9jy90j2"
-        >
+          data-oid="9jy90j2">
+
           <h2
             className="font-semibold flex items-center gap-2"
-            data-oid="v5a28:z"
-          >
+            data-oid="v5a28:z">
+
             <Film size={18} data-oid="z9jcltd" /> 미디어 LLM 설정
             (오디오/비디오, OpenAI 호환)
           </h2>
@@ -217,12 +217,12 @@ export default function AdminDashboard() {
 
         <section
           className="bg-white rounded-xl border p-6 space-y-4"
-          data-oid="q570ou4"
-        >
+          data-oid="q570ou4">
+
           <h2
             className="font-semibold flex items-center gap-2"
-            data-oid="dpn4ivz"
-          >
+            data-oid="dpn4ivz">
+
             <Mail size={18} data-oid="famr170" /> SMTP 설정 (자체 메일 서버)
           </h2>
           <div className="grid md:grid-cols-2 gap-4" data-oid="cg9bj28">
@@ -236,16 +236,16 @@ export default function AdminDashboard() {
           <button
             onClick={testSmtp}
             className="text-sm border rounded-lg px-3 py-1.5 hover:bg-slate-50"
-            data-oid="1b8ik2u"
-          >
+            data-oid="1b8ik2u">
+
             테스트 메일 발송
           </button>
         </section>
 
         <section
           className="bg-white rounded-xl border p-6 space-y-4"
-          data-oid="2_0gacw"
-        >
+          data-oid="2_0gacw">
+
           <h2 className="font-semibold" data-oid="eqokfnn">
             작업 제한
           </h2>
@@ -258,12 +258,12 @@ export default function AdminDashboard() {
 
         <section
           className="bg-white rounded-xl border p-6 space-y-4"
-          data-oid="cbt.jh."
-        >
+          data-oid="cbt.jh.">
+
           <h2
             className="font-semibold flex items-center gap-2"
-            data-oid="ssm9zip"
-          >
+            data-oid="ssm9zip">
+
             <CreditCard size={18} data-oid="jyit-0h" /> 포인트/결제 설정
           </h2>
           <div className="grid md:grid-cols-3 gap-4" data-oid=":0k02ba">
@@ -277,8 +277,8 @@ export default function AdminDashboard() {
           <div data-oid="d0f4i_y">
             <label
               className="block text-sm font-medium mb-1"
-              data-oid="rnhqk::"
-            >
+              data-oid="rnhqk::">
+
               포인트 패키지 (JSON)
             </label>
             <textarea
@@ -286,8 +286,8 @@ export default function AdminDashboard() {
               onChange={(e) => update("point_packages", e.target.value)}
               rows={4}
               className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
-              data-oid="lz:zhkj"
-            />
+              data-oid="lz:zhkj" />
+
           </div>
           <div className="grid md:grid-cols-2 gap-4" data-oid="if2bpe5">
             {field("toss_secret_key", "Toss Secret Key", "password")}
@@ -296,7 +296,7 @@ export default function AdminDashboard() {
             {field(
               "paddle_webhook_secret",
               "Paddle Webhook Secret",
-              "password",
+              "password"
             )}
             {field("paddle_vendor_id", "Paddle Vendor ID")}
           </div>
@@ -305,16 +305,16 @@ export default function AdminDashboard() {
         <button
           onClick={save}
           className="bg-blue-600 text-white rounded-lg px-5 py-2.5 font-medium hover:bg-blue-700 flex items-center gap-2"
-          data-oid="_kj.eul"
-        >
+          data-oid="_kj.eul">
+
           <Save size={18} data-oid="4lww7qu" /> 설정 저장
         </button>
 
         <section className="bg-white rounded-xl border p-6" data-oid="a4yy8tg">
           <h2
             className="font-semibold flex items-center gap-2 mb-4"
-            data-oid="s7b0jv5"
-          >
+            data-oid="s7b0jv5">
+
             <ListChecks size={18} data-oid="8zefyi1" /> 최근 작업
           </h2>
           <div className="overflow-x-auto" data-oid="rrtd8-2">
@@ -322,8 +322,8 @@ export default function AdminDashboard() {
               <thead data-oid="_vwt-x-">
                 <tr
                   className="text-left text-slate-500 border-b"
-                  data-oid="l91ul.c"
-                >
+                  data-oid="l91ul.c">
+
                   <th className="py-2" data-oid=".1p3b_-">
                     파일
                   </th>
@@ -336,16 +336,16 @@ export default function AdminDashboard() {
                 </tr>
               </thead>
               <tbody data-oid="uiar1v:">
-                {jobs.map((j) => (
-                  <tr
-                    key={j.job_id}
-                    className="border-b last:border-0"
-                    data-oid="xl2a-1r"
-                  >
+                {jobs.map((j) =>
+                <tr
+                  key={j.job_id}
+                  className="border-b last:border-0"
+                  data-oid="xl2a-1r">
+
                     <td
-                      className="py-2 max-w-[180px] truncate"
-                      data-oid="jf39w5j"
-                    >
+                    className="py-2 max-w-[180px] truncate"
+                    data-oid="jf39w5j">
+
                       {j.filename}
                     </td>
                     <td data-oid="v3:r3ds">{j.file_type}</td>
@@ -353,38 +353,38 @@ export default function AdminDashboard() {
                     <td data-oid="g8bm0op">{j.pipeline}</td>
                     <td data-oid="3_x2m4r">
                       <span
-                        className={`px-2 py-0.5 rounded text-xs ${STATUS_BADGE[j.status] || "bg-amber-100 text-amber-700"}`}
-                        data-oid="tuv3jcm"
-                      >
+                      className={`px-2 py-0.5 rounded text-xs ${STATUS_BADGE[j.status] || "bg-amber-100 text-amber-700"}`}
+                      data-oid="tuv3jcm">
+
                         {j.status}
                       </span>
                     </td>
                     <td data-oid="buw7_27">
-                      {j.total_pages
-                        ? `${j.done_pages}/${j.total_pages}p`
-                        : `${j.done_files}/${j.total_files}f`}
+                      {j.total_pages ?
+                    `${j.done_pages}/${j.total_pages}p` :
+                    `${j.done_files}/${j.total_files}f`}
                     </td>
                     <td className="text-slate-400 text-xs" data-oid="xcqwple">
                       {j.created_at?.slice(0, 16).replace("T", " ")}
                     </td>
                   </tr>
-                ))}
-                {jobs.length === 0 && (
-                  <tr data-oid="ridk95-">
+                )}
+                {jobs.length === 0 &&
+                <tr data-oid="ridk95-">
                     <td
-                      colSpan={7}
-                      className="py-6 text-center text-slate-400"
-                      data-oid="dzn_1qd"
-                    >
+                    colSpan={7}
+                    className="py-6 text-center text-slate-400"
+                    data-oid="dzn_1qd">
+
                       작업이 없습니다
                     </td>
                   </tr>
-                )}
+                }
               </tbody>
             </table>
           </div>
         </section>
       </main>
-    </div>
-  );
+    </div>);
+
 }

@@ -7,10 +7,10 @@ import "./SoftAurora.css";
 function hexToVec3(hex) {
   const h = hex.replace("#", "");
   return [
-    parseInt(h.slice(0, 2), 16) / 255,
-    parseInt(h.slice(2, 4), 16) / 255,
-    parseInt(h.slice(4, 6), 16) / 255,
-  ];
+  parseInt(h.slice(0, 2), 16) / 255,
+  parseInt(h.slice(2, 4), 16) / 255,
+  parseInt(h.slice(4, 6), 16) / 255];
+
 }
 
 const vertexShader = `
@@ -160,7 +160,7 @@ export default function SoftAurora({
   layerOffset = 0,
   colorSpeed = 1.0,
   enableMouseInteraction = true,
-  mouseInfluence = 0.25,
+  mouseInfluence = 0.25
 }) {
   const containerRef = useRef(null);
 
@@ -184,9 +184,9 @@ export default function SoftAurora({
     function handleMouseMove(e) {
       const rect = gl.canvas.getBoundingClientRect();
       targetMouse = [
-        (e.clientX - rect.left) / rect.width,
-        1.0 - (e.clientY - rect.top) / rect.height,
-      ];
+      (e.clientX - rect.left) / rect.width,
+      1.0 - (e.clientY - rect.top) / rect.height];
+
     }
 
     function handleMouseLeave() {
@@ -197,10 +197,10 @@ export default function SoftAurora({
       renderer.setSize(container.offsetWidth, container.offsetHeight);
       if (program) {
         program.uniforms.uResolution.value = [
-          gl.canvas.width,
-          gl.canvas.height,
-          gl.canvas.width / gl.canvas.height,
-        ];
+        gl.canvas.width,
+        gl.canvas.height,
+        gl.canvas.width / gl.canvas.height];
+
       }
     }
     window.addEventListener("resize", resize);
@@ -214,10 +214,10 @@ export default function SoftAurora({
         uTime: { value: 0 },
         uResolution: {
           value: [
-            gl.canvas.width,
-            gl.canvas.height,
-            gl.canvas.width / gl.canvas.height,
-          ],
+          gl.canvas.width,
+          gl.canvas.height,
+          gl.canvas.width / gl.canvas.height]
+
         },
         uSpeed: { value: speed },
         uScale: { value: scale },
@@ -233,8 +233,8 @@ export default function SoftAurora({
         uColorSpeed: { value: colorSpeed },
         uMouse: { value: new Float32Array([0.5, 0.5]) },
         uMouseInfluence: { value: mouseInfluence },
-        uEnableMouse: { value: enableMouseInteraction },
-      },
+        uEnableMouse: { value: enableMouseInteraction }
+      }
     });
 
     const mesh = new Mesh(gl, { geometry, program });
@@ -276,27 +276,27 @@ export default function SoftAurora({
       gl.getExtension("WEBGL_lose_context")?.loseContext();
     };
   }, [
-    speed,
-    scale,
-    brightness,
-    color1,
-    color2,
-    noiseFrequency,
-    noiseAmplitude,
-    bandHeight,
-    bandSpread,
-    octaveDecay,
-    layerOffset,
-    colorSpeed,
-    enableMouseInteraction,
-    mouseInfluence,
-  ]);
+  speed,
+  scale,
+  brightness,
+  color1,
+  color2,
+  noiseFrequency,
+  noiseAmplitude,
+  bandHeight,
+  bandSpread,
+  octaveDecay,
+  layerOffset,
+  colorSpeed,
+  enableMouseInteraction,
+  mouseInfluence]
+  );
 
   return (
     <div
       ref={containerRef}
       className="soft-aurora-container"
-      data-oid="p5l5e0t"
-    />
-  );
+      data-oid="p5l5e0t" />);
+
+
 }

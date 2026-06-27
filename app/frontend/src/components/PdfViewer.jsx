@@ -28,21 +28,21 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
     setLoading(true);
     setError("");
     const task = pdfjs.getDocument(url);
-    task.promise
-      .then((doc) => {
-        if (cancelled) {
-          doc.destroy();
-          return;
-        }
-        pdfRef.current = doc;
-        setNumPages(doc.numPages);
-        setLoading(false);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        setError(t("page:errors.loadFailed"));
-        setLoading(false);
-      });
+    task.promise.
+    then((doc) => {
+      if (cancelled) {
+        doc.destroy();
+        return;
+      }
+      pdfRef.current = doc;
+      setNumPages(doc.numPages);
+      setLoading(false);
+    }).
+    catch((e) => {
+      if (cancelled) return;
+      setError(t("page:errors.loadFailed"));
+      setLoading(false);
+    });
     return () => {
       cancelled = true;
       if (pdfRef.current) {
@@ -92,69 +92,69 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
     return (
       <div
         className="flex-1 flex items-center justify-center text-on-surface-variant text-sm"
-        data-oid="2i1n0p3"
-      >
+        data-oid="2i1n0p3">
+
         {t("page:errors.loadFailed")}
-      </div>
-    );
+      </div>);
+
   }
 
   if (loading) {
     return (
       <div
         className="flex-1 flex items-center justify-center"
-        data-oid="xgjzslo"
-      >
+        data-oid="xgjzslo">
+
         <div
           className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"
-          data-oid=".p0dek:"
-        ></div>
-      </div>
-    );
+          data-oid=".p0dek:">
+        </div>
+      </div>);
+
   }
 
   if (error) {
     return (
       <div
         className="flex-1 flex items-center justify-center text-error text-sm p-4"
-        data-oid="lljk3eb"
-      >
+        data-oid="lljk3eb">
+
         {error}
-      </div>
-    );
+      </div>);
+
   }
 
   return (
     <div
       ref={containerRef}
       className="flex-1 flex flex-col overflow-hidden bg-surface-container-low"
-      data-oid="9_o43iw"
-    >
+      data-oid="9_o43iw">
+
       <div
         className="h-12 border-b border-outline-variant bg-white flex items-center justify-between px-3 flex-shrink-0"
-        data-oid="x:l5d4z"
-      >
+        data-oid="x:l5d4z">
+
         <div className="flex items-center gap-2" data-oid="9e4pi1-">
           <button
             onClick={() => goToPage(currentPage - 1)}
             disabled={currentPage <= 1}
             className="p-1.5 rounded hover:bg-surface-container-high disabled:opacity-40"
-            data-oid="_c2_3zz"
-          >
+            data-oid="_c2_3zz">
+
             <ChevronLeft size={18} data-oid="oyifpg:" />
           </button>
           <span
             className="text-sm text-on-surface min-w-[80px] text-center"
-            data-oid="pnq-k0d"
-          >
+            data-oid="pnq-k0d">
+
             {currentPage} / {numPages}
           </span>
           <button
             onClick={() => goToPage(currentPage + 1)}
             disabled={currentPage >= numPages}
             className="p-1.5 rounded hover:bg-surface-container-high disabled:opacity-40"
-            data-oid="6erhr-t"
-          >
+            data-oid="6erhr-t">
+
             <ChevronRight size={18} data-oid="chclcfd" />
           </button>
         </div>
@@ -162,35 +162,35 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
           <button
             onClick={zoomOut}
             className="p-1.5 rounded hover:bg-surface-container-high"
-            data-oid="8yeef49"
-          >
+            data-oid="8yeef49">
+
             <ZoomOut size={18} data-oid="8l3n4fc" />
           </button>
           <span
             className="text-xs text-on-surface-variant w-12 text-center"
-            data-oid="2e40pod"
-          >
+            data-oid="2e40pod">
+
             {Math.round(scale * 100)}%
           </span>
           <button
             onClick={zoomIn}
             className="p-1.5 rounded hover:bg-surface-container-high"
-            data-oid="_:nbtjd"
-          >
+            data-oid="_:nbtjd">
+
             <ZoomIn size={18} data-oid="zd-kf8d" />
           </button>
         </div>
       </div>
       <div
         className="flex-1 overflow-auto custom-scrollbar p-4 flex justify-center"
-        data-oid="hifx79j"
-      >
+        data-oid="hifx79j">
+
         <canvas
           ref={canvasRef}
           className="shadow-lg rounded border border-outline-variant bg-white"
-          data-oid="trrdy_l"
-        />
+          data-oid="trrdy_l" />
+
       </div>
-    </div>
-  );
+    </div>);
+
 }

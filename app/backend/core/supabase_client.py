@@ -138,6 +138,10 @@ def upload_image(job_id: str, local_path: Path, filename: str) -> str:
 
 
 def get_signed_download_url(storage_path: str, bucket: str = "results", expires_in: int = 3600) -> str:
-    """결과 파일의 서명된 다운로드 URL을 생성합니다."""
+    """결과 파일의 서명된 다운로드 URL을 생성합니다. 외부 노출 URL로 재작성합니다."""
     client = get_service_client()
-    return client.storage.from_(bucket).create_signed_url(storage_path, expires_in).get("signedURL", "")
+    url = client.storage.from_(bucket).create_signed_url(storage_path, expires_in).get("signedURL", "")
+    if url and settings.supabase_public_url:
+        internal = settings.supabase_url.rstrip("/")
+        url = url.replace(internal, settings.supabase_public_url.rstrip("/"))
+    return url

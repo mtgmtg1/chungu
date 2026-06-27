@@ -52,6 +52,11 @@ def run_job(job_id: str) -> dict:
         extracted_info: list[dict] = []
         fmt = ""
 
+        # media LLM 설정 (PDF vision 및 멀티미디어 공통 사용)
+        media_ep = settings_store.get_setting(db, "media_llm_endpoint") or settings.media_llm_endpoint
+        media_mdl = settings_store.get_setting(db, "media_llm_model") or settings.media_llm_model
+        media_key = settings_store.get_setting(db, "media_llm_api_key") or settings.media_llm_api_key
+
         # Step 2: PDF 단일 처리
         if job.file_type == "pdf":
             pdf_path = str(work_dir / "input.pdf")
@@ -84,6 +89,7 @@ def run_job(job_id: str) -> dict:
                 page_tables = run_vision(
                     pdf_path, str(work_dir), columns, endpoint, model, api_key,
                     extra_prompt=job.prompt, dpi=job.dpi,
+                    media_endpoint=media_ep, media_model=media_mdl, media_api_key=media_key,
                     on_progress=on_progress, on_error=on_error,
                 )
                 fmt = "markdown"
@@ -147,6 +153,7 @@ def run_job(job_id: str) -> dict:
                             pdf_tables = run_vision(
                                 str(fp), str(work_dir), columns, endpoint, model, api_key,
                                 extra_prompt=job.prompt, dpi=job.dpi,
+                                media_endpoint=media_ep, media_model=media_mdl, media_api_key=media_key,
                                 on_progress=lambda done, total: None, on_error=lambda page, msg: pdf_errors.append(f"p{page}: {msg}"),
                             )
                         for _, table in pdf_tables:
@@ -173,9 +180,9 @@ def run_job(job_id: str) -> dict:
                     model,
                     api_key,
                     extra_prompt=job.prompt,
-                    media_endpoint=settings_store.get_setting(db, "media_llm_endpoint") or settings.media_llm_endpoint,
-                    media_model=settings_store.get_setting(db, "media_llm_model") or settings.media_llm_model,
-                    media_api_key=settings_store.get_setting(db, "media_llm_api_key") or settings.media_llm_api_key,
+                    media_endpoint=media_ep,
+                    media_model=media_mdl,
+                    media_api_key=media_key,
                     on_progress=on_media_progress,
                     on_error=on_media_error,
                 )

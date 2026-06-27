@@ -215,7 +215,8 @@ def run_media(
     """미디어/이미지 파일 목록을 처리해 [(filename, position, markdown_table)] 반환.
 
     files: [(file_type, file_path)]
-    오디오/비디오는 media_endpoint로, 이미지는 endpoint로 전송한다.
+    오디오/비디오는 media_endpoint로 전송한다.
+    이미지는 endpoint와 media_endpoint에 2:1 비율로 분배한다 (E4B가 기본 서버 절반 부하).
     """
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
@@ -223,8 +224,10 @@ def run_media(
     total = len(files)
     results: list[tuple[str, str, str]] = []
     done = 0
+    image_counter = 0
 
     def _resolve(file_type: str, file_path: Path) -> tuple[str, Path, str, str, str, str, str]:
+        nonlocal image_counter
         filename = file_path.name
         if file_type in ("audio", "video") and media_endpoint and media_model:
             target_endpoint = media_endpoint
@@ -233,6 +236,23 @@ def run_media(
             target_provider = _detect_provider(media_endpoint, media_model)
             target_prompt = extra_prompt
             logger.info(f"[media-routing] {filename} ({file_type}) -> E4B media LLM: {target_endpoint} / {target_model} / provider={target_provider}")
+        elif file_type == "image" and media_endpoint and media_model:
+            image_counter += 1
+            use_media = (image_counter % 3 == 0)
+            if use_media:
+                target_endpoint = media_endpoint
+                target_model = media_model
+                target_api_key = media_api_key
+                target_provider = _detect_provider(media_endpoint, media_model)
+                target_prompt = image_prompt
+                logger.info(f"[media-routing] {filename} ({file_type}) -> E4B media LLM (image share): {target_endpoint} / {target_model} / provider={target_provider}")
+            else:
+                target_endpoint = endpoint
+                target_model = model
+                target_api_key = api_key
+                target_provider = _detect_provider(endpoint, model)
+                target_prompt = image_prompt
+                logger.info(f"[media-routing] {filename} ({file_type}) -> default LLM: {target_endpoint} / {target_model} / provider={target_provider}")
         else:
             target_endpoint = endpoint
             target_model = model

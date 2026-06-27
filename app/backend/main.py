@@ -10,6 +10,7 @@ from sqlalchemy import select, text
 
 from . import settings_store
 from .api import admin, auth, jobs, payments
+from .api.supabase_proxy import router as supabase_proxy_router
 from .api.v1 import router as v1_router
 from .auth.security import hash_password
 from .config import settings
@@ -69,6 +70,7 @@ app.include_router(jobs.router)
 app.include_router(admin.router)
 app.include_router(payments.router)
 app.include_router(auth.router)
+app.include_router(supabase_proxy_router)
 app.include_router(v1_router)
 
 

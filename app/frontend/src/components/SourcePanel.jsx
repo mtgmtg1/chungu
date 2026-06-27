@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FileText, ImageIcon, Volume2, Film } from "lucide-react";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer from "./PdfViewer.jsx";
 import MediaPlayer from "./MediaPlayer.jsx";
 
@@ -87,29 +88,42 @@ export default function SourcePanel({
           <h3 className="font-bold text-sm text-on-surface">{t("page:result.sourceFiles")}</h3>
         </div>
         <div className="flex-1 overflow-hidden flex min-h-0">
-          <div className="w-2/5 border-r border-outline-variant overflow-y-auto custom-scrollbar p-2 space-y-1">
-            {files.map((f, idx) => (
-              <button
-                key={idx}
-                onClick={() => setSelectedIndex(idx)}
-                className={`w-full flex items-center gap-2 text-left p-2 rounded text-xs transition-colors ${
-                  selectedIndex === idx
-                    ? "bg-primary-container/20 text-primary font-bold"
-                    : "text-on-surface hover:bg-surface-container-high"
-                }`}
-              >
-                <SourceIcon type={f.type} />
-                <span className="truncate" title={f.name}>{f.name}</span>
-              </button>
-            ))}
-          </div>
-          <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
-            {selected.type === "pdf" ? (
-              <PdfViewer url={selected.url} page={currentPage} onPageChange={onPageChange} />
-            ) : (
-              <SingleFilePreview file={selected} filename={selected.name} />
-            )}
-          </div>
+          <PanelGroup
+            direction="horizontal"
+            className="flex-1 flex min-h-0"
+          >
+            <Panel
+              defaultSize={35}
+              minSize={20}
+              maxSize={60}
+              className="border-r border-outline-variant overflow-hidden flex flex-col"
+            >
+              <div className="overflow-y-auto custom-scrollbar p-2 space-y-1 h-full">
+                {files.map((f, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => setSelectedIndex(idx)}
+                    className={`w-full flex items-center gap-2 text-left p-2 rounded text-xs transition-colors ${
+                      selectedIndex === idx
+                        ? "bg-primary-container/20 text-primary font-bold"
+                        : "text-on-surface hover:bg-surface-container-high"
+                    }`}
+                  >
+                    <SourceIcon type={f.type} />
+                    <span className="truncate" title={f.name}>{f.name}</span>
+                  </button>
+                ))}
+              </div>
+            </Panel>
+            <PanelResizeHandle className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize" />
+            <Panel className="overflow-hidden min-h-0 flex flex-col">
+              {selected.type === "pdf" ? (
+                <PdfViewer url={selected.url} page={currentPage} onPageChange={onPageChange} />
+              ) : (
+                <SingleFilePreview file={selected} filename={selected.name} />
+              )}
+            </Panel>
+          </PanelGroup>
         </div>
       </div>
     );

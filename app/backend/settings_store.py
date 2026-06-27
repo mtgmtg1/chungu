@@ -38,6 +38,9 @@ SETTING_DEFS: dict[str, tuple[str, bool]] = {
     "media_llm_endpoint": (settings.media_llm_endpoint, False),
     "media_llm_model": (settings.media_llm_model, False),
     "media_llm_api_key": (settings.media_llm_api_key, True),
+    # 스레드 상한
+    "llm_max_workers": (str(settings.llm_max_workers), False),
+    "media_max_workers": (str(settings.media_max_workers), False),
     # API
     "api_key_default_rate_limit_rpm": ("60", False),
     "api_key_default_daily_quota": ("", False),

@@ -7,6 +7,7 @@ from typing import Callable
 
 from . import ocr_client
 from .prompts import build_text_prompt
+from ..config import settings
 
 
 def run_hybrid(
@@ -68,7 +69,7 @@ def run_hybrid(
             block = ",".join(columns) + "\n" + block
         return page_num, block
 
-    with ThreadPoolExecutor(max_workers=llm_workers if llm_workers is not None else total) as executor:
+    with ThreadPoolExecutor(max_workers=llm_workers if llm_workers is not None else min(total, settings.llm_max_workers)) as executor:
         futures = {executor.submit(structure, n): n for n, _ in pages}
         for future in as_completed(futures):
             page_num = futures[future]

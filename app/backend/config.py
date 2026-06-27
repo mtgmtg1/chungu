@@ -42,8 +42,13 @@ class Settings(BaseSettings):
 
     # 제한
     max_file_mb: int = 200
-    max_pages: int = 2000
+    max_pages: int = 10000
     download_expire_days: int = 7
+
+    # 스레드 상한 (대용량 처리 안정화)
+    llm_max_workers: int = 64       # vLLM 동시 요청 상한 (고배치 최적화)
+    media_max_workers: int = 8      # E4B(llama.cpp) 동시 요청 상한 (4슬롯 + 여유)
+    ocr_max_workers: int = 8        # Tesseract 동시 처리 상한
 
     # 경로
     data_dir: str = "/data"

@@ -56,6 +56,8 @@ def run_job(job_id: str) -> dict:
         media_ep = settings_store.get_setting(db, "media_llm_endpoint") or settings.media_llm_endpoint
         media_mdl = settings_store.get_setting(db, "media_llm_model") or settings.media_llm_model
         media_key = settings_store.get_setting(db, "media_llm_api_key") or settings.media_llm_api_key
+        llm_workers = int(settings_store.get_setting(db, "llm_max_workers") or settings.llm_max_workers)
+        media_workers = int(settings_store.get_setting(db, "media_max_workers") or settings.media_max_workers)
 
         # Step 2: PDF 단일 처리
         if job.file_type == "pdf":
@@ -82,6 +84,7 @@ def run_job(job_id: str) -> dict:
                 page_tables = run_hybrid(
                     pdf_path, str(work_dir), columns, endpoint, model, api_key,
                     extra_prompt=job.prompt, dpi=job.dpi,
+                    llm_workers=llm_workers,
                     on_progress=on_progress, on_error=on_error,
                 )
                 fmt = "csv"
@@ -90,6 +93,7 @@ def run_job(job_id: str) -> dict:
                     pdf_path, str(work_dir), columns, endpoint, model, api_key,
                     extra_prompt=job.prompt, dpi=job.dpi,
                     media_endpoint=media_ep, media_model=media_mdl, media_api_key=media_key,
+                    workers=llm_workers,
                     on_progress=on_progress, on_error=on_error,
                 )
                 fmt = "markdown"
@@ -147,6 +151,7 @@ def run_job(job_id: str) -> dict:
                             pdf_tables = run_hybrid(
                                 str(fp), str(work_dir), columns, endpoint, model, api_key,
                                 extra_prompt=job.prompt, dpi=job.dpi,
+                                llm_workers=llm_workers,
                                 on_progress=lambda done, total: None, on_error=lambda page, msg: pdf_errors.append(f"p{page}: {msg}"),
                             )
                         else:
@@ -154,6 +159,7 @@ def run_job(job_id: str) -> dict:
                                 str(fp), str(work_dir), columns, endpoint, model, api_key,
                                 extra_prompt=job.prompt, dpi=job.dpi,
                                 media_endpoint=media_ep, media_model=media_mdl, media_api_key=media_key,
+                                workers=llm_workers,
                                 on_progress=lambda done, total: None, on_error=lambda page, msg: pdf_errors.append(f"p{page}: {msg}"),
                             )
                         for _, table in pdf_tables:
@@ -183,6 +189,7 @@ def run_job(job_id: str) -> dict:
                     media_endpoint=media_ep,
                     media_model=media_mdl,
                     media_api_key=media_key,
+                    workers=llm_workers + media_workers,
                     on_progress=on_media_progress,
                     on_error=on_media_error,
                 )

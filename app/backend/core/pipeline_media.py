@@ -7,6 +7,7 @@ from typing import Callable
 
 from . import media_loader, ocr_client
 from .prompts import build_audio_prompt, build_media_prompt, build_video_prompt
+from ..config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +217,10 @@ def run_media(
 
     files: [(file_type, file_path)]
     오디오/비디오는 media_endpoint로 전송한다.
-    이미지는 endpoint와 media_endpoint에 1:4 비율로 분배한다 (E4B가 4배 빠르므로 80% 처리).
+    이미지는 endpoint와 media_endpoint에 처리량에 따라 동적 분배한다.
+    - ≤20: 1:4 (vLLM:E4B), 소량은 E4B가 4배 빠름
+    - 21~200: 1:1, 균형
+    - >200: 4:1, vLLM 고배치가 압도적
     """
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
@@ -238,7 +242,12 @@ def run_media(
             logger.info(f"[media-routing] {filename} ({file_type}) -> E4B media LLM: {target_endpoint} / {target_model} / provider={target_provider}")
         elif file_type == "image" and media_endpoint and media_model:
             image_counter += 1
-            use_media = (image_counter % 5 != 0)
+            if total <= 20:
+                use_media = (image_counter % 5 != 0)       # 1:4 (E4B 80%)
+            elif total <= 200:
+                use_media = (image_counter % 2 != 0)       # 1:1 (50/50)
+            else:
+                use_media = (image_counter % 5 == 0)       # 4:1 (vLLM 80%)
             if use_media:
                 target_endpoint = media_endpoint
                 target_model = media_model
@@ -279,7 +288,8 @@ def run_media(
             return (filename, "", "")
 
     items = [_resolve(file_type, file_path) for file_type, file_path in files]
-    with ThreadPoolExecutor(max_workers=workers if workers is not None else total) as executor:
+    max_w = workers if workers is not None else min(total, settings.llm_max_workers + settings.media_max_workers)
+    with ThreadPoolExecutor(max_workers=max_w) as executor:
         futures = {executor.submit(_process, item): item[1].name for item in items}
         for future in as_completed(futures):
             filename = futures[future]

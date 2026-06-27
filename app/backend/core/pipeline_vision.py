@@ -7,6 +7,7 @@ from typing import Callable
 
 from . import ocr_client
 from .prompts import build_vision_prompt
+from ..config import settings
 
 
 def _detect_provider(endpoint: str, model: str = "") -> str:
@@ -37,7 +38,10 @@ def run_vision(
 ) -> list[tuple[int, str]]:
     """Vision 파이프라인 실행 -> [(page_num, markdown_table)] 반환.
 
-    media_endpoint가 제공되면 페이지를 1:4 비율로 default:media에 분배한다 (E4B가 4배 빠르므로 80% 처리).
+    media_endpoint가 제공되면 페이지를 처리량에 따라 동적 분배한다.
+    - ≤20: 1:4 (vLLM:E4B), 소량은 E4B가 4배 빠름
+    - 21~200: 1:1, 균형
+    - >200: 4:1, vLLM 고배치가 압도적
     """
     work = Path(work_dir)
     img_dir = work / "img"
@@ -52,7 +56,15 @@ def run_vision(
     done = 0
 
     def resolve_endpoint(idx: int) -> tuple[str, str, str]:
-        if media_endpoint and media_model and (idx % 5 != 0):
+        if not (media_endpoint and media_model):
+            return endpoint, model, api_key
+        if total <= 20:
+            use_media = (idx % 5 != 0)       # 1:4 (E4B 80%)
+        elif total <= 200:
+            use_media = (idx % 2 != 0)       # 1:1 (50/50)
+        else:
+            use_media = (idx % 5 == 0)       # 4:1 (vLLM 80%)
+        if use_media:
             return media_endpoint, media_model, media_api_key
         return endpoint, model, api_key
 
@@ -62,7 +74,7 @@ def run_vision(
         content, _ = ocr_client.call_vision(img, prompt, ep, mdl, key, max_tokens, page_text=page_text)
         return page_num, ocr_client.extract_markdown_content(content)
 
-    with ThreadPoolExecutor(max_workers=workers if workers is not None else total) as executor:
+    with ThreadPoolExecutor(max_workers=workers if workers is not None else min(total, settings.llm_max_workers)) as executor:
         futures = {executor.submit(process, idx, n, p): n for idx, (n, p) in enumerate(pages)}
         for future in as_completed(futures):
             page_num = futures[future]

@@ -87,11 +87,15 @@ npm run start        # dev server at localhost:3000
 ## LLM Routing & Load Balancing
 
 - **Audio/Video**: 100% routed to E4B (llama.cpp, `192.168.1.82:18080`)
-- **Images (media pipeline)**: 1:4 ratio (default:E4B) — E4B handles 80% of images (4x faster)
-- **PDF pages (vision pipeline)**: 1:4 ratio (default:E4B) — E4B handles 80% of pages
+- **Images/PDF pages**: dynamically routed based on total count:
+  - ≤20 items: 1:4 (vLLM:E4B) — E4B 80%, small batches benefit from E4B speed
+  - 21~200 items: 1:1 — balanced
+  - >200 items: 4:1 (vLLM:E4B) — vLLM 80%, high-batch throughput dominates
 - Routing logic in `pipeline_media.py:_resolve()` and `pipeline_vision.py:resolve_endpoint()`
 - E4B has 4 parallel slots (`--parallel 4`), vLLM is optimized for high-batch throughput
-- Celery worker concurrency: 8 (prefork), each job spawns unlimited threads for page/image parallelism
+- Celery worker concurrency: 8 (prefork)
+- Thread limits per job: `llm_max_workers=64` (vLLM), `media_max_workers=8` (E4B), `ocr_max_workers=8` (Tesseract)
+- `max_pages=10000` per file (configurable via settings_store)
 
 ## Supabase Proxy
 

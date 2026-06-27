@@ -30,9 +30,9 @@ class Settings(BaseSettings):
     admin_email: str = "mtgmtg@naver.com"
     admin_initial_password: str = "JDg629714!@"
 
-    # 기본 LLM (이미지/PDF 파싱용 vLLM 프록시)
+    # 기본 LLM (이미지/PDF 파싱용 vLLM 프록시 → 실제 모델은 Gemma-4 26B A4B AWQ)
     default_llm_endpoint: str = "http://192.168.1.69:18080/v1"
-    default_llm_model: str = "cyankiwi/gemma-4-12B-it-qat-AWQ-INT4"
+    default_llm_model: str = "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit"
     default_llm_api_key: str = ""
 
     # 미디어 전용 LLM (오디오/비디오 파싱용 Gemma-4 12B GGUF Q4_K_M on llama.cpp)

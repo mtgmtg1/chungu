@@ -79,7 +79,7 @@ ssh a1 'curl -s http://localhost:28181/api/health'   # {"status":"ok"}
 ## 기본 LLM 설정 (관리자 페이지에서 변경 가능)
 
 - 엔드포인트: `http://192.168.1.69:18080/v1` (프록시 → :18000/:18001 분산)
-- 모델: `cyankiwi/Qwen3.6-27B-AWQ-INT4`
+- 모델: `cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit`
 - API Key: 없음
 
 ## SMTP (이메일 발송)

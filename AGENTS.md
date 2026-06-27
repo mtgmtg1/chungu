@@ -10,7 +10,7 @@ Chungu is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It 
 - **Frontend**: React + Vite + Tailwind CSS + react-i18next (en/ko/ja)
 - **Storage**: Supabase Storage (PDFs, inputs, results)
 - **Database**: PostgreSQL via Supabase (`supabase-chungu-db`)
-- **LLM Inference (Images/PDF)**: vLLM proxy (`192.168.1.69:18080`) — Qwen3.6-27B-AWQ, high-batch optimized
+- **LLM Inference (Images/PDF)**: vLLM proxy (`192.168.1.69:18080`) — Gemma-4 26B A4B AWQ 4bit, high-batch optimized
 - **LLM Inference (Audio/Video/Images)**: llama.cpp (`192.168.1.82:18080`) — Gemma-4 12B GGUF Q4_K_M, 4 parallel slots
 - **Deployment**: Docker Compose on `a1` (local server), exposed via Cloudflare Tunnel at `chungu.teamcat.app`
 

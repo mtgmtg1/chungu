@@ -44,7 +44,7 @@ def main() -> None:
         str(work / "work"),
         columns=["내용"],
         endpoint="http://192.168.1.69:18080/v1",
-        model="cyankiwi/gemma-4-12B-it-qat-AWQ-INT4",
+        model="cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit",
         media_endpoint="http://192.168.1.82:18080/v1",
         media_model="unsloth/gemma-4-12b-it-GGUF",
         max_tokens=200,

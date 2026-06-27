@@ -16,7 +16,7 @@ prompt = build_media_prompt(["항목", "금액"], "")
 print("prompt", prompt[:100])
 
 endpoint = "http://192.168.1.69:18080/v1"
-model = "cyankiwi/gemma-4-12B-it-qat-AWQ-INT4"
+model = "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit"
 try:
     content, reason = ocr_client.call_media(prompt, endpoint, model, image_paths=[path], max_tokens=10000)
     print("content", content[:500])

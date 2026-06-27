@@ -5,7 +5,7 @@
     "dropText": "파일 또는 폴더를 놓으세요",
     "fileTypes": "PDF, 오피스, HWP, 이미지, 오디오, 비디오, 압축 파일",
     "selectFiles": "파일 선택",
-    "doclingRefinement": "Docling 레이아웃 정제 사용 (페이지당 추가 비용)",
+    "doclingRefinement": "Docling 전처리 후 LLM 레이아웃 정제 추가 (페이지당 추가 비용)",
     "selectFolder": "폴더 선택",
     "selectedFiles": "선택된 파일",
     "cancel": "취소",

@@ -5,7 +5,7 @@
     "dropText": "ファイルまたはフォルダをドロップ",
     "fileTypes": "PDF、Office、HWP、画像、音声、動画、圧縮ファイル",
     "selectFiles": "ファイルを選択",
-    "doclingRefinement": "Doclingレイアウト精製を使用（ページごとに追加コスト）",
+    "doclingRefinement": "Docling前処理後にLLMレイアウト精製を追加（ページごとに追加コスト）",
     "selectFolder": "フォルダを選択",
     "selectedFiles": "選択されたファイル",
     "cancel": "キャンセル",

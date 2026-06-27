@@ -110,6 +110,12 @@ def run_job(job_id: str) -> dict:
             filename = Path(job.original_filename).name or "input.pdf"
             tabs[filename] = excel_writer.build_pdf_rows(filename, page_tables, columns)
 
+            job.total_files = 1
+            job.done_files = 1
+            job.total_pages = len(page_tables)
+            job.done_pages = len(page_tables)
+            db.commit()
+
         elif job.file_type in media_loader.HWP_TYPES:
             # Step 2b: 단일 HWP/HWPX 문서 처리 (pyhwp 기반)
             input_ext = Path(job.original_filename).suffix or ".hwp"

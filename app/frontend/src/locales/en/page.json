@@ -5,7 +5,7 @@
     "dropText": "Drop files or folders here",
     "fileTypes": "PDF, Office, HWP, images, audio, video, archive files",
     "selectFiles": "Select Files",
-    "doclingRefinement": "Use Docling layout refinement (costs extra per page)",
+    "doclingRefinement": "Add LLM layout refinement after Docling preprocessing (extra cost per page)",
     "selectFolder": "Select Folder",
     "selectedFiles": "Selected files",
     "cancel": "Cancel",

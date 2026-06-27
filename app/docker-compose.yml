@@ -38,6 +38,8 @@ services:
         VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
     command: celery -A backend.celery_app.celery worker --loglevel=info --concurrency=8
     env_file: .env
+    environment:
+      - DOCLING_SERVICE_URL=http://docling:28182
     volumes:
       - appdata:/data
     depends_on:
@@ -48,8 +50,26 @@ services:
       - supabase-network
     restart: unless-stopped
 
+  docling:
+    build:
+      context: .
+      dockerfile: backend/docling_service/Dockerfile
+    env_file: .env
+    environment:
+      - DOCLING_SERVICE_URL=http://docling:28182
+    ports:
+      - "${DOCLING_SERVICE_PORT:-28182}:28182"
+    volumes:
+      - docling_models:/app/models
+      - docling_data:/data
+    networks:
+      - default
+    restart: unless-stopped
+
 volumes:
   appdata:
+  docling_models:
+  docling_data:
 
 networks:
   supabase-network:

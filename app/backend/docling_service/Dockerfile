@@ -23,8 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # PyTorch CPU wheel + Intel Extension for PyTorch (VNNI/OneDNN 최적화)
-RUN pip3 install --no-cache-dir torch==2.3.1+cpu torchvision==0.18.1+cpu --index-url https://download.pytorch.org/whl/cpu
-RUN pip3 install --no-cache-dir intel-extension-for-pytorch==2.3.1+cpu
+RUN pip3 install --no-cache-dir torch==2.4.1+cpu torchvision==0.19.1+cpu --index-url https://download.pytorch.org/whl/cpu
+RUN pip3 install --no-cache-dir intel-extension-for-pytorch==2.4.0
 
 COPY backend/docling_service/requirements.txt ./requirements.txt
 RUN pip3 install --no-cache-dir -r requirements.txt

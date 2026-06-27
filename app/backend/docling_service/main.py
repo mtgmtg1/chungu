@@ -144,8 +144,8 @@ def _apply_ipex(converter: DocumentConverter) -> None:
     try:
         import intel_extension_for_pytorch as ipex
         import torch
-    except ImportError:
-        logger.info("[ipex] intel_extension_for_pytorch 미설치, IPEX 최적화 생략")
+    except Exception as e:
+        logger.info(f"[ipex] IPEX 초기화 실패, 최적화 생략: {e}")
         return
 
     for pipeline in converter.initialized_pipelines.values():

@@ -114,6 +114,15 @@ This syncs `app/` to the `a1` server, rebuilds Docker images, and restarts conta
 - Developer portal: `/developer` in the web UI
 - Docusaurus docs site: `/docs/` (served by FastAPI from `docs/build/`)
 
+## Result Preview & Multi-file Uploads
+
+- Uploading multiple files creates one job; results are merged into a single markdown with page markers.
+- The backend stores each PDF/image from multi-file uploads individually in the Supabase `pdfs` bucket and records paths in `extracted_files`.
+- `/api/jobs/{id}/preview` returns `source_files` (name, type, url, page_num) for each original file.
+- PDF preview uses a browser-native iframe viewer (`SourcePanel` / `PdfViewer`), not PDF.js.
+- `SourcePanel` renders a single source when only one exists, and a file list + selected preview when multiple sources exist.
+- When adding new source media types, update `SourcePanel.jsx` and add i18n keys to `page:result` and `page:components`.
+
 ## Agent Guidelines
 
 - Prefer minimal, focused edits. Follow existing code style.

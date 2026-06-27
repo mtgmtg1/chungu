@@ -1,86 +1,19 @@
-// [Flow: Step 1 (url/page prop 수신) -> Step 2 (PDF.js로 문서 로드) -> Step 3 (현재 페이지를 canvas에 렌더링) -> Step 4 (페이지 변경/줌 UI 노출)]
-import { useEffect, useRef, useState } from "react";
+// [Flow: Step 1 (url/page prop 수신) -> Step 2 (iframe으로 브라우저 PDF 뷰어 로드) -> Step 3 (페이지/줌 프래그먼트 적용) -> Step 4 (페이지 변경/줌 UI 노출)]
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import * as pdfjs from "pdfjs-dist";
-import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from "lucide-react";
-
-pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 export default function PdfViewer({ url, page = 1, onPageChange }) {
   const { t } = useTranslation();
-  const canvasRef = useRef(null);
-  const containerRef = useRef(null);
-  const pdfRef = useRef(null);
-  const [numPages, setNumPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(page);
   const [scale, setScale] = useState(1.2);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
 
   useEffect(() => {
     setCurrentPage(page);
   }, [page]);
 
-  useEffect(() => {
-    if (!url) return;
-    let cancelled = false;
-    setLoading(true);
-    setError("");
-    const task = pdfjs.getDocument(url);
-    task.promise.
-    then((doc) => {
-      if (cancelled) {
-        doc.destroy();
-        return;
-      }
-      pdfRef.current = doc;
-      setNumPages(doc.numPages);
-      setLoading(false);
-    }).
-    catch((e) => {
-      if (cancelled) return;
-      setError(t("page:errors.loadFailed"));
-      setLoading(false);
-    });
-    return () => {
-      cancelled = true;
-      if (pdfRef.current) {
-        pdfRef.current.destroy();
-        pdfRef.current = null;
-      }
-    };
-  }, [url]);
-
-  useEffect(() => {
-    if (!pdfRef.current || !canvasRef.current) return;
-    let renderTask = null;
-    const render = async () => {
-      const targetPage = Math.min(Math.max(1, currentPage), numPages || 1);
-      try {
-        const pageObj = await pdfRef.current.getPage(targetPage);
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext("2d");
-        const viewport = pageObj.getViewport({ scale });
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        canvas.style.width = `${viewport.width}px`;
-        canvas.style.height = `${viewport.height}px`;
-        const task = pageObj.render({ canvasContext: ctx, viewport });
-        renderTask = task;
-        await task.promise;
-      } catch (e) {
-        setError(t("page:errors.unknown"));
-      }
-    };
-    render();
-    return () => {
-      if (renderTask) renderTask.cancel();
-    };
-  }, [currentPage, numPages, scale]);
-
   const goToPage = (next) => {
-    const target = Math.min(Math.max(1, next), numPages || 1);
+    const target = Math.min(Math.max(1, next), 99999);
     setCurrentPage(target);
     if (onPageChange) onPageChange(target);
   };
@@ -99,34 +32,10 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
 
   }
 
-  if (loading) {
-    return (
-      <div
-        className="flex-1 flex items-center justify-center"
-        data-oid="xgjzslo">
-
-        <div
-          className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"
-          data-oid=".p0dek:">
-        </div>
-      </div>);
-
-  }
-
-  if (error) {
-    return (
-      <div
-        className="flex-1 flex items-center justify-center text-error text-sm p-4"
-        data-oid="lljk3eb">
-
-        {error}
-      </div>);
-
-  }
+  const iframeUrl = `${url}#page=${currentPage}&zoom=${Math.round(scale * 100)}`;
 
   return (
     <div
-      ref={containerRef}
       className="flex-1 flex flex-col overflow-hidden bg-surface-container-low"
       data-oid="9_o43iw">
 
@@ -147,11 +56,10 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
             className="text-sm text-on-surface min-w-[80px] text-center"
             data-oid="pnq-k0d">
 
-            {currentPage} / {numPages}
+            {currentPage}
           </span>
           <button
             onClick={() => goToPage(currentPage + 1)}
-            disabled={currentPage >= numPages}
             className="p-1.5 rounded hover:bg-surface-container-high disabled:opacity-40"
             data-oid="6erhr-t">
 
@@ -182,12 +90,13 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
         </div>
       </div>
       <div
-        className="flex-1 overflow-auto custom-scrollbar p-4 flex justify-center"
+        className="flex-1 overflow-hidden"
         data-oid="hifx79j">
 
-        <canvas
-          ref={canvasRef}
-          className="shadow-lg rounded border border-outline-variant bg-white"
+        <iframe
+          src={iframeUrl}
+          title="PDF preview"
+          className="w-full h-full border-0"
           data-oid="trrdy_l" />
 
       </div>

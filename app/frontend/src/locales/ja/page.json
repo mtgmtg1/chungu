@@ -146,6 +146,7 @@
     "sourceDocument": "元の文書",
     "sourceImages": "元の画像",
     "sourceFile": "元のファイル",
+    "sourceFiles": "元ファイル一覧",
     "archiveNotice": "アーカイブファイルはダウンロード後にローカルで確認できます。",
     "cannotDisplaySource": "元ファイルを表示できません",
     "unknownError": "不明なエラー",

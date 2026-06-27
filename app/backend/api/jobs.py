@@ -377,6 +377,29 @@ def _image_files(job: Job) -> list[tuple[int, dict]]:
     return images
 
 
+def _source_files(job: Job) -> list[dict]:
+    """extracted_files에서 개별 Storage 경로가 있는 파일 목록을 반환한다."""
+    files = job.extracted_files or []
+    out: list[dict] = []
+    for idx, info in enumerate(files):
+        if not isinstance(info, dict) or not info.get("storage_path"):
+            continue
+        ftype = info.get("type", "")
+        if ftype not in ("pdf", "image", "audio", "video"):
+            continue
+        try:
+            url = supabase_client.get_signed_download_url(info["storage_path"], bucket="pdfs", expires_in=3600)
+            out.append({
+                "name": info.get("path", info.get("storage_path", "")),
+                "type": ftype,
+                "url": url,
+                "page_num": idx + 1,
+            })
+        except Exception:
+            pass
+    return out
+
+
 def _detect_source_type(job: Job) -> str | None:
     """원본 파일의 실제 유형에 따라 source_type을 반환한다."""
     if not job.pdf_storage_path:
@@ -490,12 +513,14 @@ def preview_job(
                 except Exception:
                     pass
 
+    source_files = _source_files(job)
     return {
         "job": _job_summary(job),
         "markdown": partial_markdown,
         "source_url": source_url,
         "source_type": source_type,
         "image_urls": image_urls,
+        "source_files": source_files,
         "start_page": start_page,
         "end_page": effective_end,
         "last_page": last_page,

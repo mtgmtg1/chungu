@@ -9,12 +9,10 @@ import {
   Save,
   Loader2,
   Check,
-  FileText,
-  ImageIcon } from
+  FileText } from
 "lucide-react";
 import { api } from "../api.js";
-import PdfViewer from "./PdfViewer.jsx";
-import MediaPlayer from "./MediaPlayer.jsx";
+import SourcePanel from "./SourcePanel.jsx";
 import SimpleEditor from "./SimpleEditor.jsx";
 
 export default function PagedResultViewer({
@@ -22,6 +20,8 @@ export default function PagedResultViewer({
   pages,
   sourceUrl,
   sourceType,
+  sourceFiles,
+  imageUrls,
   sidebarOpen = true
 }) {
   const { t } = useTranslation();
@@ -32,9 +32,6 @@ export default function PagedResultViewer({
   const [saveMessage, setSaveMessage] = useState("");
   const [error, setError] = useState("");
   const editorRef = useRef(null);
-
-  const currentPageInfo = pages.find((p) => p.page_num === currentPage) || null;
-  const imageUrl = sourceType === "images" ? currentPageInfo?.image_url : null;
 
   const loadPage = useCallback(
     async (pageNum) => {
@@ -83,79 +80,12 @@ export default function PagedResultViewer({
 
   const totalPages = pages.length;
 
-  const renderSourcePanel = () => {
-    if (sourceType === "pdf" && sourceUrl) {
-      return (
-        <PdfViewer
-          url={sourceUrl}
-          page={currentPage}
-          onPageChange={setCurrentPage}
-          data-oid="8kmamif" />);
-
-
-    }
-    if (sourceType === "images" && imageUrl) {
-      return (
-        <div
-          className="flex-1 flex flex-col overflow-hidden bg-surface-container-low"
-          data-oid="e61avxt">
-
-          <div
-            className="h-12 border-b border-outline-variant bg-white flex items-center px-3 flex-shrink-0"
-            data-oid="a2811yy">
-
-            <ImageIcon
-              size={16}
-              className="text-outline mr-2"
-              data-oid="w386s-y" />
-
-
-            <span
-              className="text-sm font-medium text-on-surface truncate"
-              data-oid="p7rhj4g">
-
-              {t("page:components.originalImage")}
-            </span>
-          </div>
-          <div
-            className="flex-1 overflow-auto custom-scrollbar p-4 flex items-center justify-center"
-            data-oid="m8ac0yi">
-
-            <img
-              src={imageUrl}
-              alt={t("page:components.originalImage", { number: currentPage })}
-              className="max-w-full max-h-full object-contain shadow-lg rounded border border-outline-variant bg-white"
-              data-oid="p4ex51i" />
-
-          </div>
-        </div>);
-
-    }
-    if ((sourceType === "audio" || sourceType === "video") && sourceUrl) {
-      return (
-        <MediaPlayer
-          sourceType={sourceType}
-          url={sourceUrl}
-          filename=""
-          data-oid="74i0o79" />);
-
-
-    }
-    return (
-      <div
-        className="flex-1 flex items-center justify-center text-on-surface-variant text-sm p-4"
-        data-oid="urt1nmx">
-
-        {t("page:components.cannotDisplaySource")}
-      </div>);
-
-  };
-
   const hasSourcePanel =
   sourceType === "pdf" ||
   sourceType === "images" ||
   sourceType === "audio" ||
-  sourceType === "video";
+  sourceType === "video" ||
+  (sourceFiles && sourceFiles.length > 0);
 
   return (
     <div className="flex-1 flex overflow-hidden" data-oid="9grrz:c">
@@ -313,7 +243,15 @@ export default function PagedResultViewer({
               className="overflow-hidden"
               data-oid="_4r5fdj">
 
-                {renderSourcePanel()}
+                <SourcePanel
+                  sourceFiles={sourceFiles}
+                  sourceUrl={sourceUrl}
+                  sourceType={sourceType}
+                  imageUrls={imageUrls}
+                  currentPage={currentPage}
+                  onPageChange={setCurrentPage}
+                  data-oid="8kmamif" />
+
               </Panel>
               <PanelResizeHandle
               className="w-1 bg-outline-variant/50 hover:bg-primary/30 transition-colors"

@@ -14,8 +14,7 @@ import {
   Table2,
   XCircle } from
 "lucide-react";
-import PdfViewer from "../components/PdfViewer.jsx";
-import MediaPlayer from "../components/MediaPlayer.jsx";
+import SourcePanel from "../components/SourcePanel.jsx";
 import PagedResultViewer from "../components/PagedResultViewer.jsx";
 import SimpleEditor from "../components/SimpleEditor.jsx";
 import { api } from "../api.js";
@@ -47,6 +46,7 @@ export default function JobResultPage() {
   const [pages, setPages] = useState([]);
   const [sourceType, setSourceType] = useState(null);
   const [imageUrls, setImageUrls] = useState([]);
+  const [sourceFiles, setSourceFiles] = useState([]);
   const [currentPdfPage, setCurrentPdfPage] = useState(1);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const pollRef = useRef(null);
@@ -109,6 +109,7 @@ export default function JobResultPage() {
       setSourceUrl(preview.source_url);
       setSourceType(preview.source_type);
       setImageUrls(preview.image_urls || []);
+      setSourceFiles(preview.source_files || []);
       if (needsPagedMode(job)) {
         const meta = await api.previewJobPages(jobId);
         setPages(meta.pages || []);
@@ -227,7 +228,7 @@ export default function JobResultPage() {
           }
         </div>
         <div className="flex items-center gap-2" data-oid=":tdat.:">
-          {job?.status === "done" && sourceUrl &&
+          {job?.status === "done" && (sourceUrl || sourceFiles.length > 0) &&
           <button
             onClick={() => setSidebarOpen((v) => !v)}
             title={
@@ -442,6 +443,8 @@ export default function JobResultPage() {
         pages={pages}
         sourceUrl={sourceUrl}
         sourceType={sourceType}
+        sourceFiles={sourceFiles}
+        imageUrls={imageUrls}
         sidebarOpen={sidebarOpen}
         data-oid="x.dznfp" />
 
@@ -449,7 +452,7 @@ export default function JobResultPage() {
 
       {job?.status === "done" && !loading && !needsPagedMode(job) &&
       <div className="flex-1 flex overflow-hidden min-h-0" data-oid="ww-27ni">
-          {sidebarOpen && sourceUrl ?
+          {sidebarOpen && (sourceUrl || sourceFiles.length > 0) ?
         <PanelGroup
           direction="horizontal"
           className="flex-1 flex"
@@ -462,106 +465,16 @@ export default function JobResultPage() {
             className="flex flex-col min-h-0"
             data-oid="8gj26he">
 
-                {sourceType === "pdf" ?
-            <div
-              className="flex flex-col h-full border-r border-outline-variant bg-surface-container-low"
-              data-oid="-096roo">
-
-                    <div
-                className="p-4 flex items-center justify-between border-b border-outline-variant bg-white flex-shrink-0"
-                data-oid="uqt1.ul">
-
-                      <h3
-                  className="font-bold text-sm text-on-surface"
-                  data-oid="m8n44uu">
-
-                        {t("page:result.sourceDocument")}
-                      </h3>
-                      <span
-                  className="text-[10px] text-outline font-mono bg-surface px-1.5 py-0.5 rounded border border-outline-variant truncate max-w-[200px]"
-                  data-oid="tcve_ch">
-
-                        {job?.filename}
-                      </span>
-                    </div>
-                    <div className="flex-1 min-h-0" data-oid="hoiv69f">
-                      <PdfViewer
-                  url={sourceUrl}
-                  page={currentPdfPage}
+                <SourcePanel
+                  sourceFiles={sourceFiles}
+                  sourceUrl={sourceUrl}
+                  sourceType={sourceType}
+                  imageUrls={imageUrls}
+                  filename={job?.filename}
+                  currentPage={currentPdfPage}
                   onPageChange={setCurrentPdfPage}
                   data-oid="rp.07za" />
 
-                    </div>
-                  </div> :
-            sourceType === "images" ?
-            <div
-              className="flex flex-col h-full border-r border-outline-variant bg-surface-container-low overflow-hidden"
-              data-oid="h03ee86">
-
-                    <div
-                className="p-4 border-b border-outline-variant bg-white flex-shrink-0"
-                data-oid="po9q2nu">
-
-                      <h3
-                  className="font-bold text-sm text-on-surface"
-                  data-oid="ucdj81v">
-
-                        {t("page:result.sourceImages")}
-                      </h3>
-                    </div>
-                    <div
-                className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4"
-                data-oid="1ww77no">
-
-                      {imageUrls.map((url, idx) =>
-                <img
-                  key={idx}
-                  src={url}
-                  alt={t("page:result.originalImage", {
-                    number: idx + 1
-                  })}
-                  className="w-full rounded border border-outline-variant bg-white shadow-sm"
-                  loading="lazy"
-                  data-oid="nd3v0hm" />
-
-                )}
-                    </div>
-                  </div> :
-            sourceType === "audio" || sourceType === "video" ?
-            <MediaPlayer
-              sourceType={sourceType}
-              url={sourceUrl}
-              filename={job?.filename}
-              data-oid="a-zibj2" /> :
-
-
-            <div
-              className="flex flex-col h-full border-r border-outline-variant bg-surface-container-low p-4"
-              data-oid="ls5c2-e">
-
-                    <h3
-                className="font-bold text-sm text-on-surface mb-2"
-                data-oid="8ro3r0m">
-
-                      {t("page:result.sourceFile")}
-                    </h3>
-                    <a
-                href={sourceUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-sm text-primary hover:underline truncate"
-                data-oid="6ngylg1">
-
-                      {job?.filename}
-                    </a>
-                    <p
-                className="text-xs text-on-surface-variant mt-2"
-                data-oid="9mhca2w">
-
-                      {t("page:result.archiveNotice")}
-                    </p>
-                  </div>
-            }
               </Panel>
               <PanelResizeHandle
             className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize"

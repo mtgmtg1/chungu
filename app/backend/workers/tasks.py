@@ -48,6 +48,7 @@ def run_job(job_id: str) -> dict:
         rows: list[dict] = []
         page_tables: list[tuple[int, str]] = []
         results: list[tuple[str, str, str]] = []
+        all_page_contents: list[tuple[int, str]] = []
         fmt = ""
 
         # Step 2: PDF 단일 처리
@@ -146,6 +147,8 @@ def run_job(job_id: str) -> dict:
                                 extra_prompt=job.prompt, dpi=job.dpi,
                                 on_progress=lambda done, total: None, on_error=lambda page, msg: pdf_errors.append(f"p{page}: {msg}"),
                             )
+                        for _, table in pdf_tables:
+                            all_page_contents.append((len(all_page_contents) + 1, table))
                         tabs[fp.name] = excel_writer.build_pdf_rows(fp.name, pdf_tables, columns)
                         errors.extend(pdf_errors)
 
@@ -176,6 +179,7 @@ def run_job(job_id: str) -> dict:
 
                 for filename, position, table in results:
                     ftype = media_loader.detect_file_type(Path(filename))
+                    all_page_contents.append((len(all_page_contents) + 1, table or ""))
                     tabs[filename] = excel_writer.build_media_rows(filename, ftype, position, table)
 
                 # duration 정보 업데이트
@@ -203,6 +207,11 @@ def run_job(job_id: str) -> dict:
                             info["storage_path"] = supabase_client.upload_image(job_id, p, p.name)
                         except Exception as e:
                             errors.append(f"{p.name}: 이미지 업로드 실패 {e}")
+                    elif ftype == "pdf":
+                        try:
+                            info["storage_path"] = supabase_client.upload_pdf(job_id, p.read_bytes(), p.name)
+                        except Exception as e:
+                            errors.append(f"{p.name}: PDF 업로드 실패 {e}")
                     extracted_info.append(info)
                 job.extracted_files = extracted_info
                 job.total_files = len(extracted)
@@ -227,6 +236,8 @@ def run_job(job_id: str) -> dict:
             converter.write_layout_markdown(page_tables, md_path)
         elif rows:
             converter.write_markdown(rows, columns, md_path)
+        elif all_page_contents:
+            converter.write_layout_markdown(all_page_contents, md_path)
         elif results:
             # 미디어 결과를 페이지별 마크다운으로 변환
             media_page_tables = [(idx + 1, table or "") for idx, (_, _, table) in enumerate(results)]

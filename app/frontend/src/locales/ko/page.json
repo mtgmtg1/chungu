@@ -146,6 +146,7 @@
     "sourceDocument": "원본 문서",
     "sourceImages": "원본 이미지",
     "sourceFile": "원본 파일",
+    "sourceFiles": "원본 파일 목록",
     "archiveNotice": "아카이브 파일은 다운로드 후 로컬에서 확인할 수 있습니다.",
     "cannotDisplaySource": "원본 파일을 표시할 수 없습니다",
     "unknownError": "알 수 없는 오류",

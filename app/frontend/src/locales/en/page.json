@@ -146,6 +146,7 @@
     "sourceDocument": "Source Document",
     "sourceImages": "Source Images",
     "sourceFile": "Source File",
+    "sourceFiles": "Source Files",
     "archiveNotice": "Archive files can be downloaded and viewed locally.",
     "cannotDisplaySource": "Cannot display source file",
     "unknownError": "Unknown error",

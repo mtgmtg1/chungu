@@ -49,6 +49,7 @@ def run_job(job_id: str) -> dict:
         page_tables: list[tuple[int, str]] = []
         results: list[tuple[str, str, str]] = []
         all_page_contents: list[tuple[int, str]] = []
+        extracted_info: list[dict] = []
         fmt = ""
 
         # Step 2: PDF 단일 처리
@@ -128,6 +129,7 @@ def run_job(job_id: str) -> dict:
 
                 # 파일 유형별 분류
                 media_files: list[tuple[str, Path]] = []
+                file_markdowns_by_name: dict[str, str] = {}
                 for fp in extracted:
                     ftype = media_loader.detect_file_type(fp)
                     if ftype in ("image", "audio", "video"):
@@ -150,6 +152,7 @@ def run_job(job_id: str) -> dict:
                         for _, table in pdf_tables:
                             all_page_contents.append((len(all_page_contents) + 1, table))
                         tabs[fp.name] = excel_writer.build_pdf_rows(fp.name, pdf_tables, columns)
+                        file_markdowns_by_name[fp.name] = converter.build_layout_markdown_string(pdf_tables)
                         errors.extend(pdf_errors)
 
                 _set_status(db, job, "ocr")
@@ -181,6 +184,7 @@ def run_job(job_id: str) -> dict:
                     ftype = media_loader.detect_file_type(Path(filename))
                     all_page_contents.append((len(all_page_contents) + 1, table or ""))
                     tabs[filename] = excel_writer.build_media_rows(filename, ftype, position, table)
+                    file_markdowns_by_name[filename] = converter.build_layout_markdown_string([(1, table or "")])
 
                 # duration 정보 업데이트
                 durations = {
@@ -201,6 +205,7 @@ def run_job(job_id: str) -> dict:
                         "type": ftype,
                         "size": p.stat().st_size,
                         "duration": media_loader.get_media_duration_seconds(p) if ftype in ("audio", "video") else 0,
+                        "result_markdown": file_markdowns_by_name.get(p.name, ""),
                     }
                     if ftype == "image":
                         try:
@@ -232,7 +237,11 @@ def run_job(job_id: str) -> dict:
                 converter.write_csv(merged_rows, columns, csv_path)
 
         # MD는 원문서 레이아웃을 보존한 마크다운으로 출력 (vision PDF / 미디어)
-        if page_tables and fmt == "markdown":
+        if extracted_info:
+            converter.write_combined_file_markdowns(
+                [info.get("result_markdown", "") for info in extracted_info], md_path
+            )
+        elif page_tables and fmt == "markdown":
             converter.write_layout_markdown(page_tables, md_path)
         elif rows:
             converter.write_markdown(rows, columns, md_path)

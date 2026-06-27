@@ -116,11 +116,15 @@ This syncs `app/` to the `a1` server, rebuilds Docker images, and restarts conta
 
 ## Result Preview & Multi-file Uploads
 
-- Uploading multiple files creates one job; results are merged into a single markdown with page markers.
-- The backend stores each PDF/image from multi-file uploads individually in the Supabase `pdfs` bucket and records paths in `extracted_files`.
-- `/api/jobs/{id}/preview` returns `source_files` (name, type, url, page_num) for each original file.
+- Uploading multiple files creates one job; each file's parsing result is stored separately in `extracted_files[].result_markdown`.
+- The combined markdown uses file markers (`<!-- 파일 N -->`) via `converter.build_combined_file_markdowns()`.
+- `/api/jobs/{id}/preview` returns `source_files` (name, type, url, page_num, result_markdown) for each original file.
 - PDF preview uses a browser-native iframe viewer (`SourcePanel` / `PdfViewer`), not PDF.js.
 - `SourcePanel` renders a single source when only one exists, and a file list + selected preview when multiple sources exist.
+- `SourcePanel` supports controlled selection via `selectedFileIndex` / `onFileSelect` props.
+- `JobResultPage` manages `fileMarkdowns` state: when multiple files exist, `SimpleEditor` shows only the selected file's markdown.
+- Saving in multi-file mode uses `api.saveResultFileMarkdowns()` (PUT `file_markdowns` array); single-file mode uses `api.saveResultMarkdown()`.
+- The `save_result_markdown` backend endpoint accepts `file_markdowns` (array) to update `extracted_files` and rebuild the combined markdown.
 - When adding new source media types, update `SourcePanel.jsx` and add i18n keys to `page:result` and `page:components`.
 
 ## Agent Guidelines

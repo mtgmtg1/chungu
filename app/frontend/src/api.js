@@ -49,6 +49,8 @@ export const api = {
   previewJobPages: (id) => request(`/api/jobs/${id}/preview/pages`),
   saveResultMarkdown: (id, markdown) =>
     request(`/api/jobs/${id}/result`, { method: 'PUT', body: JSON.stringify({ markdown }) }),
+  saveResultFileMarkdowns: (id, fileMarkdowns) =>
+    request(`/api/jobs/${id}/result`, { method: 'PUT', body: JSON.stringify({ file_markdowns: fileMarkdowns }) }),
   saveResultPage: (id, pageNum, markdown) =>
     request(`/api/jobs/${id}/result/pages/${pageNum}`, {
       method: 'PATCH',

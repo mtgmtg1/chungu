@@ -61,10 +61,15 @@ export default function SourcePanel({
   filename,
   currentPage,
   onPageChange,
+  selectedFileIndex,
+  onFileSelect,
 }) {
   const { t } = useTranslation();
   const files = sourceFiles && sourceFiles.length > 0 ? sourceFiles : [];
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [internalIndex, setInternalIndex] = useState(0);
+  const isControlled = selectedFileIndex !== undefined && onFileSelect;
+  const selectedIndex = isControlled ? selectedFileIndex : internalIndex;
+  const setSelectedIndex = isControlled ? onFileSelect : setInternalIndex;
 
   if (files.length === 1) {
     const file = files[0];
@@ -98,7 +103,7 @@ export default function SourcePanel({
               </button>
             ))}
           </div>
-          <div className="flex-1 overflow-hidden min-h-0">
+          <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
             {selected.type === "pdf" ? (
               <PdfViewer url={selected.url} page={currentPage} onPageChange={onPageChange} />
             ) : (

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from .. import settings_store
 from ..auth.supabase_auth import CurrentUser, get_current_admin, get_current_user
-from ..core import archive_handler, media_loader, office_converter, points_service, supabase_client
+from ..core import archive_handler, converter, media_loader, office_converter, points_service, supabase_client
 from ..core.llm_xlsx_converter import convert_markdown_to_xlsx_with_settings
 from ..core.prompts import DEFAULT_COLUMNS
 from ..db.models import Job
@@ -378,7 +378,7 @@ def _image_files(job: Job) -> list[tuple[int, dict]]:
 
 
 def _source_files(job: Job) -> list[dict]:
-    """extracted_files에서 개별 Storage 경로가 있는 파일 목록을 반환한다."""
+    """extracted_files에서 미리보기 가능한 파일 목록과 파일별 파싱 결과를 반환한다."""
     files = job.extracted_files or []
     out: list[dict] = []
     for idx, info in enumerate(files):
@@ -394,6 +394,7 @@ def _source_files(job: Job) -> list[dict]:
                 "type": ftype,
                 "url": url,
                 "page_num": idx + 1,
+                "result_markdown": info.get("result_markdown", ""),
             })
         except Exception:
             pass
@@ -579,7 +580,19 @@ def save_result_markdown(
     if job.status != "done":
         raise HTTPException(status_code=400, detail="완료된 작업만 수정할 수 있습니다")
 
-    markdown = str(payload.get("markdown", ""))
+    file_markdowns = payload.get("file_markdowns")
+    if isinstance(file_markdowns, list):
+        files = job.extracted_files or []
+        for idx, info in enumerate(files):
+            if idx < len(file_markdowns):
+                info["result_markdown"] = str(file_markdowns[idx])
+        job.extracted_files = files
+        markdown = converter.build_combined_file_markdowns(
+            [info.get("result_markdown", "") for info in files]
+        )
+    else:
+        markdown = str(payload.get("markdown", ""))
+
     with tempfile.TemporaryDirectory() as tmpdir:
         edited_path = Path(tmpdir) / "result_edited.md"
         edited_path.write_text(markdown, encoding="utf-8")

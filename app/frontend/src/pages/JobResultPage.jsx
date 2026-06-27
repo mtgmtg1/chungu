@@ -47,6 +47,8 @@ export default function JobResultPage() {
   const [sourceType, setSourceType] = useState(null);
   const [imageUrls, setImageUrls] = useState([]);
   const [sourceFiles, setSourceFiles] = useState([]);
+  const [fileMarkdowns, setFileMarkdowns] = useState([]);
+  const [selectedFileIndex, setSelectedFileIndex] = useState(0);
   const [currentPdfPage, setCurrentPdfPage] = useState(1);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const pollRef = useRef(null);
@@ -57,6 +59,9 @@ export default function JobResultPage() {
   (j?.total_pages || 0) > PAGE_THRESHOLD ||
   (j?.total_files || 0) > PAGE_THRESHOLD;
 
+  const hasFileMarkdowns = fileMarkdowns.length > 1;
+  const displayMarkdown = hasFileMarkdowns ? fileMarkdowns[selectedFileIndex] : markdown;
+
   useEffect(() => {
     if (!jobId) return;
     loadJob();
@@ -64,6 +69,10 @@ export default function JobResultPage() {
       clearInterval(pollRef.current);
     };
   }, [jobId]);
+
+  useEffect(() => {
+    setCurrentPdfPage(1);
+  }, [selectedFileIndex]);
 
   async function loadJob() {
     try {
@@ -110,6 +119,9 @@ export default function JobResultPage() {
       setSourceType(preview.source_type);
       setImageUrls(preview.image_urls || []);
       setSourceFiles(preview.source_files || []);
+      const fms = (preview.source_files || []).map((f) => f.result_markdown || "");
+      setFileMarkdowns(fms);
+      setSelectedFileIndex(0);
       if (needsPagedMode(job)) {
         const meta = await api.previewJobPages(jobId);
         setPages(meta.pages || []);
@@ -131,8 +143,15 @@ export default function JobResultPage() {
     setSaving(true);
     setSaveMessage("");
     try {
-      await api.saveResultMarkdown(jobId, updated);
-      setMarkdown(updated);
+      if (hasFileMarkdowns) {
+        const next = [...fileMarkdowns];
+        next[selectedFileIndex] = updated;
+        setFileMarkdowns(next);
+        await api.saveResultFileMarkdowns(jobId, next);
+      } else {
+        await api.saveResultMarkdown(jobId, updated);
+        setMarkdown(updated);
+      }
       setSaveMessage(t("page:result.saved"));
       setTimeout(() => setSaveMessage(""), 2000);
     } catch (e) {
@@ -473,6 +492,8 @@ export default function JobResultPage() {
                   filename={job?.filename}
                   currentPage={currentPdfPage}
                   onPageChange={setCurrentPdfPage}
+                  selectedFileIndex={selectedFileIndex}
+                  onFileSelect={setSelectedFileIndex}
                   data-oid="rp.07za" />
 
               </Panel>
@@ -488,7 +509,7 @@ export default function JobResultPage() {
 
                   <SimpleEditor
                 ref={editorRef}
-                markdown={markdown}
+                markdown={displayMarkdown}
                 editable
                 data-oid="xzqyv5." />
 
@@ -502,7 +523,7 @@ export default function JobResultPage() {
 
               <SimpleEditor
             ref={editorRef}
-            markdown={markdown}
+            markdown={displayMarkdown}
             editable
             data-oid="r9i48wh" />
 

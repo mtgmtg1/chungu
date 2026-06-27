@@ -49,6 +49,7 @@ class Job(Base):
     columns: Mapped[list] = mapped_column(JSON, default=list)
     prompt: Mapped[str] = mapped_column(Text, default="")
     dpi: Mapped[int] = mapped_column(Integer, default=150)
+    use_docling_refinement: Mapped[bool] = mapped_column(Boolean, default=False)
 
     original_filename: Mapped[str] = mapped_column(String(512), default="")
     file_type: Mapped[str] = mapped_column(String(20), default="pdf")

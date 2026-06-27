@@ -38,8 +38,21 @@ API キーは、ログイン後の `/developer` の **開発者ポータル**で
 | 画像 | 3P |
 | 音声 1 秒 | 1P |
 | 動画 1 秒 | 3P |
+| Docling 精製ページ | 3P |
+
+Docling 精製は、Docling 前処理済み文書（PDF、Office、HTML、HWP）に対してオプションの LLM 後処理を適用し、レイアウト精度を向上させます。
 
 現在の価格とパッケージは `GET /api/v1/account/pricing` で確認できます。
+
+## サポートされる入力形式
+
+- **文書**: PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, HTML, HWP, HWPX
+- **画像**: PNG, JPG, JPEG, GIF, WEBP, BMP, TIFF
+- **音声**: MP3, WAV, FLAC, AAC, OGG, M4A, WMA
+- **動画**: MP4, AVI, MOV, MKV, WEBM, FLV, WMV, M4V
+- **圧縮ファイル**: ZIP, RAR, 7Z, TAR, GZ, TGZ, BZ2
+
+PDF、Office、HTML、HWP/HWPX ファイルは Docling 前処理パイプラインを経由して処理されます。
 
 ## コアフロー
 
@@ -124,6 +137,7 @@ API キーを無効化します。
 - `columns`: カンマ区切りの列名または JSON 配列（任意）
 - `prompt`: モデルへの追加指示（任意）
 - `dpi`: PDF レンダリング DPI、デフォルト 150
+- `docling_refinement`: `true` または `false`（デフォルト）。Docling 互換文書に対して LLM レイアウト精製を有効にします。
 
 **レスポンス:**
 ```json
@@ -134,6 +148,8 @@ API キーを無効化します。
   "total_pages": 10,
   "total_files": 1,
   "media_duration_seconds": 0,
+  "docling_refinement": false,
+  "docling_refinement_pages": 0,
   "cost": { "pages": 10, "points": 30, "krw": 30, "usd": "0.02" },
   "balance": 9970
 }

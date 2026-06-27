@@ -10,7 +10,18 @@ MEDIA_TYPES = {
     "image": (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".tif"),
     "audio": (".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma"),
     "video": (".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".webm", ".m4v"),
+    "docx": (".docx", ".doc", ".dotx", ".docm"),
+    "pptx": (".pptx", ".ppt", ".potx", ".ppsx", ".pptm", ".potm", ".ppsm"),
+    "xlsx": (".xlsx", ".xls", ".xlsm"),
+    "html": (".html", ".htm", ".xhtml"),
+    "hwp": (".hwp", ".hwpx"),
 }
+
+# Docling 전처리 서비스가 처리할 수 있는 파일 타입 (PDF + 오피스 + HTML)
+DOCLING_TYPES = {"pdf", "docx", "pptx", "xlsx", "html"}
+
+# pyhwp 기반 처리 파일 타입
+HWP_TYPES = {"hwp"}
 
 
 def detect_file_type(path: Path) -> str:
@@ -34,6 +45,25 @@ def detect_file_type(path: Path) -> str:
                 return "video"
             if mime == "application/pdf":
                 return "pdf"
+            if mime in (
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/msword",
+            ):
+                return "docx"
+            if mime in (
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "application/vnd.ms-powerpoint",
+            ):
+                return "pptx"
+            if mime in (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "application/vnd.ms-excel",
+            ):
+                return "xlsx"
+            if mime == "text/html":
+                return "html"
+            if mime in ("application/x-hwp", "application/vnd.hancom.hwp"):
+                return "hwp"
     except Exception:
         pass
     return "unknown"

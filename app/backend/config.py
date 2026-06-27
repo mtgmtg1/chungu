@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     llm_max_workers: int = 64       # vLLM 동시 요청 상한 (고배치 최적화)
     media_max_workers: int = 8      # E4B(llama.cpp) 동시 요청 상한 (4슬롯 + 여유)
     ocr_max_workers: int = 8        # Tesseract 동시 처리 상한
+    docling_max_workers: int = 4    # b2 Docling 전처리 서비스 동시 요청 상한
+
+    # Docling 전처리 서비스 (b2 GPU 서버)
+    docling_enabled: bool = True
+    docling_service_url: str = "http://192.168.1.100:28182"  # b2 Docling 서비스 주소
+    docling_refinement_enabled: bool = True  # LLM 후처리 옵션 기본 활성화
+    docling_max_images_per_doc: int = 20   # 문서당 LLM 전송 이미지 상한
+    docling_image_max_size: int = 1920      # 추출 이미지 최대 긴 변 (px)
 
     # 경로
     data_dir: str = "/data"

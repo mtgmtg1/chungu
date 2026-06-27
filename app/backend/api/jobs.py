@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # [Flow: Step 1 (업로드 -> 파일 유형 감지/압축 해제/Storage 저장) -> Step 2 (비용 계산) -> Step 3 (승인 -> 포인트 차감 + Celery) -> Step 4 (상태 폴링/Storage 다운로드)]
+import asyncio
 import json
+import logging
 import re as _re
 import tempfile
 import uuid
@@ -18,7 +20,10 @@ from sqlalchemy.orm import Session
 
 from .. import settings_store
 from ..auth.supabase_auth import CurrentUser, get_current_admin, get_current_user
-from ..core import archive_handler, converter, media_loader, office_converter, points_service, supabase_client
+from ..core import archive_handler, converter, docling_client, hwp_converter, media_loader, office_converter, points_service, supabase_client
+
+
+logger = logging.getLogger(__name__)
 from ..core.llm_xlsx_converter import convert_markdown_to_xlsx_with_settings
 from ..core.prompts import DEFAULT_COLUMNS
 from ..db.models import Job
@@ -33,6 +38,11 @@ MEDIA_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".tif",
     ".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma",
     ".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".webm", ".m4v",
+    ".docx", ".doc", ".dotx", ".docm",
+    ".pptx", ".ppt", ".potx", ".ppsx", ".pptm", ".potm", ".ppsm",
+    ".xlsx", ".xls", ".xlsm",
+    ".html", ".htm", ".xhtml",
+    ".hwp", ".hwpx",
 }
 
 
@@ -49,6 +59,24 @@ def _parse_columns(raw: str) -> list[str]:
     return [c.strip() for c in raw.split(",") if c.strip()]
 
 
+async def _count_pages_with_docling(data: bytes, filename: str) -> int:
+    """Docling 서비스에 파일을 보내 page_count를 얻는다. 실패하면 1을 반환."""
+    if not docling_client.is_enabled():
+        return 1
+    suffix = Path(filename).suffix
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(data)
+        tmp_path = Path(tmp.name)
+    try:
+        result = await asyncio.to_thread(docling_client.convert_file, tmp_path)
+        return int(result.get("page_count", 1))
+    except Exception as e:
+        logger.warning(f"[docling-page-count] {filename} 실패: {e}")
+        return 1
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 @router.post("/jobs/upload")
 async def upload_job(
     files: List[UploadFile] = File(...),
@@ -57,6 +85,7 @@ async def upload_job(
     prompt: str = Form(""),
     dpi: int = Form(300),
     relative_paths: str = Form(""),
+    docling_refinement: bool = Form(False),
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -95,9 +124,13 @@ async def upload_job(
             return rel_paths[i]
         return files[i].filename
 
-    # 하나의 파일만 업로드되고 PDF일 때는 기존 단일 PDF 플로우를 유지
-    is_single_pdf = len(files) == 1 and files[0].filename.lower().endswith(".pdf")
-    original_filename = files[0].filename if len(files) == 1 else f"{len(files)}_files.zip"
+    # 단일 파일 업로드 시 파일 유형을 먼저 파악
+    is_single_file = len(files) == 1
+    single_file_type = "pdf"
+    if is_single_file:
+        single_file_type = media_loader.detect_file_type(Path(files[0].filename))
+
+    original_filename = files[0].filename if is_single_file else f"{len(files)}_files.zip"
 
     job = Job(
         user_id=uuid.UUID(user.user_id),
@@ -106,6 +139,7 @@ async def upload_job(
         columns=_parse_columns(columns),
         prompt=prompt.strip(),
         dpi=dpi,
+        use_docling_refinement=docling_refinement,
         original_filename=original_filename,
         status="pending",
     )
@@ -121,13 +155,35 @@ async def upload_job(
     file_type = "pdf"
 
     try:
-        if is_single_pdf:
+        if is_single_file and single_file_type in media_loader.DOCLING_TYPES:
+            # 단일 PDF/오피스 문서: Docling 서비스로 페이지 수 추정
             data = file_data[0]
-            pages = len(PdfReader(BytesIO(data)).pages)
+            if single_file_type == "pdf":
+                pages = len(PdfReader(BytesIO(data)).pages)
+            else:
+                pages = await _count_pages_with_docling(data, files[0].filename)
             total_files = 1
             storage_path = supabase_client.upload_pdf(job.id, data, files[0].filename)
             job.pdf_storage_path = storage_path
-            job.file_type = "pdf"
+            job.file_type = single_file_type
+        elif is_single_file and single_file_type in media_loader.HWP_TYPES:
+            # 단일 HWP/HWPX 문서: pyhwp로 페이지 수 추정
+            data = file_data[0]
+            suffix = Path(files[0].filename).suffix
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp.write(data)
+                tmp_path = Path(tmp.name)
+            try:
+                pages = await asyncio.to_thread(hwp_converter.get_page_count, tmp_path)
+            except Exception as e:
+                logger.warning(f"[hwp-page-count] {files[0].filename} 실패: {e}")
+                pages = 1
+            finally:
+                tmp_path.unlink(missing_ok=True)
+            total_files = 1
+            storage_path = supabase_client.upload_pdf(job.id, data, files[0].filename)
+            job.pdf_storage_path = storage_path
+            job.file_type = single_file_type
         else:
             # 여러 파일/아카이브: 임시 디렉터리에 저장 후 분석
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -147,9 +203,18 @@ async def upload_job(
 
                 for fp in extracted:
                     ftype = media_loader.detect_file_type(fp)
-                    if ftype == "pdf":
+                    if ftype in media_loader.DOCLING_TYPES:
                         try:
-                            pages += len(PdfReader(fp).pages)
+                            if ftype == "pdf":
+                                pages += len(PdfReader(fp).pages)
+                            else:
+                                pages += await _count_pages_with_docling(fp.read_bytes(), fp.name)
+                        except Exception:
+                            pass
+                        total_files += 1
+                    elif ftype in media_loader.HWP_TYPES:
+                        try:
+                            pages += await asyncio.to_thread(hwp_converter.get_page_count, fp)
                         except Exception:
                             pass
                         total_files += 1
@@ -171,7 +236,7 @@ async def upload_job(
                 ]
 
                 # Storage에는 원본 파일들을 압축하여 하나로 업로드
-                if len(files) == 1:
+                if is_single_file:
                     storage_path = supabase_client.upload_input(job.id, file_data[0], files[0].filename)
                     job.pdf_storage_path = storage_path
                     job.file_type = "archive" if archive_handler.is_archive(files[0].filename) else "mixed"
@@ -199,7 +264,8 @@ async def upload_job(
         db.commit()
         raise HTTPException(status_code=502, detail=f"파일 처리 실패: {e}")
 
-    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds)
+    docling_refinement_pages = pages if docling_refinement else 0
+    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages)
     return {
         "job_id": job.id,
         "status": job.status,
@@ -207,6 +273,8 @@ async def upload_job(
         "total_pages": pages,
         "total_files": total_files,
         "media_duration_seconds": audio_seconds + video_seconds,
+        "docling_refinement": docling_refinement,
+        "docling_refinement_pages": docling_refinement_pages,
         "cost": cost,
         "balance": user.points_balance,
     }
@@ -266,12 +334,13 @@ def confirm_job(
             audio_seconds += info.get("duration", 0)
         elif ftype == "video":
             video_seconds += info.get("duration", 0)
-    if job.file_type == "pdf":
+    if job.file_type in media_loader.DOCLING_TYPES or job.file_type in media_loader.HWP_TYPES:
         image_count = 0
         audio_seconds = 0
         video_seconds = 0
 
-    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds)
+    docling_refinement_pages = job.total_pages if job.use_docling_refinement else 0
+    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages)
     try:
         points_service.spend_points(db, db_user, cost["points"], f"미디어 작업: {job.original_filename}")
     except ValueError as e:
@@ -751,6 +820,8 @@ def _job_summary(job: Job) -> dict:
         "total_files": job.total_files,
         "done_files": job.done_files,
         "media_duration_seconds": job.media_duration_seconds,
+        "docling_refinement": job.use_docling_refinement,
+        "docling_refinement_pages": job.total_pages if job.use_docling_refinement else 0,
         "cost_points": job.cost_points,
         "error_log": job.error_log,
         "created_at": job.created_at.isoformat() if job.created_at else None,

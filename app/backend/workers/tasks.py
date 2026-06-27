@@ -10,6 +10,7 @@ from pathlib import Path
 from ..celery_app import celery
 from ..config import settings
 from ..core import archive_handler, converter, excel_writer, media_loader, merge, supabase_client
+from ..core.pipeline_docling import run_docling, run_hwp
 from ..core.pipeline_hybrid import run_hybrid
 from ..core.pipeline_media import run_media
 from ..core.pipeline_vision import run_vision
@@ -59,17 +60,23 @@ def run_job(job_id: str) -> dict:
         llm_workers = int(settings_store.get_setting(db, "llm_max_workers") or settings.llm_max_workers)
         media_workers = int(settings_store.get_setting(db, "media_max_workers") or settings.media_max_workers)
 
-        # Step 2: PDF 단일 처리
-        if job.file_type == "pdf":
-            pdf_path = str(work_dir / "input.pdf")
+        # Docling 설정
+        docling_enabled = settings_store.get_setting(db, "docling_enabled") == "1"
+        use_refinement = docling_enabled and job.use_docling_refinement and (settings_store.get_setting(db, "docling_refinement_enabled") == "1")
+        docling_workers = int(settings_store.get_setting(db, "docling_max_workers") or settings.docling_max_workers)
+
+        # Step 2: 단일 PDF/오피스 문서 처리 (Docling 전용 경로)
+        if job.file_type in media_loader.DOCLING_TYPES:
+            input_ext = Path(job.original_filename).suffix or ".pdf"
+            input_path = work_dir / f"input{input_ext}"
             if job.pdf_storage_path:
-                pdf_bytes = supabase_client.download_pdf(job.pdf_storage_path)
-                Path(pdf_path).write_bytes(pdf_bytes.read())
+                input_bytes = supabase_client.download_pdf(job.pdf_storage_path)
+                input_path.write_bytes(input_bytes.read())
             else:
-                local_path = Path(work_dir) / "input.pdf"
-                if not local_path.exists():
-                    raise FileNotFoundError("PDF 파일을 찾을 수 없습니다")
-                pdf_path = str(local_path)
+                local_candidates = [p for p in work_dir.glob("*") if p.is_file()]
+                if not local_candidates:
+                    raise FileNotFoundError("입력 파일을 찾을 수 없습니다")
+                input_path = local_candidates[0]
 
             def on_progress(done: int, total: int) -> None:
                 job.done_pages = done
@@ -80,28 +87,79 @@ def run_job(job_id: str) -> dict:
                 errors.append(f"p{page}: {msg}")
 
             _set_status(db, job, "ocr")
-            if job.pipeline == "hybrid":
-                page_tables = run_hybrid(
-                    pdf_path, str(work_dir), columns, endpoint, model, api_key,
-                    extra_prompt=job.prompt, dpi=job.dpi,
-                    llm_workers=llm_workers,
-                    on_progress=on_progress, on_error=on_error,
-                )
-                fmt = "csv"
-            else:
-                page_tables = run_vision(
-                    pdf_path, str(work_dir), columns, endpoint, model, api_key,
-                    extra_prompt=job.prompt, dpi=job.dpi,
-                    media_endpoint=media_ep, media_model=media_mdl, media_api_key=media_key,
-                    workers=llm_workers,
-                    on_progress=on_progress, on_error=on_error,
-                )
-                fmt = "markdown"
+            page_tables = run_docling(
+                input_path,
+                str(work_dir),
+                columns,
+                endpoint,
+                model,
+                api_key,
+                extra_prompt=job.prompt,
+                use_refinement=use_refinement,
+                max_tokens=10000,
+                media_endpoint=media_ep,
+                media_model=media_mdl,
+                media_api_key=media_key,
+                on_progress=on_progress,
+                on_error=on_error,
+            )
+            fmt = "markdown"
 
             _set_status(db, job, "merging")
             rows = merge.merge_pages(page_tables, columns, fmt=fmt)
             filename = Path(job.original_filename).name or "input.pdf"
             tabs[filename] = excel_writer.build_pdf_rows(filename, page_tables, columns)
+
+        elif job.file_type in media_loader.HWP_TYPES:
+            # Step 2b: 단일 HWP/HWPX 문서 처리 (pyhwp 기반)
+            input_ext = Path(job.original_filename).suffix or ".hwp"
+            input_path = work_dir / f"input{input_ext}"
+            if job.pdf_storage_path:
+                input_bytes = supabase_client.download_pdf(job.pdf_storage_path)
+                input_path.write_bytes(input_bytes.read())
+            else:
+                local_candidates = [p for p in work_dir.glob("*") if p.is_file()]
+                if not local_candidates:
+                    raise FileNotFoundError("입력 파일을 찾을 수 없습니다")
+                input_path = local_candidates[0]
+
+            def on_progress(done: int, total: int) -> None:
+                job.done_pages = done
+                job.total_pages = total
+                db.commit()
+
+            def on_error(page: int, msg: str) -> None:
+                errors.append(f"p{page}: {msg}")
+
+            _set_status(db, job, "ocr")
+            page_tables = run_hwp(
+                input_path,
+                str(work_dir),
+                columns,
+                endpoint,
+                model,
+                api_key,
+                extra_prompt=job.prompt,
+                use_refinement=use_refinement,
+                max_tokens=10000,
+                media_endpoint=media_ep,
+                media_model=media_mdl,
+                media_api_key=media_key,
+                on_progress=on_progress,
+                on_error=on_error,
+            )
+            fmt = "markdown"
+
+            _set_status(db, job, "merging")
+            rows = merge.merge_pages(page_tables, columns, fmt=fmt)
+            filename = Path(job.original_filename).name or "input.hwp"
+            tabs[filename] = excel_writer.build_pdf_rows(filename, page_tables, columns)
+
+            job.total_files = 1
+            job.done_files = 1
+            job.total_pages = len(page_tables)
+            job.done_pages = len(page_tables)
+            db.commit()
         else:
             # Step 3: 멀티미디어 처리
             if job.pdf_storage_path:
@@ -144,29 +202,53 @@ def run_job(job_id: str) -> dict:
                     ftype = media_loader.detect_file_type(fp)
                     if ftype in ("image", "audio", "video"):
                         media_files.append((ftype, fp))
-                    elif ftype == "pdf":
-                        # PDF는 기존 파이프라인으로 처리
-                        pdf_errors: list[str] = []
-                        if job.pipeline == "hybrid":
-                            pdf_tables = run_hybrid(
-                                str(fp), str(work_dir), columns, endpoint, model, api_key,
-                                extra_prompt=job.prompt, dpi=job.dpi,
-                                llm_workers=llm_workers,
-                                on_progress=lambda done, total: None, on_error=lambda page, msg: pdf_errors.append(f"p{page}: {msg}"),
-                            )
-                        else:
-                            pdf_tables = run_vision(
-                                str(fp), str(work_dir), columns, endpoint, model, api_key,
-                                extra_prompt=job.prompt, dpi=job.dpi,
-                                media_endpoint=media_ep, media_model=media_mdl, media_api_key=media_key,
-                                workers=llm_workers,
-                                on_progress=lambda done, total: None, on_error=lambda page, msg: pdf_errors.append(f"p{page}: {msg}"),
-                            )
-                        for _, table in pdf_tables:
+                    elif ftype in media_loader.DOCLING_TYPES:
+                        # PDF/오피스/HTML은 Docling 전용 경로로 처리
+                        docling_errors: list[str] = []
+                        docling_tables = run_docling(
+                            fp,
+                            str(work_dir),
+                            columns,
+                            endpoint,
+                            model,
+                            api_key,
+                            extra_prompt=job.prompt,
+                            use_refinement=use_refinement,
+                            media_endpoint=media_ep,
+                            media_model=media_mdl,
+                            media_api_key=media_key,
+                            on_progress=lambda done, total: None,
+                            on_error=lambda page, msg: docling_errors.append(f"p{page}: {msg}"),
+                        )
+                        for _, table in docling_tables:
                             all_page_contents.append((len(all_page_contents) + 1, table))
-                        tabs[fp.name] = excel_writer.build_pdf_rows(fp.name, pdf_tables, columns)
-                        file_markdowns_by_name[fp.name] = converter.build_layout_markdown_string(pdf_tables)
-                        errors.extend(pdf_errors)
+                        tabs[fp.name] = excel_writer.build_pdf_rows(fp.name, docling_tables, columns)
+                        file_markdowns_by_name[fp.name] = converter.build_layout_markdown_string(docling_tables)
+                        errors.extend(docling_errors)
+
+                    elif ftype in media_loader.HWP_TYPES:
+                        # HWP/HWPX는 pyhwp 기반 경로로 처리
+                        hwp_errors: list[str] = []
+                        hwp_tables = run_hwp(
+                            fp,
+                            str(work_dir),
+                            columns,
+                            endpoint,
+                            model,
+                            api_key,
+                            extra_prompt=job.prompt,
+                            use_refinement=use_refinement,
+                            media_endpoint=media_ep,
+                            media_model=media_mdl,
+                            media_api_key=media_key,
+                            on_progress=lambda done, total: None,
+                            on_error=lambda page, msg: hwp_errors.append(f"p{page}: {msg}"),
+                        )
+                        for _, table in hwp_tables:
+                            all_page_contents.append((len(all_page_contents) + 1, table))
+                        tabs[fp.name] = excel_writer.build_pdf_rows(fp.name, hwp_tables, columns)
+                        file_markdowns_by_name[fp.name] = converter.build_layout_markdown_string(hwp_tables)
+                        errors.extend(hwp_errors)
 
                 _set_status(db, job, "ocr")
 
@@ -226,11 +308,11 @@ def run_job(job_id: str) -> dict:
                             info["storage_path"] = supabase_client.upload_image(job_id, p, p.name)
                         except Exception as e:
                             errors.append(f"{p.name}: 이미지 업로드 실패 {e}")
-                    elif ftype == "pdf":
+                    elif ftype in media_loader.DOCLING_TYPES or ftype in media_loader.HWP_TYPES:
                         try:
                             info["storage_path"] = supabase_client.upload_pdf(job_id, p.read_bytes(), p.name)
                         except Exception as e:
-                            errors.append(f"{p.name}: PDF 업로드 실패 {e}")
+                            errors.append(f"{p.name}: 문서 업로드 실패 {e}")
                     extracted_info.append(info)
                 job.extracted_files = extracted_info
                 job.total_files = len(extracted)

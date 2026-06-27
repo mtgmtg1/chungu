@@ -116,6 +116,24 @@ bash deploy_a1.sh
 This syncs `app/` to the `a1` server (via WAN host `wan-1`), rebuilds Docker images, and restarts containers.
 Server `.env` must be updated manually (not overwritten by rsync).
 
+## Docling Preprocessing Pipeline
+
+- Phase 1 routes PDF/DOCX/PPTX/XLSX/HTML through a dedicated Docling path (`run_docling` in `tasks.py`).
+- Phase 2 adds HWP/HWPX support via a separate pyhwp-based converter (`run_hwp` in `tasks.py`).
+- The Docling service runs on a Xeon Scalable CPU server (not a1 GPU), using CPU PyTorch + Intel Extension for PyTorch (IPEX) for VNNI/OneDNN acceleration.
+- Key files:
+  - `app/backend/docling_service/main.py` — FastAPI service with CPU accelerator, batch sizes, and IPEX warm-up.
+  - `app/backend/docling_service/Dockerfile` — Ubuntu 22.04 + CPU PyTorch + IPEX.
+  - `app/backend/docling_service/requirements.txt` — Docling/FastAPI deps (no torch GPU).
+  - `app/docker-compose.docling.yml` — Compose without GPU reservations.
+  - `app/backend/core/docling_client.py` — a1 backend client for the Docling service.
+  - `app/backend/core/pipeline_docling.py` — Docling markdown + optional LLM refinement.
+  - `app/backend/core/hwp_converter.py` — pyhwp-based HWP/HWPX text/image/page extraction.
+- NUMA binding: use `numactl --cpunodebind=0 --membind=0` when launching the container. For dual-socket 6230, run two independent workers bound to each NUMA node for maximum throughput.
+- VNNI tuning env vars: `DOCLING_NUM_THREADS`, `DOCLING_LAYOUT_BATCH_SIZE`, `DOCLING_TABLE_BATCH_SIZE`, `DOCLING_OCR_BATCH_SIZE`.
+- Refinement costs: `cost_per_docling_refinement_page_krw` / `cost_per_docling_refinement_page_usd` in `settings_store`.
+- Docs: `app/docs/docs/docling.md` and `app/docs/docs/hwp.md` (HWP Phase 2).
+
 ## Internationalization (i18n)
 
 - Frontend uses `react-i18next` with two namespaces: `common` and `page`

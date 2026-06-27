@@ -38,8 +38,21 @@ Points are deducted based on input type:
 | Image | 3P |
 | Audio 1 second | 1P |
 | Video 1 second | 3P |
+| Docling refinement per page | 3P |
+
+Docling refinement applies an optional LLM post-processing step to Docling-preprocessed documents (PDF, Office, HTML, HWP) to improve layout accuracy.
 
 Check current prices and packages at `GET /api/v1/account/pricing`.
+
+## Supported Input Types
+
+- **Documents**: PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, HTML, HWP, HWPX
+- **Images**: PNG, JPG, JPEG, GIF, WEBP, BMP, TIFF
+- **Audio**: MP3, WAV, FLAC, AAC, OGG, M4A, WMA
+- **Video**: MP4, AVI, MOV, MKV, WEBM, FLV, WMV, M4V
+- **Archives**: ZIP, RAR, 7Z, TAR, GZ, TGZ, BZ2
+
+PDF, Office, HTML, and HWP/HWPX files are routed through the Docling preprocessing pipeline.
 
 ## Core Flow
 
@@ -124,6 +137,7 @@ Upload files and get a cost preview.
 - `columns`: comma-separated column names or JSON array (optional)
 - `prompt`: extra instruction for the model (optional)
 - `dpi`: PDF rendering DPI, default 150
+- `docling_refinement`: `true` or `false` (default). Enables LLM layout refinement for Docling-compatible documents.
 
 **Response:**
 ```json
@@ -134,6 +148,8 @@ Upload files and get a cost preview.
   "total_pages": 10,
   "total_files": 1,
   "media_duration_seconds": 0,
+  "docling_refinement": false,
+  "docling_refinement_pages": 0,
   "cost": { "pages": 10, "points": 30, "krw": 30, "usd": "0.02" },
   "balance": 9970
 }

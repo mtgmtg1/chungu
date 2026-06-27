@@ -35,22 +35,26 @@ def calculate_cost(
     image_count: int = 0,
     audio_seconds: int = 0,
     video_seconds: int = 0,
+    docling_refinement_pages: int = 0,
 ) -> dict:
-    """페이지/이미지/오디오/비디오 조합에 따른 포인트 비용을 계산합니다."""
+    """페이지/이미지/오디오/비디오/Docling 후처리 조합에 따른 포인트 비용을 계산합니다."""
     rate = _get_rate(db)
+    krw_refinement_page = int(settings_store.get_setting(db, "cost_per_docling_refinement_page_krw") or "3")
     krw_cost = (
         pages * rate["krw_page"]
         + image_count * rate["krw_image"]
         + audio_seconds * rate["krw_audio_sec"]
         + video_seconds * rate["krw_video_sec"]
+        + docling_refinement_pages * krw_refinement_page
     )
-    total_media = pages + image_count + audio_seconds + video_seconds
+    total_media = pages + image_count + audio_seconds + video_seconds + docling_refinement_pages
     usd_cost = (total_media * rate["usd"]).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return {
         "pages": pages,
         "image_count": image_count,
         "audio_seconds": audio_seconds,
         "video_seconds": video_seconds,
+        "docling_refinement_pages": docling_refinement_pages,
         "points": krw_cost,
         "krw": krw_cost,
         "usd": usd_cost,

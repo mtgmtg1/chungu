@@ -1,10 +1,11 @@
 {
   "upload": {
     "title": "Convert files with AI",
-    "subtitle": "AI automatically extracts tables from PDFs, images, and audio.",
+    "subtitle": "AI automatically extracts tables from PDFs, Office documents, HWP, images, and audio.",
     "dropText": "Drop files or folders here",
-    "fileTypes": "PDF, images, audio, video, archive files",
+    "fileTypes": "PDF, Office, HWP, images, audio, video, archive files",
     "selectFiles": "Select Files",
+    "doclingRefinement": "Use Docling layout refinement (costs extra per page)",
     "selectFolder": "Select Folder",
     "selectedFiles": "Selected files",
     "cancel": "Cancel",

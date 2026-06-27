@@ -15,6 +15,7 @@ export default function UploadPage() {
   const [submitting, setSubmitting] = useState(false);
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState("");
+  const [doclingRefinement, setDoclingRefinement] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -70,6 +71,7 @@ export default function UploadPage() {
       relativePaths.push(f.webkitRelativePath || f.name);
     });
     fd.append("relative_paths", JSON.stringify(relativePaths));
+    fd.append("docling_refinement", doclingRefinement ? "true" : "false");
 
     setSubmitting(true);
     try {
@@ -197,7 +199,7 @@ export default function UploadPage() {
                   type="file"
                   multiple
                   className="hidden"
-                  accept=".pdf,.zip,.rar,.7z,.tar.gz,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.mp4,.avi,.mov,.mkv,.webm"
+                  accept=".pdf,.zip,.rar,.7z,.tar.gz,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.mp4,.avi,.mov,.mkv,.webm,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.html,.htm,.hwp,.hwpx"
                   onChange={(e) => setFiles(Array.from(e.target.files || []))} data-oid="kc2h.f3" />
 
 
@@ -208,7 +210,7 @@ export default function UploadPage() {
                   directory=""
                   multiple
                   className="hidden"
-                  accept=".pdf,.zip,.rar,.7z,.tar.gz,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.mp4,.avi,.mov,.mkv,.webm"
+                  accept=".pdf,.zip,.rar,.7z,.tar.gz,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.mp4,.avi,.mov,.mkv,.webm,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.html,.htm,.hwp,.hwpx"
                   onChange={(e) => setFiles(Array.from(e.target.files || []))} data-oid="vf8-08s" />
 
               </div>
@@ -216,6 +218,18 @@ export default function UploadPage() {
 
             {files.length > 0 &&
             <div className="mt-4 bg-white rounded-xl border border-outline-variant p-4 text-left max-w-xl mx-auto" data-oid="xcv5knj">
+                <div className="flex items-center gap-2 mb-3" data-oid="hwp:refinement">
+                  <input
+                    id="docling-refinement"
+                    type="checkbox"
+                    checked={doclingRefinement}
+                    onChange={(e) => setDoclingRefinement(e.target.checked)}
+                    className="h-4 w-4 rounded border-outline-variant text-primary focus:ring-primary"
+                  />
+                  <label htmlFor="docling-refinement" className="text-sm text-on-surface">
+                    {t("page:upload.doclingRefinement")}
+                  </label>
+                </div>
                 <p className="text-sm font-medium text-on-surface mb-2" data-oid="y_ncx1w">
                   {t("page:upload.selectedFiles")}
                 </p>

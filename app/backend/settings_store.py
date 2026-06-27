@@ -41,6 +41,16 @@ SETTING_DEFS: dict[str, tuple[str, bool]] = {
     # 스레드 상한
     "llm_max_workers": (str(settings.llm_max_workers), False),
     "media_max_workers": (str(settings.media_max_workers), False),
+    "docling_max_workers": (str(settings.docling_max_workers), False),
+    # Docling 전처리 서비스 (b2 GPU)
+    "docling_enabled": (str(int(settings.docling_enabled)), False),
+    "docling_service_url": (settings.docling_service_url, False),
+    "docling_refinement_enabled": (str(int(settings.docling_refinement_enabled)), False),
+    "docling_max_images_per_doc": (str(settings.docling_max_images_per_doc), False),
+    "docling_image_max_size": (str(settings.docling_image_max_size), False),
+    # Docling LLM 후처리 비용
+    "cost_per_docling_refinement_page_krw": ("3", False),
+    "cost_per_docling_refinement_page_usd": ("0.002", False),
     # API
     "api_key_default_rate_limit_rpm": ("60", False),
     "api_key_default_daily_quota": ("", False),

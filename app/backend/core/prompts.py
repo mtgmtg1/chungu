@@ -58,6 +58,23 @@ def build_media_prompt(columns: list[str], extra: str = "") -> str:
     return f"{base}\n추가 지시: {extra}" if extra.strip() else base
 
 
+def build_docling_refinement_prompt(columns: list[str], docling_markdown: str, extra: str = "") -> str:
+    """Docling이 추출한 마크다운을 LLM으로 정리/재구조화하는 프롬프트."""
+    cols = ", ".join(columns) if columns else "내용"
+    base = (
+        "아래는 Docling으로 추출한 문서의 마크다운 원문입니다. "
+        "원문서의 시각적 레이아웃(제목, 단락, 항목, 공백, 표 위치, 글꼴 크기, 굵기, 들여쓰기, 열 구분, 정렬)을 최대한 그대로 보존하세요. "
+        "표가 있으면 마크다운 표 형식으로 정리하고, 빈 셀은 공백으로 두세요. "
+        "숫자, 날짜, 금액, 콤마는 원본 그대로 쓰세요. "
+        "내용을 요약하지 말고, 추론이나 해석은 추가하지 마세요. "
+        "설명, 머리말, 마무리 문구는 절대 넣지 마세요. "
+        f"아래 컬럼({cols})은 참고용이며, 필요한 경우에만 해당 구조를 활용하세요.\n\n"
+        "Docling 원문:\n"
+        f"{docling_markdown}"
+    )
+    return f"{base}\n\n추가 지시: {extra}" if extra.strip() else base
+
+
 def build_audio_prompt(
     extra: str = "",
     segment_start: float | None = None,

@@ -23,17 +23,17 @@ export default function LanguageSelector() {
   };
 
   return (
-    <div className="relative" data-oid="0oty5r_">
+    <div className="relative" data-oid="fckrfv1">
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-outline-variant text-on-surface-variant hover:text-primary hover:border-primary/30 transition-colors text-sm"
         aria-label={i18n.t("language.label", "Language")}
-        data-oid="tvb93dz"
+        data-oid="c7z9qq5"
       >
-        <span className="text-base" data-oid="_.pi4h6">
+        <span className="text-base" data-oid="tkg7tma">
           {current.flag}
         </span>
-        <span className="font-medium uppercase" data-oid="ft433iw">
+        <span className="font-medium uppercase" data-oid="rzvraxo">
           {current.value}
         </span>
       </button>
@@ -42,12 +42,12 @@ export default function LanguageSelector() {
           <div
             className="fixed inset-0 z-40"
             onClick={() => setOpen(false)}
-            data-oid="x.h9ef0"
+            data-oid="cpi:_54"
           />
 
           <div
             className="absolute right-0 top-full mt-2 w-40 bg-surface rounded-xl shadow-lg border border-outline-variant z-50 py-1"
-            data-oid=".-i..zq"
+            data-oid="wie:foe"
           >
             {LANGUAGE_OPTIONS.map((option) => (
               <button
@@ -58,12 +58,12 @@ export default function LanguageSelector() {
                     ? "bg-primary-container/10 text-primary font-medium"
                     : "text-on-surface hover:bg-surface-container-high"
                 }`}
-                data-oid="v1livaz"
+                data-oid="yj8vmk6"
               >
-                <span className="text-base" data-oid="lbuahhb">
+                <span className="text-base" data-oid="or_:_ty">
                   {option.flag}
                 </span>
-                <span data-oid=".rhchmy">{option.label}</span>
+                <span data-oid="y8_0dpc">{option.label}</span>
               </button>
             ))}
           </div>

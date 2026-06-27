@@ -60,12 +60,12 @@ export default function JobConfirmPage() {
     return (
       <div
         className="min-h-screen bg-background flex items-center justify-center"
-        data-oid="9m0x6.s"
+        data-oid="djxlz-q"
       >
         <Loader2
           className="animate-spin text-primary"
           size={32}
-          data-oid="tu8c0yk"
+          data-oid="shu7kyb"
         />
       </div>
     );
@@ -75,16 +75,16 @@ export default function JobConfirmPage() {
     return (
       <div
         className="min-h-screen bg-background flex items-center justify-center"
-        data-oid="n-0jdni"
+        data-oid="2yrcouf"
       >
-        <div className="text-center" data-oid="6ux-ilm">
-          <p className="text-on-surface-variant mb-4" data-oid="3bo2fid">
+        <div className="text-center" data-oid="id08acd">
+          <p className="text-on-surface-variant mb-4" data-oid="8x75xz5">
             {error || t("page:confirm.notFound")}
           </p>
           <Link
             to="/"
             className="text-primary hover:underline"
-            data-oid="9y6e1wn"
+            data-oid="-cck-8r"
           >
             {t("page:confirm.home")}
           </Link>
@@ -100,17 +100,17 @@ export default function JobConfirmPage() {
   return (
     <div
       className="min-h-screen bg-background text-on-background flex flex-col"
-      data-oid="ka7pw7p"
+      data-oid="nxnt213"
     >
-      <nav className="w-full bg-transparent" data-oid="tt0ph-t">
+      <nav className="w-full bg-transparent" data-oid="3-k6pmw">
         <div
           className="max-w-container-max mx-auto flex justify-between items-center h-20 px-gutter"
-          data-oid="i__hlij"
+          data-oid="gud7eer"
         >
           <Link
             to="/"
             className="font-headline-md text-headline-md font-bold text-primary tracking-tight"
-            data-oid="hoq6k5m"
+            data-oid=".4rj2i5"
           >
             Chungu
           </Link>
@@ -119,23 +119,23 @@ export default function JobConfirmPage() {
 
       <main
         className="flex-grow flex items-center justify-center px-gutter py-12"
-        data-oid="tlf3b.i"
+        data-oid="lj9rbb1"
       >
         <div
           className="w-full max-w-xl bg-white rounded-[32px] border border-outline-variant shadow-xl shadow-primary/5 p-8 md:p-10"
-          data-oid="5-he_1_"
+          data-oid="gslt5ko"
         >
-          <div className="flex items-center gap-2 mb-6" data-oid="mcg2k5:">
+          <div className="flex items-center gap-2 mb-6" data-oid="rte0f89">
             <Link
               to="/"
               className="text-on-surface-variant hover:text-primary transition-colors"
-              data-oid="r5oz3ax"
+              data-oid="tgp-uvn"
             >
-              <ArrowLeft size={20} data-oid="n66zf38" />
+              <ArrowLeft size={20} data-oid=".car4ii" />
             </Link>
             <h1
               className="text-headline-lg font-bold text-on-surface"
-              data-oid="yxzv5n:"
+              data-oid="ujs4:cv"
             >
               {t("page:confirm.title")}
             </h1>
@@ -143,37 +143,37 @@ export default function JobConfirmPage() {
 
           <p
             className="text-body-md text-on-surface-variant mb-6"
-            data-oid=":jyrhre"
+            data-oid="j143g0."
           >
             {job.filename}
           </p>
 
           <div
             className="bg-surface-container-low rounded-2xl p-6 space-y-3 mb-6"
-            data-oid="o14qs51"
+            data-oid="x8s_b.h"
           >
             <div
               className="flex justify-between text-body-md"
-              data-oid="3aiva9d"
+              data-oid="rfkzoa6"
             >
-              <span className="text-on-surface-variant" data-oid="e5rjj60">
+              <span className="text-on-surface-variant" data-oid=".0c.0ch">
                 {t("page:confirm.fileType")}
               </span>
-              <span className="font-medium text-on-surface" data-oid="my7._h.">
+              <span className="font-medium text-on-surface" data-oid="511-kqd">
                 {job.file_type}
               </span>
             </div>
             {job.total_pages > 0 && (
               <div
                 className="flex justify-between text-body-md"
-                data-oid="qcagu4k"
+                data-oid="xpiyqhh"
               >
-                <span className="text-on-surface-variant" data-oid="_we1x-k">
+                <span className="text-on-surface-variant" data-oid="6nmdt2:">
                   {t("page:confirm.totalPages")}
                 </span>
                 <span
                   className="font-medium text-on-surface"
-                  data-oid="0t165.m"
+                  data-oid="cmbzuok"
                 >
                   {job.total_pages}
                 </span>
@@ -182,14 +182,14 @@ export default function JobConfirmPage() {
             {job.total_files > 0 && (
               <div
                 className="flex justify-between text-body-md"
-                data-oid="2gkih-1"
+                data-oid="t488p9k"
               >
-                <span className="text-on-surface-variant" data-oid="sb7ejwx">
+                <span className="text-on-surface-variant" data-oid="4f0ghra">
                   {t("page:confirm.totalFiles")}
                 </span>
                 <span
                   className="font-medium text-on-surface"
-                  data-oid="d.vb0tx"
+                  data-oid="712x3lb"
                 >
                   {job.total_files}
                 </span>
@@ -198,14 +198,14 @@ export default function JobConfirmPage() {
             {job.media_duration_seconds > 0 && (
               <div
                 className="flex justify-between text-body-md"
-                data-oid="2cowq6o"
+                data-oid="xc_gnd6"
               >
-                <span className="text-on-surface-variant" data-oid="1w45ch-">
+                <span className="text-on-surface-variant" data-oid="w7i7vpy">
                   {t("page:confirm.mediaDuration")}
                 </span>
                 <span
                   className="font-medium text-on-surface"
-                  data-oid="07:y_lc"
+                  data-oid="4i6okat"
                 >
                   {job.media_duration_seconds}
                   {t("page:confirm.seconds")}
@@ -214,54 +214,54 @@ export default function JobConfirmPage() {
             )}
             <div
               className="h-px bg-outline-variant/40 my-2"
-              data-oid="u576ew8"
+              data-oid="_tkaoqf"
             ></div>
             <div
               className="flex justify-between text-body-md"
-              data-oid="m6g_n2e"
+              data-oid="0e_flir"
             >
-              <span className="text-on-surface-variant" data-oid="yct1x55">
+              <span className="text-on-surface-variant" data-oid="w-n2:pj">
                 {t("page:confirm.requiredPoints")}
               </span>
-              <span className="font-bold text-primary" data-oid="mhxvzts">
+              <span className="font-bold text-primary" data-oid="f:gbk8s">
                 {cost} {t("common:points.point")}
               </span>
             </div>
             <div
               className="flex justify-between text-body-md"
-              data-oid="bnerws9"
+              data-oid="8qbj:al"
             >
-              <span className="text-on-surface-variant" data-oid=":2hou5o">
+              <span className="text-on-surface-variant" data-oid="bsgw7yy">
                 {t("page:confirm.myBalance")}
               </span>
-              <span className="font-medium text-on-surface" data-oid="v1yo30n">
+              <span className="font-medium text-on-surface" data-oid="vu2_p3k">
                 {balance} {t("common:points.point")}
               </span>
             </div>
           </div>
 
-          <details className="mb-6 group" data-oid="-8jr1z8">
+          <details className="mb-6 group" data-oid="9vqgwag">
             <summary
               className="flex items-center gap-2 cursor-pointer text-body-md text-on-surface-variant hover:text-primary transition-colors"
-              data-oid="qy:.oip"
+              data-oid="bbjoa1o"
             >
-              <Settings2 size={18} data-oid="xyr:a26" />
-              <span data-oid="nb10ldj">
+              <Settings2 size={18} data-oid="q-lb4dr" />
+              <span data-oid="rr27gbt">
                 {t("page:confirm.advancedOptions")}
               </span>
             </summary>
             <div
               className="mt-4 space-y-4 bg-surface-container-low rounded-2xl p-5"
-              data-oid=":chxxrl"
+              data-oid="ppq.99c"
             >
-              <div data-oid="x5wazyn">
+              <div data-oid="ijztqfe">
                 <label
                   className="block text-sm font-medium text-on-surface mb-2"
-                  data-oid="iky.844"
+                  data-oid="ygfwfd3"
                 >
                   {t("page:confirm.analysisMode")}
                 </label>
-                <div className="flex gap-3" data-oid="nafbi7v">
+                <div className="flex gap-3" data-oid="zxv4sf2">
                   {pipelineOptions.map((opt) => (
                     <button
                       key={opt.value}
@@ -272,17 +272,17 @@ export default function JobConfirmPage() {
                           ? "border-primary bg-primary/5 text-primary"
                           : "border-outline-variant text-on-surface"
                       }`}
-                      data-oid="ed59y5a"
+                      data-oid="807_h:d"
                     >
                       {opt.label}
                     </button>
                   ))}
                 </div>
               </div>
-              <div data-oid="byg9hq3">
+              <div data-oid="10iz:xq">
                 <label
                   className="block text-sm font-medium text-on-surface mb-1"
-                  data-oid="riga6n8"
+                  data-oid="o61:4ls"
                 >
                   {t("page:confirm.extractColumns")}
                 </label>
@@ -291,13 +291,13 @@ export default function JobConfirmPage() {
                   onChange={(e) => setColumns(e.target.value)}
                   placeholder={t("page:confirm.extractColumnsPlaceholder")}
                   className="w-full border border-outline-variant rounded-lg px-3 py-2 bg-white"
-                  data-oid="8c7go0g"
+                  data-oid="vltcbyj"
                 />
               </div>
-              <div data-oid="i1tkvjd">
+              <div data-oid="35qt5w-">
                 <label
                   className="block text-sm font-medium text-on-surface mb-1"
-                  data-oid="p7hyv7g"
+                  data-oid="ccv7hmm"
                 >
                   {t("page:confirm.additionalPrompt")}
                 </label>
@@ -307,7 +307,7 @@ export default function JobConfirmPage() {
                   rows={2}
                   placeholder={t("page:confirm.additionalPromptPlaceholder")}
                   className="w-full border border-outline-variant rounded-lg px-3 py-2 bg-white"
-                  data-oid=":zph:5p"
+                  data-oid="lg7__o4"
                 />
               </div>
             </div>
@@ -316,33 +316,33 @@ export default function JobConfirmPage() {
           {insufficient && (
             <div
               className="mb-6 p-4 bg-red-50 text-red-700 rounded-xl border border-red-200 text-sm"
-              data-oid="oqcdlgr"
+              data-oid="tgfo.yi"
             >
-              <p className="font-medium mb-2" data-oid="tdvcg9-">
+              <p className="font-medium mb-2" data-oid="v2gs:yp">
                 {t("page:confirm.insufficient")}
               </p>
               <Link
                 to="/payment"
                 className="inline-flex items-center gap-1 underline"
-                data-oid="vpd_nrw"
+                data-oid="ziafjhh"
               >
-                <CreditCard size={14} data-oid="prse3p2" />{" "}
+                <CreditCard size={14} data-oid="nmf-rh4" />{" "}
                 {t("page:confirm.recharge")}
               </Link>
             </div>
           )}
 
           {error && (
-            <p className="text-red-600 text-sm mb-4" data-oid="husl4x1">
+            <p className="text-red-600 text-sm mb-4" data-oid="dj1a-l1">
               {error}
             </p>
           )}
 
-          <div className="flex gap-3" data-oid="8l8zms_">
+          <div className="flex gap-3" data-oid=".pwmux7">
             <Link
               to="/"
               className="flex-1 border border-outline-variant rounded-xl py-3 text-center font-medium text-on-surface hover:bg-surface-container transition-colors"
-              data-oid="u1i.adk"
+              data-oid="iog_grc"
             >
               {t("page:confirm.cancel")}
             </Link>
@@ -350,14 +350,14 @@ export default function JobConfirmPage() {
               onClick={confirm}
               disabled={submitting || insufficient}
               className="flex-1 bg-primary text-on-primary rounded-xl py-3 font-medium hover:bg-primary-container transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-              data-oid="5.vyytz"
+              data-oid="e1yh424"
             >
               {submitting ? (
                 <>
                   <Loader2
                     className="animate-spin"
                     size={18}
-                    data-oid="ah7z9yi"
+                    data-oid="ybu18mh"
                   />{" "}
                   {t("page:confirm.processing")}
                 </>

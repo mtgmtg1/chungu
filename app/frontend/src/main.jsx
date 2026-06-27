@@ -21,76 +21,76 @@ import SettingsPage from "./pages/SettingsPage.jsx";
 
 const rootEl = document.getElementById("root");
 ReactDOM.createRoot(rootEl).render(
-  <React.StrictMode data-oid=":-kd.4e">
-    <I18nextProvider i18n={i18n} data-oid="d-jpp:2">
-      <LanguageProvider data-oid="y5_agxe">
-        <AuthProvider data-oid="wbqnak2">
-          <BrowserRouter data-oid="dmoh1tp">
-            <Routes data-oid="kd_ocsj">
+  <React.StrictMode data-oid="6kqspej">
+    <I18nextProvider i18n={i18n} data-oid="53d8vza">
+      <LanguageProvider data-oid="1e:x9zs">
+        <AuthProvider data-oid="xcbpezj">
+          <BrowserRouter data-oid="j3r-hj3">
+            <Routes data-oid="sza8yga">
               <Route
                 path="/"
-                element={<UploadPage data-oid="d64s-t8" />}
-                data-oid="5febmnc"
+                element={<UploadPage data-oid="tyuzd8m" />}
+                data-oid="f4q43vu"
               />
 
               <Route
                 path="/login"
-                element={<AuthPage data-oid="mbkj9pk" />}
-                data-oid="c9fw54o"
+                element={<AuthPage data-oid="fgx:gn0" />}
+                data-oid="xouxlfl"
               />
 
               <Route
                 path="/dashboard"
-                element={<DashboardPage data-oid="0d3q6f0" />}
-                data-oid="mqbzsq7"
+                element={<DashboardPage data-oid="_9w:9za" />}
+                data-oid="ff86bvq"
               />
 
               <Route
                 path="/jobs"
-                element={<JobsPage data-oid="1.k1tr5" />}
-                data-oid="iywmzle"
+                element={<JobsPage data-oid="fclppvc" />}
+                data-oid="i8jaj__"
               />
 
               <Route
                 path="/payment"
-                element={<PaymentPage data-oid="orimftl" />}
-                data-oid="eowox_u"
+                element={<PaymentPage data-oid="45vjc9v" />}
+                data-oid="oozoys2"
               />
 
               <Route
                 path="/developer"
-                element={<DeveloperPage data-oid="mfcyt-s" />}
-                data-oid="0a9uvxy"
+                element={<DeveloperPage data-oid="vxyzmzt" />}
+                data-oid="bomn0fs"
               />
 
               <Route
                 path="/jobs/:jobId/confirm"
-                element={<JobConfirmPage data-oid="vg-647f" />}
-                data-oid="_9qisqj"
+                element={<JobConfirmPage data-oid="tsroq7p" />}
+                data-oid="5dy2wet"
               />
 
               <Route
                 path="/jobs/:jobId"
-                element={<JobResultPage data-oid="fv53a--" />}
-                data-oid="6bzq4oz"
+                element={<JobResultPage data-oid="rc_ef71" />}
+                data-oid="_m5xc0o"
               />
 
               <Route
                 path="/settings"
-                element={<SettingsPage data-oid="m0wxxim" />}
-                data-oid="87c325g"
+                element={<SettingsPage data-oid="aw8n85r" />}
+                data-oid="2uu7w76"
               />
 
               <Route
                 path="/admin/login"
-                element={<AdminLogin data-oid="i1wmdh4" />}
-                data-oid="a85gt-k"
+                element={<AdminLogin data-oid="iu9rdhq" />}
+                data-oid="lgus3p2"
               />
 
               <Route
                 path="/admin"
-                element={<AdminDashboard data-oid="5csncnb" />}
-                data-oid="fvmpdnh"
+                element={<AdminDashboard data-oid="kl1-:.8" />}
+                data-oid="3mpq7x5"
               />
             </Routes>
           </BrowserRouter>

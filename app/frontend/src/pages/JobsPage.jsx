@@ -206,12 +206,12 @@ export default function JobsPage() {
     return (
       <div
         className="min-h-screen flex items-center justify-center bg-background"
-        data-oid="2x.gsm0"
+        data-oid="kq5:r74"
       >
         <Loader2
           className="animate-spin text-primary"
           size={32}
-          data-oid="yr8zp50"
+          data-oid="-7zx915"
         />
       </div>
     );
@@ -221,16 +221,16 @@ export default function JobsPage() {
     return (
       <div
         className="min-h-screen flex items-center justify-center bg-background"
-        data-oid="ee1g1kw"
+        data-oid="__j1q4x"
       >
-        <div className="text-center" data-oid="eemn3nj">
-          <p className="mb-4 text-on-surface-variant" data-oid="yf.ds08">
+        <div className="text-center" data-oid="2ha4jhb">
+          <p className="mb-4 text-on-surface-variant" data-oid="6.h-jmz">
             {t("common:auth.loginRequired")}
           </p>
           <button
             onClick={() => navigate("/login")}
             className="bg-primary text-on-primary px-4 py-2 rounded-lg"
-            data-oid="av1po7z"
+            data-oid="nguyl5s"
           >
             {t("page:auth.loginButton")}
           </button>
@@ -243,65 +243,65 @@ export default function JobsPage() {
     <SidebarLayout
       title={t("page:jobs.title")}
       subtitle={t("page:jobs.subtitle")}
-      data-oid="6rpqq9w"
+      data-oid="oyq:fv1"
     >
       {/* Header chips */}
       <div
         className="flex flex-col md:flex-row md:items-end justify-between gap-gutter mb-stack-lg"
-        data-oid="kftz7_d"
+        data-oid="7dzkh55"
       >
-        <div className="flex gap-4" data-oid="ye1ueaf">
+        <div className="flex gap-4" data-oid="1:wslj4">
           <div
             className="flex items-center gap-2 px-3 py-1 bg-surface-container rounded-full"
-            data-oid="olyanl:"
+            data-oid="w_ck6a4"
           >
             <span
               className="w-2 h-2 rounded-full bg-primary status-pulse"
-              data-oid="ug_8a_u"
+              data-oid="q..80g:"
             ></span>
             <span
               className="font-label-sm text-label-sm text-on-surface-variant"
-              data-oid="14tv9l9"
+              data-oid="dl_:.64"
             >
               {activeCount} {t("page:jobs.activeTasks")}
             </span>
           </div>
           <div
             className="flex items-center gap-2 px-3 py-1 bg-surface-container rounded-full"
-            data-oid="m1-iyrz"
+            data-oid="po64m:1"
           >
             <span
               className="material-symbols-outlined text-green-600 text-[14px]"
-              data-oid="czrweb9"
+              data-oid="q9x4_9l"
             >
               check_circle
             </span>
             <span
               className="font-label-sm text-label-sm text-on-surface-variant"
-              data-oid="7wd44yq"
+              data-oid="52d7owg"
             >
               {completedCount} {t("page:jobs.completedTasks")}
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-3 relative" data-oid="peuzbji">
+        <div className="flex items-center gap-3 relative" data-oid="5h44.7o">
           <Link
             to="/"
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-on-primary font-body-md text-body-md font-medium hover:opacity-90 transition-all shadow-sm"
-            data-oid="mf414ot"
+            data-oid="mv6xpjv"
           >
-            <span className="material-symbols-outlined" data-oid="jh72f2i">
+            <span className="material-symbols-outlined" data-oid="6-myl-e">
               upload
             </span>
             {t("page:jobs.uploadFiles")}
           </Link>
-          <div className="relative" data-oid="t-.7jzm">
+          <div className="relative" data-oid="-1o8i-:">
             <button
               onClick={() => setFilterOpen((v) => !v)}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border border-outline-variant font-body-md text-body-md transition-all ${filterOpen ? "bg-surface-container text-primary" : "text-on-surface-variant hover:bg-surface-container-low"}`}
-              data-oid="uxy:25l"
+              data-oid="y5qdhnz"
             >
-              <span className="material-symbols-outlined" data-oid="thjtm.0">
+              <span className="material-symbols-outlined" data-oid="jy5vm6w">
                 filter_list
               </span>
               {t("page:jobs.filters")}
@@ -309,12 +309,12 @@ export default function JobsPage() {
             {filterOpen && (
               <div
                 className="absolute right-0 top-full mt-2 w-56 bg-surface rounded-xl shadow-lg border border-outline-variant z-50 p-4"
-                data-oid="t-q0g-g"
+                data-oid="qdf9680"
               >
-                <div className="mb-4" data-oid="f3vjlpt">
+                <div className="mb-4" data-oid="j0zh63q">
                   <label
                     className="block font-label-sm text-label-sm text-on-surface-variant mb-1.5"
-                    data-oid="ipeb3a6"
+                    data-oid="k5qzle:"
                   >
                     {t("page:jobs.status")}
                   </label>
@@ -322,9 +322,9 @@ export default function JobsPage() {
                     value={statusFilter}
                     onChange={(e) => setStatusFilter(e.target.value)}
                     className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-body-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/20"
-                    data-oid="sm7:ds7"
+                    data-oid="wbzeg6w"
                   >
-                    <option value="all" data-oid="2uq0z9k">
+                    <option value="all" data-oid="1t5th8f">
                       {t("page:jobs.all")}
                     </option>
                     {[
@@ -335,16 +335,16 @@ export default function JobsPage() {
                       "done",
                       "error",
                     ].map((k) => (
-                      <option key={k} value={k} data-oid="w:i-.ou">
+                      <option key={k} value={k} data-oid="_z6irio">
                         {statusLabel(k)}
                       </option>
                     ))}
                   </select>
                 </div>
-                <div data-oid="hve0h8l">
+                <div data-oid="l3xzzt9">
                   <label
                     className="block font-label-sm text-label-sm text-on-surface-variant mb-1.5"
-                    data-oid="pvn7-s9"
+                    data-oid="fnu-t.h"
                   >
                     {t("page:jobs.fileType")}
                   </label>
@@ -352,14 +352,14 @@ export default function JobsPage() {
                     value={fileTypeFilter}
                     onChange={(e) => setFileTypeFilter(e.target.value)}
                     className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-body-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/20"
-                    data-oid="a96-dbo"
+                    data-oid="g4qu7g1"
                   >
-                    <option value="all" data-oid="zucpirx">
+                    <option value="all" data-oid="sohw2ag">
                       {t("page:jobs.all")}
                     </option>
                     {["pdf", "image", "audio", "video", "mixed", "archive"].map(
                       (k) => (
-                        <option key={k} value={k} data-oid="dag7561">
+                        <option key={k} value={k} data-oid="b9-4wen">
                           {fileTypeLabel(k)}
                         </option>
                       ),
@@ -372,20 +372,20 @@ export default function JobsPage() {
                     setFileTypeFilter("all");
                   }}
                   className="mt-4 w-full text-left text-sm text-outline hover:text-primary transition-colors"
-                  data-oid="kcl7kz5"
+                  data-oid="y_sw1ei"
                 >
                   {t("page:jobs.resetFilters")}
                 </button>
               </div>
             )}
           </div>
-          <div className="relative" data-oid="rzdko0w">
+          <div className="relative" data-oid="3ma2oqk">
             <button
               onClick={() => setDateOpen((v) => !v)}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border border-outline-variant font-body-md text-body-md transition-all ${dateOpen ? "bg-surface-container text-primary" : "text-on-surface-variant hover:bg-surface-container-low"}`}
-              data-oid="kthf7iw"
+              data-oid="cwu7skk"
             >
-              <span className="material-symbols-outlined" data-oid="mrelppf">
+              <span className="material-symbols-outlined" data-oid="iv9hri8">
                 calendar_today
               </span>
               {t("page:jobs.dateRange")}
@@ -393,12 +393,12 @@ export default function JobsPage() {
             {dateOpen && (
               <div
                 className="absolute right-0 top-full mt-2 w-64 bg-surface rounded-xl shadow-lg border border-outline-variant z-50 p-4"
-                data-oid="jy1nhub"
+                data-oid="zob5p1c"
               >
-                <div className="mb-3" data-oid="e8.:bbl">
+                <div className="mb-3" data-oid="70..9mk">
                   <label
                     className="block font-label-sm text-label-sm text-on-surface-variant mb-1.5"
-                    data-oid="2xbjjg7"
+                    data-oid="qb6ko-1"
                   >
                     {t("page:jobs.startDate")}
                   </label>
@@ -407,13 +407,13 @@ export default function JobsPage() {
                     value={dateFrom}
                     onChange={(e) => setDateFrom(e.target.value)}
                     className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-body-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/20"
-                    data-oid="sj3sk2-"
+                    data-oid="011i7kp"
                   />
                 </div>
-                <div className="mb-3" data-oid="h27_r7e">
+                <div className="mb-3" data-oid="-hyu564">
                   <label
                     className="block font-label-sm text-label-sm text-on-surface-variant mb-1.5"
-                    data-oid="z_cc9zp"
+                    data-oid="rkxml3z"
                   >
                     {t("page:jobs.endDate")}
                   </label>
@@ -422,7 +422,7 @@ export default function JobsPage() {
                     value={dateTo}
                     onChange={(e) => setDateTo(e.target.value)}
                     className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-body-md text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/20"
-                    data-oid="1:y.f6b"
+                    data-oid="ql3-f2o"
                   />
                 </div>
                 <button
@@ -431,7 +431,7 @@ export default function JobsPage() {
                     setDateTo("");
                   }}
                   className="w-full text-left text-sm text-outline hover:text-primary transition-colors"
-                  data-oid="b:w1dul"
+                  data-oid="0os-1hx"
                 >
                   {t("page:jobs.resetDate")}
                 </button>
@@ -444,9 +444,9 @@ export default function JobsPage() {
       {error && (
         <div
           className="bg-red-50 text-red-700 px-4 py-3 rounded-lg mb-6 flex items-center gap-2 border border-red-200"
-          data-oid="edjol3z"
+          data-oid="kt2vw9a"
         >
-          <span className="material-symbols-outlined" data-oid="xk0nm9l">
+          <span className="material-symbols-outlined" data-oid="q-nfw9f">
             error
           </span>
           {error}
@@ -456,46 +456,46 @@ export default function JobsPage() {
       {/* Jobs table */}
       <div
         className="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm overflow-hidden"
-        data-oid="-8eb1ak"
+        data-oid="3f8sszo"
       >
-        <div className="overflow-x-auto custom-scrollbar" data-oid="6wv_xjv">
+        <div className="overflow-x-auto custom-scrollbar" data-oid="gz-rlzc">
           <table
             className="w-full text-left border-collapse"
-            data-oid="6fd6zzs"
+            data-oid="6k4gubk"
           >
-            <thead data-oid="1u2gmpn">
+            <thead data-oid="ho01sek">
               <tr
                 className="bg-surface-container-low/50 border-b border-outline-variant"
-                data-oid="msr2mnk"
+                data-oid="uzfp9p7"
               >
                 <th
                   className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider"
-                  data-oid="rtxzjv:"
+                  data-oid="0q7xa_:"
                 >
                   {t("page:jobs.fileName")}
                 </th>
                 <th
                   className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider"
-                  data-oid="jgp_fr6"
+                  data-oid="d9qbk69"
                 >
                   {t("page:jobs.status")}
                 </th>
                 <th
                   className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider"
-                  data-oid="_1:y0o."
+                  data-oid="hxlgn4f"
                 >
                   {t("page:jobs.dateCreated")}
                 </th>
                 <th
                   className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider"
-                  data-oid="rzaly65"
+                  data-oid="0i551g5"
                 >
-                  <div className="flex items-center gap-1" data-oid="ik.77uk">
+                  <div className="flex items-center gap-1" data-oid="e4eiju5">
                     {t("page:jobs.expiresIn")}
                     <span
                       className="material-symbols-outlined text-[14px] cursor-help"
                       title={t("page:jobs.expiresInfo")}
-                      data-oid="e-bdk5f"
+                      data-oid="eeloa-0"
                     >
                       info
                     </span>
@@ -503,7 +503,7 @@ export default function JobsPage() {
                 </th>
                 <th
                   className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider text-right"
-                  data-oid="eldhc99"
+                  data-oid="k8a17n2"
                 >
                   {t("page:jobs.actions")}
                 </th>
@@ -511,19 +511,19 @@ export default function JobsPage() {
             </thead>
             <tbody
               className="divide-y divide-outline-variant/50"
-              data-oid="o3n:w.4"
+              data-oid="kas6s2w"
             >
               {loading ? (
-                <tr data-oid="f87gqh0">
+                <tr data-oid="2a4vwvg">
                   <td
                     colSpan={5}
                     className="text-center py-12"
-                    data-oid="9fp7x2t"
+                    data-oid="2eowq3q"
                   >
                     <Loader2
                       className="animate-spin mx-auto text-primary"
                       size={24}
-                      data-oid="t.4.6n6"
+                      data-oid="88atot:"
                     />
                   </td>
                 </tr>
@@ -535,54 +535,54 @@ export default function JobsPage() {
                     <tr
                       key={j.job_id}
                       className="hover:bg-surface-container/30 transition-colors group"
-                      data-oid="7ytafjy"
+                      data-oid="7iv7mrp"
                     >
-                      <td className="px-gutter py-5" data-oid="b0ze034">
+                      <td className="px-gutter py-5" data-oid="onovb9s">
                         <div
                           className="flex items-center gap-3"
-                          data-oid="9wqyz_q"
+                          data-oid="y2ftyte"
                         >
                           <div
                             className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0"
-                            data-oid="j9fo0dn"
+                            data-oid="k4j15nw"
                           >
                             <span
                               className="material-symbols-outlined"
-                              data-oid="35w634u"
+                              data-oid="r6tajuj"
                             >
                               {isDone ? "table_chart" : "description"}
                             </span>
                           </div>
-                          <div data-oid="nc44-id">
+                          <div data-oid="ats28o7">
                             <p
                               className="font-body-md text-body-md font-medium text-on-surface"
-                              data-oid="s05g5fs"
+                              data-oid="7sy3qzp"
                             >
                               {j.filename}
                             </p>
                             <p
                               className="font-label-sm text-label-sm text-outline"
-                              data-oid="rswyz2o"
+                              data-oid="i0y1sq2"
                             >
                               {fileSize(j.file_size)}
                             </p>
                           </div>
                         </div>
                       </td>
-                      <td className="px-gutter py-5" data-oid="dvk0m6z">
+                      <td className="px-gutter py-5" data-oid="ge54lqm">
                         <div
                           className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border border-inherit ${chip.bg} ${chip.text}`}
-                          data-oid="xi3:x4g"
+                          data-oid="1uiycel"
                         >
                           <span
                             className={`material-symbols-outlined text-[16px] ${j.status === "ocr" || j.status === "merging" || j.status === "queued" ? "animate-spin" : ""}`}
-                            data-oid="r.n4h-j"
+                            data-oid="_iw_vfh"
                           >
                             {chip.icon}
                           </span>
                           <span
                             className="font-label-sm text-label-sm font-semibold"
-                            data-oid="hg4jacf"
+                            data-oid="596fbly"
                           >
                             {statusLabel(j.status)}
                           </span>
@@ -590,23 +590,23 @@ export default function JobsPage() {
                       </td>
                       <td
                         className="px-gutter py-5 font-body-md text-body-md text-on-surface-variant"
-                        data-oid="x4qd9:y"
+                        data-oid="n_ue8pe"
                       >
                         {formatDate(j.created_at)}
                       </td>
                       <td
                         className="px-gutter py-5 font-body-md text-body-md text-on-surface-variant"
-                        data-oid=".1o4xvu"
+                        data-oid="zmn711w"
                       >
                         {daysLeft(j.expires_at)}
                       </td>
                       <td
                         className="px-gutter py-5 text-right"
-                        data-oid="tc9bc2n"
+                        data-oid="jo2op4c"
                       >
                         <div
                           className="flex justify-end gap-2"
-                          data-oid="p4_n11d"
+                          data-oid="nj:056g"
                         >
                           {isDone ? (
                             <>
@@ -614,44 +614,44 @@ export default function JobsPage() {
                                 to={`/jobs/${j.job_id}`}
                                 className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-primary transition-colors"
                                 title={`${fileTypeLabel(j.file_type)} ${t("page:jobs.view")}`}
-                                data-oid="jlr:jxa"
+                                data-oid="czg0jxq"
                               >
-                                <Eye size={18} data-oid="zlljj2e" />
+                                <Eye size={18} data-oid="yxvpdkc" />
                               </Link>
                               <button
                                 onClick={() => openDeleteModal(j)}
                                 className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
                                 title={`${fileTypeLabel(j.file_type)} ${t("page:jobs.delete")}`}
-                                data-oid="3fli7y8"
+                                data-oid="3nnh9iw"
                               >
-                                <Trash2 size={18} data-oid="-k-b37b" />
+                                <Trash2 size={18} data-oid="fp7w_cf" />
                               </button>
                               <div
                                 className="relative group"
-                                data-oid="c9wswyx"
+                                data-oid="tnuc:1x"
                               >
                                 <button
                                   className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-primary transition-colors"
                                   title={`${fileTypeLabel(j.file_type)} ${t("page:jobs.download")}`}
-                                  data-oid="42hi852"
+                                  data-oid="tpz9cfy"
                                 >
-                                  <Download size={18} data-oid="8b0etat" />
+                                  <Download size={18} data-oid="x4fihqx" />
                                 </button>
                                 <div
                                   className="absolute right-0 top-full mt-1 w-52 bg-white rounded-lg shadow-lg border border-outline-variant hidden group-hover:flex flex-col z-50 py-1"
-                                  data-oid="wd78tk-"
+                                  data-oid="42.dgaa"
                                 >
                                   <button
                                     onClick={() => download(j.job_id, "md")}
                                     className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                                    data-oid="gb95pz0"
+                                    data-oid="l3on:rn"
                                   >
                                     {t("page:jobs.markdownFree")}
                                   </button>
                                   <button
                                     onClick={() => download(j.job_id, "csv")}
                                     className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                                    data-oid="3z-tbye"
+                                    data-oid="1f026pp"
                                   >
                                     {t("page:jobs.csvExcel")}
                                   </button>
@@ -661,7 +661,7 @@ export default function JobsPage() {
                                     }
                                     disabled={converting[j.job_id]}
                                     className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                                    data-oid=":jj6eno"
+                                    data-oid="8hk1t8z"
                                   >
                                     {t("page:jobs.excelCost", {
                                       cost: xlsxCost(j).toLocaleString(),
@@ -673,7 +673,7 @@ export default function JobsPage() {
                                     }
                                     disabled={converting[j.job_id]}
                                     className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                                    data-oid="pgny3s2"
+                                    data-oid="eb.9d4f"
                                   >
                                     {t("page:jobs.wordFree")}
                                   </button>
@@ -683,7 +683,7 @@ export default function JobsPage() {
                                     }
                                     disabled={converting[j.job_id]}
                                     className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                                    data-oid="qceilkq"
+                                    data-oid="t2i707y"
                                   >
                                     {t("page:jobs.pptFree")}
                                   </button>
@@ -695,9 +695,9 @@ export default function JobsPage() {
                               onClick={() => openDeleteModal(j)}
                               className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
                               title={`${fileTypeLabel(j.file_type)} ${t("page:jobs.delete")}`}
-                              data-oid="wl9vpn2"
+                              data-oid="ida:p:-"
                             >
-                              <Trash2 size={18} data-oid=".sm4600" />
+                              <Trash2 size={18} data-oid="t.hqgua" />
                             </button>
                           )}
                         </div>
@@ -707,17 +707,17 @@ export default function JobsPage() {
                 })
               )}
               {!loading && pageJobs.length === 0 && (
-                <tr data-oid="n675vel">
+                <tr data-oid="ocs1v4i">
                   <td
                     colSpan={5}
                     className="text-center py-12 text-on-surface-variant"
-                    data-oid="n23v_pp"
+                    data-oid="rv:rftt"
                   >
-                    <p data-oid="h6them-">{t("page:jobs.noJobs")}</p>
+                    <p data-oid="er1dbhj">{t("page:jobs.noJobs")}</p>
                     <Link
                       to="/"
                       className="text-primary hover:underline mt-2 inline-block"
-                      data-oid="35o_i8p"
+                      data-oid="hhynqec"
                     >
                       {t("page:jobs.firstUpload")}
                     </Link>
@@ -731,11 +731,11 @@ export default function JobsPage() {
         {/* Pagination */}
         <div
           className="px-gutter py-4 border-t border-outline-variant flex flex-col md:flex-row items-center justify-between gap-3 bg-surface-container-lowest"
-          data-oid="d66-tpn"
+          data-oid="r34v:p9"
         >
           <p
             className="font-label-sm text-label-sm text-on-surface-variant"
-            data-oid="e5dn_sh"
+            data-oid="50ampsj"
           >
             {t("page:jobs.showing", {
               from: (page - 1) * PAGE_SIZE + 1,
@@ -743,21 +743,21 @@ export default function JobsPage() {
               total: filtered.length,
             })}
           </p>
-          <div className="flex items-center gap-1" data-oid="cg872nm">
+          <div className="flex items-center gap-1" data-oid="f45bbfe">
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1}
               className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container transition-colors disabled:opacity-30"
-              data-oid="az:ttj."
+              data-oid="_.es66e"
             >
-              <ChevronLeft size={18} data-oid="z0ze_ig" />
+              <ChevronLeft size={18} data-oid="_mm52sr" />
             </button>
             {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
               <button
                 key={p}
                 onClick={() => setPage(p)}
                 className={`w-8 h-8 flex items-center justify-center rounded-lg font-label-sm text-label-sm ${page === p ? "bg-primary text-on-primary" : "hover:bg-surface-container"}`}
-                data-oid="r34-mzl"
+                data-oid="7n:1hmb"
               >
                 {p}
               </button>
@@ -766,9 +766,9 @@ export default function JobsPage() {
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
               className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container transition-colors disabled:opacity-30"
-              data-oid="wz:bbcr"
+              data-oid="i3yu82j"
             >
-              <ChevronRight size={18} data-oid="z8sgzu6" />
+              <ChevronRight size={18} data-oid="6mnqyin" />
             </button>
           </div>
         </div>
@@ -777,37 +777,37 @@ export default function JobsPage() {
       {/* API promo card */}
       <div
         className="mt-stack-lg grid grid-cols-1 md:grid-cols-3 gap-gutter"
-        data-oid="7xlkavo"
+        data-oid="b2uerpz"
       >
         <div
           className="col-span-1 md:col-span-2 glass-surface p-gutter rounded-2xl border border-primary/10 flex items-start gap-4"
-          data-oid="joj8l2l"
+          data-oid="0pkucux"
         >
           <div
             className="p-3 rounded-xl bg-primary/10 text-primary"
-            data-oid="3uh_267"
+            data-oid="j8ymdn."
           >
-            <span className="material-symbols-outlined" data-oid="76znta6">
+            <span className="material-symbols-outlined" data-oid="7sz9cgc">
               lightbulb
             </span>
           </div>
-          <div data-oid="ffwe3.p">
+          <div data-oid=".71qi7m">
             <h4
               className="font-headline-md text-headline-md text-primary mb-2"
-              data-oid=".q_9u93"
+              data-oid="3l2ilm-"
             >
               {t("page:jobs.apiPromoTitle")}
             </h4>
             <p
               className="font-body-md text-body-md text-on-surface-variant max-w-xl"
-              data-oid="1x7l8nj"
+              data-oid="tz77vay"
             >
               {t("page:jobs.apiPromoDesc")}
             </p>
             <Link
               to="/developer"
               className="mt-4 text-primary font-body-md text-body-md font-bold hover:underline inline-block"
-              data-oid="xls:pnt"
+              data-oid="9legvww"
             >
               {t("page:jobs.apiPromoLink")} →
             </Link>
@@ -819,31 +819,31 @@ export default function JobsPage() {
       {deleteModal.open && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          data-oid="ud8zldm"
+          data-oid="yo3s1wu"
         >
           <div
             className="w-full max-w-sm bg-surface-container rounded-2xl shadow-xl border border-outline-variant p-6"
-            data-oid="febsyzf"
+            data-oid="8g..5yq"
           >
             <h3
               className="font-headline-sm text-headline-sm text-on-surface mb-2"
-              data-oid="wbqi12c"
+              data-oid="7z_576e"
             >
               {t("page:jobs.deleteConfirmTitle")}
             </h3>
             <p
               className="font-body-md text-body-md text-on-surface-variant mb-6"
-              data-oid="s471w6h"
+              data-oid="_c.1psc"
             >
               {t("page:jobs.deleteConfirmDesc", {
                 filename: deleteModal.job?.filename,
               })}
             </p>
-            <div className="flex justify-end gap-3" data-oid="94r__-v">
+            <div className="flex justify-end gap-3" data-oid="ef9ppi0">
               <button
                 onClick={closeDeleteModal}
                 className="px-4 py-2 rounded-xl border border-outline-variant font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-high transition-colors"
-                data-oid="kro9l8j"
+                data-oid="blrh66x"
               >
                 {t("page:jobs.cancel")}
               </button>
@@ -851,7 +851,7 @@ export default function JobsPage() {
                 onClick={confirmDelete}
                 disabled={deleting[deleteModal.job?.job_id]}
                 className="px-4 py-2 rounded-xl bg-red-600 text-white font-body-md text-body-md font-medium hover:bg-red-700 transition-colors disabled:opacity-50"
-                data-oid="5.2qh4g"
+                data-oid="czziy-v"
               >
                 {deleting[deleteModal.job?.job_id]
                   ? t("page:jobs.deleting")

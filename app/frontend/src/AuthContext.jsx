@@ -49,7 +49,7 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider
       value={{ user, session, loading, signIn, signUp, signOut }}
-      data-oid="b2112kh"
+      data-oid="-hsew:k"
     >
       {children}
     </AuthContext.Provider>

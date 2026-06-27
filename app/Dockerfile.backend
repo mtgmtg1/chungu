@@ -12,6 +12,14 @@ RUN npm install
 COPY frontend/ ./
 RUN npm run build
 
+# ---------- Stage 1.5: Docusaurus 문서 빌드 ----------
+FROM node:20-slim AS docs
+WORKDIR /docs
+COPY docs/package.json ./
+RUN npm install
+COPY docs/ ./
+RUN npm run build
+
 # ---------- Stage 2: 백엔드 런타임 ----------
 FROM python:3.11-slim AS runtime
 
@@ -40,6 +48,8 @@ RUN pip install --no-cache-dir -r backend/requirements.txt
 COPY backend/ ./backend/
 # 빌드된 프론트 정적 산출물 복사 (main.py가 ../frontend/dist 를 참조)
 COPY --from=frontend /fe/dist ./frontend/dist
+# 빌드된 Docusaurus 문서 산출물 복사 (main.py가 ../docs/build 를 참조)
+COPY --from=docs /docs/build ./docs/build
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 28181

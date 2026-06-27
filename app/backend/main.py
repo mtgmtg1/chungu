@@ -77,6 +77,24 @@ def health():
     return {"status": "ok"}
 
 
+# Docusaurus 문서 사이트 서빙 (빌드 산출물이 있을 때만)
+DOCS_DIR = Path(__file__).resolve().parent.parent / "docs" / "build"
+if DOCS_DIR.exists():
+    app.mount("/docs/assets", StaticFiles(directory=DOCS_DIR / "assets"), name="docs-assets")
+
+    @app.get("/docs")
+    def docs_index():
+        return FileResponse(DOCS_DIR / "index.html")
+
+    @app.get("/docs/{full_path:path}")
+    def docs_catch_all(full_path: str):
+        target = DOCS_DIR / full_path
+        if target.is_file():
+            return FileResponse(target)
+        if target.is_dir() and (target / "index.html").exists():
+            return FileResponse(target / "index.html")
+        return FileResponse(DOCS_DIR / "index.html")
+
 # 정적 프론트엔드 서빙 (빌드 산출물이 있을 때만)
 if STATIC_DIR.exists():
     app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")

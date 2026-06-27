@@ -39,35 +39,35 @@ export default function AuthPage() {
   return (
     <div
       className="min-h-screen flex items-center justify-center bg-slate-50"
-      data-oid="xl0d0nw"
+      data-oid="yel_p-w"
     >
       <form
         onSubmit={handleSubmit}
         className="bg-white rounded-xl shadow-sm border p-8 w-full max-w-sm space-y-5"
-        data-oid="k1_sr7o"
+        data-oid="xpfks5y"
       >
-        <div className="text-center" data-oid="1sg10ao">
+        <div className="text-center" data-oid="d46vz5f">
           {isSignUp ? (
             <UserPlus
               className="mx-auto text-blue-600 mb-2"
-              data-oid="knh3-tg"
+              data-oid="kfkwh8:"
             />
           ) : (
-            <LogIn className="mx-auto text-blue-600 mb-2" data-oid="il8dqy_" />
+            <LogIn className="mx-auto text-blue-600 mb-2" data-oid="2p:4802" />
           )}
-          <h1 className="text-lg font-bold" data-oid="dhzanyk">
+          <h1 className="text-lg font-bold" data-oid="pr:mnop">
             {isSignUp ? t("page:auth.signupTitle") : t("page:auth.loginTitle")}
           </h1>
-          <p className="text-sm text-slate-500 mt-1" data-oid="e3eo.sm">
+          <p className="text-sm text-slate-500 mt-1" data-oid="q2apom4">
             {t("page:auth.loginSubtitle")}
           </p>
         </div>
 
-        <div className="relative" data-oid="b1cenl6">
+        <div className="relative" data-oid="vw6ih8y">
           <Mail
             className="absolute left-3 top-2.5 text-slate-400"
             size={18}
-            data-oid="vs-1orz"
+            data-oid="pksi5kx"
           />
 
           <input
@@ -77,14 +77,14 @@ export default function AuthPage() {
             placeholder={t("page:auth.emailPlaceholder")}
             className="w-full border rounded-lg pl-10 pr-3 py-2"
             required
-            data-oid="8uv4y67"
+            data-oid="li.23zo"
           />
         </div>
-        <div className="relative" data-oid="x.-i-3k">
+        <div className="relative" data-oid="xlxabbb">
           <Lock
             className="absolute left-3 top-2.5 text-slate-400"
             size={18}
-            data-oid="n6vpg36"
+            data-oid="ggti-5r"
           />
 
           <input
@@ -94,12 +94,12 @@ export default function AuthPage() {
             placeholder={t("page:auth.passwordPlaceholder")}
             className="w-full border rounded-lg pl-10 pr-3 py-2"
             required
-            data-oid="wahv_09"
+            data-oid="q683z2v"
           />
         </div>
 
         {error && (
-          <p className="text-red-600 text-sm" data-oid="prmb4kn">
+          <p className="text-red-600 text-sm" data-oid="h7krp8j">
             {error}
           </p>
         )}
@@ -108,10 +108,10 @@ export default function AuthPage() {
           type="submit"
           disabled={loading}
           className="w-full bg-blue-600 text-white rounded-lg py-2.5 font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
-          data-oid="zpyirg6"
+          data-oid="uxs79pg"
         >
           {loading ? (
-            <Loader2 className="animate-spin" size={18} data-oid="wtb_28i" />
+            <Loader2 className="animate-spin" size={18} data-oid="rxx5uwq" />
           ) : isSignUp ? (
             t("page:auth.signupButton")
           ) : (
@@ -119,23 +119,23 @@ export default function AuthPage() {
           )}
         </button>
 
-        <div className="text-center text-sm text-slate-500" data-oid="z5jmavg">
+        <div className="text-center text-sm text-slate-500" data-oid="ec952ox">
           {isSignUp ? t("page:auth.haveAccount") : t("page:auth.noAccount")}{" "}
           <button
             type="button"
             onClick={() => setIsSignUp(!isSignUp)}
             className="text-blue-600 hover:underline"
-            data-oid="ocohejv"
+            data-oid="l3vfmri"
           >
             {isSignUp ? t("page:auth.loginLink") : t("page:auth.signupLink")}
           </button>
         </div>
 
-        <p className="text-xs text-center text-slate-400" data-oid="c2hy9s.">
+        <p className="text-xs text-center text-slate-400" data-oid="mpy46--">
           <Link
             to="/admin/login"
             className="hover:underline"
-            data-oid="00zkvu5"
+            data-oid="t3kpkfp"
           >
             {t("page:auth.adminLogin")}
           </Link>

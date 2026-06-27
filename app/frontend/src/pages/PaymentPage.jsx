@@ -88,16 +88,12 @@ export default function PaymentPage() {
 
   if (!user) {
     return (
-      <div
-        className="min-h-screen flex items-center justify-center"
-        data-oid="3l92vl."
-      >
-        <div className="text-center" data-oid="edw7on1">
-          <p data-oid="h-reqzp">{t("page:payment.loginRequired")}</p>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <p>{t("page:payment.loginRequired")}</p>
           <button
             onClick={() => nav("/login")}
             className="bg-blue-600 text-white px-4 py-2 rounded-lg mt-4"
-            data-oid="bg0b4n9"
           >
             {t("page:payment.login")}
           </button>
@@ -107,27 +103,21 @@ export default function PaymentPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50" data-oid="l9k42rr">
-      <header className="border-b bg-white" data-oid="hfwiisz">
-        <div
-          className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between"
-          data-oid=":isf3cw"
-        >
-          <div className="flex items-center gap-2" data-oid="frg68c_">
+    <div className="min-h-screen bg-slate-50">
+      <header className="border-b bg-white">
+        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
             <Link
               to="/dashboard"
               className="text-slate-500 hover:text-slate-800"
-              data-oid="kdds9ce"
             >
-              <ArrowLeft size={20} data-oid="xfooidz" />
+              <ArrowLeft size={20} />
             </Link>
-            <h1 className="text-xl font-bold" data-oid="30fc1xs">
-              {t("page:payment.title")}
-            </h1>
+            <h1 className="text-xl font-bold">{t("page:payment.title")}</h1>
           </div>
-          <div className="flex items-center gap-2 text-sm" data-oid="afnt3l_">
-            <Coins size={18} className="text-yellow-500" data-oid="j9a8cg0" />
-            <span data-oid="5din6o9">
+          <div className="flex items-center gap-2 text-sm">
+            <Coins size={18} className="text-yellow-500" />
+            <span>
               {t("page:payment.balance", {
                 points: profile?.points_balance ?? "-",
               })}
@@ -136,66 +126,43 @@ export default function PaymentPage() {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-6 py-8" data-oid="qlt.1_4">
+      <main className="max-w-5xl mx-auto px-6 py-8">
         {success && (
-          <div
-            className="bg-green-50 text-green-700 rounded-lg p-4 mb-6 flex items-center gap-2"
-            data-oid=".bmcdoo"
-          >
-            <CheckCircle2 size={20} data-oid="49exo6e" />{" "}
-            {t("page:payment.rechargeComplete")}
+          <div className="bg-green-50 text-green-700 rounded-lg p-4 mb-6 flex items-center gap-2">
+            <CheckCircle2 size={20} /> {t("page:payment.rechargeComplete")}
           </div>
         )}
-        {error && (
-          <p className="text-red-600 text-sm mb-6" data-oid="0.u1bz6">
-            {error}
-          </p>
-        )}
+        {error && <p className="text-red-600 text-sm mb-6">{error}</p>}
 
         {loading ? (
-          <div className="text-center py-12" data-oid="gjb3z:2">
-            <Loader2 className="animate-spin mx-auto" data-oid="_:an-g9" />
+          <div className="text-center py-12">
+            <Loader2 className="animate-spin mx-auto" />
           </div>
         ) : (
-          <div
-            className="grid grid-cols-1 md:grid-cols-3 gap-6"
-            data-oid="xleyd7u"
-          >
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {packages.map((pkg) => (
               <div
                 key={pkg.name}
                 className="bg-white rounded-xl border p-6 flex flex-col"
-                data-oid="9sq1aua"
               >
-                <h2 className="text-lg font-bold mb-1" data-oid="ps::tgl">
-                  {pkg.name}
-                </h2>
-                <p
-                  className="text-3xl font-bold text-blue-600 mb-4"
-                  data-oid="ttmkwm3"
-                >
+                <h2 className="text-lg font-bold mb-1">{pkg.name}</h2>
+                <p className="text-3xl font-bold text-blue-600 mb-4">
                   {pkg.points.toLocaleString()} P
                 </p>
-                <p className="text-sm text-slate-500 mb-6" data-oid="ygbdhg1">
+                <p className="text-sm text-slate-500 mb-6">
                   ₩{pkg.krw.toLocaleString()} / ${pkg.usd}
                 </p>
-                <div className="mt-auto space-y-2" data-oid="0cib32z">
+                <div className="mt-auto space-y-2">
                   <button
                     onClick={() => payWithToss(pkg)}
                     disabled={paying}
                     className="w-full bg-blue-600 text-white rounded-lg py-2 font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
-                    data-oid="dz.wt.u"
                   >
                     {paying ? (
-                      <Loader2
-                        className="animate-spin"
-                        size={16}
-                        data-oid="d1w7-r8"
-                      />
+                      <Loader2 className="animate-spin" size={16} />
                     ) : (
                       <>
-                        <CreditCard size={16} data-oid="wu9tmbk" />{" "}
-                        {t("page:payment.cardKrw")}
+                        <CreditCard size={16} /> {t("page:payment.cardKrw")}
                       </>
                     )}
                   </button>
@@ -203,7 +170,6 @@ export default function PaymentPage() {
                     onClick={() => payWithPaddle(pkg)}
                     disabled={paying}
                     className="w-full bg-slate-800 text-white rounded-lg py-2 font-medium hover:bg-slate-900 disabled:opacity-50"
-                    data-oid="::m743j"
                   >
                     {t("page:payment.paypalUsd")}
                   </button>

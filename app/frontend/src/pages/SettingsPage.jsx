@@ -152,104 +152,66 @@ export default function SettingsPage() {
 
   if (loading || !user) {
     return (
-      <div
-        className="min-h-screen bg-background flex items-center justify-center"
-        data-oid="gxsqv74"
-      >
-        <div
-          className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"
-          data-oid="tgnr9j1"
-        ></div>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
     );
   }
 
   const renderApiKeys = () => (
-    <div className="space-y-gutter" data-oid="77mrer2">
-      <div className="glass-panel p-6 rounded-2xl" data-oid="ddpz4:e">
-        <div
-          className="flex justify-between items-center mb-4"
-          data-oid="o0zgoy1"
-        >
-          <h3
-            className="font-headline-md text-headline-md text-on-surface"
-            data-oid="b1ff3u_"
-          >
+    <div className="space-y-gutter">
+      <div className="glass-panel p-6 rounded-2xl">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="font-headline-md text-headline-md text-on-surface">
             {t("page:settings.apiKeys")}
           </h3>
           <button
             onClick={() => setShowCreate(true)}
             className="bg-primary text-on-primary px-4 py-2 rounded-lg flex items-center gap-2 font-body-md hover:bg-primary/90 transition-all"
-            data-oid="uzx1wp8"
           >
-            <span className="material-symbols-outlined" data-oid="dao2ppx">
-              add
-            </span>
+            <span className="material-symbols-outlined">add</span>
             {t("page:settings.newKey")}
           </button>
         </div>
-        <div className="overflow-x-auto" data-oid="v1nefxp">
-          <table className="w-full text-left" data-oid="_e_fzoj">
-            <thead
-              className="bg-surface-container-low text-on-surface-variant font-label-sm text-label-sm uppercase tracking-wider"
-              data-oid="2_r4ho:"
-            >
-              <tr data-oid=".rbjhbi">
-                <th className="px-4 py-3" data-oid="9znpv2o">
-                  {t("page:settings.label")}
-                </th>
-                <th className="px-4 py-3" data-oid="8r:kkba">
-                  {t("page:settings.prefix")}
-                </th>
-                <th className="px-4 py-3 text-right" data-oid="gi9rve:">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-surface-container-low text-on-surface-variant font-label-sm text-label-sm uppercase tracking-wider">
+              <tr>
+                <th className="px-4 py-3">{t("page:settings.label")}</th>
+                <th className="px-4 py-3">{t("page:settings.prefix")}</th>
+                <th className="px-4 py-3 text-right">
                   {t("page:settings.rate")}
                 </th>
-                <th className="px-4 py-3 text-right" data-oid="-6_t0hu">
+                <th className="px-4 py-3 text-right">
                   {t("page:settings.created")}
                 </th>
-                <th className="px-4 py-3 text-right" data-oid="axfvrvg">
+                <th className="px-4 py-3 text-right">
                   {t("page:settings.actions")}
                 </th>
               </tr>
             </thead>
-            <tbody
-              className="divide-y divide-outline-variant text-body-md"
-              data-oid="i4nd8_d"
-            >
+            <tbody className="divide-y divide-outline-variant text-body-md">
               {keys.map((k) => (
-                <tr
-                  key={k.id}
-                  className={k.is_active ? "" : "opacity-50"}
-                  data-oid="rbgf-5u"
-                >
-                  <td className="px-4 py-3" data-oid="ywc2kkh">
-                    {k.name}
-                  </td>
-                  <td
-                    className="px-4 py-3 font-mono text-xs"
-                    data-oid="zscl5q:"
-                  >
-                    {k.prefix}
-                  </td>
-                  <td className="px-4 py-3 text-right" data-oid="6mbsav_">
+                <tr key={k.id} className={k.is_active ? "" : "opacity-50"}>
+                  <td className="px-4 py-3">{k.name}</td>
+                  <td className="px-4 py-3 font-mono text-xs">{k.prefix}</td>
+                  <td className="px-4 py-3 text-right">
                     {k.rate_limit_rpm} RPM
                   </td>
-                  <td className="px-4 py-3 text-right" data-oid="hteui3c">
+                  <td className="px-4 py-3 text-right">
                     {formatDate(k.created_at)}
                   </td>
-                  <td className="px-4 py-3 text-right" data-oid="elfwdww">
+                  <td className="px-4 py-3 text-right">
                     <button
                       onClick={() => rotateKey(k.id)}
                       className="text-primary text-sm hover:underline mr-3"
                       disabled={!k.is_active}
-                      data-oid="1wd5svv"
                     >
                       {t("page:settings.rotate")}
                     </button>
                     <button
                       onClick={() => deleteKey(k.id)}
                       className="text-error text-sm hover:underline"
-                      data-oid="94xbdgq"
                     >
                       {t("page:settings.delete")}
                     </button>
@@ -257,11 +219,10 @@ export default function SettingsPage() {
                 </tr>
               ))}
               {keys.length === 0 && (
-                <tr data-oid="97jl7b9">
+                <tr>
                   <td
                     colSpan={5}
                     className="px-4 py-8 text-center text-outline"
-                    data-oid="oeed8fn"
                   >
                     {t("page:settings.noKeys")}
                   </td>
@@ -273,34 +234,28 @@ export default function SettingsPage() {
       </div>
 
       {showCreate && (
-        <div className="glass-panel p-6 rounded-2xl" data-oid="4xw786p">
-          <h3
-            className="font-headline-md text-headline-md text-on-surface mb-4"
-            data-oid=".dqcvw:"
-          >
+        <div className="glass-panel p-6 rounded-2xl">
+          <h3 className="font-headline-md text-headline-md text-on-surface mb-4">
             {t("page:settings.createKey")}
           </h3>
-          <div className="flex gap-3" data-oid="pef.2cs">
+          <div className="flex gap-3">
             <input
               type="text"
               placeholder={t("page:settings.keyName")}
               value={newKeyName}
               onChange={(e) => setNewKeyName(e.target.value)}
               className="flex-1 bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-body-md focus:ring-1 focus:ring-primary focus:outline-none"
-              data-oid="-zj81iw"
             />
 
             <button
               onClick={createKey}
               className="bg-primary text-on-primary px-4 py-2 rounded-lg font-body-md hover:bg-primary/90"
-              data-oid="j0zzdoj"
             >
               {t("page:settings.create")}
             </button>
             <button
               onClick={() => setShowCreate(false)}
               className="border border-outline-variant px-4 py-2 rounded-lg font-body-md text-on-surface hover:bg-surface-container"
-              data-oid="zr0x0xa"
             >
               {t("page:settings.cancel")}
             </button>
@@ -309,34 +264,23 @@ export default function SettingsPage() {
       )}
 
       {revealedKey && (
-        <div
-          className="rounded-2xl border border-amber-300 bg-amber-50 p-6"
-          data-oid="4zh_att"
-        >
-          <p
-            className="text-xs font-semibold text-amber-800 mb-2"
-            data-oid="p4zalsj"
-          >
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-6">
+          <p className="text-xs font-semibold text-amber-800 mb-2">
             {t("page:settings.saveKey")}
           </p>
-          <div className="flex gap-2" data-oid="kpse2:o">
-            <pre
-              className="flex-1 rounded bg-white p-3 text-xs break-all text-on-surface"
-              data-oid="bxfjfef"
-            >
+          <div className="flex gap-2">
+            <pre className="flex-1 rounded bg-white p-3 text-xs break-all text-on-surface">
               {revealedKey.key}
             </pre>
             <button
               onClick={() => copyToClipboard(revealedKey.key)}
               className="bg-amber-700 text-white px-3 py-2 rounded-lg text-sm hover:bg-amber-800"
-              data-oid="5l1d1az"
             >
               {t("page:settings.copy")}
             </button>
             <button
               onClick={() => setRevealedKey(null)}
               className="bg-slate-200 text-slate-700 px-3 py-2 rounded-lg text-sm hover:bg-slate-300"
-              data-oid="aaeqbaz"
             >
               {t("page:settings.hide")}
             </button>
@@ -347,23 +291,14 @@ export default function SettingsPage() {
   );
 
   const renderBilling = () => (
-    <div className="space-y-gutter" data-oid="ggl.h:i">
-      <div className="glass-panel p-6 rounded-2xl" data-oid="91elc50">
-        <div
-          className="flex items-center justify-between mb-6"
-          data-oid="-9ib.dq"
-        >
-          <div data-oid="f1uyo:1">
-            <p
-              className="text-on-surface-variant text-body-md mb-1"
-              data-oid="se-4iyn"
-            >
+    <div className="space-y-gutter">
+      <div className="glass-panel p-6 rounded-2xl">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <p className="text-on-surface-variant text-body-md mb-1">
               {t("page:settings.pointsBalance")}
             </p>
-            <p
-              className="font-headline-lg text-headline-lg text-on-surface"
-              data-oid="yj_-.-:"
-            >
+            <p className="font-headline-lg text-headline-lg text-on-surface">
               {(account?.points_balance || 0).toLocaleString()}
               {t("common:points.point")}
             </p>
@@ -371,69 +306,41 @@ export default function SettingsPage() {
           <button
             onClick={() => navigate("/payment")}
             className="bg-primary text-on-primary px-6 py-3 rounded-xl font-body-md hover:bg-primary/90 transition-all"
-            data-oid="wbyf32a"
           >
             {t("page:settings.recharge")}
           </button>
         </div>
-        <div
-          className="h-px bg-outline-variant/40 mb-6"
-          data-oid="caji34o"
-        ></div>
-        <h3
-          className="font-headline-md text-headline-md text-on-surface mb-4"
-          data-oid="la53xnw"
-        >
+        <div className="h-px bg-outline-variant/40 mb-6"></div>
+        <h3 className="font-headline-md text-headline-md text-on-surface mb-4">
           {t("page:settings.paymentHistory")}
         </h3>
-        <div className="overflow-x-auto" data-oid="3ynajzw">
-          <table className="w-full text-left" data-oid="bu:qq_:">
-            <thead
-              className="bg-surface-container-low text-on-surface-variant font-label-sm text-label-sm uppercase tracking-wider"
-              data-oid="wjkmoqc"
-            >
-              <tr data-oid="rzmqhcu">
-                <th className="px-4 py-3" data-oid="8vlz72a">
-                  {t("page:settings.date")}
-                </th>
-                <th className="px-4 py-3" data-oid="iwmw2_s">
-                  {t("page:settings.provider")}
-                </th>
-                <th className="px-4 py-3" data-oid="w5.u44q">
-                  {t("page:settings.amount")}
-                </th>
-                <th className="px-4 py-3" data-oid="ap_:m5y">
-                  {t("page:settings.points")}
-                </th>
-                <th className="px-4 py-3" data-oid="u7i3709">
-                  {t("page:settings.status")}
-                </th>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-surface-container-low text-on-surface-variant font-label-sm text-label-sm uppercase tracking-wider">
+              <tr>
+                <th className="px-4 py-3">{t("page:settings.date")}</th>
+                <th className="px-4 py-3">{t("page:settings.provider")}</th>
+                <th className="px-4 py-3">{t("page:settings.amount")}</th>
+                <th className="px-4 py-3">{t("page:settings.points")}</th>
+                <th className="px-4 py-3">{t("page:settings.status")}</th>
               </tr>
             </thead>
-            <tbody
-              className="divide-y divide-outline-variant text-body-md"
-              data-oid="faxwyoi"
-            >
+            <tbody className="divide-y divide-outline-variant text-body-md">
               {payments.map((p) => {
                 const amount = Number(p.amount) || 0;
                 return (
-                  <tr key={p.id} data-oid="970u:k9">
-                    <td className="px-4 py-3" data-oid="sg-nvl_">
-                      {formatDate(p.created_at)}
-                    </td>
-                    <td className="px-4 py-3 uppercase" data-oid="be61ydp">
-                      {p.provider}
-                    </td>
-                    <td className="px-4 py-3" data-oid="yfyf2be">
+                  <tr key={p.id}>
+                    <td className="px-4 py-3">{formatDate(p.created_at)}</td>
+                    <td className="px-4 py-3 uppercase">{p.provider}</td>
+                    <td className="px-4 py-3">
                       {amount.toLocaleString()} {p.currency}
                     </td>
-                    <td className="px-4 py-3" data-oid="2yn1z1f">
+                    <td className="px-4 py-3">
                       {p.points_added?.toLocaleString() || "-"}
                     </td>
-                    <td className="px-4 py-3" data-oid="ja:vp8f">
+                    <td className="px-4 py-3">
                       <span
                         className={`px-2 py-1 rounded text-xs ${p.status === "paid" ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600"}`}
-                        data-oid="4dx.o.."
                       >
                         {p.status}
                       </span>
@@ -442,11 +349,10 @@ export default function SettingsPage() {
                 );
               })}
               {payments.length === 0 && (
-                <tr data-oid="uyz7muv">
+                <tr>
                   <td
                     colSpan={5}
                     className="px-4 py-8 text-center text-outline"
-                    data-oid="ux42faw"
                   >
                     {t("page:settings.noPayments")}
                   </td>
@@ -457,17 +363,11 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className="glass-panel p-6 rounded-2xl" data-oid="z-ahb:-">
-        <h3
-          className="font-headline-md text-headline-md text-on-surface mb-4"
-          data-oid="17b30lr"
-        >
+      <div className="glass-panel p-6 rounded-2xl">
+        <h3 className="font-headline-md text-headline-md text-on-surface mb-4">
           {t("page:settings.rechargePackages")}
         </h3>
-        <div
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-gutter"
-          data-oid="jsor4:3"
-        >
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-gutter">
           {packages.map((pkg) => {
             const points = pkg.points || 0;
             const price = pkg.price || pkg.krw || 0;
@@ -476,18 +376,11 @@ export default function SettingsPage() {
               <div
                 key={pkg.id || `${points}-${price}`}
                 className="border border-outline-variant rounded-xl p-4 flex flex-col"
-                data-oid="0:2f6rh"
               >
-                <p
-                  className="font-headline-md text-headline-md text-on-surface"
-                  data-oid="xwack_."
-                >
+                <p className="font-headline-md text-headline-md text-on-surface">
                   {points.toLocaleString()}P
                 </p>
-                <p
-                  className="text-on-surface-variant text-body-md mb-4"
-                  data-oid="-qi7jsh"
-                >
+                <p className="text-on-surface-variant text-body-md mb-4">
                   {price.toLocaleString()} {currency}
                 </p>
                 <button
@@ -495,7 +388,6 @@ export default function SettingsPage() {
                     navigate("/payment", { state: { selectedPackage: pkg } })
                   }
                   className="mt-auto w-full bg-primary text-on-primary py-2 rounded-lg font-body-md hover:bg-primary/90"
-                  data-oid="chy9s32"
                 >
                   {t("page:settings.select")}
                 </button>
@@ -503,7 +395,7 @@ export default function SettingsPage() {
             );
           })}
           {packages.length === 0 && (
-            <p className="text-outline col-span-full" data-oid="l8otlbo">
+            <p className="text-outline col-span-full">
               {t("page:settings.noPackages")}
             </p>
           )}
@@ -517,96 +409,56 @@ export default function SettingsPage() {
     const quota = account?.daily_quota;
     const spent = account?.daily_spent_points || 0;
     return (
-      <div className="space-y-gutter" data-oid="8js21xo">
-        <div className="glass-panel p-6 rounded-2xl" data-oid="xss_nkc">
-          <h3
-            className="font-headline-md text-headline-md text-on-surface mb-6"
-            data-oid=".432h87"
-          >
+      <div className="space-y-gutter">
+        <div className="glass-panel p-6 rounded-2xl">
+          <h3 className="font-headline-md text-headline-md text-on-surface mb-6">
             {t("page:settings.rateLimit")}
           </h3>
-          <div
-            className="grid grid-cols-1 md:grid-cols-3 gap-gutter"
-            data-oid="3yzkzps"
-          >
-            <div
-              className="bg-surface-container-low rounded-xl p-4"
-              data-oid="67l0mkw"
-            >
-              <p
-                className="text-on-surface-variant text-label-sm mb-1"
-                data-oid="uadv1ln"
-              >
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-gutter">
+            <div className="bg-surface-container-low rounded-xl p-4">
+              <p className="text-on-surface-variant text-label-sm mb-1">
                 {t("page:settings.requestsPerMinute")}
               </p>
-              <p
-                className="font-headline-md text-headline-md text-on-surface"
-                data-oid="_jslslj"
-              >
+              <p className="font-headline-md text-headline-md text-on-surface">
                 {limit}
               </p>
             </div>
-            <div
-              className="bg-surface-container-low rounded-xl p-4"
-              data-oid="vc1rfnd"
-            >
-              <p
-                className="text-on-surface-variant text-label-sm mb-1"
-                data-oid="4xqq0x9"
-              >
+            <div className="bg-surface-container-low rounded-xl p-4">
+              <p className="text-on-surface-variant text-label-sm mb-1">
                 {t("page:settings.dailyQuota")}
               </p>
-              <p
-                className="font-headline-md text-headline-md text-on-surface"
-                data-oid="mpupo7r"
-              >
+              <p className="font-headline-md text-headline-md text-on-surface">
                 {quota
                   ? `${quota.toLocaleString()}${t("common:points.point")}`
                   : t("page:settings.unlimited")}
               </p>
             </div>
-            <div
-              className="bg-surface-container-low rounded-xl p-4"
-              data-oid="lh73nbt"
-            >
-              <p
-                className="text-on-surface-variant text-label-sm mb-1"
-                data-oid="wyilpm7"
-              >
+            <div className="bg-surface-container-low rounded-xl p-4">
+              <p className="text-on-surface-variant text-label-sm mb-1">
                 {t("page:settings.dailySpent")}
               </p>
-              <p
-                className="font-headline-md text-headline-md text-on-surface"
-                data-oid="ruk068z"
-              >
+              <p className="font-headline-md text-headline-md text-on-surface">
                 {spent.toLocaleString()}
                 {t("common:points.point")}
               </p>
             </div>
           </div>
           {quota && (
-            <div className="mt-6" data-oid="qv-xh_:">
-              <div
-                className="flex justify-between text-body-md mb-2"
-                data-oid="n_0c3ym"
-              >
-                <span className="text-on-surface-variant" data-oid="r0sic65">
+            <div className="mt-6">
+              <div className="flex justify-between text-body-md mb-2">
+                <span className="text-on-surface-variant">
                   {t("page:settings.dailyQuotaUsage")}
                 </span>
-                <span className="text-on-surface" data-oid="c7e9uup">
+                <span className="text-on-surface">
                   {Math.min(100, Math.round((spent / quota) * 100))}%
                 </span>
               </div>
-              <div
-                className="h-2 bg-surface-container-low rounded-full overflow-hidden"
-                data-oid="1n27hvn"
-              >
+              <div className="h-2 bg-surface-container-low rounded-full overflow-hidden">
                 <div
                   className="h-full bg-primary rounded-full transition-all"
                   style={{
                     width: `${Math.min(100, Math.round((spent / quota) * 100))}%`,
                   }}
-                  data-oid="ai8:87y"
                 ></div>
               </div>
             </div>
@@ -617,51 +469,32 @@ export default function SettingsPage() {
   };
 
   const renderAccount = () => (
-    <div className="space-y-gutter" data-oid="nji-oky">
-      <div className="glass-panel p-6 rounded-2xl" data-oid="bpllsbz">
-        <h3
-          className="font-headline-md text-headline-md text-on-surface mb-4"
-          data-oid="x0u93ko"
-        >
+    <div className="space-y-gutter">
+      <div className="glass-panel p-6 rounded-2xl">
+        <h3 className="font-headline-md text-headline-md text-on-surface mb-4">
           {t("page:settings.account")}
         </h3>
-        <div className="mb-6" data-oid=".g:95kf">
-          <p
-            className="text-on-surface-variant text-label-sm mb-1"
-            data-oid="u8771uz"
-          >
+        <div className="mb-6">
+          <p className="text-on-surface-variant text-label-sm mb-1">
             {t("page:settings.email")}
           </p>
-          <p className="text-on-surface text-body-md" data-oid="fktv.gf">
-            {user.email}
-          </p>
+          <p className="text-on-surface text-body-md">{user.email}</p>
         </div>
         <button
           onClick={handleLogout}
           className="border border-outline-variant text-on-surface px-4 py-2 rounded-lg font-body-md hover:bg-surface-container transition-colors"
-          data-oid="69dsvzh"
         >
           {t("page:settings.logout")}
         </button>
       </div>
 
-      <div className="glass-panel p-6 rounded-2xl" data-oid="vz0254g">
-        <h3
-          className="font-headline-md text-headline-md text-on-surface mb-4"
-          data-oid="pt-0vsw"
-        >
+      <div className="glass-panel p-6 rounded-2xl">
+        <h3 className="font-headline-md text-headline-md text-on-surface mb-4">
           {t("page:settings.changePassword")}
         </h3>
-        <form
-          onSubmit={changePassword}
-          className="space-y-4 max-w-md"
-          data-oid=":usygdi"
-        >
-          <div data-oid="-4kfhsn">
-            <label
-              className="block text-on-surface-variant text-label-sm mb-1"
-              data-oid="at.4tfr"
-            >
+        <form onSubmit={changePassword} className="space-y-4 max-w-md">
+          <div>
+            <label className="block text-on-surface-variant text-label-sm mb-1">
               {t("page:settings.currentPassword")}
             </label>
             <input
@@ -672,14 +505,10 @@ export default function SettingsPage() {
               }
               required
               className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-body-md focus:ring-1 focus:ring-primary focus:outline-none"
-              data-oid="0em71fn"
             />
           </div>
-          <div data-oid="3u7ghyl">
-            <label
-              className="block text-on-surface-variant text-label-sm mb-1"
-              data-oid="w9v8cbg"
-            >
+          <div>
+            <label className="block text-on-surface-variant text-label-sm mb-1">
               {t("page:settings.newPassword")}
             </label>
             <input
@@ -689,14 +518,10 @@ export default function SettingsPage() {
               required
               minLength={8}
               className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-body-md focus:ring-1 focus:ring-primary focus:outline-none"
-              data-oid="53r0fvn"
             />
           </div>
-          <div data-oid="5ekei2u">
-            <label
-              className="block text-on-surface-variant text-label-sm mb-1"
-              data-oid="wpjjz8:"
-            >
+          <div>
+            <label className="block text-on-surface-variant text-label-sm mb-1">
               {t("page:settings.confirmPassword")}
             </label>
             <input
@@ -708,14 +533,12 @@ export default function SettingsPage() {
               required
               minLength={8}
               className="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-body-md focus:ring-1 focus:ring-primary focus:outline-none"
-              data-oid="dr-2cof"
             />
           </div>
           <button
             type="submit"
             disabled={pwLoading}
             className="bg-primary text-on-primary px-4 py-2 rounded-lg font-body-md hover:bg-primary/90 disabled:opacity-50"
-            data-oid="40e2aq7"
           >
             {pwLoading
               ? t("page:settings.changing")
@@ -737,7 +560,6 @@ export default function SettingsPage() {
     <SidebarLayout
       title={t("page:settings.title")}
       subtitle={t("page:settings.subtitle")}
-      data-oid="--5tiqr"
     >
       {(error || msg) && (
         <div
@@ -746,14 +568,13 @@ export default function SettingsPage() {
               ? "bg-error-container text-error border-error/10"
               : "bg-green-50 text-green-700 border-green-200"
           }`}
-          data-oid="t_:8rl."
         >
           {error || msg}
         </div>
       )}
 
-      <div className="flex flex-col md:flex-row gap-gutter" data-oid="kq6s0c0">
-        <nav className="md:w-56 shrink-0 space-y-1" data-oid="ef6g9aa">
+      <div className="flex flex-col md:flex-row gap-gutter">
+        <nav className="md:w-56 shrink-0 space-y-1">
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -763,12 +584,8 @@ export default function SettingsPage() {
                   ? "bg-primary-container/10 text-primary font-bold border-r-2 border-primary"
                   : "text-on-surface-variant hover:bg-primary-container/10"
               }`}
-              data-oid="cvfn01d"
             >
-              <span
-                className="material-symbols-outlined text-xl"
-                data-oid="k_g2.ed"
-              >
+              <span className="material-symbols-outlined text-xl">
                 {tab.icon}
               </span>
               {tab.label}
@@ -776,9 +593,7 @@ export default function SettingsPage() {
           ))}
         </nav>
 
-        <div className="flex-1 min-w-0" data-oid="0tn583_">
-          {tabContent[activeTab]()}
-        </div>
+        <div className="flex-1 min-w-0">{tabContent[activeTab]()}</div>
       </div>
     </SidebarLayout>
   );

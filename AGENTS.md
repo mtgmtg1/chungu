@@ -27,6 +27,13 @@ app/
     src/locales/   i18n translation files (en/ko/ja × common/page)
     src/i18n.js     i18next configuration
     src/LanguageContext.jsx  Language provider with Supabase persistence
+  docs/              Docusaurus documentation site (API docs, AI prompts)
+    docs/            Markdown content (en: source of truth)
+    i18n/ko/         Korean translations
+    i18n/ja/         Japanese translations
+    static/img/      Chungu logo & favicon SVGs
+    docusaurus.config.js
+    build/           Generated static site (gitignored)
   Dockerfile.backend
   docker-compose.yml
   .env.example
@@ -65,6 +72,12 @@ npm run dev
 # Worker
 cd ../backend
 celery -A backend.celery_app.celery worker --loglevel=info
+
+# Docs (Docusaurus)
+cd ../docs
+npm install
+npm run build        # outputs to docs/build/
+npm run start        # dev server at localhost:3000
 ```
 
 ## Deployment
@@ -87,6 +100,8 @@ This syncs `app/` to the `a1` server, rebuilds Docker images, and restarts conta
 - `LanguageSelector` component in sidebar for manual switching
 - `LanguageContext.jsx` provides `useLanguage()` hook for global access
 - API docs translated: `app/API.md` (en), `app/API.ko.md` (ko), `app/API.ja.md` (ja)
+- Docusaurus docs site supports en/ko/ja via `i18n/{locale}/docusaurus-plugin-content-docs/current/` directories
+- Docusaurus docs are served at `/docs/` by FastAPI (`main.py` mounts `docs/build/` as static files)
 - Admin pages (`AdminDashboard.jsx`, `AdminLogin.jsx`) are not yet internationalized
 - When adding new UI strings, add keys to all three languages and use `t('namespace:key')`
 
@@ -97,6 +112,7 @@ This syncs `app/` to the `a1` server, rebuilds Docker images, and restarts conta
 - Billing: points are deducted per page/image/audio/video
 - Docs: `/api/v1/docs` (OpenAPI/Swagger)
 - Developer portal: `/developer` in the web UI
+- Docusaurus docs site: `/docs/` (served by FastAPI from `docs/build/`)
 
 ## Agent Guidelines
 
@@ -107,3 +123,4 @@ This syncs `app/` to the `a1` server, rebuilds Docker images, and restarts conta
 - Keep the workflow-linear code style with flow comments at the top of major functions.
 - When adding UI text, always use i18n translation keys. Never hardcode user-facing strings.
 - Add new translation keys to all three locale files (en/ko/ja) simultaneously.
+- When adding new Docusaurus docs pages, create the English source in `app/docs/docs/` and add Korean/Japanese translations under `app/docs/i18n/{ko,ja}/docusaurus-plugin-content-docs/current/`.

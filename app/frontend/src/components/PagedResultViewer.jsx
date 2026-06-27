@@ -90,7 +90,7 @@ export default function PagedResultViewer({
           url={sourceUrl}
           page={currentPage}
           onPageChange={setCurrentPage}
-          data-oid="3w3hp.b"
+          data-oid="8kmamif"
         />
       );
     }
@@ -98,34 +98,34 @@ export default function PagedResultViewer({
       return (
         <div
           className="flex-1 flex flex-col overflow-hidden bg-surface-container-low"
-          data-oid="w:269q-"
+          data-oid="e61avxt"
         >
           <div
             className="h-12 border-b border-outline-variant bg-white flex items-center px-3 flex-shrink-0"
-            data-oid="owpoh:2"
+            data-oid="a2811yy"
           >
             <ImageIcon
               size={16}
               className="text-outline mr-2"
-              data-oid="064.d6d"
+              data-oid="w386s-y"
             />
 
             <span
               className="text-sm font-medium text-on-surface truncate"
-              data-oid="3-b4oz."
+              data-oid="p7rhj4g"
             >
               {t("page:components.originalImage")}
             </span>
           </div>
           <div
             className="flex-1 overflow-auto custom-scrollbar p-4 flex items-center justify-center"
-            data-oid="lh-fml0"
+            data-oid="m8ac0yi"
           >
             <img
               src={imageUrl}
               alt={t("page:components.originalImage", { number: currentPage })}
               className="max-w-full max-h-full object-contain shadow-lg rounded border border-outline-variant bg-white"
-              data-oid="n5:nu:2"
+              data-oid="p4ex51i"
             />
           </div>
         </div>
@@ -137,14 +137,14 @@ export default function PagedResultViewer({
           sourceType={sourceType}
           url={sourceUrl}
           filename=""
-          data-oid="cwoo06-"
+          data-oid="74i0o79"
         />
       );
     }
     return (
       <div
         className="flex-1 flex items-center justify-center text-on-surface-variant text-sm p-4"
-        data-oid="ll9tkw_"
+        data-oid="urt1nmx"
       >
         {t("page:components.cannotDisplaySource")}
       </div>
@@ -158,8 +158,8 @@ export default function PagedResultViewer({
     sourceType === "video";
 
   return (
-    <div className="flex-1 flex overflow-hidden" data-oid="toiymro">
-      <PanelGroup direction="horizontal" data-oid="0ger5sf">
+    <div className="flex-1 flex overflow-hidden" data-oid="9grrz:c">
+      <PanelGroup direction="horizontal" data-oid="nx8cibg">
         {sidebarOpen && (
           <>
             <Panel
@@ -167,23 +167,23 @@ export default function PagedResultViewer({
               minSize={15}
               maxSize={35}
               className="border-r border-outline-variant bg-surface flex flex-col"
-              data-oid="e-ge1co"
+              data-oid="m.s-c:w"
             >
               <div
                 className="p-3 border-b border-outline-variant bg-surface-container-low"
-                data-oid="q3:-w.n"
+                data-oid="7s2nrab"
               >
                 <p
                   className="text-xs font-bold text-on-surface-variant uppercase tracking-wider"
-                  data-oid="tdq:0j3"
+                  data-oid="z:01:i6"
                 >
                   {t("page:result.pageList")}
                 </p>
-                <p className="text-xs text-outline mt-1" data-oid="4zvlu18">
+                <p className="text-xs text-outline mt-1" data-oid="l0gjaer">
                   {t("page:result.totalPages", { total: totalPages })}
                 </p>
               </div>
-              <div className="flex-1 overflow-hidden" data-oid=".e8x.ya">
+              <div className="flex-1 overflow-hidden" data-oid="wz65v:b">
                 <Virtuoso
                   data={pages}
                   itemContent={(idx, page) => (
@@ -194,19 +194,19 @@ export default function PagedResultViewer({
                           ? "bg-primary-container/10 text-primary font-bold"
                           : "text-on-surface hover:bg-surface-container-high"
                       }`}
-                      data-oid="j51o72a"
+                      data-oid="8zlp6vl"
                     >
                       <div
                         className="flex items-center gap-2"
-                        data-oid="gkd-306"
+                        data-oid="ahpbqa5"
                       >
                         <FileText
                           size={14}
                           className="text-outline flex-shrink-0"
-                          data-oid="q8g.b4i"
+                          data-oid="jgmib_."
                         />
 
-                        <span className="truncate" data-oid="9a_srlg">
+                        <span className="truncate" data-oid="j0ixjt6">
                           {t("page:components.pdfPage", {
                             page: page.page_num,
                           })}
@@ -214,60 +214,60 @@ export default function PagedResultViewer({
                       </div>
                       <p
                         className="text-xs text-outline truncate mt-0.5 pl-5"
-                        data-oid="28ypv9q"
+                        data-oid="v.-k1:b"
                       >
                         {page.preview}
                       </p>
                     </button>
                   )}
-                  data-oid="rgykzk."
+                  data-oid="hfg:nky"
                 />
               </div>
             </Panel>
             <PanelResizeHandle
               className="w-1 bg-outline-variant/50 hover:bg-primary/30 transition-colors"
-              data-oid=":r-i5jt"
+              data-oid="6mz3vke"
             />
           </>
         )}
 
         <Panel
           className="flex-1 flex flex-col overflow-hidden"
-          data-oid="bopd6fy"
+          data-oid="ui_0qx3"
         >
           <div
             className="h-12 border-b border-outline-variant bg-white flex items-center justify-between px-4 flex-shrink-0"
-            data-oid="rkc:9b-"
+            data-oid="j643u-y"
           >
-            <div className="flex items-center gap-2" data-oid="haxz.hh">
+            <div className="flex items-center gap-2" data-oid="ysluiny">
               <button
                 onClick={() => goToPage(currentPage - 1)}
                 className="p-1.5 rounded hover:bg-surface-container-high"
-                data-oid="dana1mz"
+                data-oid="6s8-_0n"
               >
-                <ChevronLeft size={18} data-oid="f16wrv4" />
+                <ChevronLeft size={18} data-oid="wrb3i01" />
               </button>
               <span
                 className="text-sm font-medium text-on-surface"
-                data-oid="vp-b:0c"
+                data-oid="n86uamj"
               >
                 {currentPage} / {totalPages}
               </span>
               <button
                 onClick={() => goToPage(currentPage + 1)}
                 className="p-1.5 rounded hover:bg-surface-container-high"
-                data-oid="4dz5p:f"
+                data-oid="ounzdw:"
               >
-                <ChevronRight size={18} data-oid="3ahsoen" />
+                <ChevronRight size={18} data-oid="xf50.:b" />
               </button>
             </div>
-            <div className="flex items-center gap-2" data-oid="xu9q3cy">
+            <div className="flex items-center gap-2" data-oid="0opfhtl">
               {saveMessage && (
                 <span
                   className="text-xs text-green-600 flex items-center gap-1"
-                  data-oid="btuwc-z"
+                  data-oid="j5b.:l."
                 >
-                  <Check size={12} data-oid="hhr5iu5" />
+                  <Check size={12} data-oid="iob5p09" />
                   {saveMessage}
                 </span>
               )}
@@ -275,16 +275,16 @@ export default function PagedResultViewer({
                 onClick={saveCurrentPage}
                 disabled={saving}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-bold hover:opacity-90 disabled:opacity-50"
-                data-oid="04_fh4j"
+                data-oid="0s0s0bf"
               >
                 {saving ? (
                   <Loader2
                     size={14}
                     className="animate-spin"
-                    data-oid="cf_781n"
+                    data-oid="jwkn1rb"
                   />
                 ) : (
-                  <Save size={14} data-oid="7klafvf" />
+                  <Save size={14} data-oid="tlhbcof" />
                 )}
                 {t("page:result.save")}
               </button>
@@ -294,7 +294,7 @@ export default function PagedResultViewer({
           {error && (
             <div
               className="bg-red-50 text-red-700 px-4 py-2 text-sm flex items-center gap-2 border-b border-red-200 flex-shrink-0"
-              data-oid="a5-cokn"
+              data-oid="fqpxu.n"
             >
               {error}
             </div>
@@ -304,20 +304,20 @@ export default function PagedResultViewer({
             <PanelGroup
               direction="horizontal"
               className="flex-1 overflow-hidden"
-              data-oid="uemc5gm"
+              data-oid="wbpjin7"
             >
               <Panel
                 defaultSize={45}
                 minSize={25}
                 maxSize={70}
                 className="overflow-hidden"
-                data-oid="ds-klot"
+                data-oid="_4r5fdj"
               >
                 {renderSourcePanel()}
               </Panel>
               <PanelResizeHandle
                 className="w-1 bg-outline-variant/50 hover:bg-primary/30 transition-colors"
-                data-oid="7pzivus"
+                data-oid="rn4azy0"
               />
 
               <Panel
@@ -325,17 +325,17 @@ export default function PagedResultViewer({
                 minSize={30}
                 maxSize={75}
                 className="flex flex-col bg-white overflow-hidden"
-                data-oid="47s06uh"
+                data-oid="ue-8gmm"
               >
                 {loadingPage ? (
                   <div
                     className="flex-1 flex items-center justify-center"
-                    data-oid="-0w582c"
+                    data-oid="kti5mwj"
                   >
                     <Loader2
                       className="animate-spin text-primary"
                       size={24}
-                      data-oid=":oyvjpd"
+                      data-oid="2acty.6"
                     />
                   </div>
                 ) : (
@@ -343,7 +343,7 @@ export default function PagedResultViewer({
                     ref={editorRef}
                     markdown={pageMarkdown}
                     editable
-                    data-oid="2nok50_"
+                    data-oid="-ocn9ti"
                   />
                 )}
               </Panel>
@@ -351,17 +351,17 @@ export default function PagedResultViewer({
           ) : (
             <div
               className="flex-1 flex flex-col bg-white overflow-hidden"
-              data-oid="jc:9.e0"
+              data-oid="8m4s7e_"
             >
               {loadingPage ? (
                 <div
                   className="flex-1 flex items-center justify-center"
-                  data-oid=".vgs:ja"
+                  data-oid="ms_jktn"
                 >
                   <Loader2
                     className="animate-spin text-primary"
                     size={24}
-                    data-oid="7j68pwf"
+                    data-oid="pxexur0"
                   />
                 </div>
               ) : (
@@ -369,7 +369,7 @@ export default function PagedResultViewer({
                   ref={editorRef}
                   markdown={pageMarkdown}
                   editable
-                  data-oid="qcw.72_"
+                  data-oid="1bhay7t"
                 />
               )}
             </div>

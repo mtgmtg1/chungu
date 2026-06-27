@@ -58,7 +58,7 @@ export function LanguageProvider({ children }) {
         loading,
         supportedLanguages: SUPPORTED_LANGUAGES,
       }}
-      data-oid="syt3q98"
+      data-oid="dt6ognq"
     >
       {children}
     </LanguageContext.Provider>

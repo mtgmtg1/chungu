@@ -296,7 +296,7 @@ export default function SoftAurora({
     <div
       ref={containerRef}
       className="soft-aurora-container"
-      data-oid="582w2b-"
+      data-oid="p5l5e0t"
     />
   );
 }

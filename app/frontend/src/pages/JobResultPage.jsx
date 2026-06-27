@@ -180,38 +180,38 @@ export default function JobResultPage() {
   return (
     <div
       className="min-h-screen bg-background flex flex-col"
-      data-oid="2b2k2kh"
+      data-oid="vl.tj_r"
     >
       <header
         className="h-16 border-b border-outline-variant bg-surface flex items-center justify-between px-6 flex-shrink-0"
-        data-oid="7.u79su"
+        data-oid="kxse7f."
       >
-        <div className="flex items-center gap-4" data-oid="c1tyx-6">
+        <div className="flex items-center gap-4" data-oid="jz8kj2e">
           <Link
             to="/"
             className="flex items-center gap-2 text-on-surface-variant hover:text-primary transition-colors"
-            data-oid="gby_am."
+            data-oid="homj3ye"
           >
-            <ArrowLeft size={18} data-oid="z-e9f.f" />
-            <span className="font-medium" data-oid="16pvv9.">
+            <ArrowLeft size={18} data-oid="pmqivjc" />
+            <span className="font-medium" data-oid="efc.i4.">
               {t("page:result.newConversion")}
             </span>
           </Link>
-          <div className="h-4 w-px bg-outline-variant" data-oid="r05s01t"></div>
+          <div className="h-4 w-px bg-outline-variant" data-oid="-vnoo-."></div>
           <h1
             className="font-headline-md text-headline-md font-bold text-on-surface"
-            data-oid="dz-bk1z"
+            data-oid="aaxa04a"
           >
             {job?.filename || jobId}
           </h1>
           {job?.status === "done" && (
             <span
               className="px-3 py-1 bg-green-100 text-green-700 text-xs font-bold rounded-full flex items-center gap-1.5 border border-green-200"
-              data-oid="r1h-928"
+              data-oid="lxd0:1l"
             >
               <span
                 className="w-1.5 h-1.5 bg-green-600 rounded-full"
-                data-oid="dlvvbk_"
+                data-oid="4iq1gl9"
               ></span>
               {t("page:result.done")}
             </span>
@@ -219,14 +219,14 @@ export default function JobResultPage() {
           {job?.status === "error" && (
             <span
               className="px-3 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full flex items-center gap-1.5 border border-red-200"
-              data-oid="4nevs38"
+              data-oid="uf3gdos"
             >
-              <XCircle size={12} data-oid="7yxmgm8" />
+              <XCircle size={12} data-oid="vcowgtj" />
               {t("page:result.error")}
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2" data-oid="1tw:m:l">
+        <div className="flex items-center gap-2" data-oid=":tdat.:">
           {job?.status === "done" && sourceUrl && (
             <button
               onClick={() => setSidebarOpen((v) => !v)}
@@ -236,12 +236,12 @@ export default function JobResultPage() {
                   : t("page:result.showSidebar")
               }
               className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
-              data-oid="9ln-81_"
+              data-oid="g85z5vd"
             >
               {sidebarOpen ? (
-                <PanelLeftClose size={16} data-oid="tlbe26o" />
+                <PanelLeftClose size={16} data-oid="tn5ebf8" />
               ) : (
-                <PanelLeft size={16} data-oid="lqw.bpp" />
+                <PanelLeft size={16} data-oid="iknpeoy" />
               )}
             </button>
           )}
@@ -250,9 +250,9 @@ export default function JobResultPage() {
               <button
                 onClick={() => download("md")}
                 className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
-                data-oid="rc._-5d"
+                data-oid="yirbet1"
               >
-                <FileText size={16} data-oid="1qz0ygb" />
+                <FileText size={16} data-oid="go.4duu" />
                 {t("page:result.md")}
               </button>
               <button
@@ -270,32 +270,32 @@ export default function JobResultPage() {
                   download("csv");
                 }}
                 className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
-                data-oid="e9_0pun"
+                data-oid="00coi-x"
               >
-                <Table2 size={16} data-oid="afl37iw" />
+                <Table2 size={16} data-oid="0yo:c7a" />
                 {job.xlsx_converted
                   ? t("page:result.csv")
                   : t("page:result.csvCost", {
                       cost: xlsxCost.toLocaleString(),
                     })}
               </button>
-              <div className="relative group" data-oid="jhjg_7d">
+              <div className="relative group" data-oid="e5fsbni">
                 <button
                   className="flex items-center gap-1.5 px-3 py-2 bg-primary text-white rounded-lg font-bold hover:opacity-90 transition-colors shadow-sm"
-                  data-oid="j1r6gw6"
+                  data-oid="du_8s4p"
                 >
-                  <Download size={16} data-oid="9waixh_" />
+                  <Download size={16} data-oid="d46ozw7" />
                   {t("page:result.office")}
                 </button>
                 <div
                   className="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg border border-outline-variant hidden group-hover:flex flex-col z-50 py-1"
-                  data-oid="ps9wawj"
+                  data-oid="4ia:xlm"
                 >
                   <button
                     onClick={() => convertAndDownload("xlsx")}
                     disabled={converting}
                     className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                    data-oid="q0o3_.s"
+                    data-oid="e_iw.cl"
                   >
                     {job.xlsx_converted
                       ? t("page:result.excelDownload")
@@ -307,7 +307,7 @@ export default function JobResultPage() {
                     onClick={() => convertAndDownload("docx")}
                     disabled={converting}
                     className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                    data-oid="cgt9ify"
+                    data-oid="s80vrqg"
                   >
                     {t("page:result.word")}
                   </button>
@@ -315,7 +315,7 @@ export default function JobResultPage() {
                     onClick={() => convertAndDownload("pptx")}
                     disabled={converting}
                     className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                    data-oid="rq67l:2"
+                    data-oid="8663wlk"
                   >
                     {t("page:result.ppt")}
                   </button>
@@ -325,16 +325,16 @@ export default function JobResultPage() {
                 onClick={saveMarkdown}
                 disabled={saving}
                 className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg font-bold hover:opacity-90 transition-colors shadow-sm disabled:opacity-50"
-                data-oid="dsrrzzu"
+                data-oid="0y62kdm"
               >
                 {saving ? (
                   <Loader2
                     size={16}
                     className="animate-spin"
-                    data-oid="khsu18r"
+                    data-oid="zubuhoj"
                   />
                 ) : (
-                  <Save size={16} data-oid="dqi9ytq" />
+                  <Save size={16} data-oid="9q9sxwr" />
                 )}
                 {t("page:result.save")}
               </button>
@@ -346,9 +346,9 @@ export default function JobResultPage() {
       {saveMessage && (
         <div
           className="bg-green-50 text-green-700 px-4 py-2 text-sm flex items-center gap-2 border-b border-green-200"
-          data-oid="w132rfv"
+          data-oid="uhtevhw"
         >
-          <Check size={16} data-oid="vel8eos" />
+          <Check size={16} data-oid="jze93xf" />
           {saveMessage}
         </div>
       )}
@@ -356,9 +356,9 @@ export default function JobResultPage() {
       {error && (
         <div
           className="bg-red-50 text-red-700 px-4 py-2 text-sm flex items-center gap-2 border-b border-red-200"
-          data-oid="d-wams1"
+          data-oid="dj7ay27"
         >
-          <XCircle size={16} data-oid="gsri92m" />
+          <XCircle size={16} data-oid="872vq_g" />
           {error}
         </div>
       )}
@@ -366,12 +366,12 @@ export default function JobResultPage() {
       {loading && !job && (
         <div
           className="flex-1 flex items-center justify-center"
-          data-oid="5feuxpg"
+          data-oid="bv9f2yo"
         >
           <Loader2
             className="animate-spin text-primary"
             size={32}
-            data-oid="wbwc9f0"
+            data-oid="ekpzidb"
           />
         </div>
       )}
@@ -379,33 +379,33 @@ export default function JobResultPage() {
       {job && job.status !== "done" && job.status !== "error" && (
         <div
           className="flex-1 flex flex-col items-center justify-center p-6"
-          data-oid="lg80dmz"
+          data-oid="-ilo9dx"
         >
           <Loader2
             className="animate-spin text-primary mb-4"
             size={32}
-            data-oid="k.dtw61"
+            data-oid="s92lc-w"
           />
 
           <h2
             className="text-lg font-semibold text-on-surface mb-2"
-            data-oid="artnkbe"
+            data-oid="v6r4kxx"
           >
             {statusLabel(job.status)}
           </h2>
           <div
             className="w-full max-w-md h-2 bg-surface-container-high rounded-full overflow-hidden"
-            data-oid="jeyc2-n"
+            data-oid="oyicto6"
           >
             <div
               className="h-full bg-primary transition-all"
               style={{ width: `${pct}%` }}
-              data-oid="__rttik"
+              data-oid="sgb5f5x"
             />
           </div>
           <p
             className="text-sm text-on-surface-variant mt-2"
-            data-oid="gqc2pg8"
+            data-oid="7tbe0.7"
           >
             {job.total_pages
               ? t("page:result.pageProgress", {
@@ -425,11 +425,11 @@ export default function JobResultPage() {
       {job?.status === "error" && (
         <div
           className="flex-1 flex items-center justify-center p-6"
-          data-oid="v2sftn9"
+          data-oid=".1e5ij:"
         >
           <pre
             className="bg-red-50 text-red-700 text-xs p-4 rounded-lg whitespace-pre-wrap max-w-3xl"
-            data-oid="hfviul6"
+            data-oid="vgn48fw"
           >
             {job.error_log || t("page:result.unknownError")}
           </pre>
@@ -443,75 +443,75 @@ export default function JobResultPage() {
           sourceUrl={sourceUrl}
           sourceType={sourceType}
           sidebarOpen={sidebarOpen}
-          data-oid=".5pwaq1"
+          data-oid="x.dznfp"
         />
       )}
 
       {job?.status === "done" && !loading && !needsPagedMode(job) && (
-        <div className="flex-1 flex overflow-hidden min-h-0" data-oid="wtl-z4w">
+        <div className="flex-1 flex overflow-hidden min-h-0" data-oid="ww-27ni">
           {sidebarOpen && sourceUrl ? (
             <PanelGroup
               direction="horizontal"
               className="flex-1 flex"
-              data-oid="5srcok_"
+              data-oid="wn6pn3w"
             >
               <Panel
                 defaultSize={30}
                 minSize={20}
                 maxSize={60}
                 className="flex flex-col min-h-0"
-                data-oid="4qn3ut1"
+                data-oid="8gj26he"
               >
                 {sourceType === "pdf" ? (
                   <div
                     className="flex flex-col h-full border-r border-outline-variant bg-surface-container-low"
-                    data-oid="rclzwjg"
+                    data-oid="-096roo"
                   >
                     <div
                       className="p-4 flex items-center justify-between border-b border-outline-variant bg-white flex-shrink-0"
-                      data-oid="o-8flsf"
+                      data-oid="uqt1.ul"
                     >
                       <h3
                         className="font-bold text-sm text-on-surface"
-                        data-oid="_t.92q8"
+                        data-oid="m8n44uu"
                       >
                         {t("page:result.sourceDocument")}
                       </h3>
                       <span
                         className="text-[10px] text-outline font-mono bg-surface px-1.5 py-0.5 rounded border border-outline-variant truncate max-w-[200px]"
-                        data-oid="7o1avij"
+                        data-oid="tcve_ch"
                       >
                         {job?.filename}
                       </span>
                     </div>
-                    <div className="flex-1 min-h-0" data-oid=".3oyynr">
+                    <div className="flex-1 min-h-0" data-oid="hoiv69f">
                       <PdfViewer
                         url={sourceUrl}
                         page={currentPdfPage}
                         onPageChange={setCurrentPdfPage}
-                        data-oid="0m-g9:r"
+                        data-oid="rp.07za"
                       />
                     </div>
                   </div>
                 ) : sourceType === "images" ? (
                   <div
                     className="flex flex-col h-full border-r border-outline-variant bg-surface-container-low overflow-hidden"
-                    data-oid="q._bpvt"
+                    data-oid="h03ee86"
                   >
                     <div
                       className="p-4 border-b border-outline-variant bg-white flex-shrink-0"
-                      data-oid=".4kovz1"
+                      data-oid="po9q2nu"
                     >
                       <h3
                         className="font-bold text-sm text-on-surface"
-                        data-oid="ml42c3p"
+                        data-oid="ucdj81v"
                       >
                         {t("page:result.sourceImages")}
                       </h3>
                     </div>
                     <div
                       className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4"
-                      data-oid="w:1yrm9"
+                      data-oid="1ww77no"
                     >
                       {imageUrls.map((url, idx) => (
                         <img
@@ -522,7 +522,7 @@ export default function JobResultPage() {
                           })}
                           className="w-full rounded border border-outline-variant bg-white shadow-sm"
                           loading="lazy"
-                          data-oid="_yk7kt_"
+                          data-oid="nd3v0hm"
                         />
                       ))}
                     </div>
@@ -532,16 +532,16 @@ export default function JobResultPage() {
                     sourceType={sourceType}
                     url={sourceUrl}
                     filename={job?.filename}
-                    data-oid="824243q"
+                    data-oid="a-zibj2"
                   />
                 ) : (
                   <div
                     className="flex flex-col h-full border-r border-outline-variant bg-surface-container-low p-4"
-                    data-oid="ulitjka"
+                    data-oid="ls5c2-e"
                   >
                     <h3
                       className="font-bold text-sm text-on-surface mb-2"
-                      data-oid="-r-c06o"
+                      data-oid="8ro3r0m"
                     >
                       {t("page:result.sourceFile")}
                     </h3>
@@ -550,13 +550,13 @@ export default function JobResultPage() {
                       target="_blank"
                       rel="noreferrer"
                       className="text-sm text-primary hover:underline truncate"
-                      data-oid="kuvaigo"
+                      data-oid="6ngylg1"
                     >
                       {job?.filename}
                     </a>
                     <p
                       className="text-xs text-on-surface-variant mt-2"
-                      data-oid="343jgcp"
+                      data-oid="9mhca2w"
                     >
                       {t("page:result.archiveNotice")}
                     </p>
@@ -565,19 +565,19 @@ export default function JobResultPage() {
               </Panel>
               <PanelResizeHandle
                 className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize"
-                data-oid="2ihfoq1"
+                data-oid="j-sm.n3"
               />
 
-              <Panel className="flex flex-col min-h-0" data-oid="ginc7yl">
+              <Panel className="flex flex-col min-h-0" data-oid="2xixpf2">
                 <div
                   className="flex flex-col h-full bg-white overflow-hidden"
-                  data-oid="c0t-hbd"
+                  data-oid="1pwia81"
                 >
                   <SimpleEditor
                     ref={editorRef}
                     markdown={markdown}
                     editable
-                    data-oid="q4efui7"
+                    data-oid="xzqyv5."
                   />
                 </div>
               </Panel>
@@ -585,13 +585,13 @@ export default function JobResultPage() {
           ) : (
             <div
               className="flex-1 flex flex-col bg-white overflow-hidden min-h-0"
-              data-oid="mkvvorb"
+              data-oid="w605w2j"
             >
               <SimpleEditor
                 ref={editorRef}
                 markdown={markdown}
                 editable
-                data-oid="2vkm-mo"
+                data-oid="r9i48wh"
               />
             </div>
           )}

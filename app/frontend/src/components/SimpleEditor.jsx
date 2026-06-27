@@ -79,7 +79,7 @@ function ToolbarButton({ onClick, active, disabled, children, title }) {
           ? "bg-primary text-white"
           : "hover:bg-surface-container-high text-on-surface"
       } disabled:opacity-40`}
-      data-oid="0183n1t"
+      data-oid="x3atm-5"
     >
       {children}
     </button>
@@ -88,7 +88,7 @@ function ToolbarButton({ onClick, active, disabled, children, title }) {
 
 function ToolbarDivider() {
   return (
-    <div className="w-px h-5 bg-outline-variant mx-1" data-oid="uf:kl4l"></div>
+    <div className="w-px h-5 bg-outline-variant mx-1" data-oid="lxjp-4z"></div>
   );
 }
 
@@ -170,42 +170,42 @@ const SimpleEditor = forwardRef(function SimpleEditor(
   const HeadingIcon = headingIcon;
 
   return (
-    <div className="flex flex-col h-full bg-white" data-oid="kqk1wyh">
+    <div className="flex flex-col h-full bg-white" data-oid="i28xau9">
       <div
         className="flex items-center gap-1 px-3 py-2 border-b border-outline-variant bg-surface flex-wrap"
-        data-oid="gtt1iq0"
+        data-oid="44c5xqu"
       >
         <ToolbarButton
           onClick={() => editor.chain().focus().undo().run()}
           disabled={!editor.can().undo()}
           title={t("page:components.undo")}
-          data-oid="tygac4e"
+          data-oid="3cjvnmo"
         >
-          <Undo size={18} data-oid="zqj2c7t" />
+          <Undo size={18} data-oid="x2kv.xh" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().redo().run()}
           disabled={!editor.can().redo()}
           title={t("page:components.redo")}
-          data-oid="jkux.r3"
+          data-oid=":h.0vku"
         >
-          <Redo size={18} data-oid="gmo5wle" />
+          <Redo size={18} data-oid=".7dxqt_" />
         </ToolbarButton>
-        <ToolbarDivider data-oid="wu4egp3" />
+        <ToolbarDivider data-oid="hw-mdtw" />
 
-        <div className="relative" data-oid="vhhjvv0">
+        <div className="relative" data-oid="0wpl:-9">
           <ToolbarButton
             onClick={() => setHeadingOpen((v) => !v)}
             active={editor.isActive("heading")}
             title={t("page:components.heading")}
-            data-oid="f8y16ql"
+            data-oid="7d992de"
           >
-            <HeadingIcon size={18} data-oid="zhsbjwd" />
+            <HeadingIcon size={18} data-oid="xuvv95x" />
           </ToolbarButton>
           {headingOpen && (
             <div
               className="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-outline-variant p-1 z-50 flex flex-col gap-0.5"
-              data-oid="l9x-dzq"
+              data-oid="mylyfxl"
             >
               {[1, 2, 3, 4].map((level) => (
                 <button
@@ -220,7 +220,7 @@ const SimpleEditor = forwardRef(function SimpleEditor(
                       ? "bg-primary-container/10 text-primary font-bold"
                       : "text-on-surface"
                   }`}
-                  data-oid="mgy_13y"
+                  data-oid="d-3z5sx"
                 >
                   {t("page:components.headingN", { level })}
                 </button>
@@ -232,149 +232,149 @@ const SimpleEditor = forwardRef(function SimpleEditor(
                   setHeadingOpen(false);
                 }}
                 className="px-3 py-1.5 rounded text-sm text-left hover:bg-surface-container-high text-on-surface"
-                data-oid="xr4u:86"
+                data-oid="aw5:3ha"
               >
                 {t("page:components.paragraph")}
               </button>
             </div>
           )}
         </div>
-        <ToolbarDivider data-oid="7w0740g" />
+        <ToolbarDivider data-oid="pwj6-sh" />
 
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleBold().run()}
           active={editor.isActive("bold")}
           title={t("page:components.bold")}
-          data-oid="7.sv_20"
+          data-oid=":a6xd9h"
         >
-          <Bold size={18} data-oid="5j_u58q" />
+          <Bold size={18} data-oid="wvk9x-o" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleItalic().run()}
           active={editor.isActive("italic")}
           title={t("page:components.italic")}
-          data-oid="fgzgc4u"
+          data-oid="s2zecw5"
         >
-          <Italic size={18} data-oid="819ree-" />
+          <Italic size={18} data-oid="5rt7qq:" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleUnderline().run()}
           active={editor.isActive("underline")}
           title={t("page:components.underline")}
-          data-oid="77h:qpz"
+          data-oid="td5et.g"
         >
-          <UnderlineIcon size={18} data-oid="ns:9:d9" />
+          <UnderlineIcon size={18} data-oid="li:m9iu" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleStrike().run()}
           active={editor.isActive("strike")}
           title={t("page:components.strikethrough")}
-          data-oid=":a2qbe8"
+          data-oid="zml36x:"
         >
-          <Strikethrough size={18} data-oid="-spzvdp" />
+          <Strikethrough size={18} data-oid="m:wguu2" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleHighlight().run()}
           active={editor.isActive("highlight")}
           title={t("page:components.highlight")}
-          data-oid="tq4-nco"
+          data-oid="jeojw-m"
         >
-          <Highlighter size={18} data-oid="416ancz" />
+          <Highlighter size={18} data-oid="4up0fme" />
         </ToolbarButton>
-        <ToolbarDivider data-oid="j1b0d-0" />
+        <ToolbarDivider data-oid="dk-tgwp" />
 
         <ToolbarButton
           onClick={() => editor.chain().focus().setTextAlign("left").run()}
           active={editor.isActive({ textAlign: "left" })}
           title={t("page:components.alignLeft")}
-          data-oid="gm5or.2"
+          data-oid="toi.nlh"
         >
-          <AlignLeft size={18} data-oid="9k:meom" />
+          <AlignLeft size={18} data-oid="a57ewqz" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().setTextAlign("center").run()}
           active={editor.isActive({ textAlign: "center" })}
           title={t("page:components.alignCenter")}
-          data-oid="-0ug3xs"
+          data-oid="u3:3bw3"
         >
-          <AlignCenter size={18} data-oid="wq1209z" />
+          <AlignCenter size={18} data-oid="4oqegh5" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().setTextAlign("right").run()}
           active={editor.isActive({ textAlign: "right" })}
           title={t("page:components.alignRight")}
-          data-oid="4aw-zyn"
+          data-oid="toiant1"
         >
-          <AlignRight size={18} data-oid="79skolr" />
+          <AlignRight size={18} data-oid="b13nn9a" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().setTextAlign("justify").run()}
           active={editor.isActive({ textAlign: "justify" })}
           title={t("page:components.alignJustify")}
-          data-oid="kec7ze8"
+          data-oid="xzayz42"
         >
-          <AlignJustify size={18} data-oid="ekzh--9" />
+          <AlignJustify size={18} data-oid="k-6k0sh" />
         </ToolbarButton>
-        <ToolbarDivider data-oid="b6oko22" />
+        <ToolbarDivider data-oid="0g.d7w_" />
 
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleBulletList().run()}
           active={editor.isActive("bulletList")}
           title={t("page:components.bulletList")}
-          data-oid="-:7j689"
+          data-oid="v0d3mu8"
         >
-          <List size={18} data-oid="wi-8wn_" />
+          <List size={18} data-oid="6xwxur4" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleOrderedList().run()}
           active={editor.isActive("orderedList")}
           title={t("page:components.orderedList")}
-          data-oid="ueq-gl2"
+          data-oid="h76nzt:"
         >
-          <ListOrdered size={18} data-oid="1vos_8a" />
+          <ListOrdered size={18} data-oid="y0pjv15" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleTaskList().run()}
           active={editor.isActive("taskList")}
           title={t("page:components.taskList")}
-          data-oid="tbk_514"
+          data-oid="_dh0ip4"
         >
-          <ListTodo size={18} data-oid="7lthgnd" />
+          <ListTodo size={18} data-oid="ut6hju7" />
         </ToolbarButton>
-        <ToolbarDivider data-oid="nhe0jer" />
+        <ToolbarDivider data-oid="k3gd.63" />
 
         <ToolbarButton
           onClick={toggleLink}
           active={editor.isActive("link")}
           title={t("page:components.link")}
-          data-oid="hir0jkc"
+          data-oid="ls_yew0"
         >
-          <LinkIcon size={18} data-oid="07_tj7p" />
+          <LinkIcon size={18} data-oid="3oixvfi" />
         </ToolbarButton>
         <ToolbarButton
           onClick={addImage}
           title={t("page:components.image")}
-          data-oid="kobdksq"
+          data-oid="8z-1uw0"
         >
-          <ImageIcon size={18} data-oid="txcg3bt" />
+          <ImageIcon size={18} data-oid="dgmdr-8" />
         </ToolbarButton>
         <ToolbarButton
           onClick={addTable}
           active={editor.isActive("table")}
           title={t("page:components.table")}
-          data-oid="ihlv8ar"
+          data-oid="5ow0_b6"
         >
-          <TableIcon size={18} data-oid="k_nk6td" />
+          <TableIcon size={18} data-oid="k-unaiu" />
         </ToolbarButton>
       </div>
       <div
         className="flex-1 overflow-y-auto p-6 custom-scrollbar"
-        data-oid="fhuuzgl"
+        data-oid="qjrci2n"
       >
         <EditorContent
           editor={editor}
           className="prose max-w-none focus:outline-none"
-          data-oid="kqvot89"
+          data-oid="adafms."
         />
       </div>
     </div>

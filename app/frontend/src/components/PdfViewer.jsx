@@ -92,7 +92,7 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
     return (
       <div
         className="flex-1 flex items-center justify-center text-on-surface-variant text-sm"
-        data-oid="lcmgb00"
+        data-oid="2i1n0p3"
       >
         {t("page:errors.loadFailed")}
       </div>
@@ -103,11 +103,11 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
     return (
       <div
         className="flex-1 flex items-center justify-center"
-        data-oid="h_9m:e5"
+        data-oid="xgjzslo"
       >
         <div
           className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"
-          data-oid="u2zkybb"
+          data-oid=".p0dek:"
         ></div>
       </div>
     );
@@ -117,7 +117,7 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
     return (
       <div
         className="flex-1 flex items-center justify-center text-error text-sm p-4"
-        data-oid="pr:jjht"
+        data-oid="lljk3eb"
       >
         {error}
       </div>
@@ -128,24 +128,24 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
     <div
       ref={containerRef}
       className="flex-1 flex flex-col overflow-hidden bg-surface-container-low"
-      data-oid="h:os9_v"
+      data-oid="9_o43iw"
     >
       <div
         className="h-12 border-b border-outline-variant bg-white flex items-center justify-between px-3 flex-shrink-0"
-        data-oid="cr8oc4f"
+        data-oid="x:l5d4z"
       >
-        <div className="flex items-center gap-2" data-oid="_aw.:sc">
+        <div className="flex items-center gap-2" data-oid="9e4pi1-">
           <button
             onClick={() => goToPage(currentPage - 1)}
             disabled={currentPage <= 1}
             className="p-1.5 rounded hover:bg-surface-container-high disabled:opacity-40"
-            data-oid="y0v2np9"
+            data-oid="_c2_3zz"
           >
-            <ChevronLeft size={18} data-oid="k48jz_k" />
+            <ChevronLeft size={18} data-oid="oyifpg:" />
           </button>
           <span
             className="text-sm text-on-surface min-w-[80px] text-center"
-            data-oid="0vuoknk"
+            data-oid="pnq-k0d"
           >
             {currentPage} / {numPages}
           </span>
@@ -153,42 +153,42 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
             onClick={() => goToPage(currentPage + 1)}
             disabled={currentPage >= numPages}
             className="p-1.5 rounded hover:bg-surface-container-high disabled:opacity-40"
-            data-oid="nfbbtfo"
+            data-oid="6erhr-t"
           >
-            <ChevronRight size={18} data-oid="w3a8_8r" />
+            <ChevronRight size={18} data-oid="chclcfd" />
           </button>
         </div>
-        <div className="flex items-center gap-1" data-oid="aezqe2v">
+        <div className="flex items-center gap-1" data-oid="artizrf">
           <button
             onClick={zoomOut}
             className="p-1.5 rounded hover:bg-surface-container-high"
-            data-oid=".f70qfm"
+            data-oid="8yeef49"
           >
-            <ZoomOut size={18} data-oid="ksx_.oj" />
+            <ZoomOut size={18} data-oid="8l3n4fc" />
           </button>
           <span
             className="text-xs text-on-surface-variant w-12 text-center"
-            data-oid=":-ghkey"
+            data-oid="2e40pod"
           >
             {Math.round(scale * 100)}%
           </span>
           <button
             onClick={zoomIn}
             className="p-1.5 rounded hover:bg-surface-container-high"
-            data-oid="f88-vx8"
+            data-oid="_:nbtjd"
           >
-            <ZoomIn size={18} data-oid="9r--n_m" />
+            <ZoomIn size={18} data-oid="zd-kf8d" />
           </button>
         </div>
       </div>
       <div
         className="flex-1 overflow-auto custom-scrollbar p-4 flex justify-center"
-        data-oid="-bnvbo7"
+        data-oid="hifx79j"
       >
         <canvas
           ref={canvasRef}
           className="shadow-lg rounded border border-outline-variant bg-white"
-          data-oid="i156z73"
+          data-oid="trrdy_l"
         />
       </div>
     </div>

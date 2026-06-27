@@ -11,20 +11,20 @@ export default function MediaPlayer({ sourceType, url, filename }) {
   return (
     <div
       className="flex flex-col h-full border-r border-outline-variant bg-surface-container-low"
-      data-oid="j.-78mt"
+      data-oid="dqliuxg"
     >
       <div
         className="p-4 flex items-center justify-between border-b border-outline-variant bg-white flex-shrink-0"
-        data-oid="8t6hvc8"
+        data-oid="jb1scfh"
       >
         <h3
           className="font-bold text-sm text-on-surface flex items-center gap-2"
-          data-oid="tiayx.h"
+          data-oid="qt:7b0h"
         >
           {isAudio ? (
-            <Volume2 size={16} data-oid="7t2ldi6" />
+            <Volume2 size={16} data-oid="mz-q_b_" />
           ) : (
-            <Film size={16} data-oid="woqnb8p" />
+            <Film size={16} data-oid="io-i7m1" />
           )}
           {t(
             isAudio
@@ -34,21 +34,21 @@ export default function MediaPlayer({ sourceType, url, filename }) {
         </h3>
         <span
           className="text-[10px] text-outline font-mono bg-surface px-1.5 py-0.5 rounded border border-outline-variant truncate max-w-[200px]"
-          data-oid="4zt9uhv"
+          data-oid="fcme47b"
         >
           {filename}
         </span>
       </div>
       <div
         className="flex-1 min-h-0 flex items-center justify-center p-4"
-        data-oid="5lu.d63"
+        data-oid="7szfwy4"
       >
         {isAudio ? (
           <audio
             controls
             src={url}
             className="w-full max-w-md"
-            data-oid="8fdvpat"
+            data-oid="6jn74ud"
           >
             {t("page:components.audioNotSupported")}
           </audio>
@@ -57,7 +57,7 @@ export default function MediaPlayer({ sourceType, url, filename }) {
             controls
             src={url}
             className="max-w-full max-h-full rounded border border-outline-variant shadow-sm bg-black"
-            data-oid="pmuej4t"
+            data-oid="og-neg5"
           >
             {t("page:components.videoNotSupported")}
           </video>

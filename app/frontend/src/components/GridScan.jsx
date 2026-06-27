@@ -841,20 +841,20 @@ export default function GridScan({
       ref={containerRef}
       className={`gridscan${className ? ` ${className}` : ""}`}
       style={style}
-      data-oid="o1--z29"
+      data-oid="z8-furf"
     >
       {showPreview && (
-        <div className="gridscan__preview" data-oid="2ldj37h">
+        <div className="gridscan__preview" data-oid="n3:0_1:">
           <video
             ref={videoRef}
             muted
             playsInline
             autoPlay
             className="gridscan__video"
-            data-oid="4yxud.0"
+            data-oid="ifj86pj"
           />
 
-          <div className="gridscan__badge" data-oid="kf:9b8i">
+          <div className="gridscan__badge" data-oid="cr69kif">
             {enableWebcam
               ? modelsReady
                 ? uiFaceActive

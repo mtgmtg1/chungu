@@ -2,6 +2,8 @@ __pycache__/
 *.pyc
 node_modules/
 frontend/dist/
+docs/build/
+docs/.docusaurus/
 .env
 *.log
 data/

@@ -216,7 +216,7 @@ def run_media(
 
     files: [(file_type, file_path)]
     오디오/비디오는 media_endpoint로 전송한다.
-    이미지는 endpoint와 media_endpoint에 2:1 비율로 분배한다 (E4B가 기본 서버 절반 부하).
+    이미지는 endpoint와 media_endpoint에 1:4 비율로 분배한다 (E4B가 4배 빠르므로 80% 처리).
     """
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
@@ -238,7 +238,7 @@ def run_media(
             logger.info(f"[media-routing] {filename} ({file_type}) -> E4B media LLM: {target_endpoint} / {target_model} / provider={target_provider}")
         elif file_type == "image" and media_endpoint and media_model:
             image_counter += 1
-            use_media = (image_counter % 3 == 0)
+            use_media = (image_counter % 5 != 0)
             if use_media:
                 target_endpoint = media_endpoint
                 target_model = media_model

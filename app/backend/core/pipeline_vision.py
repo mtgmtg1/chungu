@@ -37,7 +37,7 @@ def run_vision(
 ) -> list[tuple[int, str]]:
     """Vision 파이프라인 실행 -> [(page_num, markdown_table)] 반환.
 
-    media_endpoint가 제공되면 페이지를 2:1 비율로 default:media에 분배한다.
+    media_endpoint가 제공되면 페이지를 1:4 비율로 default:media에 분배한다 (E4B가 4배 빠르므로 80% 처리).
     """
     work = Path(work_dir)
     img_dir = work / "img"
@@ -52,7 +52,7 @@ def run_vision(
     done = 0
 
     def resolve_endpoint(idx: int) -> tuple[str, str, str]:
-        if media_endpoint and media_model and (idx % 3 == 2):
+        if media_endpoint and media_model and (idx % 5 != 0):
             return media_endpoint, media_model, media_api_key
         return endpoint, model, api_key
 

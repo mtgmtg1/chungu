@@ -36,7 +36,7 @@ services:
       dockerfile: Dockerfile.backend
       args:
         VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
-    command: celery -A backend.celery_app.celery worker --loglevel=info --concurrency=2
+    command: celery -A backend.celery_app.celery worker --loglevel=info --concurrency=8
     env_file: .env
     volumes:
       - appdata:/data

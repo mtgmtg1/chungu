@@ -10,8 +10,9 @@ Chungu is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It 
 - **Frontend**: React + Vite + Tailwind CSS + react-i18next (en/ko/ja)
 - **Storage**: Supabase Storage (PDFs, inputs, results)
 - **Database**: PostgreSQL via Supabase (`supabase-chungu-db`)
-- **LLM Inference**: vLLM proxy (`192.168.1.69:18080`)
-- **Deployment**: Docker Compose on `a1` (local server)
+- **LLM Inference (Images/PDF)**: vLLM proxy (`192.168.1.69:18080`) — Qwen3.6-27B-AWQ, high-batch optimized
+- **LLM Inference (Audio/Video/Images)**: llama.cpp (`192.168.1.82:18080`) — Gemma-4 E4B GGUF, 4 parallel slots
+- **Deployment**: Docker Compose on `a1` (local server), exposed via Cloudflare Tunnel at `chungu.teamcat.app`
 
 ## Directory Structure
 
@@ -50,7 +51,10 @@ Copy `app/.env.example` to `app/.env` and fill in:
 - `DATABASE_URL`
 - `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
 - `REDIS_URL`
-- `DEFAULT_LLM_ENDPOINT`, `DEFAULT_LLM_MODEL`
+- `DEFAULT_LLM_ENDPOINT`, `DEFAULT_LLM_MODEL` (vLLM for images/PDF)
+- `MEDIA_LLM_ENDPOINT`, `MEDIA_LLM_MODEL` (llama.cpp for audio/video + image share)
+- `PUBLIC_BASE_URL` (external URL for download links)
+- `SUPABASE_URL` (internal), `SUPABASE_PUBLIC_URL` (external proxied URL)
 - `JWT_SECRET_KEY` (for Supabase token verification)
 - `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH`
 - Toss/Paddle keys for payments
@@ -80,6 +84,22 @@ npm run build        # outputs to docs/build/
 npm run start        # dev server at localhost:3000
 ```
 
+## LLM Routing & Load Balancing
+
+- **Audio/Video**: 100% routed to E4B (llama.cpp, `192.168.1.82:18080`)
+- **Images (media pipeline)**: 1:4 ratio (default:E4B) — E4B handles 80% of images (4x faster)
+- **PDF pages (vision pipeline)**: 1:4 ratio (default:E4B) — E4B handles 80% of pages
+- Routing logic in `pipeline_media.py:_resolve()` and `pipeline_vision.py:resolve_endpoint()`
+- E4B has 4 parallel slots (`--parallel 4`), vLLM is optimized for high-batch throughput
+- Celery worker concurrency: 8 (prefork), each job spawns unlimited threads for page/image parallelism
+
+## Supabase Proxy
+
+- FastAPI reverse proxy at `/supabase/*` routes to internal Supabase (`192.168.1.50:28000`)
+- Frontend uses `window.location.origin + '/supabase'` as Supabase URL (no hardcoded IPs)
+- Signed download URLs are rewritten from internal to external proxied URLs in `supabase_client.py`
+- Proxy implementation: `app/backend/api/supabase_proxy.py`
+
 ## Deployment
 
 Use the provided scripts:
@@ -89,7 +109,8 @@ bash build_backend.sh
 bash deploy_a1.sh
 ```
 
-This syncs `app/` to the `a1` server, rebuilds Docker images, and restarts containers.
+This syncs `app/` to the `a1` server (via WAN host `wan-1`), rebuilds Docker images, and restarts containers.
+Server `.env` must be updated manually (not overwritten by rsync).
 
 ## Internationalization (i18n)
 

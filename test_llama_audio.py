@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""llama-server 오디오 테스트 (Gemma-4 E4B)."""
+"""llama-server 오디오 테스트 (Gemma-4 12B GGUF Q4_K_M)."""
 import base64
 import json
 import wave
@@ -24,7 +24,7 @@ def main() -> None:
 
     b64 = base64.b64encode(wav_path.read_bytes()).decode()
     payload = {
-        "model": "unsloth/gemma-4-E4B-it-qat-GGUF",
+        "model": "unsloth/gemma-4-12b-it-GGUF",
         "temperature": 0,
         "max_tokens": 200,
         "messages": [

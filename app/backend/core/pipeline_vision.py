@@ -39,9 +39,11 @@ def run_vision(
     """Vision 파이프라인 실행 -> [(page_num, markdown_table)] 반환.
 
     media_endpoint가 제공되면 페이지를 처리량에 따라 동적 분배한다.
-    - ≤20: 1:4 (vLLM:E4B), 소량은 E4B가 4배 빠름
-    - 21~200: 1:1, 균형
-    - >200: 4:1, vLLM 고배치가 압도적
+    속도가 유사하므로 페이지를 vLLM에 집중하고, E4B는 오디오/비디오 우선 처리를 위해
+    이미지 부하를 크게 줄인다.
+    - ≤6: 1:3 (E4B 1/3)
+    - 7~59: 1:5 (E4B 1/5)
+    - ≥60: 1:10 (E4B 1/10)
     """
     work = Path(work_dir)
     img_dir = work / "img"
@@ -58,12 +60,12 @@ def run_vision(
     def resolve_endpoint(idx: int) -> tuple[str, str, str]:
         if not (media_endpoint and media_model):
             return endpoint, model, api_key
-        if total <= 20:
-            use_media = (idx % 5 != 0)       # 1:4 (E4B 80%)
-        elif total <= 200:
-            use_media = (idx % 2 != 0)       # 1:1 (50/50)
+        if total <= 6:
+            use_media = (idx % 3 == 0)       # 1:3 (E4B 1/3)
+        elif total < 60:
+            use_media = (idx % 5 == 0)       # 1:5 (E4B 1/5)
         else:
-            use_media = (idx % 5 == 0)       # 4:1 (vLLM 80%)
+            use_media = (idx % 10 == 0)      # 1:10 (E4B 1/10)
         if use_media:
             return media_endpoint, media_model, media_api_key
         return endpoint, model, api_key

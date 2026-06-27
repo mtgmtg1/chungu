@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""백엔드 media 파이프라인 테스트 (E4B 연동)."""
+"""백엔드 media 파이프라인 테스트 (Gemma-4 12B GGUF Q4_K_M 연동)."""
 import base64
 import subprocess
 import wave
@@ -46,7 +46,7 @@ def main() -> None:
         endpoint="http://192.168.1.69:18080/v1",
         model="cyankiwi/gemma-4-12B-it-qat-AWQ-INT4",
         media_endpoint="http://192.168.1.82:18080/v1",
-        media_model="unsloth/gemma-4-E4B-it-qat-GGUF",
+        media_model="unsloth/gemma-4-12b-it-GGUF",
         max_tokens=200,
     )
     for filename, position, table in results:

@@ -35,9 +35,9 @@ class Settings(BaseSettings):
     default_llm_model: str = "cyankiwi/gemma-4-12B-it-qat-AWQ-INT4"
     default_llm_api_key: str = ""
 
-    # 미디어 전용 LLM (오디오/비디오 파싱용 Gemma-4 E4B)
+    # 미디어 전용 LLM (오디오/비디오 파싱용 Gemma-4 12B GGUF Q4_K_M on llama.cpp)
     media_llm_endpoint: str = "http://192.168.1.82:18080/v1"
-    media_llm_model: str = "unsloth/gemma-4-E4B-it-qat-GGUF"
+    media_llm_model: str = "unsloth/gemma-4-12b-it-GGUF"
     media_llm_api_key: str = ""
 
     # 제한

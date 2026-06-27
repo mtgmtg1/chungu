@@ -11,7 +11,7 @@ Chungu is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It 
 - **Storage**: Supabase Storage (PDFs, inputs, results)
 - **Database**: PostgreSQL via Supabase (`supabase-chungu-db`)
 - **LLM Inference (Images/PDF)**: vLLM proxy (`192.168.1.69:18080`) — Qwen3.6-27B-AWQ, high-batch optimized
-- **LLM Inference (Audio/Video/Images)**: llama.cpp (`192.168.1.82:18080`) — Gemma-4 E4B GGUF, 4 parallel slots
+- **LLM Inference (Audio/Video/Images)**: llama.cpp (`192.168.1.82:18080`) — Gemma-4 12B GGUF Q4_K_M, 4 parallel slots
 - **Deployment**: Docker Compose on `a1` (local server), exposed via Cloudflare Tunnel at `chungu.teamcat.app`
 
 ## Directory Structure
@@ -87,10 +87,10 @@ npm run start        # dev server at localhost:3000
 ## LLM Routing & Load Balancing
 
 - **Audio/Video**: 100% routed to E4B (llama.cpp, `192.168.1.82:18080`)
-- **Images/PDF pages**: dynamically routed based on total count:
-  - ≤20 items: 1:4 (vLLM:E4B) — E4B 80%, small batches benefit from E4B speed
-  - 21~200 items: 1:1 — balanced
-  - >200 items: 4:1 (vLLM:E4B) — vLLM 80%, high-batch throughput dominates
+- **Images/PDF pages**: dynamically routed based on total count, but E4B image load is minimized to prioritize audio/video:
+  - ≤6 items: 1:3 (vLLM:E4B) — E4B 1/3
+  - 7~59 items: 1:5 (vLLM:E4B) — E4B 1/5
+  - ≥60 items: 1:10 (vLLM:E4B) — E4B 1/10
 - Routing logic in `pipeline_media.py:_resolve()` and `pipeline_vision.py:resolve_endpoint()`
 - E4B has 4 parallel slots (`--parallel 4`), vLLM is optimized for high-batch throughput
 - Celery worker concurrency: 8 (prefork)

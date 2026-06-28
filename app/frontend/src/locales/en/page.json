@@ -155,7 +155,8 @@
     "fileProgress": "{{done}} / {{total}} files ({{pct}}%)",
     "pageList": "Page List",
     "totalPages": "Total {{total}} pages",
-    "originalImage": "Original Image {{number}}"
+    "originalImage": "Original Image {{number}}",
+    "leaveNotice": "You can leave this page. We'll send you an email when complete."
   },
   "payment": {
     "title": "Recharge Points",

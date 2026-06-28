@@ -15,6 +15,7 @@ import {
   XCircle } from
 "lucide-react";
 import SourcePanel from "../components/SourcePanel.jsx";
+import PoetryProgress from "../components/PoetryProgress.jsx";
 import PagedResultViewer from "../components/PagedResultViewer.jsx";
 import SimpleEditor from "../components/SimpleEditor.jsx";
 import { api } from "../api.js";
@@ -397,49 +398,23 @@ export default function JobResultPage() {
       }
 
       {job && job.status !== "done" && job.status !== "error" &&
-      <div
-        className="flex-1 flex flex-col items-center justify-center p-6"
-        data-oid="-ilo9dx">
-
-          <Loader2
-          className="animate-spin text-primary mb-4"
-          size={32}
-          data-oid="s92lc-w" />
-
-
-          <h2
-          className="text-lg font-semibold text-on-surface mb-2"
-          data-oid="v6r4kxx">
-
-            {statusLabel(job.status)}
-          </h2>
-          <div
-          className="w-full max-w-md h-2 bg-surface-container-high rounded-full overflow-hidden"
-          data-oid="oyicto6">
-
-            <div
-            className="h-full bg-primary transition-all"
-            style={{ width: `${pct}%` }}
-            data-oid="sgb5f5x" />
-
-          </div>
-          <p
-          className="text-sm text-on-surface-variant mt-2"
-          data-oid="7tbe0.7">
-
-            {job.total_pages ?
-          t("page:result.pageProgress", {
-            done: job.done_pages || 0,
-            total: job.total_pages,
-            pct
-          }) :
-          t("page:result.fileProgress", {
-            done: job.done_files || 0,
-            total: job.total_files,
-            pct
-          })}
-          </p>
-        </div>
+        <PoetryProgress
+          pct={pct}
+          statusLabel={statusLabel(job.status)}
+          progressText={
+            job.total_pages ?
+              t("page:result.pageProgress", {
+                done: job.done_pages || 0,
+                total: job.total_pages,
+                pct
+              }) :
+              t("page:result.fileProgress", {
+                done: job.done_files || 0,
+                total: job.total_files,
+                pct
+              })
+          }
+        />
       }
 
       {job?.status === "error" &&

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-# [Flow: Step 1 (HWP/HWPX 파일 검증) -> Step 2 (pyhwp2md로 마크다운 추출) -> Step 3 (pyhwp Hwp5File로 BinData 이미지 추출) -> Step 4 (페이지 수 추정) -> Step 5 (결과 반환)]
+# [Flow: Step 1 (HWP/HWPX 파일 검증) -> Step 2 (LibreOffice로 DOCX 변환 시도) -> Step 3 (pyhwp2md로 마크다운 추출 fallback) -> Step 4 (pyhwp Hwp5File로 BinData 이미지 추출) -> Step 5 (페이지 수 추정) -> Step 6 (결과 반환)]
 import logging
+import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,54 @@ HWP_EXTENSIONS = {".hwp", ".hwpx"}
 def is_hwp_file(path: Path) -> bool:
     """HWP/HWPX 파일 여부."""
     return path.suffix.lower() in HWP_EXTENSIONS
+
+
+def _libreoffice_env() -> dict[str, str]:
+    """LibreOffice headless 변환에 필요한 locale 및 사용자 프로필 경로를 설정한다."""
+    return {
+        **dict(os.environ),
+        "LANG": "ko_KR.UTF-8",
+        "LC_ALL": "ko_KR.UTF-8",
+        "HOME": "/tmp",
+        "XDG_CONFIG_HOME": "/tmp/.config",
+        "XDG_CACHE_HOME": "/tmp/.cache",
+    }
+
+
+def convert_to_docx(input_path: Path, output_dir: Path | None = None) -> Path:
+    """LibreOffice headless를 이용해 HWP/HWPX 파일을 DOCX로 변환한다."""
+    output_dir = output_dir or input_path.parent
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        "libreoffice",
+        "--headless",
+        "--convert-to",
+        "docx",
+        "--outdir",
+        str(output_dir),
+        str(input_path),
+    ]
+    result = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=120,
+        env=_libreoffice_env(),
+    )
+    stdout_text = result.stdout.decode("utf-8", errors="ignore")
+    stderr_text = result.stderr.decode("utf-8", errors="ignore")
+    if result.returncode != 0:
+        logger.warning(f"[libreoffice-docx] 변환 실패 (returncode={result.returncode}): {stderr_text[:1000]} {stdout_text[:500]}")
+        raise subprocess.CalledProcessError(result.returncode, cmd, output=result.stdout, stderr=result.stderr)
+    if stderr_text:
+        logger.debug(f"[libreoffice-docx] stderr: {stderr_text[:500]}")
+
+    expected = output_dir / f"{input_path.stem}.docx"
+    if not expected.exists():
+        raise FileNotFoundError(f"LibreOffice DOCX 변환 산출물을 찾을 수 없습니다: {expected}")
+    return expected
 
 
 def extract_markdown(path: Path) -> str:

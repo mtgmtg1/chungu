@@ -155,14 +155,41 @@ def run_hwp(
 ) -> list[tuple[int, str]]:
     """HWP/HWPX 전처리 파이프라인 실행 -> [(page_num, markdown)] 반환.
 
-    - pyhwp2md로 마크다운을 추출하고 pyhwp로 BinData 이미지를 추출한다.
+    - 먼저 LibreOffice로 HWP/HWPX를 DOCX로 변환한 뒤 Docling 서비스에서 마크다운을 추출한다.
+    - Docling 변환이 불가능하면 pyhwp2md 기반 fallback을 사용한다.
     - use_refinement=True면 이미지를 포함해 LLM 후처리를 수행한다.
     - LLM 후처리 실패 시 원본 마크다운을 사용한다.
     """
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
-    img_dir = work / "hwp_images"
 
+    # 1) LibreOffice -> DOCX -> Docling (전체 페이지 추출 가능)
+    try:
+        docx_path = hwp_converter.convert_to_docx(file_path, work)
+        logger.info(f"[hwp] {file_path.name} -> DOCX 변환 성공, Docling 경로로 처리합니다")
+        return run_docling(
+            docx_path,
+            work_dir,
+            columns,
+            endpoint,
+            model,
+            api_key,
+            extra_prompt,
+            use_refinement,
+            max_tokens,
+            media_endpoint,
+            media_model,
+            media_api_key,
+            max_images,
+            image_max_size,
+            on_progress,
+            on_error,
+        )
+    except Exception as e:
+        logger.warning(f"[hwp] {file_path.name} DOCX/Docling 처리 실패, pyhwp2md fallback: {e}")
+
+    # 2) Fallback: pyhwp2md 기존 경로
+    img_dir = work / "hwp_images"
     try:
         result = hwp_converter.convert_hwp(file_path, img_dir)
     except Exception as e:
@@ -172,7 +199,6 @@ def run_hwp(
         return []
 
     markdown = result.get("markdown", "")
-    page_count = result.get("page_count", 1) or 1
     image_paths = [img_dir / p for p in result.get("images", [])]
 
     if not use_refinement:

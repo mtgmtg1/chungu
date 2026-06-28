@@ -1,4 +1,4 @@
-// [Flow: Step 1 (sourceFiles/sourceUrl/sourceType/imageUrls 수신) -> Step 2 (파일 개수 판단) -> Step 3 (단일 파일이면 직접 렌더링) -> Step 4 (다중 파일이면 목록+선택 프리뷰, iframe 내장 뷰어가 페이지/줌 처리)]
+// [Flow: Step 1 (sourceFiles/sourceUrl/sourceType/imageUrls 수신) -> Step 2 (파일 개수 판단) -> Step 3 (단일 파일이면 직접 렌더링) -> Step 4 (다중 파일이면 목록+선택 프리뷰, PDF.js 뷰어가 페이지/줌 처리, docx/hwp는 PDF 변환 후 표시)]
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FileText, ImageIcon, Volume2, Film } from "lucide-react";
@@ -8,6 +8,8 @@ import MediaPlayer from "./MediaPlayer.jsx";
 
 function SourceIcon({ type }) {
   if (type === "pdf") return <FileText size={16} className="text-error flex-shrink-0" />;
+  if (type === "docx") return <FileText size={16} className="text-primary flex-shrink-0" />;
+  if (type === "hwp") return <FileText size={16} className="text-secondary flex-shrink-0" />;
   if (type === "image") return <ImageIcon size={16} className="text-primary flex-shrink-0" />;
   if (type === "audio") return <Volume2 size={16} className="text-secondary flex-shrink-0" />;
   if (type === "video") return <Film size={16} className="text-tertiary flex-shrink-0" />;
@@ -16,6 +18,9 @@ function SourceIcon({ type }) {
 
 function SingleFilePreview({ file, filename }) {
   if (file.type === "pdf") return <PdfViewer url={file.url} />;
+  if (file.type === "docx" || file.type === "hwp") {
+    return file.preview_url ? <PdfViewer url={file.preview_url} /> : null;
+  }
   if (file.type === "image") {
     return (
       <div className="flex-1 overflow-auto custom-scrollbar p-4 flex items-center justify-center">
@@ -117,8 +122,8 @@ export default function SourcePanel({
             </Panel>
             <PanelResizeHandle className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize" />
             <Panel className="overflow-hidden min-h-0 flex flex-col">
-              {selected.type === "pdf" ? (
-                <PdfViewer url={selected.url} page={currentPage} onPageChange={onPageChange} />
+              {selected.type === "pdf" || selected.type === "docx" || selected.type === "hwp" ? (
+                <PdfViewer url={selected.preview_url || selected.url} page={currentPage} onPageChange={onPageChange} />
               ) : (
                 <SingleFilePreview file={selected} filename={selected.name} />
               )}
@@ -129,7 +134,7 @@ export default function SourcePanel({
     );
   }
 
-  if (sourceType === "pdf" && sourceUrl) {
+  if ((sourceType === "pdf" || sourceType === "docx" || sourceType === "hwp") && sourceUrl) {
     return <PdfViewer url={sourceUrl} page={currentPage} onPageChange={onPageChange} />;
   }
   if (sourceType === "images" && imageUrls?.length) {

@@ -173,6 +173,13 @@ Server `.env` must be updated manually (not overwritten by rsync).
 - `xlsx`: creates a `Content` sheet with all text/list/code content and a separate sheet per markdown table.
 - Conversion endpoints: `/api/jobs/{id}/convert` (web) and `/api/v1/jobs/{id}/convert` (API). xlsx conversion still deducts points per page/file.
 
+## DOCX/HWP Preview
+
+- `docx` and `hwp` source files are converted to PDF on the backend using LibreOffice headless.
+- The converted PDF is stored in Supabase Storage under the `pdfs` bucket (`preview_pdfs/` prefix) and reused across preview requests.
+- The frontend renders the converted PDF with `PdfViewer` (PDF.js), just like native PDFs.
+- Preview conversion is a server-side operation; no client-side load is added.
+
 ## Result Preview & Multi-file Uploads
 
 - Uploading multiple files creates one job; each file's parsing result is stored separately in `extracted_files[].result_markdown`.

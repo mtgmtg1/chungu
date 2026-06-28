@@ -82,6 +82,8 @@ export default function PagedResultViewer({
 
   const hasSourcePanel =
   sourceType === "pdf" ||
+  sourceType === "docx" ||
+  sourceType === "hwp" ||
   sourceType === "images" ||
   sourceType === "audio" ||
   sourceType === "video" ||

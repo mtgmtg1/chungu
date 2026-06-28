@@ -158,6 +158,110 @@
     "originalImage": "Original Image {{number}}",
     "leaveNotice": "You can leave this page. We'll send you an email when complete."
   },
+  "poems": [
+    {
+      "title": "Counting the Stars",
+      "author": "Yoon Dong-ju",
+      "lines": [
+        "In the sky where seasons pass",
+        "It is full of autumn.",
+        "Without a single worry",
+        "I seem to count all the stars in the autumn.",
+        "",
+        "Stars that sink one by one into my heart",
+        "Now they have all been counted."
+      ]
+    },
+    {
+      "title": "Prologue",
+      "author": "Yoon Dong-ju",
+      "lines": [
+        "Until the day I die, looking up at the sky",
+        "I hope to have no shame,",
+        "Even at the wind brushing the leaves",
+        "I was troubled.",
+        "",
+        "With a heart that sings the stars",
+        "I must love all things that are dying",
+        "And walk the road given to me."
+      ]
+    },
+    {
+      "title": "Snow",
+      "author": "Kim Soo-young",
+      "lines": [
+        "Snow is alive.",
+        "Fallen snow is alive.",
+        "Snow fallen in the yard is alive.",
+        "",
+        "Let us cough.",
+        "Young poet, let us cough.",
+        "Let us cough upon the snow."
+      ]
+    },
+    {
+      "title": "Flower",
+      "author": "Kim Chun-soo",
+      "lines": [
+        "Before I called his name",
+        "He was nothing more",
+        "Than a gesture.",
+        "",
+        "When I called his name",
+        "He came to me",
+        "And became a flower."
+      ]
+    },
+    {
+      "title": "Until the Peony Blooms",
+      "author": "Kim Young-rang",
+      "lines": [
+        "Until the peony blooms",
+        "I still have a long while to stay",
+        "",
+        "Now the peony will not bloom",
+        "Until the peony blooms",
+        "I will remain here"
+      ]
+    },
+    {
+      "title": "Mountain Flower",
+      "author": "Yi Yuk-sa",
+      "lines": [
+        "Like white medicinal water",
+        "The mountain flower",
+        "Sways in the wind",
+        "",
+        "Gently swaying",
+        "Its shape",
+        "Grows ever sadder."
+      ]
+    },
+    {
+      "title": "Green Grape",
+      "author": "Yi Yuk-sa",
+      "lines": [
+        "In my hometown, July",
+        "Is the season when green grapes ripen",
+        "",
+        "In every corner of my heart",
+        "Green grapes ripen",
+        "In every corner of my heart"
+      ]
+    },
+    {
+      "title": "A Poem Written Easily",
+      "author": "Shin Dong-yeop",
+      "lines": [
+        "A beautiful poem written easily",
+        "It is",
+        "Not written easily.",
+        "",
+        "Enduring sleepless nights",
+        "It is not written easily."
+      ]
+    }
+  ],
   "payment": {
     "title": "Recharge Points",
     "back": "Back",

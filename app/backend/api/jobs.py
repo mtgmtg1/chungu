@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from .. import settings_store
 from ..auth.supabase_auth import CurrentUser, get_current_admin, get_current_user
-from ..core import archive_handler, converter, docling_client, hwp_converter, media_loader, office_converter, points_service, supabase_client
+from ..core import archive_handler, converter, docling_client, hwp_converter, media_loader, office_converter, pdf_preview_converter, points_service, supabase_client
 
 
 logger = logging.getLogger(__name__)
@@ -453,17 +453,20 @@ def _source_files(job: Job) -> list[dict]:
         if not isinstance(info, dict) or not info.get("storage_path"):
             continue
         ftype = info.get("type", "")
-        if ftype not in ("pdf", "image", "audio", "video"):
+        if ftype not in ("pdf", "image", "audio", "video", "docx", "hwp"):
             continue
         try:
             url = supabase_client.get_signed_download_url(info["storage_path"], bucket="pdfs", expires_in=3600)
-            out.append({
+            item = {
                 "name": info.get("path", info.get("storage_path", "")),
                 "type": ftype,
                 "url": url,
                 "page_num": idx + 1,
                 "result_markdown": info.get("result_markdown", ""),
-            })
+            }
+            if ftype in ("docx", "hwp"):
+                item["preview_url"] = pdf_preview_converter.get_preview_pdf_url(info["storage_path"], expires_in=3600)
+            out.append(item)
         except Exception:
             pass
     return out
@@ -476,7 +479,7 @@ def _detect_source_type(job: Job) -> str | None:
     files = job.extracted_files or []
     if len(files) == 1:
         ftype = files[0].get("type", "")
-        if ftype in ("audio", "video"):
+        if ftype in ("audio", "video", "docx", "hwp"):
             return ftype
     # 파일명 확장자 기준 fallback
     ext = Path(job.pdf_storage_path).suffix.lower()
@@ -484,6 +487,10 @@ def _detect_source_type(job: Job) -> str | None:
         return "audio"
     if ext in (".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".webm", ".m4v"):
         return "video"
+    if ext in (".docx", ".doc"):
+        return "docx"
+    if ext in (".hwp", ".hwpx"):
+        return "hwp"
     return "pdf"
 
 
@@ -566,8 +573,11 @@ def preview_job(
     image_urls: list[str] = []
     if job.pdf_storage_path:
         try:
-            source_url = supabase_client.get_signed_download_url(job.pdf_storage_path, bucket="pdfs", expires_in=3600)
             source_type = _detect_source_type(job)
+            if source_type in ("docx", "hwp"):
+                source_url = pdf_preview_converter.get_preview_pdf_url(job.pdf_storage_path, expires_in=3600)
+            else:
+                source_url = supabase_client.get_signed_download_url(job.pdf_storage_path, bucket="pdfs", expires_in=3600)
         except Exception:
             pass
 

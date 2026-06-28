@@ -108,20 +108,26 @@ const POEMS = [
   },
 ];
 
-const SLIDE_INTERVAL = 5000;
+const SLIDE_INTERVAL = 10000;
 
 export default function PoetryProgress({ pct, statusLabel, progressText }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const translatedPoems = t("page:poems", { returnObjects: true });
+  const poems = Array.isArray(translatedPoems) ? translatedPoems : POEMS;
   const [slideIdx, setSlideIdx] = useState(0);
 
   useEffect(() => {
+    setSlideIdx(0);
+  }, [i18n.language]);
+
+  useEffect(() => {
     const timer = setInterval(() => {
-      setSlideIdx((prev) => (prev + 1) % POEMS.length);
+      setSlideIdx((prev) => (prev + 1) % poems.length);
     }, SLIDE_INTERVAL);
     return () => clearInterval(timer);
-  }, []);
+  }, [poems.length]);
 
-  const poem = POEMS[slideIdx];
+  const poem = poems[slideIdx];
 
   return (
     <div

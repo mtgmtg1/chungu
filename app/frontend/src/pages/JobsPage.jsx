@@ -612,19 +612,27 @@ export default function JobsPage() {
                           </span>
                         </div>
                         {j.status !== "done" && j.status !== "error" && (j.total_pages > 0 || j.total_files > 0) && (
-                          <div className="mt-1.5 flex items-center gap-2">
-                            <div className="flex-1 h-1.5 bg-surface-container-high rounded-full overflow-hidden min-w-[80px]">
-                              <div
-                                className="h-full bg-primary rounded-full transition-all duration-500"
-                                style={{ width: `${Math.min(100, Math.round(((j.total_pages ? j.done_pages / j.total_pages : j.done_files / j.total_files) || 0) * 100))}%` }}
-                              />
-                            </div>
-                            <span className="font-label-sm text-label-sm text-on-surface-variant whitespace-nowrap">
-                              {j.total_pages > 0
-                                ? t("page:jobs.progressPages", { done: j.done_pages || 0, total: j.total_pages })
-                                : t("page:jobs.progressFiles", { done: j.done_files || 0, total: j.total_files })}
-                            </span>
-                          </div>
+                          (() => {
+                            const usePages = j.total_pages > 0 && j.done_pages > 0;
+                            const done = usePages ? j.done_pages : j.done_files;
+                            const total = usePages ? j.total_pages : j.total_files;
+                            const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+                            return (
+                              <div className="mt-1.5 flex items-center gap-2">
+                                <div className="flex-1 h-1.5 bg-surface-container-high rounded-full overflow-hidden min-w-[80px]">
+                                  <div
+                                    className="h-full bg-primary rounded-full transition-all duration-500"
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </div>
+                                <span className="font-label-sm text-label-sm text-on-surface-variant whitespace-nowrap">
+                                  {usePages
+                                    ? t("page:jobs.progressPages", { done: done || 0, total: total })
+                                    : t("page:jobs.progressFiles", { done: done || 0, total: total })}
+                                </span>
+                              </div>
+                            );
+                          })()
                         )}
                       </td>
                       <td

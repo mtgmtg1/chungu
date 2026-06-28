@@ -28,12 +28,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-kor \
     tesseract-ocr-eng \
+    tesseract-ocr-jpn \
+    tesseract-ocr-chi-sim \
+    tesseract-ocr-chi-tra \
     imagemagick \
     ffmpeg \
     unrar-free \
     libreoffice-writer \
+    libreoffice-l10n-ko \
+    libreoffice-help-ko \
+    fonts-noto-cjk \
+    fonts-nanum \
+    fonts-unfonts-core \
+    fonts-noto-color-emoji \
+    locales \
+    xsltproc \
+    libxml2-utils \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# LibreOffice headless 변환에서 한글/중국어/일본어 문자를 올바르게 렌더링하도록 locale 설정
+RUN sed -i 's/^# *\(ko_KR.UTF-8\)/\1/' /etc/locale.gen && \
+    sed -i 's/^# *\(ja_JP.UTF-8\)/\1/' /etc/locale.gen && \
+    sed -i 's/^# *\(zh_CN.UTF-8\)/\1/' /etc/locale.gen && \
+    locale-gen
+ENV LANG=ko_KR.UTF-8
+ENV LC_ALL=ko_KR.UTF-8
 
 # Mailu 자체서명 TLS 인증서를 신뢰 저장소에 추가
 COPY backend/certs/mailu-cert.pem /usr/local/share/ca-certificates/mailu.crt

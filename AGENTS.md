@@ -97,6 +97,16 @@ npm run start        # dev server at localhost:3000
 - Thread limits per job: `llm_max_workers=64` (vLLM), `media_max_workers=8` (E4B), `ocr_max_workers=8` (Tesseract)
 - `max_pages=10000` per file (configurable via settings_store)
 
+## Large Image Tiling (Whiteboard/Planner)
+
+- High-resolution images (whiteboards, planners, posters) that exceed Gemma 4's vision encoder pixel limit (~2.58M pixels, ~1606x1606) are automatically split into overlapping tiles.
+- Tiling logic in `ocr_client.py:tile_large_image()` — 15% overlap between tiles to avoid cutting text/tables at boundaries.
+- `pipeline_media.py:_process_file()` calls `tile_large_image()` for each image; if tiling is needed, each tile is sent to the LLM separately and results are concatenated with `\n\n`.
+- Images within the pixel limit are processed as-is (no tiling overhead).
+- Tiles are generated in left-to-right, top-to-bottom reading order.
+- No additional billing: tiling is an internal processing detail; the user is charged per original image, not per tile.
+- Key files: `app/backend/core/ocr_client.py` (`tile_large_image`, `fit_image_to_gemma4_resolution`), `app/backend/core/pipeline_media.py` (`_process_file`).
+
 ## Supabase Proxy
 
 - FastAPI reverse proxy at `/supabase/*` routes to internal Supabase (`192.168.1.50:28000`)

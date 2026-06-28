@@ -83,6 +83,60 @@ def fit_image_to_gemma4_resolution(
 
 
 # ---------------------------------------------------------------------------
+# Step 2b: 큰 이미지를 타일로 분할 (화이트보드/플래너 등 고해상도 이미지)
+# ---------------------------------------------------------------------------
+TILE_OVERLAP_RATIO = 0.15
+
+
+def tile_large_image(
+    image_path: Path,
+    max_soft_tokens: int = GEMMA4_MAX_SOFT_TOKENS,
+    patch_size: int = GEMMA4_PATCH_SIZE,
+    pooling_kernel_size: int = GEMMA4_POOLING_KERNEL,
+    overlap_ratio: float = TILE_OVERLAP_RATIO,
+) -> list[Path]:
+    # [Flow: Step 1 (이미지 크기 확인) -> Step 2 (분할 필요 시 타일 생성) -> Step 3 (타일 경로 반환)]
+    """큰 이미지를 Gemma 4 해상도 한계 내의 겹치는 타일로 분할한다.
+
+    이미지가 max_pixels 이내면 원본을 그대로 반환한다.
+    초과하면 overlap_ratio 만큼 겹치는 타일들을 생성해 좌→우, 상→하 순서로 반환한다.
+    """
+    effective = patch_size * pooling_kernel_size
+    max_pixels = max_soft_tokens * effective * effective
+    max_side = int(max_pixels ** 0.5)
+
+    with Image.open(image_path) as img:
+        w, h = img.size
+        if w * h <= max_pixels:
+            return [image_path]
+
+        tile_w = min(w, max_side)
+        tile_h = min(h, max_side)
+        overlap_w = int(tile_w * overlap_ratio)
+        overlap_h = int(tile_h * overlap_ratio)
+        step_w = tile_w - overlap_w
+        step_h = tile_h - overlap_h
+
+        cols = max(1, (w - overlap_w + step_w - 1) // step_w)
+        rows = max(1, (h - overlap_h + step_h - 1) // step_h)
+
+        tiles: list[Path] = []
+        for row in range(rows):
+            for col in range(cols):
+                left = min(col * step_w, w - tile_w)
+                top = min(row * step_h, h - tile_h)
+                right = left + tile_w
+                bottom = top + tile_h
+                tile = img.crop((left, top, right, bottom))
+                tile_path = image_path.with_suffix(f".tile_r{row}_c{col}.png")
+                tile.save(tile_path, "PNG")
+                tiles.append(tile_path)
+
+        logger.info(f"[tile] {image_path.name} ({w}x{h}) -> {len(tiles)} tiles ({rows}x{cols})")
+        return tiles
+
+
+# ---------------------------------------------------------------------------
 # Step 3: PDF 텍스트 레이어 추출 (레이아웃 보존)
 # ---------------------------------------------------------------------------
 def extract_pdf_page_text(pdf_path: str, page_num: int) -> str:

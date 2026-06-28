@@ -73,20 +73,39 @@ def _process_file(
 ) -> tuple[str, str]:
     """단일 미디어/이미지 파일을 처리해 통일된 마크다운 표 문자열을 반환한다.
 
-    - 이미지: prompt를 그대로 사용
+    - 이미지: 크기에 따라 타일 분할 후 각 타일별 LLM 호출, 결과 병합
     - 오디오/비디오: prompt를 extra_prompt로 사용해 30초 세그먼트별로 요청 후 병합
     """
     if file_type == "image":
-        content, _ = ocr_client.call_media(
-            prompt,
-            endpoint,
-            model,
-            api_key,
-            image_paths=[file_path],
-            max_tokens=max_tokens,
-            provider=provider,
-        )
-        return content, ""
+        tiles = ocr_client.tile_large_image(file_path)
+        if len(tiles) <= 1:
+            content, _ = ocr_client.call_media(
+                prompt,
+                endpoint,
+                model,
+                api_key,
+                image_paths=[file_path],
+                max_tokens=max_tokens,
+                provider=provider,
+            )
+            return content, ""
+
+        tile_contents: list[str] = []
+        for tile in tiles:
+            try:
+                content, _ = ocr_client.call_media(
+                    prompt,
+                    endpoint,
+                    model,
+                    api_key,
+                    image_paths=[tile],
+                    max_tokens=max_tokens,
+                    provider=provider,
+                )
+                tile_contents.append(content)
+            except Exception as e:
+                logger.warning(f"[image-tile] {file_path.name} 타일 처리 실패: {e}")
+        return "\n\n".join(tile_contents), ""
 
     if file_type == "audio":
         duration = media_loader.get_media_duration_seconds(file_path)

@@ -97,7 +97,10 @@
     "daysLeft": "あと{{days}}日",
     "apiPromoTitle": "APIで自動化",
     "apiPromoDesc": "手動アップロードをやめ、データパイプラインをAPIに直接接続して、シームレスなリアルタイム変換と検証を実現します。",
-    "apiPromoLink": "APIドキュメントを見る"
+    "apiPromoLink": "APIドキュメントを見る",
+    "progressPages": "{{done}}/{{total}}ページ",
+    "progressFiles": "{{done}}/{{total}}ファイル",
+    "progressPercent": "{{pct}}%"
   },
   "confirm": {
     "title": "変換費用の確認",

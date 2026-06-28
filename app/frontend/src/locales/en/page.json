@@ -97,7 +97,10 @@
     "daysLeft": "{{days}} days left",
     "apiPromoTitle": "Automate with API",
     "apiPromoDesc": "Stop manual uploads. Connect your data pipeline directly to our API for seamless, real-time conversion and validation.",
-    "apiPromoLink": "View API documentation"
+    "apiPromoLink": "View API documentation",
+    "progressPages": "{{done}}/{{total}} pages",
+    "progressFiles": "{{done}}/{{total}} files",
+    "progressPercent": "{{pct}}%"
   },
   "confirm": {
     "title": "Confirm Conversion Cost",

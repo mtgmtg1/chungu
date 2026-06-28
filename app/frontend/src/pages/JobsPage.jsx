@@ -1,5 +1,5 @@
 // [Flow: Step 1 (사용자 확인 + 작업 목록 로드) -> Step 2 (검색/필터 상태) -> Step 3 (테이블 렌더링 + Actions) -> Step 4 (페이지네이션)]
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -55,6 +55,7 @@ export default function JobsPage() {
   const [dateTo, setDateTo] = useState("");
   const [deleteModal, setDeleteModal] = useState({ open: false, job: null });
   const [deleting, setDeleting] = useState({});
+  const pollRef = useRef(null);
 
   const statusLabel = (status) => t(`common:status.${status}`) || status;
   const fileTypeLabel = (type) => t(`common:fileType.${type}`) || type;
@@ -63,6 +64,29 @@ export default function JobsPage() {
     if (!user) return;
     load();
   }, [user]);
+
+  // [Flow: Step 1 (활성 작업 존재 확인) -> Step 2 (5초 간격 폴링) -> Step 3 (완료 시 폴링 중지)]
+  useEffect(() => {
+    const hasActive = jobs.some((j) => j.status !== "done" && j.status !== "error");
+    if (!hasActive) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+      return;
+    }
+    if (pollRef.current) return;
+    pollRef.current = setInterval(async () => {
+      try {
+        const list = await api.listJobs();
+        setJobs(list);
+      } catch {
+        // 폴링 에러는 무시
+      }
+    }, 5000);
+    return () => {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    };
+  }, [jobs]);
 
   async function load() {
     setLoading(true);
@@ -587,6 +611,21 @@ export default function JobsPage() {
                             {statusLabel(j.status)}
                           </span>
                         </div>
+                        {j.status !== "done" && j.status !== "error" && (j.total_pages > 0 || j.total_files > 0) && (
+                          <div className="mt-1.5 flex items-center gap-2">
+                            <div className="flex-1 h-1.5 bg-surface-container-high rounded-full overflow-hidden min-w-[80px]">
+                              <div
+                                className="h-full bg-primary rounded-full transition-all duration-500"
+                                style={{ width: `${Math.min(100, Math.round(((j.total_pages ? j.done_pages / j.total_pages : j.done_files / j.total_files) || 0) * 100))}%` }}
+                              />
+                            </div>
+                            <span className="font-label-sm text-label-sm text-on-surface-variant whitespace-nowrap">
+                              {j.total_pages > 0
+                                ? t("page:jobs.progressPages", { done: j.done_pages || 0, total: j.total_pages })
+                                : t("page:jobs.progressFiles", { done: j.done_files || 0, total: j.total_files })}
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td
                       className="px-gutter py-5 font-body-md text-body-md text-on-surface-variant"

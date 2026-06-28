@@ -97,7 +97,10 @@
     "daysLeft": "{{days}}일 남음",
     "apiPromoTitle": "API로 자동화",
     "apiPromoDesc": "수동 업로드를 멈추고 데이터 파이프라인을 API에 직접 연결하여 실시간 변환과 검증을 완료하세요.",
-    "apiPromoLink": "API 문서 보기"
+    "apiPromoLink": "API 문서 보기",
+    "progressPages": "{{done}}/{{total}} 페이지",
+    "progressFiles": "{{done}}/{{total}} 파일",
+    "progressPercent": "{{pct}}%"
   },
   "confirm": {
     "title": "변환 비용 확인",

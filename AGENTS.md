@@ -164,12 +164,21 @@ Server `.env` must be updated manually (not overwritten by rsync).
 - Developer portal: `/developer` in the web UI
 - Docusaurus docs site: `/docs/` (served by FastAPI from `docs/build/`)
 
+## Office Conversion (DOCX/PPTX/XLSX)
+
+- Conversion is handled by `app/backend/core/office_converter.py`.
+- All markdown content is preserved: headings, paragraphs, lists, tables, and code blocks. No data is lost.
+- `docx`: renders headings, paragraphs with inline formatting (`**bold**`, `*italic*`, `~~strike~~`), bullet/numbered lists, tables, and code blocks.
+- `pptx`: splits content into slides by headings; each slide contains the heading as a title and the following content as body text.
+- `xlsx`: creates a `Content` sheet with all text/list/code content and a separate sheet per markdown table.
+- Conversion endpoints: `/api/jobs/{id}/convert` (web) and `/api/v1/jobs/{id}/convert` (API). xlsx conversion still deducts points per page/file.
+
 ## Result Preview & Multi-file Uploads
 
 - Uploading multiple files creates one job; each file's parsing result is stored separately in `extracted_files[].result_markdown`.
 - The combined markdown uses file markers (`<!-- 파일 N -->`) via `converter.build_combined_file_markdowns()`.
 - `/api/jobs/{id}/preview` returns `source_files` (name, type, url, page_num, result_markdown) for each original file.
-- PDF preview uses PDF.js (`PdfViewer`) to render one page at a time on a canvas, with bottom page navigation and zoom controls.
+- PDF preview uses PDF.js (`PdfViewer`) to render one page at a time on a canvas, auto-fitted to the container. The toolbar with page navigation and zoom controls is at the top of the preview panel. The preview panel scrolls independently and the page is aligned to the top.
 - `SourcePanel` renders a single source when only one exists, and a file list + selected preview when multiple sources exist.
 - `SourcePanel` supports controlled selection via `selectedFileIndex` / `onFileSelect` props.
 - `JobResultPage` manages `fileMarkdowns` state: when multiple files exist, `SimpleEditor` shows only the selected file's markdown.

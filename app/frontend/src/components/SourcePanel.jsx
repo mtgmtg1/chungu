@@ -1,4 +1,4 @@
-// [Flow: Step 1 (sourceFiles/sourceUrl/sourceType/imageUrls 수신) -> Step 2 (파일 개수 판단) -> Step 3 (단일 파일이면 직접 렌더링) -> Step 4 (다중 파일이면 목록+선택 프리뷰)]
+// [Flow: Step 1 (sourceFiles/sourceUrl/sourceType/imageUrls 수신) -> Step 2 (파일 개수 판단) -> Step 3 (단일 파일이면 직접 렌더링) -> Step 4 (다중 파일이면 목록+선택 프리뷰, iframe 내장 뷰어가 페이지/줌 처리)]
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FileText, ImageIcon, Volume2, Film } from "lucide-react";
@@ -61,7 +61,6 @@ export default function SourcePanel({
   imageUrls,
   filename,
   currentPage,
-  onPageChange,
   selectedFileIndex,
   onFileSelect,
 }) {
@@ -75,7 +74,7 @@ export default function SourcePanel({
   if (files.length === 1) {
     const file = files[0];
     if (file.type === "pdf") {
-      return <PdfViewer url={file.url} page={currentPage} onPageChange={onPageChange} />;
+      return <PdfViewer url={file.url} page={currentPage} />;
     }
     return <SingleFilePreview file={file} filename={filename || file.name} />;
   }
@@ -118,7 +117,7 @@ export default function SourcePanel({
             <PanelResizeHandle className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize" />
             <Panel className="overflow-hidden min-h-0 flex flex-col">
               {selected.type === "pdf" ? (
-                <PdfViewer url={selected.url} page={currentPage} onPageChange={onPageChange} />
+                <PdfViewer url={selected.url} page={currentPage} />
               ) : (
                 <SingleFilePreview file={selected} filename={selected.name} />
               )}
@@ -130,7 +129,7 @@ export default function SourcePanel({
   }
 
   if (sourceType === "pdf" && sourceUrl) {
-    return <PdfViewer url={sourceUrl} page={currentPage} onPageChange={onPageChange} />;
+    return <PdfViewer url={sourceUrl} page={currentPage} />;
   }
   if (sourceType === "images" && imageUrls?.length) {
     return <ImageList urls={imageUrls} t={t} />;

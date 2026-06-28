@@ -32,11 +32,88 @@ def _libreoffice_env() -> dict[str, str]:
 
 
 def convert_to_docx(input_path: Path, output_dir: Path | None = None) -> Path:
-    """LibreOffice headless를 이용해 HWP/HWPX 파일을 DOCX로 변환한다."""
+    """hwp5odt로 HWP -> ODT 변환 후 LibreOffice로 ODT -> DOCX 변환한다.
+
+    LibreOffice는 직접 HWP/HWPX를 읽지 못하는 환경이 많으므로, pyhwp의
+    hwp5odt를 먼저 사용해 ODT를 생성한 뒤 DOCX로 변환한다.
+    """
     output_dir = output_dir or input_path.parent
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    ext = input_path.suffix.lower()
+    if ext != ".hwp":
+        # .hwpx 등 hwp5odt가 지원하지 않는 형식은 직접 LibreOffice 시도
+        return _hwp_to_docx_with_libreoffice(input_path, output_dir)
+
+    # 1) HWP -> ODT
+    odt_path = output_dir / f"{input_path.stem}.odt"
+    odt_cmd = [
+        "hwp5odt",
+        "--output",
+        str(odt_path),
+        str(input_path),
+    ]
+    try:
+        odt_result = subprocess.run(
+            odt_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=120,
+            env=_libreoffice_env(),
+        )
+    except FileNotFoundError as e:
+        logger.warning(f"[hwp5odt] 명령을 찾을 수 없습니다: {e}")
+        return _hwp_to_docx_with_libreoffice(input_path, output_dir)
+
+    odt_stderr = odt_result.stderr.decode("utf-8", errors="ignore")
+    if odt_result.returncode != 0:
+        logger.warning(f"[hwp5odt] 변환 실패 (returncode={odt_result.returncode}): {odt_stderr[:1000]}")
+        return _hwp_to_docx_with_libreoffice(input_path, output_dir)
+    if not odt_path.exists():
+        logger.warning(f"[hwp5odt] ODT 산출물이 생성되지 않았습니다: {odt_path}")
+        return _hwp_to_docx_with_libreoffice(input_path, output_dir)
+    if odt_stderr:
+        logger.debug(f"[hwp5odt] stderr: {odt_stderr[:500]}")
+
+    # 2) ODT -> DOCX
+    return _odt_to_docx_with_libreoffice(odt_path, output_dir)
+
+
+def _odt_to_docx_with_libreoffice(odt_path: Path, output_dir: Path) -> Path:
+    """LibreOffice headless를 이용해 ODT 파일을 DOCX로 변환한다."""
+    cmd = [
+        "libreoffice",
+        "--headless",
+        "--convert-to",
+        "docx",
+        "--outdir",
+        str(output_dir),
+        str(odt_path),
+    ]
+    result = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=120,
+        env=_libreoffice_env(),
+    )
+    stdout_text = result.stdout.decode("utf-8", errors="ignore")
+    stderr_text = result.stderr.decode("utf-8", errors="ignore")
+    if result.returncode != 0:
+        logger.warning(f"[libreoffice-docx] 변환 실패 (returncode={result.returncode}): {stderr_text[:1000]} {stdout_text[:500]}")
+        raise subprocess.CalledProcessError(result.returncode, cmd, output=result.stdout, stderr=result.stderr)
+    if stderr_text:
+        logger.debug(f"[libreoffice-docx] stderr: {stderr_text[:500]}")
+
+    expected = output_dir / f"{odt_path.stem}.docx"
+    if not expected.exists():
+        raise FileNotFoundError(f"LibreOffice DOCX 변환 산출물을 찾을 수 없습니다: {expected}")
+    return expected
+
+
+def _hwp_to_docx_with_libreoffice(input_path: Path, output_dir: Path) -> Path:
+    """LibreOffice headless를 이용해 HWP/HWPX 파일을 직접 DOCX로 변환한다."""
     cmd = [
         "libreoffice",
         "--headless",
@@ -56,10 +133,10 @@ def convert_to_docx(input_path: Path, output_dir: Path | None = None) -> Path:
     stdout_text = result.stdout.decode("utf-8", errors="ignore")
     stderr_text = result.stderr.decode("utf-8", errors="ignore")
     if result.returncode != 0:
-        logger.warning(f"[libreoffice-docx] 변환 실패 (returncode={result.returncode}): {stderr_text[:1000]} {stdout_text[:500]}")
+        logger.warning(f"[libreoffice-docx-direct] 변환 실패 (returncode={result.returncode}): {stderr_text[:1000]} {stdout_text[:500]}")
         raise subprocess.CalledProcessError(result.returncode, cmd, output=result.stdout, stderr=result.stderr)
     if stderr_text:
-        logger.debug(f"[libreoffice-docx] stderr: {stderr_text[:500]}")
+        logger.debug(f"[libreoffice-docx-direct] stderr: {stderr_text[:500]}")
 
     expected = output_dir / f"{input_path.stem}.docx"
     if not expected.exists():

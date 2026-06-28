@@ -136,7 +136,7 @@ Server `.env` must be updated manually (not overwritten by rsync).
 ## Docling Preprocessing Pipeline
 
 - Phase 1 routes PDF/DOCX/PPTX/XLSX/HTML through a dedicated Docling path (`run_docling` in `tasks.py`).
-- Phase 2 adds HWP/HWPX support: `run_hwp` first converts the file to DOCX via LibreOffice headless, then sends it to the Docling service. This avoids `pyhwp2md`/`hwp5odt` extracting only the first page of some multi-page HWP files. If LibreOffice or Docling fails, it falls back to the original pyhwp-based converter.
+- Phase 2 adds HWP/HWPX support: `run_hwp` first converts the file to ODT via `pyhwp`'s `hwp5odt` (LibreOffice alone cannot read many HWP files), then converts ODT to DOCX via LibreOffice headless, and finally sends the DOCX to the Docling service. This avoids `pyhwp2md`/`hwp5odt` extracting only the first page of some multi-page HWP files. If LibreOffice or Docling fails, it falls back to the original pyhwp-based converter.
 - The Docling service runs on a Xeon Scalable CPU server (not a1 GPU), using CPU PyTorch + Intel Extension for PyTorch (IPEX) for VNNI/OneDNN acceleration.
 - Key files:
   - `app/backend/docling_service/main.py` — FastAPI service with CPU accelerator, model quantization, and IPEX warm-up.

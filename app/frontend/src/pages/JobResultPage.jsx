@@ -431,6 +431,12 @@ export default function JobResultPage() {
         </div>
       }
 
+      {job?.status === "done" && job.error_log && job.error_log.includes("350mm") &&
+      <div className="mx-4 mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm" data-oid="unparsable-warn">
+        {job.error_log}
+      </div>
+      }
+
       {job?.status === "done" && !loading && needsPagedMode(job) &&
       <PagedResultViewer
         jobId={jobId}

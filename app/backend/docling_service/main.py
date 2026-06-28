@@ -174,23 +174,24 @@ def _apply_ipex(converter: DocumentConverter) -> None:
 
 def _quantize_model_recursive(model: Any, label: str, ipex, torch) -> None:
     """모델 래퍼 내의 모든 torch.nn.Module을 찾아 최적화한다.
-    - SuryaModel (recognition): torch.quantize_dynamic (Linear INT8)
-    - EfficientViT (detection): OpenVINO INT8 양자화
-    - RTDetrV2 (layout): OpenVINO INT8 양자화
+    - SuryaModel (recognition): torch.quantize_dynamic (Linear INT8) — 글자 인식 문제 없음, 속도 유지
+    - RTDetrV2 (layout): FP32 유지 — 레이아웃 인식 품질 복구
+    - EfficientViT (detection): FP32 유지 — bbox 검출 품질 복구
+    - TableModel04_rs (table structure): FP32 유지 — 표 구조 인식 품질 복구
     """
     targets = _find_all_nn_modules(model)
     if not targets:
         logger.warning(f"[ipex] {label}: torch.nn.Module을 찾지 못함")
         return
 
-    logger.info(f"[ipex] {label}: {len(targets)}개 모덈 발견")
+    logger.info(f"[ipex] {label}: {len(targets)}개 모델 발견")
     for parent, attr_name, nn_module in targets:
         sub_label = f"{label}.{attr_name}"
         try:
             nn_module.eval()
             model_type = type(nn_module).__name__
 
-            # SuryaModel (recognition): torch.quantize_dynamic (Linear INT8)
+            # SuryaModel (recognition): torch.quantize_dynamic (Linear INT8) — 유지
             if "SuryaModel" in model_type:
                 try:
                     quantized = torch.quantization.quantize_dynamic(
@@ -201,42 +202,9 @@ def _quantize_model_recursive(model: Any, label: str, ipex, torch) -> None:
                 except Exception as qe:
                     logger.warning(f"[ipex] {sub_label} ({model_type}) 양자화 실패, 원본 유지: {qe}")
 
-            # EfficientViT (detection): torch.quantize_dynamic (Linear INT8)
-            # ov.convert_model과 torch.jit.trace 모두 EfficientViT에서 hang됨
-            elif "EfficientViT" in model_type:
-                try:
-                    quantized = torch.quantization.quantize_dynamic(
-                        nn_module, {torch.nn.Linear}, dtype=torch.qint8
-                    )
-                    setattr(parent, attr_name, quantized)
-                    logger.info(f"[ipex] {sub_label} ({model_type}) Linear INT8 동적 양자화 적용")
-                except Exception as qe:
-                    logger.warning(f"[ipex] {sub_label} ({model_type}) 양자화 실패, 원본 유지: {qe}")
-
-            # RTDetrV2 (layout): OpenVINO NNCF INT8 양자화
-            elif "RTDetr" in model_type:
-                try:
-                    wrapper = _convert_to_openvino(nn_module, model_type, "layout", model)
-                    if wrapper is not None:
-                        setattr(parent, attr_name, wrapper)
-                        logger.info(f"[ov] {sub_label} ({model_type}) OpenVINO NNCF INT8 양자화 적용")
-                except Exception as ove:
-                    logger.warning(f"[ov] {sub_label} ({model_type}) OpenVINO 변환 실패, 원본 유지: {ove}")
-
-            # TableModel04_rs (table structure): torch.quantize_dynamic (Linear INT8)
-            # autoregressive 모델이라 OpenVINO 변환 불가, 모듈 구조 유지 필요
-            elif "TableModel" in model_type:
-                try:
-                    quantized = torch.quantization.quantize_dynamic(
-                        nn_module, {torch.nn.Linear}, dtype=torch.qint8
-                    )
-                    setattr(parent, attr_name, quantized)
-                    logger.info(f"[ipex] {sub_label} ({model_type}) Linear INT8 동적 양자화 적용")
-                except Exception as qe:
-                    logger.warning(f"[ipex] {sub_label} ({model_type}) 양자화 실패, 원본 유지: {qe}")
-
+            # 나머지 모델: FP32 원본 유지 (레이아웃/표 구조 품질 복구)
             else:
-                logger.info(f"[ipex] {sub_label} ({model_type}) 최적화 생략")
+                logger.info(f"[ipex] {sub_label} ({model_type}) FP32 유지 (레이아웃 품질 복구)")
         except Exception as e:
             logger.warning(f"[ipex] {sub_label} 최적화 실패: {e}")
 
@@ -524,13 +492,124 @@ class ConvertResponse(BaseModel):
     error: str | None = None
 
 
+class AsyncConvertResponse(BaseModel):
+    task_id: str
+    status: str
+
+
+class TaskStatusResponse(BaseModel):
+    task_id: str
+    status: str  # processing | done | error
+    result: ConvertResponse | None = None
+    error: str | None = None
+    started_at: float | None = None
+    finished_at: float | None = None
+
+
 DATA_DIR = Path("/data")
 IMAGE_BASE_DIR = DATA_DIR / "docling_images"
+
+# 비동기 변환 task store (메모리 내)
+_tasks: dict[str, dict] = {}
+_tasks_lock = threading.Lock()
 
 
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _do_convert(task_id: str, input_path: Path, filename: str) -> None:
+    """백그라운드 스레드에서 Docling 변환을 수행한다."""
+    import time
+
+    try:
+        converter = get_converter()
+        result = converter.convert(input_path)
+
+        if result.status in (ConversionStatus.FAILURE, ConversionStatus.PARTIAL_SUCCESS) and not result.document:
+            with _tasks_lock:
+                _tasks[task_id]["status"] = "error"
+                _tasks[task_id]["error"] = "Docling 변환 결과가 없습니다"
+                _tasks[task_id]["finished_at"] = time.time()
+            return
+
+        request_id = uuid.uuid4().hex
+        image_dir = IMAGE_BASE_DIR / request_id
+        image_paths = _extract_images(result, image_dir)
+        relative_images = [str(p.relative_to(DATA_DIR)) for p in image_paths]
+
+        markdown = result.document.export_to_markdown(image_mode=ImageRefMode.PLACEHOLDER)
+
+        convert_result = ConvertResponse(
+            markdown=markdown,
+            images=relative_images,
+            page_count=_count_pages(result),
+            file_type=fmt.value if (fmt := _detect_format(input_path)) else "unknown",
+        )
+
+        with _tasks_lock:
+            _tasks[task_id]["status"] = "done"
+            _tasks[task_id]["result"] = convert_result
+            _tasks[task_id]["finished_at"] = time.time()
+
+    except Exception as e:
+        logger.exception(f"[docling-async] {filename} 변환 실패: {e}")
+        with _tasks_lock:
+            _tasks[task_id]["status"] = "error"
+            _tasks[task_id]["error"] = str(e)
+            _tasks[task_id]["finished_at"] = time.time()
+
+
+@app.post("/convert/async", response_model=AsyncConvertResponse)
+async def convert_async(file: UploadFile = File(...)) -> AsyncConvertResponse:
+    """파일을 비동기로 변환 시작, task_id를 즉시 반환한다."""
+    import time
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="파일 이름이 없습니다")
+
+    task_id = uuid.uuid4().hex
+    tmpdir = tempfile.mkdtemp()
+    tmp_path = Path(tmpdir)
+    input_path = tmp_path / (file.filename or "input.bin")
+    input_path.write_bytes(await file.read())
+
+    input_format = _detect_format(input_path)
+    if input_format is None:
+        raise HTTPException(status_code=400, detail=f"지원하지 않는 파일 형식입니다: {file.filename}")
+
+    with _tasks_lock:
+        _tasks[task_id] = {
+            "status": "processing",
+            "result": None,
+            "error": None,
+            "started_at": time.time(),
+            "finished_at": None,
+            "tmpdir": tmpdir,
+        }
+
+    thread = threading.Thread(target=_do_convert, args=(task_id, input_path, file.filename), daemon=True)
+    thread.start()
+
+    return AsyncConvertResponse(task_id=task_id, status="processing")
+
+
+@app.get("/convert/status/{task_id}", response_model=TaskStatusResponse)
+async def get_convert_status(task_id: str) -> TaskStatusResponse:
+    """비동기 변환 task의 진행 상태를 반환한다."""
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="task를 찾을 수 없습니다")
+    return TaskStatusResponse(
+        task_id=task_id,
+        status=task["status"],
+        result=task.get("result"),
+        error=task.get("error"),
+        started_at=task.get("started_at"),
+        finished_at=task.get("finished_at"),
+    )
 
 
 @app.post("/convert/file", response_model=ConvertResponse)

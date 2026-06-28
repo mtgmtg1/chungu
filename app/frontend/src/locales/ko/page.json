@@ -100,7 +100,8 @@
     "apiPromoLink": "API 문서 보기",
     "progressPages": "{{done}}/{{total}} 페이지",
     "progressFiles": "{{done}}/{{total}} 파일",
-    "progressPercent": "{{pct}}%"
+    "progressPercent": "{{pct}}%",
+    "unparsablePages": "{{count}}페이지를 파싱할 수 없습니다 (용지 크기 350mm 초과)"
   },
   "confirm": {
     "title": "변환 비용 확인",

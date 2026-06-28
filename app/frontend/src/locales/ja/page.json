@@ -100,7 +100,8 @@
     "apiPromoLink": "APIドキュメントを見る",
     "progressPages": "{{done}}/{{total}}ページ",
     "progressFiles": "{{done}}/{{total}}ファイル",
-    "progressPercent": "{{pct}}%"
+    "progressPercent": "{{pct}}%",
+    "unparsablePages": "{{count}}ページを解析できません（用紙サイズ350mm超過）"
   },
   "confirm": {
     "title": "変換費用の確認",

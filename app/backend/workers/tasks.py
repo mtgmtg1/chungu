@@ -7,6 +7,8 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from pypdf import PdfReader
+
 from ..celery_app import celery
 from ..config import settings
 from ..core import archive_handler, converter, excel_writer, media_loader, merge, supabase_client
@@ -18,10 +20,29 @@ from ..db.models import Job
 from ..db.session import SessionLocal
 from .. import email_sender, settings_store
 
+MAX_PAGE_SIDE_MM = 350
+MM_PER_PT = 0.3528
+
 
 def _set_status(db, job: Job, status: str) -> None:
     job.status = status
     db.commit()
+
+
+def count_oversized_pages(file_path: Path) -> tuple[int, int]:
+    """PDF에서 350mm를 초과하는 페이지 수를 반환한다. (oversized_count, total_pages)"""
+    try:
+        reader = PdfReader(str(file_path))
+        total = len(reader.pages)
+        oversized = 0
+        for page in reader.pages:
+            w = float(page.mediabox.width) * MM_PER_PT
+            h = float(page.mediabox.height) * MM_PER_PT
+            if w > MAX_PAGE_SIDE_MM or h > MAX_PAGE_SIDE_MM:
+                oversized += 1
+        return oversized, total
+    except Exception:
+        return 0, 0
 
 
 @celery.task(name="backend.workers.tasks.run_job")
@@ -86,24 +107,32 @@ def run_job(job_id: str) -> dict:
             def on_error(page: int, msg: str) -> None:
                 errors.append(f"p{page}: {msg}")
 
-            _set_status(db, job, "ocr")
-            page_tables = run_docling(
-                input_path,
-                str(work_dir),
-                columns,
-                endpoint,
-                model,
-                api_key,
-                extra_prompt=job.prompt,
-                use_refinement=use_refinement,
-                max_tokens=10000,
-                media_endpoint=media_ep,
-                media_model=media_mdl,
-                media_api_key=media_key,
-                on_progress=on_progress,
-                on_error=on_error,
-            )
-            fmt = "markdown"
+            # [Flow: Step 1 (페이지 크기 검사) -> Step 2 (전체 초과 시 스킵) -> Step 3 (Docling 처리)]
+            oversized, total_pages = count_oversized_pages(input_path)
+            if oversized > 0:
+                errors.append(f"{input_path.name}: {oversized}페이지가 350mm를 초과하여 파싱할 수 없습니다")
+            if oversized == total_pages and total_pages > 0:
+                page_tables = []
+                fmt = "markdown"
+            else:
+                _set_status(db, job, "ocr")
+                page_tables = run_docling(
+                    input_path,
+                    str(work_dir),
+                    columns,
+                    endpoint,
+                    model,
+                    api_key,
+                    extra_prompt=job.prompt,
+                    use_refinement=use_refinement,
+                    max_tokens=10000,
+                    media_endpoint=media_ep,
+                    media_model=media_mdl,
+                    media_api_key=media_key,
+                    on_progress=on_progress,
+                    on_error=on_error,
+                )
+                fmt = "markdown"
 
             _set_status(db, job, "merging")
             rows = merge.merge_pages(page_tables, columns, fmt=fmt)
@@ -224,21 +253,28 @@ def run_job(job_id: str) -> dict:
 
                 for fp in docling_files:
                     docling_errors: list[str] = []
-                    docling_tables = run_docling(
-                        fp,
-                        str(work_dir),
-                        columns,
-                        endpoint,
-                        model,
-                        api_key,
-                        extra_prompt=job.prompt,
-                        use_refinement=use_refinement,
-                        media_endpoint=media_ep,
-                        media_model=media_mdl,
-                        media_api_key=media_key,
-                        on_progress=lambda done, total: None,
-                        on_error=lambda page, msg: docling_errors.append(f"p{page}: {msg}"),
-                    )
+                    # [Flow: Step 1 (페이지 크기 검사) -> Step 2 (전체 초과 시 스킵) -> Step 3 (Docling 처리)]
+                    oversized, total_fp_pages = count_oversized_pages(fp)
+                    if oversized > 0:
+                        errors.append(f"{fp.name}: {oversized}페이지가 350mm를 초과하여 파싱할 수 없습니다")
+                    if oversized == total_fp_pages and total_fp_pages > 0:
+                        docling_tables = []
+                    else:
+                        docling_tables = run_docling(
+                            fp,
+                            str(work_dir),
+                            columns,
+                            endpoint,
+                            model,
+                            api_key,
+                            extra_prompt=job.prompt,
+                            use_refinement=use_refinement,
+                            media_endpoint=media_ep,
+                            media_model=media_mdl,
+                            media_api_key=media_key,
+                            on_progress=lambda done, total: None,
+                            on_error=lambda page, msg: docling_errors.append(f"p{page}: {msg}"),
+                        )
                     for _, table in docling_tables:
                         all_page_contents.append((len(all_page_contents) + 1, table))
                     tabs[fp.name] = excel_writer.build_pdf_rows(fp.name, docling_tables, columns)

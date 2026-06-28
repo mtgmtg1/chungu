@@ -100,7 +100,8 @@
     "apiPromoLink": "View API documentation",
     "progressPages": "{{done}}/{{total}} pages",
     "progressFiles": "{{done}}/{{total}} files",
-    "progressPercent": "{{pct}}%"
+    "progressPercent": "{{pct}}%",
+    "unparsablePages": "{{count}} page(s) could not be parsed (page size exceeds 350mm)"
   },
   "confirm": {
     "title": "Confirm Conversion Cost",

@@ -17,7 +17,6 @@ from sqlalchemy.orm import Session
 from ...auth.api_key_auth import require_api_key_with_key
 from ...auth.supabase_auth import CurrentUser
 from ...core import archive_handler, media_loader, office_converter, points_service, supabase_client
-from ...core.llm_xlsx_converter import convert_markdown_to_xlsx_with_settings
 from ...core.prompts import DEFAULT_COLUMNS
 from ...core.rate_limit import add_daily_spent_points, enforce_rate_limit
 from ...db.models import ApiKey, ApiUsage, Job, User
@@ -378,7 +377,7 @@ def _ensure_xlsx_bundle(job: Job, db: Session) -> int:
         raise HTTPException(status_code=400, detail="변환할 마크다운 결과가 없습니다")
     with tempfile.TemporaryDirectory() as tmpdir:
         out_path = Path(tmpdir) / "result.xlsx"
-        convert_markdown_to_xlsx_with_settings(markdown, out_path, db)
+        office_converter.markdown_to_xlsx(markdown, out_path)
         storage_path = supabase_client.upload_office_result(job.id, out_path, "xlsx")
     job.result_xlsx_storage_path = storage_path
     db.commit()
@@ -499,7 +498,7 @@ def convert_job(
         with tempfile.TemporaryDirectory() as tmpdir:
             out_path = Path(tmpdir) / f"result.{fmt}"
             if fmt == "xlsx":
-                convert_markdown_to_xlsx_with_settings(markdown, out_path, db)
+                office_converter.markdown_to_xlsx(markdown, out_path)
             elif fmt == "docx":
                 office_converter.markdown_to_docx(markdown, out_path)
             else:

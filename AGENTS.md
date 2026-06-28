@@ -169,7 +169,7 @@ Server `.env` must be updated manually (not overwritten by rsync).
 - Uploading multiple files creates one job; each file's parsing result is stored separately in `extracted_files[].result_markdown`.
 - The combined markdown uses file markers (`<!-- 파일 N -->`) via `converter.build_combined_file_markdowns()`.
 - `/api/jobs/{id}/preview` returns `source_files` (name, type, url, page_num, result_markdown) for each original file.
-- PDF preview uses a browser-native iframe viewer (`SourcePanel` / `PdfViewer`), not PDF.js.
+- PDF preview uses PDF.js (`PdfViewer`) to render one page at a time on a canvas, with bottom page navigation and zoom controls.
 - `SourcePanel` renders a single source when only one exists, and a file list + selected preview when multiple sources exist.
 - `SourcePanel` supports controlled selection via `selectedFileIndex` / `onFileSelect` props.
 - `JobResultPage` manages `fileMarkdowns` state: when multiple files exist, `SimpleEditor` shows only the selected file's markdown.

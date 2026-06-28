@@ -61,6 +61,7 @@ export default function SourcePanel({
   imageUrls,
   filename,
   currentPage,
+  onPageChange,
   selectedFileIndex,
   onFileSelect,
 }) {
@@ -74,7 +75,7 @@ export default function SourcePanel({
   if (files.length === 1) {
     const file = files[0];
     if (file.type === "pdf") {
-      return <PdfViewer url={file.url} page={currentPage} />;
+      return <PdfViewer url={file.url} page={currentPage} onPageChange={onPageChange} />;
     }
     return <SingleFilePreview file={file} filename={filename || file.name} />;
   }
@@ -117,7 +118,7 @@ export default function SourcePanel({
             <PanelResizeHandle className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize" />
             <Panel className="overflow-hidden min-h-0 flex flex-col">
               {selected.type === "pdf" ? (
-                <PdfViewer url={selected.url} page={currentPage} />
+                <PdfViewer url={selected.url} page={currentPage} onPageChange={onPageChange} />
               ) : (
                 <SingleFilePreview file={selected} filename={selected.name} />
               )}
@@ -129,7 +130,7 @@ export default function SourcePanel({
   }
 
   if (sourceType === "pdf" && sourceUrl) {
-    return <PdfViewer url={sourceUrl} page={currentPage} />;
+    return <PdfViewer url={sourceUrl} page={currentPage} onPageChange={onPageChange} />;
   }
   if (sourceType === "images" && imageUrls?.length) {
     return <ImageList urls={imageUrls} t={t} />;

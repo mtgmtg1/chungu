@@ -1,4 +1,4 @@
-// [Flow: Step 1 (PDF.js worker 설정) -> Step 2 (url로 PDFDocument 로드) -> Step 3 (현재 페이지만 canvas에 렌더링) -> Step 4 (페이지 변경/줌 동기화)]
+// [Flow: Step 1 (PDF.js worker 설정) -> Step 2 (url로 PDFDocument 로드) -> Step 3 (컨테이너에 맞춰 현재 페이지만 렌더링) -> Step 4 (페이지 변경/줌 동기화)]
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as pdfjsLib from "pdfjs-dist";
@@ -7,16 +7,24 @@ import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from "lucide-react";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
+const ZOOM_STEP = 1.2;
+const MAX_SCALE = 3;
+const MIN_SCALE = 0.4;
+
 export default function PdfViewer({ url, page = 1, onPageChange }) {
   const { t } = useTranslation();
   const canvasRef = useRef(null);
+  const containerRef = useRef(null);
   const renderTaskRef = useRef(null);
   const [pdf, setPdf] = useState(null);
   const [currentPage, setCurrentPage] = useState(page);
   const [totalPages, setTotalPages] = useState(0);
-  const [scale, setScale] = useState(1.2);
+  const [fitScale, setFitScale] = useState(1);
+  const [zoomLevel, setZoomLevel] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const scale = Math.min(Math.max(fitScale * zoomLevel, MIN_SCALE), MAX_SCALE);
 
   useEffect(() => {
     setCurrentPage(page);
@@ -47,6 +55,33 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
   }, [url, t]);
 
   useEffect(() => {
+    if (!pdf || !containerRef.current) return;
+    let active = true;
+
+    const measureFitScale = async () => {
+      const pdfPage = await pdf.getPage(currentPage);
+      const baseViewport = pdfPage.getViewport({ scale: 1 });
+      const container = containerRef.current;
+      const rect = container.getBoundingClientRect();
+      const padding = 32;
+      const availableWidth = Math.max(1, rect.width - padding);
+      const availableHeight = Math.max(1, rect.height - padding);
+      const fit = Math.min(availableWidth / baseViewport.width, availableHeight / baseViewport.height);
+      if (!active) return;
+      setFitScale(Math.max(MIN_SCALE, fit));
+      pdfPage.cleanup();
+    };
+
+    measureFitScale();
+    const observer = new ResizeObserver(measureFitScale);
+    observer.observe(containerRef.current);
+    return () => {
+      active = false;
+      observer.disconnect();
+    };
+  }, [pdf, currentPage]);
+
+  useEffect(() => {
     if (!pdf || !canvasRef.current) return;
     if (currentPage < 1 || currentPage > totalPages) return;
 
@@ -60,10 +95,10 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
       const pdfPage = await pdf.getPage(currentPage);
       const viewport = pdfPage.getViewport({ scale });
       const dpr = window.devicePixelRatio || 1;
-      canvas.width = viewport.width * dpr;
-      canvas.height = viewport.height * dpr;
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
+      canvas.width = Math.floor(viewport.width * dpr);
+      canvas.height = Math.floor(viewport.height * dpr);
+      canvas.style.width = `${Math.floor(viewport.width)}px`;
+      canvas.style.height = `${Math.floor(viewport.height)}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       renderTaskRef.current = pdfPage.render({ canvasContext: ctx, viewport });
       try {
@@ -93,8 +128,8 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
     if (onPageChange) onPageChange(target);
   };
 
-  const zoomIn = () => setScale((s) => Math.min(s + 0.2, 3));
-  const zoomOut = () => setScale((s) => Math.max(s - 0.2, 0.4));
+  const zoomIn = () => setZoomLevel((z) => Math.min(z * ZOOM_STEP, MAX_SCALE / Math.max(fitScale, 0.01)));
+  const zoomOut = () => setZoomLevel((z) => Math.max(z / ZOOM_STEP, MIN_SCALE / Math.max(fitScale, 0.01)));
 
   if (!url) {
     return (
@@ -114,11 +149,19 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-surface-container-low" data-oid="pdfjs-viewer">
-      <div className="flex-1 overflow-auto custom-scrollbar flex items-center justify-center p-4" data-oid="pdf-canvas-wrap">
+      <div
+        ref={containerRef}
+        className="flex-1 overflow-hidden flex items-center justify-center p-4"
+        data-oid="pdf-canvas-wrap"
+      >
         {loading ? (
           <span className="text-sm text-on-surface-variant" data-oid="pdf-loading">{t("page:result.saving")}</span>
         ) : (
-          <canvas ref={canvasRef} className="shadow-lg rounded border border-outline-variant bg-white" data-oid="pdf-canvas" />
+          <canvas
+            ref={canvasRef}
+            className="max-w-full max-h-full shadow-lg rounded border border-outline-variant bg-white"
+            data-oid="pdf-canvas"
+          />
         )}
       </div>
       <div

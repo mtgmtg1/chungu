@@ -456,7 +456,7 @@ export default function JobResultPage() {
             defaultSize={30}
             minSize={20}
             maxSize={60}
-            className="flex flex-col min-h-0"
+            className="flex flex-col min-h-0 overflow-hidden"
             data-oid="8gj26he">
 
                 <SourcePanel

@@ -107,7 +107,7 @@ npm run start        # dev server at localhost:3000
 ## Public URL & Email Confirmation
 
 - All externally visible URLs must use the public domain (`https://chungu.teamcat.app`), never internal IPs.
-- `app/backend/config.py` defaults `public_base_url` to `https://chungu.teamcat.app` so that missing `.env` values do not leak internal addresses.
+- `app/backend/config.py` defaults `public_base_url` to `https://chungu.teamcat.app` and `supabase_public_url` to `https://chungu.teamcat.app/supabase` so that missing `.env` values do not leak internal addresses.
 - In `app/.env` (and on the server):
   - `PUBLIC_BASE_URL=https://chungu.teamcat.app` (used by `email_sender.py` for download links)
   - `SUPABASE_PUBLIC_URL=https://chungu.teamcat.app/supabase` (used by `supabase_client.py` to rewrite signed Storage URLs)

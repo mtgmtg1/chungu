@@ -204,63 +204,77 @@ def run_job(job_id: str) -> dict:
                 # 파일 유형별 분류
                 media_files: list[tuple[str, Path]] = []
                 file_markdowns_by_name: dict[str, str] = {}
+                docling_files: list[Path] = []
+                hwp_files: list[Path] = []
                 for fp in extracted:
                     ftype = media_loader.detect_file_type(fp)
                     if ftype in ("image", "audio", "video"):
                         media_files.append((ftype, fp))
                     elif ftype in media_loader.DOCLING_TYPES:
-                        # PDF/오피스/HTML은 Docling 전용 경로로 처리
-                        docling_errors: list[str] = []
-                        docling_tables = run_docling(
-                            fp,
-                            str(work_dir),
-                            columns,
-                            endpoint,
-                            model,
-                            api_key,
-                            extra_prompt=job.prompt,
-                            use_refinement=use_refinement,
-                            media_endpoint=media_ep,
-                            media_model=media_mdl,
-                            media_api_key=media_key,
-                            on_progress=lambda done, total: None,
-                            on_error=lambda page, msg: docling_errors.append(f"p{page}: {msg}"),
-                        )
-                        for _, table in docling_tables:
-                            all_page_contents.append((len(all_page_contents) + 1, table))
-                        tabs[fp.name] = excel_writer.build_pdf_rows(fp.name, docling_tables, columns)
-                        file_markdowns_by_name[fp.name] = converter.build_layout_markdown_string(docling_tables)
-                        errors.extend(docling_errors)
-
+                        docling_files.append(fp)
                     elif ftype in media_loader.HWP_TYPES:
-                        # HWP/HWPX는 pyhwp 기반 경로로 처리
-                        hwp_errors: list[str] = []
-                        hwp_tables = run_hwp(
-                            fp,
-                            str(work_dir),
-                            columns,
-                            endpoint,
-                            model,
-                            api_key,
-                            extra_prompt=job.prompt,
-                            use_refinement=use_refinement,
-                            media_endpoint=media_ep,
-                            media_model=media_mdl,
-                            media_api_key=media_key,
-                            on_progress=lambda done, total: None,
-                            on_error=lambda page, msg: hwp_errors.append(f"p{page}: {msg}"),
-                        )
-                        for _, table in hwp_tables:
-                            all_page_contents.append((len(all_page_contents) + 1, table))
-                        tabs[fp.name] = excel_writer.build_pdf_rows(fp.name, hwp_tables, columns)
-                        file_markdowns_by_name[fp.name] = converter.build_layout_markdown_string(hwp_tables)
-                        errors.extend(hwp_errors)
+                        hwp_files.append(fp)
 
+                # [Flow: Step 1 (총 파일 수 설정 + 상태 ocr로 변경) -> Step 2 (Docling/HWP 파일 순차 처리하며 done_files 증가) -> Step 3 (미디어 파일 처리하며 done_files 증가)]
+                total_to_process = len(docling_files) + len(hwp_files) + len(media_files)
+                job.total_files = total_to_process
+                job.done_files = 0
                 _set_status(db, job, "ocr")
+                db.commit()
+
+                for fp in docling_files:
+                    docling_errors: list[str] = []
+                    docling_tables = run_docling(
+                        fp,
+                        str(work_dir),
+                        columns,
+                        endpoint,
+                        model,
+                        api_key,
+                        extra_prompt=job.prompt,
+                        use_refinement=use_refinement,
+                        media_endpoint=media_ep,
+                        media_model=media_mdl,
+                        media_api_key=media_key,
+                        on_progress=lambda done, total: None,
+                        on_error=lambda page, msg: docling_errors.append(f"p{page}: {msg}"),
+                    )
+                    for _, table in docling_tables:
+                        all_page_contents.append((len(all_page_contents) + 1, table))
+                    tabs[fp.name] = excel_writer.build_pdf_rows(fp.name, docling_tables, columns)
+                    file_markdowns_by_name[fp.name] = converter.build_layout_markdown_string(docling_tables)
+                    errors.extend(docling_errors)
+                    job.done_files += 1
+                    db.commit()
+
+                for fp in hwp_files:
+                    hwp_errors: list[str] = []
+                    hwp_tables = run_hwp(
+                        fp,
+                        str(work_dir),
+                        columns,
+                        endpoint,
+                        model,
+                        api_key,
+                        extra_prompt=job.prompt,
+                        use_refinement=use_refinement,
+                        media_endpoint=media_ep,
+                        media_model=media_mdl,
+                        media_api_key=media_key,
+                        on_progress=lambda done, total: None,
+                        on_error=lambda page, msg: hwp_errors.append(f"p{page}: {msg}"),
+                    )
+                    for _, table in hwp_tables:
+                        all_page_contents.append((len(all_page_contents) + 1, table))
+                    tabs[fp.name] = excel_writer.build_pdf_rows(fp.name, hwp_tables, columns)
+                    file_markdowns_by_name[fp.name] = converter.build_layout_markdown_string(hwp_tables)
+                    errors.extend(hwp_errors)
+                    job.done_files += 1
+                    db.commit()
 
                 def on_media_progress(done: int, total: int) -> None:
-                    job.done_files = done
-                    job.total_files = total
+                    job.done_files = len(docling_files) + len(hwp_files) + done
+                    job.total_files = total_to_process
                     db.commit()
 
                 def on_media_error(filename: str, msg: str) -> None:

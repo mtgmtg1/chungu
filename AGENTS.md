@@ -122,15 +122,22 @@ Server `.env` must be updated manually (not overwritten by rsync).
 - Phase 2 adds HWP/HWPX support via a separate pyhwp-based converter (`run_hwp` in `tasks.py`).
 - The Docling service runs on a Xeon Scalable CPU server (not a1 GPU), using CPU PyTorch + Intel Extension for PyTorch (IPEX) for VNNI/OneDNN acceleration.
 - Key files:
-  - `app/backend/docling_service/main.py` — FastAPI service with CPU accelerator, batch sizes, and IPEX warm-up.
+  - `app/backend/docling_service/main.py` — FastAPI service with CPU accelerator, model quantization, and IPEX warm-up.
   - `app/backend/docling_service/Dockerfile` — Ubuntu 22.04 + CPU PyTorch + IPEX.
-  - `app/backend/docling_service/requirements.txt` — Docling/FastAPI deps (no torch GPU).
+  - `app/backend/docling_service/requirements.txt` — Docling/FastAPI deps (no torch GPU). Includes `openvino>=2024.0` and `nncf>=3.0`.
   - `app/docker-compose.docling.yml` — Compose without GPU reservations.
   - `app/backend/core/docling_client.py` — a1 backend client for the Docling service.
   - `app/backend/core/pipeline_docling.py` — Docling markdown + optional LLM refinement.
   - `app/backend/core/hwp_converter.py` — pyhwp-based HWP/HWPX text/image/page extraction.
 - NUMA binding: use `numactl --cpunodebind=0 --membind=0` when launching the container. For dual-socket 6230, run two independent workers bound to each NUMA node for maximum throughput.
-- VNNI tuning env vars: `DOCLING_NUM_THREADS`, `DOCLING_LAYOUT_BATCH_SIZE`, `DOCLING_TABLE_BATCH_SIZE`, `DOCLING_OCR_BATCH_SIZE`.
+- Model quantization (applied in `_apply_ipex` after warm-up):
+  - **RTDetrV2 (layout)**: OpenVINO NNCF INT8 quantization with `torch.jit.trace` → `ov.convert_model` → `nncf.quantize`. Cached on disk at `/data/ov_cache/`. Compiled with `INFERENCE_NUM_THREADS=2`.
+  - **EfficientViT (detection)**: `torch.quantization.quantize_dynamic` (Linear INT8). OpenVINO conversion hangs due to dynamic control flow in forward.
+  - **SuryaModel (recognition)**: `torch.quantization.quantize_dynamic` (Linear INT8). ~1.9x throughput improvement.
+  - **TableModel04_rs (table structure)**: `torch.quantization.quantize_dynamic` (Linear INT8). Discovered via `table_model.tf_predictor._model`.
+- Threading: `torch.set_num_threads(2)` (2 threads per request), `AcceleratorOptions(num_threads=40)` (total 40 threads = 20 concurrent requests). OpenVINO `INFERENCE_NUM_THREADS=2`.
+- `torch.autocast` patched to CPU float32 to avoid slow bfloat16 emulation on CPU.
+- Batch sizes: Docling defaults (no custom env vars).
 - Refinement costs: `cost_per_docling_refinement_page_krw` / `cost_per_docling_refinement_page_usd` in `settings_store`.
 - Docs: `app/docs/docs/docling.md` and `app/docs/docs/hwp.md` (HWP Phase 2).
 

@@ -200,7 +200,7 @@ export default function JobResultPage() {
 
   return (
     <div
-      className="min-h-screen bg-background flex flex-col"
+      className="h-screen bg-background flex flex-col"
       data-oid="vl.tj_r">
 
       <header

@@ -150,22 +150,7 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-surface-container-low" data-oid="pdfjs-viewer">
       <div
-        ref={containerRef}
-        className="flex-1 overflow-auto custom-scrollbar flex items-start justify-center p-4"
-        data-oid="pdf-canvas-wrap"
-      >
-        {loading ? (
-          <span className="text-sm text-on-surface-variant" data-oid="pdf-loading">{t("page:result.saving")}</span>
-        ) : (
-          <canvas
-            ref={canvasRef}
-            className="max-w-full max-h-full shadow-lg rounded border border-outline-variant bg-white"
-            data-oid="pdf-canvas"
-          />
-        )}
-      </div>
-      <div
-        className="h-12 border-t border-outline-variant bg-surface flex items-center justify-between px-4 flex-shrink-0"
+        className="h-12 border-b border-outline-variant bg-surface flex items-center justify-between px-4 flex-shrink-0"
         data-oid="pdf-toolbar"
       >
         <div className="flex items-center gap-2" data-oid="pdf-page-nav">
@@ -210,6 +195,21 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
             <ZoomIn size={18} />
           </button>
         </div>
+      </div>
+      <div
+        ref={containerRef}
+        className="flex-1 overflow-auto custom-scrollbar flex items-start justify-center p-4"
+        data-oid="pdf-canvas-wrap"
+      >
+        {loading ? (
+          <span className="text-sm text-on-surface-variant" data-oid="pdf-loading">{t("page:result.saving")}</span>
+        ) : (
+          <canvas
+            ref={canvasRef}
+            className="shadow-lg rounded border border-outline-variant bg-white"
+            data-oid="pdf-canvas"
+          />
+        )}
       </div>
     </div>
   );

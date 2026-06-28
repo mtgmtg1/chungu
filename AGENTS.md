@@ -104,6 +104,23 @@ npm run start        # dev server at localhost:3000
 - Signed download URLs are rewritten from internal to external proxied URLs in `supabase_client.py`
 - Proxy implementation: `app/backend/api/supabase_proxy.py`
 
+## Public URL & Email Confirmation
+
+- All externally visible URLs must use the public domain (`https://chungu.teamcat.app`), never internal IPs.
+- `app/backend/config.py` defaults `public_base_url` to `https://chungu.teamcat.app` so that missing `.env` values do not leak internal addresses.
+- In `app/.env` (and on the server):
+  - `PUBLIC_BASE_URL=https://chungu.teamcat.app` (used by `email_sender.py` for download links)
+  - `SUPABASE_PUBLIC_URL=https://chungu.teamcat.app/supabase` (used by `supabase_client.py` to rewrite signed Storage URLs)
+- For self-hosted Supabase (`/opt/supabase-chungu/.env` on `a1`):
+  - `SITE_URL=https://chungu.teamcat.app`
+  - `ADDITIONAL_REDIRECT_URLS=https://chungu.teamcat.app/**`
+  - `MAILER_URLPATHS_CONFIRMATION="/supabase/auth/v1/verify"`
+  - `MAILER_URLPATHS_INVITE="/supabase/auth/v1/verify"`
+  - `MAILER_URLPATHS_RECOVERY="/supabase/auth/v1/verify"`
+  - `MAILER_URLPATHS_EMAIL_CHANGE="/supabase/auth/v1/verify"`
+- With this setup, Supabase Auth emails generate links like `https://chungu.teamcat.app/supabase/auth/v1/verify?token=...&type=signup`, which are proxied by FastAPI's `/supabase/*` route to the internal Supabase Auth service (`192.168.1.50:28000`).
+- Internal IPs (`192.168.1.x`, `localhost`, `127.0.0.1`) are reserved for backend-only services: LLM endpoints, Docling service, and the internal `SUPABASE_URL`.
+
 ## Deployment
 
 Use the provided scripts:

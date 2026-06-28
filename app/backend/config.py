@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     # 서비스
     app_port: int = 28181
-    public_base_url: str = "http://192.168.1.50:28181"
+    public_base_url: str = "https://chungu.teamcat.app"
 
     # 인프라
     database_url: str = "postgresql+psycopg2://chungu:changeme_postgres@postgres:5432/chungu"

@@ -151,7 +151,7 @@ export default function PdfViewer({ url, page = 1, onPageChange }) {
     <div className="flex-1 flex flex-col overflow-hidden bg-surface-container-low" data-oid="pdfjs-viewer">
       <div
         ref={containerRef}
-        className="flex-1 overflow-hidden flex items-center justify-center p-4"
+        className="flex-1 overflow-auto custom-scrollbar flex items-start justify-center p-4"
         data-oid="pdf-canvas-wrap"
       >
         {loading ? (

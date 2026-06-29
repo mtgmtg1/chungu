@@ -1,5 +1,5 @@
 # [Flow: Stage 1 (CUDA 베이스 + Python 3.12) -> Stage 2 (PyTorch GPU + Surya OCR 설치) -> Stage 3 (서비스 코드 복사 및 실행)]
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
+FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04 AS runtime
 
 # 시스템 의존성
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -36,7 +36,8 @@ COPY backend/docling_service/requirements.gpu.txt ./requirements.txt
 RUN python3.12 -m pip install --no-cache-dir -r requirements.txt
 
 # PyTorch GPU wheel을 requirements 이후에 강제 재설치 (docling이 CPU torch로 덮어쓰는 것 방지)
-RUN python3.12 -m pip install --no-cache-dir --force-reinstall torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
+# cu126 인덱스 사용: surya-ocr 0.17.1이 torch>=2.7.0을 요구
+RUN python3.12 -m pip install --no-cache-dir --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu126
 
 COPY backend/docling_service/ ./docling_service/
 

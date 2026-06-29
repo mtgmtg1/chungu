@@ -31,12 +31,12 @@ WORKDIR /app
 # pip 최신화
 RUN python3.12 -m pip install --no-cache-dir --upgrade pip
 
-# PyTorch GPU wheel (CUDA 12.4 호환 — 2080 Ti Turing 호환)
-RUN python3.12 -m pip install --no-cache-dir torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
-
 # Docling requirements (OpenVINO/NNCF 제거 — GPU에서 불필요)
 COPY backend/docling_service/requirements.gpu.txt ./requirements.txt
 RUN python3.12 -m pip install --no-cache-dir -r requirements.txt
+
+# PyTorch GPU wheel을 requirements 이후에 강제 재설치 (docling이 CPU torch로 덮어쓰는 것 방지)
+RUN python3.12 -m pip install --no-cache-dir --force-reinstall torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
 
 COPY backend/docling_service/ ./docling_service/
 

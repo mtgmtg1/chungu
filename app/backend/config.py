@@ -53,7 +53,7 @@ class Settings(BaseSettings):
 
     # Docling 전처리 서비스 (b2 GPU 서버)
     docling_enabled: bool = True
-    docling_service_url: str = "http://192.168.1.100:28182"  # b2 Docling 서비스 주소
+    docling_service_url: str = "http://192.168.1.82:28182"  # b2 GPU Docling 서비스 주소
     docling_refinement_enabled: bool = True  # LLM 후처리 옵션 기본 활성화
     docling_max_images_per_doc: int = 20   # 문서당 LLM 전송 이미지 상한
     docling_image_max_size: int = 1920      # 추출 이미지 최대 긴 변 (px)

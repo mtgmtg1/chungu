@@ -1,0 +1,48 @@
+# [Flow: Stage 1 (CUDA 베이스 + Python 3.12) -> Stage 2 (PyTorch GPU + Surya OCR 설치) -> Stage 3 (서비스 코드 복사 및 실행)]
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS runtime
+
+# 시스템 의존성
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-kor \
+    tesseract-ocr-eng \
+    imagemagick \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python 3.12 standalone binary (docling-surya requires >=3.12)
+RUN curl -fsSL https://github.com/astral-sh/python-build-standalone/releases/download/20250409/cpython-3.12.10+20250409-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz -o /tmp/python3.12.tar.gz \
+    && tar -xzf /tmp/python3.12.tar.gz -C /usr/local \
+    && rm -f /tmp/python3.12.tar.gz \
+    && ln -sf /usr/local/python/bin/python3.12 /usr/local/bin/python3.12 \
+    && ln -sf /usr/local/python/bin/python3.12 /usr/local/bin/python3 \
+    && ln -sf /usr/local/python/bin/pip3.12 /usr/local/bin/pip3
+
+WORKDIR /app
+
+# pip 최신화
+RUN python3.12 -m pip install --no-cache-dir --upgrade pip
+
+# PyTorch GPU wheel (CUDA 12.4)
+RUN python3.12 -m pip install --no-cache-dir torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu124
+
+# Docling requirements (OpenVINO/NNCF 제거 — GPU에서 불필요)
+COPY backend/docling_service/requirements.gpu.txt ./requirements.txt
+RUN python3.12 -m pip install --no-cache-dir -r requirements.txt
+
+COPY backend/docling_service/ ./docling_service/
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+ENV DOCLING_DEVICE=cuda
+EXPOSE 28182
+
+CMD ["python3.12", "-m", "uvicorn", "docling_service.main:app", "--host", "0.0.0.0", "--port", "28182"]

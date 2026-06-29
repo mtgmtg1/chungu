@@ -28,8 +28,10 @@ logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="Chungu Docling Preprocessing Service")
 
-# 1요청당 2스레드, 총 40스레드 = 20 동시성 허용
+# 1요청당 2스레드, 총 40스레드 = 20 동시성 허용 (CPU 모드)
 DOCLING_NUM_THREADS = int(os.environ.get("DOCLING_NUM_THREADS", "40"))
+DOCLING_DEVICE = os.environ.get("DOCLING_DEVICE", "cpu").lower()  # cpu | cuda
+DOCLING_HALF_SURYA = os.environ.get("DOCLING_HALF_SURYA", "0") == "1"
 
 # 확장자 -> InputFormat 매핑
 EXTENSION_TO_FORMAT: dict[str, InputFormat] = {
@@ -83,11 +85,12 @@ def _detect_format(path: Path) -> InputFormat | None:
 
 
 def _build_converter() -> DocumentConverter:
-    """CPU + VNNI/OneDNN 최적화를 활용한 DocumentConverter를 생성한다."""
+    """CPU/GPU 모드에 따라 DocumentConverter를 생성한다."""
+    is_gpu = DOCLING_DEVICE == "cuda"
     pdf_options = PdfPipelineOptions()
     pdf_options.accelerator_options = AcceleratorOptions(
-        num_threads=DOCLING_NUM_THREADS,
-        device=AcceleratorDevice.CPU,
+        num_threads=1 if is_gpu else DOCLING_NUM_THREADS,
+        device=AcceleratorDevice.CUDA if is_gpu else AcceleratorDevice.CPU,
     )
     pdf_options.do_ocr = True
     pdf_options.allow_external_plugins = True
@@ -103,7 +106,10 @@ def _build_converter() -> DocumentConverter:
             InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options),
         },
     )
-    _warmup_and_apply_ipex(converter)
+    if is_gpu:
+        _warmup_and_apply_gpu(converter)
+    else:
+        _warmup_and_apply_ipex(converter)
     return converter
 
 
@@ -136,6 +142,90 @@ def _warmup_and_apply_ipex(converter: DocumentConverter) -> None:
 
         _apply_ipex(converter)
         _IPEX_WARMED = True
+
+
+_GPU_WARMED = False
+_GPU_LOCK = threading.Lock()
+
+
+def _warmup_and_apply_gpu(converter: DocumentConverter) -> None:
+    """빈 PDF로 파이프라인을 warm-up하고, GPU FP16 최적화를 적용한다."""
+    global _GPU_WARMED
+    with _GPU_LOCK:
+        if _GPU_WARMED:
+            return
+        try:
+            import torch
+            from pypdf import PdfWriter
+
+            logger.info(f"[gpu] GPU 모드: {torch.cuda.get_device_name(0)}")
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                pdf_path = Path(tmpdir) / "warmup.pdf"
+                writer = PdfWriter()
+                writer.add_blank_page(612, 792)
+                with open(pdf_path, "wb") as f:
+                    writer.write(f)
+                try:
+                    converter.convert(pdf_path)
+                    logger.info("[gpu-warmup] 파이프라인 warm-up 완료")
+                except Exception as e:
+                    logger.warning(f"[gpu-warmup] warm-up 실패: {e}")
+        except Exception as e:
+            logger.warning(f"[gpu-warmup] warm-up PDF 생성 실패: {e}")
+
+        _apply_gpu_optimization(converter)
+        _GPU_WARMED = True
+
+
+def _apply_gpu_optimization(converter: DocumentConverter) -> None:
+    """GPU 모드 최적화: FP16 autocast 패치 + SuryaModel .half() (옵션).
+
+    - 모든 모델: torch.autocast("cuda", float16)로 Tensor Core 가속
+    - SuryaModel (DOCLING_HALF_SURYA=1 시): .half()로 가중치를 FP16으로 미리 변환하여 VRAM 절감
+    - 나머지 모델: FP32 가중치 유지, autocast 범위에서 자동 FP16 변환
+    """
+    try:
+        import torch
+    except Exception as e:
+        logger.warning(f"[gpu] torch import 실패: {e}")
+        return
+
+    # FP16 autocast 패치: 모든 CUDA 추론이 float16으로 자동 변환
+    _original_autocast = torch.autocast
+
+    def _patched_autocast(device_type, **kwargs):
+        if device_type == "cuda":
+            kwargs.setdefault("dtype", torch.float16)
+        return _original_autocast(device_type, **kwargs)
+
+    torch.autocast = _patched_autocast
+    logger.info("[gpu] torch.autocast를 CUDA float16으로 패치 완료")
+
+    if not DOCLING_HALF_SURYA:
+        logger.info("[gpu] DOCLING_HALF_SURYA=0, autocast-only 모드 (가중치 FP32 유지)")
+        return
+
+    # SuryaModel만 .half()로 가중치를 FP16으로 미리 변환
+    for pipeline in converter.initialized_pipelines.values():
+        if not hasattr(pipeline, "layout_model") and not hasattr(pipeline, "table_model"):
+            continue
+        for attr in ("layout_model", "table_model", "ocr_model"):
+            model = getattr(pipeline, attr, None)
+            if model is None:
+                continue
+            targets = _find_all_nn_modules(model)
+            for parent, attr_name, nn_module in targets:
+                model_type = type(nn_module).__name__
+                if "SuryaModel" in model_type:
+                    try:
+                        nn_module.half()
+                        nn_module.cuda()
+                        logger.info(f"[gpu] {model_type} .half() 변환 완료 (VRAM 절감)")
+                    except Exception as e:
+                        logger.warning(f"[gpu] {model_type} .half() 실패, autocast-only로 진행: {e}")
+                else:
+                    logger.info(f"[gpu] {model_type} FP32 유지 (autocast 범위)")
 
 
 def _apply_ipex(converter: DocumentConverter) -> None:

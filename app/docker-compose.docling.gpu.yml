@@ -1,0 +1,27 @@
+# [Flow: Step 1 (Docling GPU 서비스 기동 on b2) -> Step 2 (GPU 리소스 할당) -> Step 3 (모델 캐시 볼륨 마운트)]
+# b2 서버(2080 Ti)에서 Docling GPU 전처리 서비스를 구동하는 compose 파일.
+services:
+  docling:
+    build:
+      context: .
+      dockerfile: backend/docling_service/Dockerfile.gpu
+    env_file: .env
+    environment:
+      - DOCLING_DEVICE=cuda
+    ports:
+      - "${DOCLING_SERVICE_PORT:-28182}:28182"
+    volumes:
+      - docling_models:/app/models
+      - docling_data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  docling_models:
+  docling_data:

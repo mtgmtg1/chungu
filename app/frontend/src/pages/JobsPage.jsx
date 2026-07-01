@@ -490,8 +490,16 @@ export default function JobsPage() {
 
         <div className="overflow-x-auto custom-scrollbar" data-oid="gz-rlzc">
           <table
-            className="w-full text-left border-collapse"
+            className="w-full text-left border-collapse table-fixed"
             data-oid="6k4gubk">
+
+            <colgroup>
+              <col className="w-[42%]" />
+              <col className="w-[18%]" />
+              <col className="w-[18%]" />
+              <col className="w-[12%]" />
+              <col className="w-[10%]" />
+            </colgroup>
 
             <thead data-oid="ho01sek">
               <tr
@@ -582,8 +590,9 @@ export default function JobsPage() {
                           </div>
                           <div data-oid="ats28o7">
                             <p
-                            className="font-body-md text-body-md font-medium text-on-surface"
-                            data-oid="7sy3qzp">
+                            className="font-body-md text-body-md font-medium text-on-surface truncate max-w-[200px]"
+                            data-oid="7sy3qzp"
+                            title={j.filename}>
 
                               {j.filename}
                             </p>
@@ -639,13 +648,13 @@ export default function JobsPage() {
                         )}
                       </td>
                       <td
-                      className="px-gutter py-4 font-body-md text-body-md text-on-surface-variant"
+                      className="px-gutter py-4 font-body-md text-body-md text-on-surface-variant whitespace-nowrap"
                       data-oid="n_ue8pe">
 
                         {formatDate(j.created_at)}
                       </td>
                       <td
-                      className="px-gutter py-4 font-body-md text-body-md text-on-surface-variant"
+                      className="px-gutter py-4 font-body-md text-body-md text-on-surface-variant whitespace-nowrap"
                       data-oid="zmn711w">
 
                         {timeLeft(j.source_expires_at)}

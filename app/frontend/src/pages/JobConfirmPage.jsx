@@ -1,8 +1,8 @@
-// [Flow: Step 1 (job ID로 진입) -> Step 2 (작업 정보 로드) -> Step 3 (비용 확인 + 고급 옵션) -> Step 4 (승인 -> 결과 페이지 이동)]
+// [Flow: Step 1 (job ID로 진입) -> Step 2 (작업 정보 로드) -> Step 3 (OCR 모델 선택 + 비용 확인) -> Step 4 (승인 -> 결과 페이지 이동)]
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, Loader2, CreditCard, Settings2 } from "lucide-react";
+import { ArrowLeft, Loader2, CreditCard, Settings2, Zap, Sparkles, ScanLine } from "lucide-react";
 import { api } from "../api.js";
 
 export default function JobConfirmPage() {
@@ -14,14 +14,10 @@ export default function JobConfirmPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [pipeline, setPipeline] = useState("vision");
+  const [ocrModel, setOcrModel] = useState("premium");
+  const [ocrEngine, setOcrEngine] = useState("easyocr");
   const [columns, setColumns] = useState("");
   const [prompt, setPrompt] = useState("");
-
-  const pipelineOptions = [
-  { value: "vision", label: t("page:confirm.vision") },
-  { value: "hybrid", label: t("page:confirm.hybrid") }];
-
 
   useEffect(() => {
     if (!jobId) return;
@@ -33,7 +29,8 @@ export default function JobConfirmPage() {
       const [jobData, me] = await Promise.all([api.getJob(jobId), api.me()]);
       setJob(jobData);
       setProfile(me);
-      setPipeline(jobData.pipeline || "vision");
+      setOcrModel(jobData.ocr_model || "premium");
+      setOcrEngine(jobData.ocr_engine || "easyocr");
     } catch (e) {
       setError(e.message || t("page:confirm.loadError"));
     } finally {
@@ -45,7 +42,7 @@ export default function JobConfirmPage() {
     setSubmitting(true);
     setError("");
     try {
-      await api.updateJob(jobId, { pipeline, columns, prompt });
+      await api.updateJob(jobId, { ocr_model: ocrModel, ocr_engine: ocrEngine, columns, prompt });
       await api.confirmJob(jobId);
       nav(`/jobs/${jobId}`);
     } catch (e) {
@@ -94,7 +91,11 @@ export default function JobConfirmPage() {
   }
 
   const balance = profile?.points_balance ?? job.balance ?? 0;
-  const cost = job.cost?.points ?? 0;
+  const hasMedia = job.has_media || false;
+  const effectiveModel = hasMedia ? "premium" : ocrModel;
+  const costData = effectiveModel === "basic" ? job.cost_basic : job.cost_premium;
+  const cost = costData?.points ?? job.cost?.points ?? 0;
+  const freeRemaining = job.free_pages_remaining ?? 0;
   const insufficient = balance < cost;
 
   return (
@@ -240,6 +241,105 @@ export default function JobConfirmPage() {
             </div>
           </div>
 
+          <div className="mb-6" data-oid="model-select">
+            <label
+              className="block text-sm font-medium text-on-surface mb-3"
+              data-oid="model-label">
+
+              {t("page:confirm.ocrModel")}
+            </label>
+            <div className="grid grid-cols-2 gap-3" data-oid="model-cards">
+              <button
+                type="button"
+                onClick={() => !hasMedia && setOcrModel("basic")}
+                disabled={hasMedia}
+                className={`border rounded-2xl p-4 text-left transition-all ${
+                  effectiveModel === "basic"
+                    ? "border-primary bg-primary/5 ring-2 ring-primary/20"
+                    : "border-outline-variant hover:border-primary/50"
+                } ${hasMedia ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                data-oid="btn-basic">
+
+                <div className="flex items-center gap-2 mb-2" data-oid="basic-icon">
+                  <Zap size={18} className={effectiveModel === "basic" ? "text-primary" : "text-on-surface-variant"} data-oid="zap-icon" />
+                  <span className="font-medium text-on-surface" data-oid="basic-title">
+                    {t("page:confirm.basicModel")}
+                  </span>
+                </div>
+                <p className="text-xs text-on-surface-variant mb-2" data-oid="basic-desc">
+                  {t("page:confirm.basicModelDesc")}
+                </p>
+                <div className="text-xs space-y-1" data-oid="basic-info">
+                  <p className="text-on-surface-variant" data-oid="basic-price">
+                    {t("page:confirm.basicPrice")}
+                  </p>
+                  <p className="text-primary font-medium" data-oid="basic-free">
+                    {t("page:confirm.freeRemaining", { count: freeRemaining })}
+                  </p>
+                </div>
+                {effectiveModel === "basic" && !hasMedia && (
+                  <div className="mt-3 pt-3 border-t border-outline-variant/40" data-oid="engine-select">
+                    <label
+                      className="flex items-center gap-1.5 text-xs font-medium text-on-surface mb-2"
+                      data-oid="engine-label">
+                      <ScanLine size={14} data-oid="engine-icon" />
+                      {t("page:confirm.ocrEngine")}
+                    </label>
+                    <div className="grid grid-cols-3 gap-2" data-oid="engine-options">
+                      {["tesseract", "easyocr", "rapidocr"].map((eng) => (
+                        <button
+                          key={eng}
+                          type="button"
+                          onClick={() => setOcrEngine(eng)}
+                          className={`text-xs border rounded-lg py-2 px-1 text-center transition-all ${
+                            ocrEngine === eng
+                              ? "border-primary bg-primary/5 text-primary font-medium ring-1 ring-primary/20"
+                              : "border-outline-variant text-on-surface-variant hover:border-primary/50"
+                          }`}
+                          data-oid={`btn-engine-${eng}`}>
+                          {t(`page:confirm.engine_${eng}`)}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-on-surface-variant" data-oid="engine-desc">
+                      {t(`page:confirm.engine_${ocrEngine}_desc`)}
+                    </p>
+                  </div>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setOcrModel("premium")}
+                className={`border rounded-2xl p-4 text-left transition-all cursor-pointer ${
+                  effectiveModel === "premium"
+                    ? "border-primary bg-primary/5 ring-2 ring-primary/20"
+                    : "border-outline-variant hover:border-primary/50"
+                }`}
+                data-oid="btn-premium">
+
+                <div className="flex items-center gap-2 mb-2" data-oid="premium-icon">
+                  <Sparkles size={18} className={effectiveModel === "premium" ? "text-primary" : "text-on-surface-variant"} data-oid="sparkles-icon" />
+                  <span className="font-medium text-on-surface" data-oid="premium-title">
+                    {t("page:confirm.premiumModel")}
+                  </span>
+                </div>
+                <p className="text-xs text-on-surface-variant mb-2" data-oid="premium-desc">
+                  {t("page:confirm.premiumModelDesc")}
+                </p>
+                <div className="text-xs space-y-1" data-oid="premium-info">
+                  <p className="text-on-surface-variant" data-oid="premium-price">
+                    {t("page:confirm.premiumPrice")}
+                  </p>
+                </div>
+              </button>
+            </div>
+            {hasMedia &&
+              <p className="mt-2 text-xs text-amber-600" data-oid="media-notice">
+                {t("page:confirm.mediaForcesPremium")}
+              </p>
+            }
+          </div>
+
           <details className="mb-6 group" data-oid="9vqgwag">
             <summary
               className="flex items-center gap-2 cursor-pointer text-body-md text-on-surface-variant hover:text-primary transition-colors"
@@ -254,31 +354,6 @@ export default function JobConfirmPage() {
               className="mt-4 space-y-4 bg-surface-container-low rounded-2xl p-5"
               data-oid="ppq.99c">
 
-              <div data-oid="ijztqfe">
-                <label
-                  className="block text-sm font-medium text-on-surface mb-2"
-                  data-oid="ygfwfd3">
-
-                  {t("page:confirm.analysisMode")}
-                </label>
-                <div className="flex gap-3" data-oid="zxv4sf2">
-                  {pipelineOptions.map((opt) =>
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setPipeline(opt.value)}
-                    className={`flex-1 border rounded-lg px-3 py-2 text-sm text-left transition-colors ${
-                    pipeline === opt.value ?
-                    "border-primary bg-primary/5 text-primary" :
-                    "border-outline-variant text-on-surface"}`
-                    }
-                    data-oid="807_h:d">
-
-                      {opt.label}
-                    </button>
-                  )}
-                </div>
-              </div>
               <div data-oid="10iz:xq">
                 <label
                   className="block text-sm font-medium text-on-surface mb-1"

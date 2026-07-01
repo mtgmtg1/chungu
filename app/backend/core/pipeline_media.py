@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
-from . import media_loader, ocr_client
+from . import docling_client, media_loader, ocr_client
 from .prompts import build_audio_prompt, build_media_prompt, build_video_prompt
 from ..config import settings
 
@@ -70,13 +70,24 @@ def _process_file(
     work_dir: Path,
     max_tokens: int = 10000,
     provider: str = "openai",
+    ocr_model: str = "premium",
+    ocr_engine: str = "easyocr",
 ) -> tuple[str, str]:
     """단일 미디어/이미지 파일을 처리해 통일된 마크다운 표 문자열을 반환한다.
 
-    - 이미지: 크기에 따라 타일 분할 후 각 타일별 LLM 호출, 결과 병합
+    - 이미지 (basic): Docling 서비스로 OCR 변환
+    - 이미지 (premium): 타일 분할 후 각 타일별 LLM 호출, 결과 병합
     - 오디오/비디오: prompt를 extra_prompt로 사용해 30초 세그먼트별로 요청 후 병합
     """
     if file_type == "image":
+        if ocr_model == "basic":
+            try:
+                markdown, _images = docling_client.convert_file(file_path, ocr_engine=ocr_engine)
+                return markdown, ""
+            except Exception as e:
+                logger.warning(f"[image-basic] {file_path.name} Docling 변환 실패: {e}")
+                return "", ""
+
         tiles = ocr_client.tile_large_image(file_path)
         if len(tiles) <= 1:
             content, _ = ocr_client.call_media(
@@ -231,6 +242,8 @@ def run_media(
     workers: int | None = None,
     on_progress: Callable[[int, int], None] | None = None,
     on_error: Callable[[str, str], None] | None = None,
+    ocr_model: str = "premium",
+    ocr_engine: str = "easyocr",
 ) -> list[tuple[str, str, str]]:
     """미디어/이미지 파일 목록을 처리해 [(filename, position, markdown_table)] 반환.
 
@@ -297,7 +310,7 @@ def run_media(
         filename = file_path.name
         try:
             content, position = _process_file(
-                file_path, file_type, target_prompt, target_endpoint, target_model, target_api_key, work, max_tokens, target_provider
+                file_path, file_type, target_prompt, target_endpoint, target_model, target_api_key, work, max_tokens, target_provider, ocr_model, ocr_engine
             )
             table = ocr_client.extract_markdown_table(content)
             logger.info(f"[media-result] {filename} ({file_type}) -> position={position}, table_length={len(table)}")

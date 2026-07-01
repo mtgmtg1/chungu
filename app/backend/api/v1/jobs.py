@@ -59,6 +59,8 @@ def _job_summary(job: Job) -> dict:
         "total_files": job.total_files,
         "done_files": job.done_files,
         "media_duration_seconds": job.media_duration_seconds,
+        "ocr_model": job.ocr_model or "premium",
+        "ocr_engine": job.ocr_engine or "easyocr",
         "cost_points": job.cost_points,
         "error_log": job.error_log,
         "created_at": job.created_at.isoformat() if job.created_at else None,
@@ -100,6 +102,8 @@ async def upload_job(
     prompt: str = Form(""),
     dpi: int = Form(300),
     relative_paths: str = Form(""),
+    ocr_model: str = Form("premium"),
+    ocr_engine: str = Form("easyocr"),
     auth: tuple[CurrentUser, ApiKey] = Depends(require_api_key_with_key),
     db: Session = Depends(get_db),
 ):
@@ -111,6 +115,10 @@ async def upload_job(
         raise HTTPException(status_code=400, detail="파일을 선택하세요")
     if pipeline not in ("vision", "hybrid"):
         pipeline = settings_store.get_setting(db, "default_pipeline") or "vision"
+    if ocr_model not in ("basic", "premium"):
+        ocr_model = "premium"
+    if ocr_engine not in ("tesseract", "easyocr", "rapidocr"):
+        ocr_engine = "easyocr"
 
     max_mb = int(settings_store.get_setting(db, "max_file_mb") or "200")
     total_size = 0
@@ -152,6 +160,8 @@ async def upload_job(
         columns=_parse_columns(columns),
         prompt=prompt.strip(),
         dpi=dpi,
+        ocr_model=ocr_model,
+        ocr_engine=ocr_engine,
         original_filename=original_filename,
         status="pending",
     )
@@ -241,7 +251,14 @@ async def upload_job(
         db.commit()
         raise HTTPException(status_code=502, detail=f"파일 처리 실패: {e}")
 
-    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds)
+    has_media = audio_seconds > 0 or video_seconds > 0
+    if has_media and ocr_model == "basic":
+        ocr_model = "premium"
+        job.ocr_model = "premium"
+        db.commit()
+
+    user_id = uuid.UUID(user.user_id)
+    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, ocr_model=ocr_model, user_id=user_id)
     _log_api_usage(
         db, api_key, uuid.UUID(user.user_id), "/api/v1/jobs/upload", 200, points_spent=0, job_id=job.id,
         client_ip=request.client.host if request.client else "",
@@ -253,6 +270,9 @@ async def upload_job(
         "total_pages": pages,
         "total_files": total_files,
         "media_duration_seconds": audio_seconds + video_seconds,
+        "ocr_model": ocr_model,
+        "ocr_engine": ocr_engine,
+        "has_media": has_media,
         "cost": cost,
         "balance": user.points_balance,
     }
@@ -296,7 +316,10 @@ def confirm_job(
         audio_seconds = 0
         video_seconds = 0
 
-    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds)
+    ocr_model = job.ocr_model or "premium"
+    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, ocr_model=ocr_model, user_id=job.user_id)
+    if ocr_model == "basic":
+        points_service.record_daily_usage(db, job.user_id, pages + image_count)
     try:
         points_service.spend_points(db, db_user, cost["points"], f"API 작업: {job.original_filename}")
     except ValueError as e:

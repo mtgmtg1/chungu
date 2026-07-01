@@ -145,3 +145,32 @@ def get_signed_download_url(storage_path: str, bucket: str = "results", expires_
         internal = settings.supabase_url.rstrip("/")
         url = url.replace(internal, settings.supabase_public_url.rstrip("/"))
     return url
+
+
+def _delete_storage_path(bucket: str, path: str) -> None:
+    """단일 Storage 경로를 삭제합니다. 경로가 비어있거나 없으면 무시합니다."""
+    if not path:
+        return
+    client = get_service_client()
+    try:
+        client.storage.from_(bucket).remove([path])
+    except Exception:
+        # 이미 삭제되었거나 존재하지 않는 파일은 무시
+        pass
+
+
+def delete_source_files(job) -> None:
+    """OCR 원본 업로드 파일(pdfs 버킷)을 삭제합니다. DB 레코드는 유지합니다."""
+    if job.pdf_storage_path:
+        _delete_storage_path("pdfs", job.pdf_storage_path)
+    for info in job.extracted_files or []:
+        if isinstance(info, dict) and info.get("storage_path"):
+            _delete_storage_path("pdfs", info["storage_path"])
+
+
+def clear_source_paths(job) -> None:
+    """원본 Storage 경로 참조를 제거합니다. DB 커밋은 호출자가 담당합니다."""
+    job.pdf_storage_path = ""
+    for info in job.extracted_files or []:
+        if isinstance(info, dict) and "storage_path" in info:
+            info["storage_path"] = ""

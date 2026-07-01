@@ -1,4 +1,4 @@
-// [Flow: Step 1 (로그인 확인) -> Step 2 (중앙 업로드 영역) -> Step 3 (업로드 -> 비용 확인 페이지 이동) -> Step 4 (승인 -> 결과 페이지 이동)]
+// [Flow: Step 1 (로그인 확인) -> Step 2 (중앙 업로드 영역) -> Step 3 (init -> TUS 업로드 -> create) -> Step 4 (비용 확인 페이지 이동)]
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -6,6 +6,7 @@ import { FileUp, Loader2, LogIn, Coins } from "lucide-react";
 import GridScan from "../components/GridScan.jsx";
 import { useAuth } from "../AuthContext.jsx";
 import { api } from "../api.js";
+import { uploadFilesTUS } from "../tusUpload.js";
 
 export default function UploadPage() {
   const { user, loading: authLoading } = useAuth();
@@ -16,6 +17,7 @@ export default function UploadPage() {
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState("");
   const [doclingRefinement, setDoclingRefinement] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, percent: 0, fileName: "" });
 
   useEffect(() => {
     if (!user) return;
@@ -64,23 +66,56 @@ export default function UploadPage() {
     if (!user) return nav("/login");
     if (!files.length) return setError(t("page:upload.selectFile"));
 
-    const fd = new FormData();
-    const relativePaths = [];
-    files.forEach((f) => {
-      fd.append("files", f);
-      relativePaths.push(f.webkitRelativePath || f.name);
-    });
-    fd.append("relative_paths", JSON.stringify(relativePaths));
-    fd.append("docling_refinement", doclingRefinement ? "true" : "false");
-
     setSubmitting(true);
     try {
-      const res = await api.uploadJob(fd);
+      // Step 1: init - 임시 Job 생성 + Storage 경로 할당
+      const filesPayload = files.map((f) => ({
+        name: f.name,
+        size: f.size,
+        relative_path: f.webkitRelativePath || f.name,
+      }));
+
+      const initRes = await api.initJob({
+        files: filesPayload,
+        docling_refinement: doclingRefinement,
+      });
+
+      // Step 2: TUS 청크 업로드 (각 청크 6MB, Cloudflare 100MB 제한 회피)
+      const uploadItems = files.map((f, i) => ({
+        file: f,
+        storagePath: initRes.upload_paths[i].storage_path,
+      }));
+
+      setUploadProgress({ current: 0, total: files.length, percent: 0, fileName: files[0]?.name || "" });
+
+      await uploadFilesTUS(
+        uploadItems,
+        (fileIndex, pct) => {
+          setUploadProgress({
+            current: fileIndex,
+            total: files.length,
+            percent: pct,
+            fileName: files[fileIndex]?.name || "",
+          });
+        },
+      );
+
+      // Step 3: create - Storage 파일 분석 + 비용 계산
+      const createPayload = {
+        files: initRes.upload_paths.map((p) => ({
+          storage_path: p.storage_path,
+          original_name: p.original,
+          relative_path: p.relative_path,
+        })),
+      };
+
+      const res = await api.createJob(initRes.job_id, createPayload);
       nav(`/jobs/${res.job_id}/confirm`);
     } catch (e) {
       setError(e.message);
     } finally {
       setSubmitting(false);
+      setUploadProgress({ current: 0, total: 0, percent: 0, fileName: "" });
     }
   }
 
@@ -252,6 +287,25 @@ export default function UploadPage() {
                 )}
                 </ul>
                 {error && <p className="text-red-600 text-sm mt-3" data-oid="-a7o5g0">{error}</p>}
+                {submitting && uploadProgress.total > 0 && (
+                  <div className="mt-3 mb-2" data-oid="upload-progress">
+                    <div className="flex items-center justify-between text-xs text-on-surface-variant mb-1">
+                      <span className="truncate max-w-[200px]" data-oid="prog-file">
+                        {uploadProgress.fileName}
+                      </span>
+                      <span data-oid="prog-count">
+                        {uploadProgress.current + 1}/{uploadProgress.total} ({uploadProgress.percent}%)
+                      </span>
+                    </div>
+                    <div className="w-full bg-surface-container rounded-full h-2 overflow-hidden" data-oid="prog-bar-bg">
+                      <div
+                        className="bg-primary h-full rounded-full transition-all duration-300"
+                        style={{ width: `${uploadProgress.percent}%` }}
+                        data-oid="prog-bar-fill"
+                      />
+                    </div>
+                  </div>
+                )}
                 <div className="flex gap-3 mt-4" data-oid="sj37fh-">
                   <button
                   type="button"

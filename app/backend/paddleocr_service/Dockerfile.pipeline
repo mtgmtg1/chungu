@@ -1,0 +1,28 @@
+# [Flow: Step 1 (PaddleOCR 베이스 이미지) -> Step 2 (FastAPI 래퍼 설치) -> Step 3 (Pipeline 서비스 기동)]
+# PaddleOCR Pipeline 컨테이너: PP-DocLayoutV2 + FastAPI 래퍼
+# vLLM 서버(http://vllm:8080)에 VLM 추론을 위임하고 레이아웃 분석 + API 서비스 제공
+
+FROM ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-vl:latest-nvidia-gpu
+
+USER root
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PADDLEOCR_PIPELINE_VERSION=v1.6
+ENV VLLM_SERVER_URL=http://vllm:8080/v1
+
+# LibreOffice + CJK 폰트 설치 (DOCX/PPTX/XLSX/HTML → PDF 변환용)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libreoffice-core libreoffice-writer libreoffice-impress libreoffice-calc \
+    fonts-noto-cjk fonts-noto-cjk-extra \
+    && rm -rf /var/lib/apt/lists/*
+
+# FastAPI 래퍼 의존성 설치
+RUN pip install --no-cache-dir fastapi uvicorn python-multipart PyMuPDF
+
+# 서비스 코드 복사
+COPY backend/paddleocr_service/main.py /app/main.py
+
+WORKDIR /app
+
+EXPOSE 28182
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "28182"]

@@ -146,6 +146,22 @@ bash deploy_a1.sh
 This syncs `app/` to the `a1` server (via WAN host `wan-1`), rebuilds Docker images, and restarts containers.
 Server `.env` must be updated manually (not overwritten by rsync).
 
+## Storage Retention & Source Cleanup
+
+- OCR 원본 업로드 파일은 `Job.created_at` 기준 **48시간** 후 Supabase Storage `pdfs` 버킷에서 자동 삭제된다.
+- 변환 결과 파일(`results` 버킷)은 별도 보관 정책을 유지하며, 원본 삭제와 무관하게 다운로드 가능하다.
+- DB의 `jobs` 레코드는 유지되며, 삭제 후 `pdf_storage_path` 및 `extracted_files` 내 `storage_path` 참조만 제거된다.
+- 삭제 스케줄링: Celery beat가 1시간마다 `cleanup_expired_uploads` 태스크를 실행한다.
+- 사용자가 수동으로 작업을 삭제하면 DB 레코드 삭제 전에 `pdfs` 버킷 원본 파일도 함께 삭제된다.
+- jobs 리스트에는 `source_expires_at`를 기준으로 남은 시간(일/시간/분)이 표시된다.
+- Key files:
+  - `app/backend/api/jobs.py` — `_source_expires_at()`, `delete_job` Storage 정리
+  - `app/backend/core/supabase_client.py` — `delete_source_files()`, `clear_source_paths()`
+  - `app/backend/workers/tasks.py` — `cleanup_expired_uploads` periodic task
+  - `app/backend/celery_app.py` — Celery beat schedule
+  - `app/frontend/src/pages/JobsPage.jsx` — 남은 시간 표시
+  - `app/docker-compose.yml` — `beat` 서비스
+
 ## Docling Preprocessing Pipeline
 
 - Phase 1 routes PDF/DOCX/PPTX/XLSX/HTML through a dedicated Docling path (`run_docling` in `tasks.py`).

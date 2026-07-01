@@ -1,5 +1,5 @@
-# [Flow: Step 1 (Docling 전처리 서비스 기동 on b2) -> Step 2 (GPU 리소스 할당) -> Step 3 (모델 캐시 볼륨 마운트)]
-# b2 서버(2080ti)에서 Docling 전처리 서비스를 구동하는 compose 파일.
+# [Flow: Step 1 (Docling 전처리 서비스 기동 on a1) -> Step 2 (CPU 리소스 설정) -> Step 3 (모델 캐시 볼륨 마운트)]
+# a1 CPU 서버에서 Docling 전처리 서비스를 구동하는 compose 파일.
 services:
   docling:
     build:

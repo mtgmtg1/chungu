@@ -564,3 +564,50 @@ def run_job(job_id: str) -> dict:
         return {"job_id": job_id, "error": str(e)}
     finally:
         db.close()
+
+
+# OCR 업로드 원본 파일의 Supabase Storage 보관 기간 (시간)
+UPLOAD_RETENTION_HOURS = 48
+
+
+# [Flow: Step 1 (48시간 이전 생성된 job 조회) -> Step 2 (pdfs 버킷 원본 파일 삭제) -> Step 3 (DB 경로 참조 제거)]
+@celery.task(name="backend.workers.tasks.cleanup_expired_uploads")
+def cleanup_expired_uploads() -> dict:
+    """created_at 기준 48시간이 지난 job의 원본 업로드 파일을 Storage에서 삭제한다."""
+    db = SessionLocal()
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=UPLOAD_RETENTION_HOURS)
+        jobs = (
+            db.query(Job)
+            .filter(Job.created_at < cutoff)
+            .filter((Job.pdf_storage_path != "") | (Job.extracted_files.isnot(None)))
+            .all()
+        )
+
+        cleaned = 0
+        skipped = 0
+        for job in jobs:
+            has_source = bool(job.pdf_storage_path) or any(
+                isinstance(info, dict) and info.get("storage_path")
+                for info in job.extracted_files or []
+            )
+            if not has_source:
+                skipped += 1
+                continue
+
+            try:
+                supabase_client.delete_source_files(job)
+                supabase_client.clear_source_paths(job)
+                db.commit()
+                cleaned += 1
+                logger.info(f"[cleanup_expired_uploads] {job.id} 원본 파일 삭제 완료")
+            except Exception as e:
+                db.rollback()
+                logger.warning(f"[cleanup_expired_uploads] {job.id} 삭제 중 오류: {e}")
+
+        return {"cleaned": cleaned, "skipped": skipped}
+    except Exception as e:
+        logger.exception(f"[cleanup_expired_uploads] 태스크 오류: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()

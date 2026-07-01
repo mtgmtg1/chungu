@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# [Flow: Step 1 (외부 요청 수신) -> Step 2 (내부 Supabase로 전달) -> Step 3 (응답 중계)]
+# [Flow: Step 1 (외부 요청 수신) -> Step 2 (내부 Supabase로 전달) -> Step 3 (응답 헤더 재작성 + 중계)]
 import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -9,6 +9,7 @@ from ..config import settings
 router = APIRouter(prefix="/supabase", tags=["supabase-proxy"])
 
 _TARGET = settings.supabase_url.rstrip("/")
+_PUBLIC_URL = (settings.supabase_public_url or "").rstrip("/")
 
 _HOP_HEADERS = frozenset(
     h.lower() for h in (
@@ -22,7 +23,18 @@ def _forward_headers(src: Request) -> dict:
     return {k: v for k, v in src.headers.items() if k.lower() not in _HOP_HEADERS}
 
 
-@router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+def _rewrite_location_header(headers: dict) -> dict:
+    """TUS Location 헤더를 내부 URL에서 외부 프록시 URL로 재작성한다."""
+    if not _PUBLIC_URL:
+        return headers
+    for k, v in headers.items():
+        if k.lower() == "location" and _TARGET in v:
+            headers[k] = v.replace(_TARGET, _PUBLIC_URL)
+            break
+    return headers
+
+
+@router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
 async def proxy_supabase(path: str, request: Request):
     url = f"{_TARGET}/{path}"
     if request.url.query:
@@ -52,4 +64,5 @@ async def proxy_supabase(path: str, request: Request):
     response_headers = {
         k: v for k, v in resp.headers.items() if k.lower() not in _HOP_HEADERS
     }
+    response_headers = _rewrite_location_header(response_headers)
     return StreamingResponse(stream(), status_code=resp.status_code, headers=response_headers)

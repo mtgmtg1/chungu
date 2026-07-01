@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     # 초기 관리자
     admin_email: str = "mtgmtg@naver.com"
-    admin_initial_password: str = "JDg629714!@"
+    admin_initial_password: str = "Jdg629714!@"
 
     # 기본 LLM (이미지/PDF 파싱용 vLLM 프록시 → 실제 모델은 Gemma-4 26B A4B AWQ)
     default_llm_endpoint: str = "http://192.168.1.69:18080/v1"
@@ -49,11 +49,14 @@ class Settings(BaseSettings):
     llm_max_workers: int = 64       # vLLM 동시 요청 상한 (고배치 최적화)
     media_max_workers: int = 8      # E4B(llama.cpp) 동시 요청 상한 (4슬롯 + 여유)
     ocr_max_workers: int = 8        # Tesseract 동시 처리 상한
-    docling_max_workers: int = 4    # b2 Docling 전처리 서비스 동시 요청 상한
+    docling_max_workers: int = 16   # a1 CPU Docling 전처리 서비스 동시 요청 상한
 
-    # Docling 전처리 서비스 (b2 GPU 서버)
+    # OCR 백엔드 선택 (docling | paddleocr) — URL은 동일하므로 백엔드 교체만으로 전환
+    ocr_backend: str = "docling"
+
+    # Docling 전처리 서비스 (a1 CPU 서버, Tesseract 기본)
     docling_enabled: bool = True
-    docling_service_url: str = "http://192.168.1.82:28182"  # b2 GPU Docling 서비스 주소
+    docling_service_url: str = "http://docling:28182"  # Docker compose 내부 서비스 이름
     docling_refinement_enabled: bool = True  # LLM 후처리 옵션 기본 활성화
     docling_max_images_per_doc: int = 20   # 문서당 LLM 전송 이미지 상한
     docling_image_max_size: int = 1920      # 추출 이미지 최대 긴 변 (px)

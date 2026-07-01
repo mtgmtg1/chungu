@@ -21,13 +21,19 @@ SETTING_DEFS: dict[str, tuple[str, bool]] = {
     "max_pages": (str(settings.max_pages), False),
     "max_file_mb": (str(settings.max_file_mb), False),
     "default_pipeline": ("vision", False),
-    # 포인트/결제
+    # 포인트/결제 (레거시 호환)
     "cost_per_page_krw": ("3", False),
     "cost_per_image_krw": ("3", False),
     "cost_per_audio_sec_krw": ("1", False),
     "cost_per_video_sec_krw": ("10", False),
     "cost_per_page_usd": ("0.002", False),
     "usd_to_krw_rate": ("1500", False),
+    # 모델별 차등 과금
+    "cost_basic_page_krw": ("1", False),
+    "cost_premium_page_krw": ("5", False),
+    "cost_premium_audio_sec_krw": ("1", False),
+    "cost_premium_video_sec_krw": ("5", False),
+    "free_daily_pages_basic": ("100", False),
     "point_packages": ('[{"name":"1,000P","points":1000,"krw":1000,"usd":0.67},{"name":"5,000P","points":5000,"krw":5000,"usd":3.34},{"name":"10,000P","points":10000,"krw":10000,"usd":6.67}]', False),
     "toss_secret_key": ("", True),
     "toss_client_key": ("", False),
@@ -41,8 +47,8 @@ SETTING_DEFS: dict[str, tuple[str, bool]] = {
     # 스레드 상한
     "llm_max_workers": (str(settings.llm_max_workers), False),
     "media_max_workers": (str(settings.media_max_workers), False),
-    "docling_max_workers": (str(settings.docling_max_workers), False),
-    # Docling 전처리 서비스 (b2 GPU)
+    "docling_max_workers": (str(settings.docling_max_workers), False),  # a1 CPU 80 logical cores
+    # Docling 전처리 서비스 (a1 CPU)
     "docling_enabled": (str(int(settings.docling_enabled)), False),
     "docling_service_url": (settings.docling_service_url, False),
     "docling_refinement_enabled": (str(int(settings.docling_refinement_enabled)), False),

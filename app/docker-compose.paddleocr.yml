@@ -1,0 +1,59 @@
+# [Flow: Step 1 (vLLM 서버 기동) -> Step 2 (PaddleOCR Pipeline 서비스 기동) -> Step 3 (a1 백엔드에서 :28182 접속)]
+# b2 서버(2080 Ti, CC 7.5)에서 PaddleOCR-VL 1.6 + vLLM 이중 컨테이너 구동
+# 기존 docker-compose.docling.gpu.yml과 포트 충돌 방지: 동시에 실행하지 않을 것
+services:
+  vllm:
+    # CC 7.5 전용 소스 빌드 이미지 (Dockerfile.vllm 참조)
+    image: vllm-cc75:latest
+    environment:
+      - VLLM_USE_V1=0
+      - HF_HUB_CACHE=/models
+      - VLLM_NO_USAGE_STATS=1
+    command:
+      - PaddlePaddle/PaddleOCR-VL-1.6
+      - --trust-remote-code
+      - --dtype=half
+      - --enforce-eager
+      - --no-enable-prefix-caching
+      - --mm-processor-cache-gb=0
+      - --max-num-batched-tokens=16384
+      - --host=0.0.0.0
+      - --port=8080
+      - --served-model-name=PaddleOCR-VL-1.6-0.9B
+      - --gpu-memory-utilization=0.7
+    volumes:
+      - hf_cache:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  paddleocr-pipeline:
+    build:
+      context: .
+      dockerfile: backend/paddleocr_service/Dockerfile.pipeline
+    environment:
+      - VLLM_SERVER_URL=http://vllm:8080/v1
+      - PADDLEOCR_PIPELINE_VERSION=v1.6
+    ports:
+      - "${DOCLING_SERVICE_PORT:-28182}:28182"
+    volumes:
+      - paddleocr_data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      - vllm
+    restart: unless-stopped
+
+volumes:
+  hf_cache:
+  paddleocr_data:

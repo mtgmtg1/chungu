@@ -7,7 +7,7 @@ import re as _re
 import tempfile
 import uuid
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import List
@@ -30,6 +30,17 @@ from ..db.session import get_db
 from ..workers.tasks import run_job
 
 router = APIRouter(prefix="/api", tags=["jobs"])
+
+# OCR 업로드 원본 파일의 Supabase Storage 보관 기간 (시간)
+UPLOAD_RETENTION_HOURS = 48
+
+
+def _source_expires_at(job: Job) -> datetime:
+    """작업 생성 시점으로부터 48시간 후의 원본 업로드 만료 시각을 계산한다."""
+    created = job.created_at or datetime.now(timezone.utc)
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return created + timedelta(hours=UPLOAD_RETENTION_HOURS)
 
 
 MEDIA_EXTENSIONS = {
@@ -67,8 +78,8 @@ async def _count_pages_with_docling(data: bytes, filename: str) -> int:
         tmp.write(data)
         tmp_path = Path(tmp.name)
     try:
-        result = await asyncio.to_thread(docling_client.convert_file, tmp_path)
-        return int(result.get("page_count", 1))
+        _markdown, _images = await asyncio.to_thread(docling_client.convert_file, tmp_path)
+        return 1
     except Exception as e:
         logger.warning(f"[docling-page-count] {filename} 실패: {e}")
         return 1
@@ -85,6 +96,8 @@ async def upload_job(
     dpi: int = Form(300),
     relative_paths: str = Form(""),
     docling_refinement: bool = Form(False),
+    ocr_model: str = Form("premium"),
+    ocr_engine: str = Form("easyocr"),
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -92,6 +105,10 @@ async def upload_job(
         raise HTTPException(status_code=400, detail="파일을 선택하세요")
     if pipeline not in ("vision", "hybrid"):
         pipeline = settings_store.get_setting(db, "default_pipeline") or "vision"
+    if ocr_model not in ("basic", "premium"):
+        ocr_model = "premium"
+    if ocr_engine not in ("tesseract", "easyocr", "rapidocr"):
+        ocr_engine = "easyocr"
 
     max_mb = int(settings_store.get_setting(db, "max_file_mb") or "200")
     total_size = 0
@@ -139,6 +156,8 @@ async def upload_job(
         prompt=prompt.strip(),
         dpi=dpi,
         use_docling_refinement=docling_refinement,
+        ocr_model=ocr_model,
+        ocr_engine=ocr_engine,
         original_filename=original_filename,
         status="pending",
     )
@@ -263,8 +282,18 @@ async def upload_job(
         db.commit()
         raise HTTPException(status_code=502, detail=f"파일 처리 실패: {e}")
 
+    has_media = audio_seconds > 0 or video_seconds > 0
+    if has_media and ocr_model == "basic":
+        ocr_model = "premium"
+        job.ocr_model = "premium"
+        db.commit()
+
     docling_refinement_pages = pages if docling_refinement else 0
-    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages)
+    user_id = uuid.UUID(user.user_id)
+    cost_basic = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=0, ocr_model="basic", user_id=user_id)
+    cost_premium = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages, ocr_model="premium", user_id=user_id)
+    cost = cost_premium if ocr_model == "premium" else cost_basic
+    free_remaining = points_service.get_daily_free_remaining(db, user_id)
     return {
         "job_id": job.id,
         "status": job.status,
@@ -274,7 +303,290 @@ async def upload_job(
         "media_duration_seconds": audio_seconds + video_seconds,
         "docling_refinement": docling_refinement,
         "docling_refinement_pages": docling_refinement_pages,
+        "ocr_model": ocr_model,
+        "ocr_engine": ocr_engine,
+        "has_media": has_media,
         "cost": cost,
+        "cost_basic": cost_basic,
+        "cost_premium": cost_premium,
+        "free_pages_remaining": free_remaining,
+        "balance": user.points_balance,
+    }
+
+
+# ===== TUS Resumable Upload 지원 =====
+# [Flow: Step 1 (init: 임시 Job 생성 + Storage 경로 반환) ->
+#        Step 2 (프론트엔드에서 TUS 청크 업로드) ->
+#        Step 3 (create: Storage 파일 분석 + 비용 계산)]
+
+async def _analyze_extracted_files(extracted: list[Path]) -> tuple:
+    """추출된 파일 목록을 분석하여 (pages, image_count, audio_seconds, video_seconds, total_files)를 반환한다."""
+    pages = 0
+    image_count = 0
+    audio_seconds = 0
+    video_seconds = 0
+    total_files = 0
+
+    for fp in extracted:
+        ftype = media_loader.detect_file_type(fp)
+        if ftype in media_loader.DOCLING_TYPES:
+            try:
+                if ftype == "pdf":
+                    pages += len(PdfReader(fp).pages)
+                else:
+                    pages += await _count_pages_with_docling(fp.read_bytes(), fp.name)
+            except Exception:
+                pass
+            total_files += 1
+        elif ftype in media_loader.HWP_TYPES:
+            try:
+                pages += await asyncio.to_thread(hwp_converter.get_page_count, fp)
+            except Exception:
+                pass
+            total_files += 1
+        elif ftype == "image":
+            image_count += 1
+            total_files += 1
+        elif ftype == "audio":
+            audio_seconds += media_loader.get_media_duration_seconds(fp)
+            total_files += 1
+        elif ftype == "video":
+            video_seconds += media_loader.get_media_duration_seconds(fp)
+            total_files += 1
+
+    return pages, image_count, audio_seconds, video_seconds, total_files
+
+
+@router.post("/jobs/init")
+async def init_job(
+    payload: dict = Body(...),
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """TUS 업로드용 임시 Job을 생성하고 Storage 업로드 경로를 반환한다."""
+    files = payload.get("files", [])
+    if not files:
+        raise HTTPException(status_code=400, detail="파일을 선택하세요")
+
+    pipeline = payload.get("pipeline", "vision")
+    if pipeline not in ("vision", "hybrid"):
+        pipeline = settings_store.get_setting(db, "default_pipeline") or "vision"
+    ocr_model = payload.get("ocr_model", "premium")
+    if ocr_model not in ("basic", "premium"):
+        ocr_model = "premium"
+    ocr_engine = payload.get("ocr_engine", "easyocr")
+    if ocr_engine not in ("tesseract", "easyocr", "rapidocr"):
+        ocr_engine = "easyocr"
+
+    for f in files:
+        ext = Path(f["name"]).suffix.lower()
+        if ext not in MEDIA_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"지원하지 않는 파일 형식입니다: {f['name']}")
+
+    max_mb = int(settings_store.get_setting(db, "max_file_mb") or "200")
+    total_size = sum(f.get("size", 0) for f in files)
+    if total_size > max_mb * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"전체 파일이 너무 큽니다 (최대 {max_mb}MB)")
+
+    is_single_file = len(files) == 1
+    original_filename = files[0]["name"] if is_single_file else f"{len(files)}_files.zip"
+
+    job = Job(
+        user_id=uuid.UUID(user.user_id),
+        email=user.email,
+        pipeline=pipeline,
+        columns=_parse_columns(payload.get("columns", "")),
+        prompt=payload.get("prompt", "").strip(),
+        dpi=payload.get("dpi", 300),
+        use_docling_refinement=payload.get("docling_refinement", False),
+        ocr_model=ocr_model,
+        ocr_engine=ocr_engine,
+        original_filename=original_filename,
+        status="uploading",
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    upload_paths = []
+    for f in files:
+        safe_name = supabase_client._sanitize_storage_filename(f["name"])
+        storage_path = f"{job.id}/{safe_name}"
+        upload_paths.append({
+            "original": f["name"],
+            "storage_name": safe_name,
+            "storage_path": storage_path,
+            "relative_path": f.get("relative_path", f["name"]),
+            "size": f.get("size", 0),
+        })
+
+    return {"job_id": job.id, "upload_paths": upload_paths}
+
+
+@router.post("/jobs/{job_id}/create")
+async def create_job(
+    job_id: str,
+    payload: dict = Body(...),
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """TUS 업로드 완료 후 Storage의 파일을 분석하여 비용을 계산한다."""
+    job = db.get(Job, job_id)
+    if job is None or str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+    if job.status != "uploading":
+        raise HTTPException(status_code=400, detail="업로드 중인 작업만 처리할 수 있습니다")
+
+    files_info = payload.get("files", [])
+    if not files_info:
+        raise HTTPException(status_code=400, detail="파일 정보가 없습니다")
+
+    is_single_file = len(files_info) == 1
+    pages = 0
+    image_count = 0
+    audio_seconds = 0
+    video_seconds = 0
+    total_files = 0
+
+    try:
+        if is_single_file:
+            info = files_info[0]
+            storage_path = info["storage_path"]
+            filename = info["original_name"]
+            data = supabase_client.download_pdf(storage_path).read()
+            single_file_type = media_loader.detect_file_type(Path(filename))
+
+            if single_file_type in media_loader.DOCLING_TYPES:
+                if single_file_type == "pdf":
+                    pages = len(PdfReader(BytesIO(data)).pages)
+                else:
+                    pages = await _count_pages_with_docling(data, filename)
+                total_files = 1
+                job.pdf_storage_path = storage_path
+                job.file_type = single_file_type
+            elif single_file_type in media_loader.HWP_TYPES:
+                suffix = Path(filename).suffix
+                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                    tmp.write(data)
+                    tmp_path = Path(tmp.name)
+                try:
+                    pages = await asyncio.to_thread(hwp_converter.get_page_count, tmp_path)
+                except Exception as e:
+                    logger.warning(f"[hwp-page-count] {filename} 실패: {e}")
+                    pages = 1
+                finally:
+                    tmp_path.unlink(missing_ok=True)
+                total_files = 1
+                job.pdf_storage_path = storage_path
+                job.file_type = single_file_type
+            else:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    tmp_path = Path(tmpdir)
+                    file_path = tmp_path / info.get("relative_path", filename)
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    file_path.write_bytes(data)
+                    extracted: list[Path] = []
+                    if archive_handler.is_archive(filename):
+                        archive_dest = tmp_path / "extracted"
+                        archive_dest.mkdir(parents=True, exist_ok=True)
+                        extracted.extend(archive_handler.extract_all_recursive(filename, data, archive_dest))
+                    else:
+                        extracted.append(file_path)
+
+                    pages, image_count, audio_seconds, video_seconds, total_files = await _analyze_extracted_files(extracted)
+
+                    job.total_files = total_files
+                    job.media_duration_seconds = audio_seconds + video_seconds
+                    job.extracted_files = [
+                        {"path": str(p.relative_to(tmp_path)), "type": media_loader.detect_file_type(p), "size": p.stat().st_size}
+                        for p in extracted
+                    ]
+                    job.pdf_storage_path = storage_path
+                    job.file_type = "archive" if archive_handler.is_archive(filename) else "mixed"
+        else:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp_path = Path(tmpdir)
+                multi_extracted: list[Path] = []
+                for info in files_info:
+                    storage_path = info["storage_path"]
+                    filename = info["original_name"]
+                    rel_path = info.get("relative_path", filename)
+                    data = supabase_client.download_pdf(storage_path).read()
+                    if archive_handler.is_archive(filename):
+                        archive_dest = tmp_path / f"extracted_{rel_path}"
+                        archive_dest.mkdir(parents=True, exist_ok=True)
+                        multi_extracted.extend(archive_handler.extract_all_recursive(filename, data, archive_dest))
+                    else:
+                        file_path = tmp_path / rel_path
+                        file_path.parent.mkdir(parents=True, exist_ok=True)
+                        file_path.write_bytes(data)
+                        multi_extracted.append(file_path)
+
+                pages, image_count, audio_seconds, video_seconds, total_files = await _analyze_extracted_files(multi_extracted)
+
+                job.total_files = total_files
+                job.media_duration_seconds = audio_seconds + video_seconds
+                job.extracted_files = [
+                    {"path": str(p.relative_to(tmp_path)), "type": media_loader.detect_file_type(p), "size": p.stat().st_size}
+                    for p in multi_extracted
+                ]
+
+                zip_path = tmp_path / f"{job.id}.zip"
+                with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for info in files_info:
+                        rel_path = info.get("relative_path", info["original_name"])
+                        data = supabase_client.download_pdf(info["storage_path"]).read()
+                        zf.writestr(rel_path, data)
+                storage_path = supabase_client.upload_input(job.id, zip_path.read_bytes(), zip_path.name, "application/zip")
+                job.pdf_storage_path = storage_path
+                job.file_type = "mixed"
+
+        max_pages = int(settings_store.get_setting(db, "max_pages") or "2000")
+        if pages > max_pages:
+            db.delete(job)
+            db.commit()
+            raise HTTPException(status_code=413, detail=f"페이지가 너무 많습니다 (최대 {max_pages})")
+
+        job.total_pages = pages
+        job.status = "pending"
+        db.commit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        job.status = "error"
+        job.error_log = str(e)
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"파일 처리 실패: {e}")
+
+    has_media = audio_seconds > 0 or video_seconds > 0
+    if has_media and job.ocr_model == "basic":
+        job.ocr_model = "premium"
+        db.commit()
+
+    docling_refinement_pages = pages if job.use_docling_refinement else 0
+    user_id = uuid.UUID(user.user_id)
+    cost_basic = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=0, ocr_model="basic", user_id=user_id)
+    cost_premium = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages, ocr_model="premium", user_id=user_id)
+    ocr_model = job.ocr_model or "premium"
+    cost = cost_premium if ocr_model == "premium" else cost_basic
+    free_remaining = points_service.get_daily_free_remaining(db, user_id)
+
+    return {
+        "job_id": job.id,
+        "status": job.status,
+        "file_type": job.file_type,
+        "total_pages": pages,
+        "total_files": total_files,
+        "media_duration_seconds": audio_seconds + video_seconds,
+        "docling_refinement": job.use_docling_refinement,
+        "docling_refinement_pages": docling_refinement_pages,
+        "ocr_model": ocr_model,
+        "ocr_engine": job.ocr_engine,
+        "has_media": has_media,
+        "cost": cost,
+        "cost_basic": cost_basic,
+        "cost_premium": cost_premium,
+        "free_pages_remaining": free_remaining,
         "balance": user.points_balance,
     }
 
@@ -294,6 +606,10 @@ def update_job(
 
     if "pipeline" in payload and payload["pipeline"] in ("vision", "hybrid"):
         job.pipeline = payload["pipeline"]
+    if "ocr_model" in payload and payload["ocr_model"] in ("basic", "premium"):
+        job.ocr_model = payload["ocr_model"]
+    if "ocr_engine" in payload and payload["ocr_engine"] in ("tesseract", "easyocr", "rapidocr"):
+        job.ocr_engine = payload["ocr_engine"]
     if "columns" in payload:
         job.columns = _parse_columns(payload["columns"])
     if "prompt" in payload:
@@ -339,7 +655,10 @@ def confirm_job(
         video_seconds = 0
 
     docling_refinement_pages = job.total_pages if job.use_docling_refinement else 0
-    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages)
+    ocr_model = job.ocr_model or "premium"
+    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages, ocr_model=ocr_model, user_id=job.user_id)
+    if ocr_model == "basic":
+        points_service.record_daily_usage(db, job.user_id, pages + image_count)
     try:
         points_service.spend_points(db, db_user, cost["points"], f"미디어 작업: {job.original_filename}")
     except ValueError as e:
@@ -370,7 +689,32 @@ def get_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: Sess
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
-    return _job_summary(job)
+    summary = _job_summary(job)
+    if job.status == "pending":
+        user_id = uuid.UUID(user.user_id)
+        pages = job.total_pages or 0
+        image_count = 0
+        audio_seconds = 0
+        video_seconds = 0
+        for info in job.extracted_files or []:
+            ftype = info.get("type", "")
+            if ftype == "image":
+                image_count += 1
+            elif ftype == "audio":
+                audio_seconds += info.get("duration", 0)
+            elif ftype == "video":
+                video_seconds += info.get("duration", 0)
+        if job.file_type in media_loader.DOCLING_TYPES or job.file_type in media_loader.HWP_TYPES:
+            image_count = 0
+            audio_seconds = 0
+            video_seconds = 0
+        docling_refinement_pages = pages if job.use_docling_refinement else 0
+        summary["has_media"] = audio_seconds > 0 or video_seconds > 0
+        summary["cost_basic"] = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=0, ocr_model="basic", user_id=user_id)
+        summary["cost_premium"] = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages, ocr_model="premium", user_id=user_id)
+        summary["free_pages_remaining"] = points_service.get_daily_free_remaining(db, user_id)
+        summary["cost"] = summary["cost_basic"] if (job.ocr_model or "premium") == "basic" else summary["cost_premium"]
+    return summary
 
 
 @router.delete("/jobs/{job_id}")
@@ -378,6 +722,10 @@ def delete_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: S
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+    try:
+        supabase_client.delete_source_files(job)
+    except Exception as e:
+        logger.warning(f"[delete_job] {job_id} Storage 정리 중 오류 (무시): {e}")
     db.delete(job)
     db.commit()
     return {"deleted": True}
@@ -831,10 +1179,14 @@ def _job_summary(job: Job) -> dict:
         "media_duration_seconds": job.media_duration_seconds,
         "docling_refinement": job.use_docling_refinement,
         "docling_refinement_pages": job.total_pages if job.use_docling_refinement else 0,
+        "ocr_model": job.ocr_model or "premium",
+        "ocr_engine": job.ocr_engine or "easyocr",
         "cost_points": job.cost_points,
         "error_log": job.error_log,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        "expires_at": job.expires_at.isoformat() if job.expires_at else None,
+        "source_expires_at": _source_expires_at(job).isoformat(),
         "downloadable": job.status == "done",
         "xlsx_converted": bool(job.result_xlsx_storage_path),
     }

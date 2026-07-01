@@ -111,13 +111,17 @@ export default function JobsPage() {
     });
   }
 
-  function daysLeft(expiresAt) {
+  function timeLeft(expiresAt) {
     if (!expiresAt) return t("page:jobs.noExpiry");
-    const diff = Math.ceil(
-      (new Date(expiresAt) - new Date()) / (1000 * 60 * 60 * 24)
-    );
-    if (diff <= 0) return t("page:jobs.expired");
-    return t("page:jobs.daysLeft", { days: diff });
+    const diffMs = new Date(expiresAt) - new Date();
+    if (diffMs <= 0) return t("page:jobs.expired");
+    const totalMinutes = Math.ceil(diffMs / (1000 * 60));
+    const days = Math.floor(totalMinutes / (60 * 24));
+    const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+    const minutes = totalMinutes % 60;
+    if (days > 0) return t("page:jobs.daysLeft", { days });
+    if (hours > 0) return t("page:jobs.hoursLeft", { hours });
+    return t("page:jobs.minutesLeft", { minutes });
   }
 
   function fileSize(bytes) {
@@ -645,7 +649,7 @@ export default function JobsPage() {
                       className="px-gutter py-5 font-body-md text-body-md text-on-surface-variant"
                       data-oid="zmn711w">
 
-                        {daysLeft(j.expires_at)}
+                        {timeLeft(j.source_expires_at)}
                       </td>
                       <td
                       className="px-gutter py-5 text-right"

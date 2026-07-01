@@ -18,4 +18,13 @@ celery.conf.update(
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
+    # 대용량 파일 변환(최대 ~24시간) 시 Redis visibility timeout으로 인한 재시도 방지
+    broker_transport_options={"visibility_timeout": 86400},
+    visibility_timeout=86400,
+    beat_schedule={
+        "cleanup-expired-uploads": {
+            "task": "backend.workers.tasks.cleanup_expired_uploads",
+            "schedule": 3600.0,
+        },
+    },
 )

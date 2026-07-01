@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 # [Flow: Step 1 (job 로드) -> Step 2 (Storage에서 입력 다운로드) -> Step 3 (PDF: vision|hybrid / 미디어: 파일별 처리) -> Step 4 (Excel/CSV/MD 저장) -> Step 5 (Storage 업로드) -> Step 6 (DB/이메일)]
 import json
+import logging
 import tempfile
+import time
 import traceback
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pypdf import PdfReader
+from sqlalchemy import text as sql_text
 
 from ..celery_app import celery
+from celery.signals import worker_ready
 from ..config import settings
 from ..core import archive_handler, converter, excel_writer, media_loader, merge, supabase_client
 from ..core.pipeline_docling import run_docling, run_hwp
@@ -20,8 +24,64 @@ from ..db.models import Job
 from ..db.session import SessionLocal
 from .. import email_sender, settings_store
 
+logger = logging.getLogger(__name__)
+
 MAX_PAGE_SIDE_MM = 350
 MM_PER_PT = 0.3528
+MAX_RETRY_COUNT = 3
+
+# [Flow: Step 1 (worker_ready 시그널 수신) -> Step 2 (DB에서 중단된 job 조회) -> Step 3 (retry_count < 3인 job 재시도) -> Step 4 (>= 3인 job error로 변경)]
+@worker_ready.connect
+def recover_stuck_jobs(sender=None, **kwargs):
+    """Worker 시작 시 중단된 job(queued/rendering/ocr/merging)을 자동으로 재시도한다."""
+    time.sleep(3)
+
+    db = None
+    for attempt in range(2):
+        try:
+            db = SessionLocal()
+            break
+        except Exception as e:
+            logger.warning(f"[recover] DB 연결 실패 (attempt {attempt + 1}/2): {e}")
+            if attempt == 0:
+                time.sleep(5)
+
+    if db is None:
+        logger.error("[recover] DB 연결 실패, 중단된 job 복구를 건너뜁니다")
+        return
+
+    try:
+        stuck_statuses = ("queued", "rendering", "ocr", "merging")
+        jobs = db.query(Job).filter(Job.status.in_(stuck_statuses)).all()
+
+        if not jobs:
+            logger.info("[recover] 중단된 job 없음")
+            return
+
+        recovered = 0
+        exhausted = 0
+
+        for job in jobs:
+            if job.retry_count < MAX_RETRY_COUNT:
+                job.retry_count += 1
+                job.status = "queued"
+                db.commit()
+                run_job.delay(job.id)
+                recovered += 1
+                logger.info(f"[recover] job {job.id} 재시도 ({job.retry_count}/{MAX_RETRY_COUNT})")
+            else:
+                job.status = "error"
+                job.error_log = (job.error_log + f"\n재시도 한계 초과 (server restart, {MAX_RETRY_COUNT}회)").strip()
+                job.finished_at = datetime.now(timezone.utc)
+                db.commit()
+                exhausted += 1
+                logger.warning(f"[recover] job {job.id} 재시도 한계 초과, error로 전환")
+
+        logger.info(f"[recover] 복구 완료: {recovered}개 재시도, {exhausted}개 error 전환")
+    except Exception as e:
+        logger.exception(f"[recover] 중단된 job 복구 중 오류: {e}")
+    finally:
+        db.close()
 
 
 def _set_status(db, job: Job, status: str) -> None:
@@ -54,6 +114,11 @@ def run_job(job_id: str) -> dict:
         db.close()
         return {"error": "job not found"}
 
+    # 중복 실행 방지: status가 queued가 아니면 스킵
+    if job.status != "queued":
+        db.close()
+        return {"job_id": job_id, "skipped": True, "reason": f"status={job.status}"}
+
     try:
         # Step 1: 런타임 설정 주입
         endpoint = job.endpoint or settings_store.get_setting(db, "llm_endpoint")
@@ -83,10 +148,14 @@ def run_job(job_id: str) -> dict:
 
         # Docling 설정
         docling_enabled = settings_store.get_setting(db, "docling_enabled") == "1"
-        use_refinement = docling_enabled and job.use_docling_refinement and (settings_store.get_setting(db, "docling_refinement_enabled") == "1")
+        ocr_model = job.ocr_model or "premium"
+        ocr_engine = job.ocr_engine or "easyocr"
+        # 기본모델은 refinement 비활성화
+        use_refinement = docling_enabled and job.use_docling_refinement and (settings_store.get_setting(db, "docling_refinement_enabled") == "1") and (ocr_model == "premium")
         docling_workers = int(settings_store.get_setting(db, "docling_max_workers") or settings.docling_max_workers)
 
-        # Step 2: 단일 PDF/오피스 문서 처리 (Docling 전용 경로)
+        # Step 2: 단일 PDF/오피스 문서 처리
+        # [Flow: pipeline=vision -> 페이지별 PNG 렌더 후 Gemma4 직접 호출 / pipeline=docling -> Docling OCR + 선택적 LLM refinement]
         if job.file_type in media_loader.DOCLING_TYPES:
             input_ext = Path(job.original_filename).suffix or ".pdf"
             input_path = work_dir / f"input{input_ext}"
@@ -107,12 +176,51 @@ def run_job(job_id: str) -> dict:
             def on_error(page: int, msg: str) -> None:
                 errors.append(f"p{page}: {msg}")
 
-            # [Flow: Step 1 (페이지 크기 검사) -> Step 2 (전체 초과 시 스킵) -> Step 3 (Docling 처리)]
+            # [Flow: Step 1 (페이지 크기 검사) -> Step 2 (전체 초과 시 스킵) -> Step 3 (vision: Gemma4 직접 / docling: Docling OCR + refinement)]
             oversized, total_pages = count_oversized_pages(input_path)
             if oversized > 0:
                 errors.append(f"{input_path.name}: {oversized}페이지가 350mm를 초과하여 파싱할 수 없습니다")
             if oversized == total_pages and total_pages > 0:
                 page_tables = []
+                fmt = "markdown"
+            elif job.pipeline == "vision" and input_path.suffix.lower() == ".pdf":
+                _set_status(db, job, "ocr")
+                page_tables = run_vision(
+                    str(input_path),
+                    str(work_dir),
+                    columns,
+                    endpoint,
+                    model,
+                    api_key,
+                    extra_prompt=job.prompt,
+                    dpi=job.dpi,
+                    max_tokens=10000,
+                    media_endpoint=media_ep,
+                    media_model=media_mdl,
+                    media_api_key=media_key,
+                    on_progress=on_progress,
+                    on_error=on_error,
+                )
+                fmt = "markdown"
+            elif ocr_model == "basic" and input_path.suffix.lower() == ".pdf":
+                _set_status(db, job, "ocr")
+                page_tables = run_docling(
+                    input_path,
+                    str(work_dir),
+                    columns,
+                    endpoint,
+                    model,
+                    api_key,
+                    extra_prompt=job.prompt,
+                    use_refinement=False,
+                    max_tokens=10000,
+                    media_endpoint=media_ep,
+                    media_model=media_mdl,
+                    media_api_key=media_key,
+                    on_progress=on_progress,
+                    on_error=on_error,
+                    ocr_engine=ocr_engine,
+                )
                 fmt = "markdown"
             else:
                 _set_status(db, job, "ocr")
@@ -131,6 +239,7 @@ def run_job(job_id: str) -> dict:
                     media_api_key=media_key,
                     on_progress=on_progress,
                     on_error=on_error,
+                    ocr_engine=ocr_engine,
                 )
                 fmt = "markdown"
 
@@ -274,6 +383,7 @@ def run_job(job_id: str) -> dict:
                             media_api_key=media_key,
                             on_progress=lambda done, total: None,
                             on_error=lambda page, msg: docling_errors.append(f"p{page}: {msg}"),
+                            ocr_engine=ocr_engine,
                         )
                     for _, table in docling_tables:
                         all_page_contents.append((len(all_page_contents) + 1, table))
@@ -299,6 +409,7 @@ def run_job(job_id: str) -> dict:
                         media_api_key=media_key,
                         on_progress=lambda done, total: None,
                         on_error=lambda page, msg: hwp_errors.append(f"p{page}: {msg}"),
+                        ocr_engine=ocr_engine,
                     )
                     for _, table in hwp_tables:
                         all_page_contents.append((len(all_page_contents) + 1, table))
@@ -330,6 +441,8 @@ def run_job(job_id: str) -> dict:
                     workers=llm_workers + media_workers,
                     on_progress=on_media_progress,
                     on_error=on_media_error,
+                    ocr_model=ocr_model,
+                    ocr_engine=ocr_engine,
                 )
 
                 for filename, position, table in results:

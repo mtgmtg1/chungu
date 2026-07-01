@@ -10,7 +10,7 @@ Chungu is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It 
 - **Frontend**: React + Vite + Tailwind CSS + react-i18next (en/ko/ja)
 - **Storage**: Supabase Storage (PDFs, inputs, results)
 - **Database**: PostgreSQL via Supabase (`supabase-chungu-db`)
-- **LLM Inference (Images/PDF)**: vLLM proxy (`192.168.1.69:18080`) — Gemma-4 26B A4B AWQ 4bit, high-batch optimized
+- **LLM Inference (Images/PDF)**: vLLM proxy (`192.168.1.69:18080`) — round-robin load balancer to two Gemma-4 26B A4B AWQ 4bit instances (`18000` on GPU 1/2, `18001` on GPU 0/3); proxy auto-rewrites the request `model` name to the actual model loaded on the chosen backend
 - **LLM Inference (Audio/Video/Images)**: llama.cpp (`192.168.1.82:18080`) — Gemma-4 12B GGUF Q4_K_M, 4 parallel slots
 - **Deployment**: Docker Compose on `a1` (local server), exposed via Cloudflare Tunnel at `chungu.teamcat.app`
 
@@ -87,7 +87,9 @@ npm run start        # dev server at localhost:3000
 ## LLM Routing & Load Balancing
 
 - **Audio/Video**: 100% routed to E4B (llama.cpp, `192.168.1.82:18080`)
-- **Images/PDF pages**: dynamically routed based on total count, but E4B image load is minimized to prioritize audio/video:
+- **Images/PDF pages (pipeline=vision)**: rendered to PNG by PyMuPDF and sent page-by-page to the vLLM proxy (`192.168.1.69:18080`). The proxy round-robins between two Gemma-4 26B A4B AWQ 4bit instances (`18000` on GPU 1/2, `18001` on GPU 0/3). If the request's `model` name does not match the loaded model on the selected backend, the proxy rewrites it to the actual backend model name before forwarding.
+- **PDF pages (pipeline=docling)**: Docling OCR + optional LLM refinement; no per-page PNG rendering.
+- **Mixed media batches** (images/audio/video): dynamically routed based on total count, but E4B image load is minimized to prioritize audio/video:
   - ≤6 items: 1:3 (vLLM:E4B) — E4B 1/3
   - 7~59 items: 1:5 (vLLM:E4B) — E4B 1/5
   - ≥60 items: 1:10 (vLLM:E4B) — E4B 1/10
@@ -99,6 +101,7 @@ npm run start        # dev server at localhost:3000
 
 ## Large Image Tiling (Whiteboard/Planner)
 
+- PDF pages for the vision pipeline are rendered to PNG by PyMuPDF (`ocr_client.render_pdf()`) using multi-threaded page rendering (16 workers), replacing the previous single-threaded `pdftoppm` path.
 - High-resolution images (whiteboards, planners, posters) that exceed Gemma 4's vision encoder pixel limit (~2.58M pixels, ~1606x1606) are automatically split into overlapping tiles.
 - Tiling logic in `ocr_client.py:tile_large_image()` — 15% overlap between tiles to avoid cutting text/tables at boundaries.
 - `pipeline_media.py:_process_file()` calls `tile_large_image()` for each image; if tiling is needed, each tile is sent to the LLM separately and results are concatenated with `\n\n`.
@@ -148,25 +151,38 @@ Server `.env` must be updated manually (not overwritten by rsync).
 - Phase 1 routes PDF/DOCX/PPTX/XLSX/HTML through a dedicated Docling path (`run_docling` in `tasks.py`).
 - Phase 2 adds HWP/HWPX support: `run_hwp` first converts the file to ODT via `pyhwp`'s `hwp5odt` (LibreOffice alone cannot read many HWP files), then converts ODT to DOCX via LibreOffice headless, and finally sends the DOCX to the Docling service. This avoids `pyhwp2md`/`hwp5odt` extracting only the first page of some multi-page HWP files. If LibreOffice or Docling fails, it falls back to the original pyhwp-based converter.
 - The Docling service runs on a Xeon Scalable CPU server (not a1 GPU), using CPU PyTorch + Intel Extension for PyTorch (IPEX) for VNNI/OneDNN acceleration.
+- OCR engine selection: set `OCR_ENGINE=tesseract` (default) or `OCR_ENGINE=easyocr` in `.env`. `OCR_LANG=ko+en+ja` controls Tesseract language packs.
+- Tesseract 5.5.1 is the default for speed on Xeon 6230 dual-socket. The container uses the `ppa:alex-p/tesseract-ocr5` PPA; verify with `tesseract -v` inside the container — look for `Found AVX512VNNI`, `Found AVX512F`, `Found AVX2`, and `Found OpenMP`.
+- EasyOCR handles rotated/noisy scans better but is slower; Tesseract works best on clean, deskewed scans.
 - Key files:
   - `app/backend/docling_service/main.py` — FastAPI service with CPU accelerator, model quantization, and IPEX warm-up.
-  - `app/backend/docling_service/Dockerfile` — Ubuntu 22.04 + CPU PyTorch + IPEX.
+  - `app/backend/docling_service/Dockerfile` — Ubuntu 22.04 + CPU PyTorch + IPEX + Tesseract language packs.
   - `app/backend/docling_service/requirements.txt` — Docling/FastAPI deps (no torch GPU). Includes `openvino>=2024.0` and `nncf>=3.0`.
+  - `app/backend/docling_service/benchmark_ocr.py` — EasyOCR vs Tesseract A/B benchmark tool.
   - `app/docker-compose.docling.yml` — Compose without GPU reservations.
   - `app/backend/core/docling_client.py` — a1 backend client for the Docling service.
   - `app/backend/core/pipeline_docling.py` — Docling markdown + optional LLM refinement.
   - `app/backend/core/hwp_converter.py` — pyhwp-based HWP/HWPX text/image/page extraction.
+- Threading: `torch.set_num_threads(2)` (2 threads per request), `AcceleratorOptions(num_threads=80)` (total 80 threads = 40 concurrent requests on Xeon 6230 dual-socket). OpenVINO `INFERENCE_NUM_THREADS=2`.
+- Celery worker concurrency: 16 (prefork).
+- Backend `docling_max_workers`: 16 concurrent Docling requests.
 - NUMA binding: use `numactl --cpunodebind=0 --membind=0` when launching the container. For dual-socket 6230, run two independent workers bound to each NUMA node for maximum throughput.
 - Model quantization (applied in `_apply_ipex` after warm-up):
   - **RTDetrV2 (layout)**: OpenVINO NNCF INT8 quantization with `torch.jit.trace` → `ov.convert_model` → `nncf.quantize`. Cached on disk at `/data/ov_cache/`. Compiled with `INFERENCE_NUM_THREADS=2`.
   - **EfficientViT (detection)**: `torch.quantization.quantize_dynamic` (Linear INT8). OpenVINO conversion hangs due to dynamic control flow in forward.
-  - **SuryaModel (recognition)**: `torch.quantization.quantize_dynamic` (Linear INT8). ~1.9x throughput improvement.
   - **TableModel04_rs (table structure)**: `torch.quantization.quantize_dynamic` (Linear INT8). Discovered via `table_model.tf_predictor._model`.
-- Threading: `torch.set_num_threads(2)` (2 threads per request), `AcceleratorOptions(num_threads=40)` (total 40 threads = 20 concurrent requests). OpenVINO `INFERENCE_NUM_THREADS=2`.
+  - **OCR model**: kept in FP32 to preserve recognition quality.
 - `torch.autocast` patched to CPU float32 to avoid slow bfloat16 emulation on CPU.
 - Batch sizes: Docling defaults (no custom env vars).
 - Refinement costs: `cost_per_docling_refinement_page_krw` / `cost_per_docling_refinement_page_usd` in `settings_store`.
 - Docs: `app/docs/docs/docling.md` and `app/docs/docs/hwp.md` (HWP Phase 2).
+
+## GPU OCR Backends (Suspended)
+
+- **Status**: b2 GPU server (RTX 3080) is currently down with boot failures and is scheduled for repair. All GPU OCR backend work is suspended until the server is recovered.
+- **PaddleOCR-VL 1.6**: dual-container architecture (vLLM + PaddleOCR Pipeline) was in progress on b2. Files remain in `app/backend/paddleocr_service/` and `app/docker-compose.paddleocr.yml` for resumption after repair.
+- **Nemotron-OCR-v2**: Docker-based evaluation was attempted but could not complete due to the b2 outage. The model is Turing/CC-7.5 unsupported by NVIDIA's official docs; evaluation will resume on a compatible GPU if available.
+- **Fallback**: production currently uses the CPU-only Docling service with `OCR_ENGINE=easyocr`.
 
 ## Internationalization (i18n)
 

@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -50,6 +50,8 @@ class Job(Base):
     prompt: Mapped[str] = mapped_column(Text, default="")
     dpi: Mapped[int] = mapped_column(Integer, default=150)
     use_docling_refinement: Mapped[bool] = mapped_column(Boolean, default=False)
+    ocr_model: Mapped[str] = mapped_column(String(10), default="premium")  # basic | premium
+    ocr_engine: Mapped[str] = mapped_column(String(10), default="easyocr")  # tesseract | easyocr | rapidocr
 
     original_filename: Mapped[str] = mapped_column(String(512), default="")
     file_type: Mapped[str] = mapped_column(String(20), default="pdf")
@@ -61,6 +63,7 @@ class Job(Base):
     extracted_files: Mapped[list] = mapped_column(JSON, default=list)
     error_log: Mapped[str] = mapped_column(Text, default="")
     cost_points: Mapped[int] = mapped_column(Integer, default=0)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
 
     # Supabase Storage 경로 (로컬 경로 대체)
     pdf_storage_path: Mapped[str] = mapped_column(String(1024), default="")
@@ -182,3 +185,14 @@ class ApiUsage(Base):
 
     api_key: Mapped["ApiKey"] = relationship("ApiKey", back_populates="api_usage")
     user: Mapped["User"] = relationship("User", back_populates="api_usage")
+
+
+class DailyUsage(Base):
+    """사용자별 일일 기본모델 무료 한도 추적."""
+
+    __tablename__ = "daily_usage"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), index=True)
+    date: Mapped[datetime] = mapped_column(Date, index=True)
+    pages_used: Mapped[int] = mapped_column(Integer, default=0)

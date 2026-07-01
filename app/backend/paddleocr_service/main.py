@@ -2,8 +2,11 @@
 # [Flow: Step 1 (파일 수신) -> Step 2 (PDF→페이지 이미지 변환) -> Step 3 (PaddleOCR Pipeline 호출) -> Step 4 (마크다운 + 이미지 추출) -> Step 5 (docling_client 호환 응답)]
 # PaddleOCR-VL 1.6 FastAPI 서비스 — 기존 docling_client.py API 스펙 호환
 # vLLM 서버(http://vllm:8080)에 VLM 추론 위임, PP-DocLayoutV2로 레이아웃 분석
+# AI Studio API 폴백 엔드포인트(/api/convert) 포함: 외부 API 호출을 서비스 내부로 캡슐화
+import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -13,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import fitz  # PyMuPDF
+import requests
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -26,6 +30,16 @@ VLLM_SERVER_URL = os.environ.get("VLLM_SERVER_URL", "http://vllm:8080/v1")
 PIPELINE_VERSION = os.environ.get("PADDLEOCR_PIPELINE_VERSION", "v1.6")
 DATA_DIR = Path("/data")
 IMAGE_BASE_DIR = DATA_DIR / "paddleocr_images"
+
+# AI Studio API 설정 (폴백용)
+AISTUDIO_API_URL = os.environ.get("PADDLEOCR_API_URL", "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs")
+AISTUDIO_API_TOKEN = os.environ.get("PADDLEOCR_API_TOKEN", "")
+AISTUDIO_MODEL = os.environ.get("PADDLEOCR_API_MODEL", "PaddleOCR-VL-1.6")
+AISTUDIO_UPLOAD_TIMEOUT = int(os.environ.get("PADDLEOCR_UPLOAD_TIMEOUT", "300"))
+AISTUDIO_POLL_INTERVAL = int(os.environ.get("PADDLEOCR_POLL_INTERVAL", "5"))
+AISTUDIO_POLL_TIMEOUT = int(os.environ.get("PADDLEOCR_POLL_TIMEOUT", "30"))
+AISTUDIO_DOWNLOAD_TIMEOUT = int(os.environ.get("PADDLEOCR_DOWNLOAD_TIMEOUT", "120"))
+AISTUDIO_MAX_POLL_DURATION = int(os.environ.get("PADDLEOCR_MAX_POLL_DURATION", "1800"))
 
 # 지원 확장자 (PDF + 이미지 + 오피스 문서)
 SUPPORTED_EXTENSIONS = {
@@ -384,6 +398,242 @@ async def get_image(image_path: str) -> FileResponse:
     if not target.exists():
         raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
     return FileResponse(str(target))
+
+
+# ─── AI Studio API 연동 (폴백용 /api/convert 엔드포인트) ───
+
+def _aistudio_submit_job(file_path: Path) -> str:
+    """AI Studio API에 OCR job을 제출하고 jobId를 반환한다.
+
+    [Flow: Step 1 (파일 업로드 + 모델 선택) -> Step 2 (API POST) -> Step 3 (jobId 추출)]
+    """
+    if not AISTUDIO_API_TOKEN:
+        raise RuntimeError("PADDLEOCR_API_TOKEN이 설정되지 않았습니다")
+
+    headers = {"Authorization": f"bearer {AISTUDIO_API_TOKEN}"}
+    optional_payload = {
+        "useDocOrientationClassify": False,
+        "useDocUnwarping": False,
+        "useChartRecognition": False,
+    }
+    data = {"model": AISTUDIO_MODEL, "optionalPayload": json.dumps(optional_payload)}
+
+    with open(file_path, "rb") as f:
+        files = {"file": (file_path.name, f)}
+        resp = requests.post(
+            AISTUDIO_API_URL, headers=headers, data=data, files=files,
+            timeout=AISTUDIO_UPLOAD_TIMEOUT,
+        )
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"AI Studio API job 제출 실패: HTTP {resp.status_code} {resp.text[:300]}")
+
+    job_data = resp.json().get("data", {})
+    job_id = job_data.get("jobId")
+    if not job_id:
+        raise RuntimeError(f"AI Studio API jobId 없음: {resp.text[:300]}")
+
+    logger.info(f"[aistudio] job 제출 완료: jobId={job_id}, file={file_path.name}")
+    return job_id
+
+
+def _aistudio_poll_job(job_id: str) -> str:
+    """AI Studio API job이 완료될 때까지 폴링하고 JSONL 결과 URL을 반환한다.
+
+    [Flow: Step 1 (5초 간격 폴링) -> Step 2 (state=done 시 jsonUrl 반환) -> Step 3 (state=failed 시 예외)]
+    """
+    headers = {"Authorization": f"bearer {AISTUDIO_API_TOKEN}"}
+    poll_url = f"{AISTUDIO_API_URL}/{job_id}"
+    start_time = time.monotonic()
+
+    poll_count = 0
+    while True:
+        elapsed = time.monotonic() - start_time
+        if elapsed > AISTUDIO_MAX_POLL_DURATION:
+            raise TimeoutError(f"AI Studio API 폴링 타임아웃: {elapsed:.0f}s > {AISTUDIO_MAX_POLL_DURATION}s")
+
+        poll_count += 1
+        try:
+            resp = requests.get(poll_url, headers=headers, timeout=AISTUDIO_POLL_TIMEOUT)
+        except Exception as e:
+            logger.warning(f"[aistudio] 폴링 실패 (poll {poll_count}): {e}")
+            time.sleep(AISTUDIO_POLL_INTERVAL)
+            continue
+
+        if resp.status_code != 200:
+            logger.warning(f"[aistudio] 폴링 HTTP {resp.status_code} (poll {poll_count})")
+            time.sleep(AISTUDIO_POLL_INTERVAL)
+            continue
+
+        data = resp.json().get("data", {})
+        state = data.get("state", "")
+
+        if state == "done":
+            json_url = data.get("resultUrl", {}).get("jsonUrl", "")
+            if not json_url:
+                raise RuntimeError(f"AI Studio API 결과 URL 없음: {json.dumps(data)[:300]}")
+            logger.info(f"[aistudio] job 완료: jobId={job_id}, elapsed={elapsed:.0f}s, polls={poll_count}")
+            return json_url
+
+        if state == "failed":
+            error_msg = data.get("errorMsg", "알 수 없는 오류")
+            raise RuntimeError(f"AI Studio API job 실패: {error_msg}")
+
+        logger.debug(f"[aistudio] 폴링 중 (poll {poll_count}): state={state}, elapsed={elapsed:.0f}s")
+        time.sleep(AISTUDIO_POLL_INTERVAL)
+
+
+def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, Any]:
+    """JSONL 결과를 다운로드하고 페이지별 markdown + 이미지로 변환한다.
+
+    [Flow: Step 1 (JSONL 다운로드) -> Step 2 (라인별 파싱) -> Step 3 (layoutParsingResults 순회) -> Step 4 (markdown.text 추출) -> Step 5 (images 다운로드 + src 치환) -> Step 6 (페이지별 마크다운 병합)]
+    """
+    resp = requests.get(jsonl_url, timeout=AISTUDIO_DOWNLOAD_TIMEOUT)
+    resp.raise_for_status()
+
+    lines = [line.strip() for line in resp.text.strip().split("\n") if line.strip()]
+    if not lines:
+        raise RuntimeError("AI Studio API JSONL 결과가 비어있음")
+
+    image_dir = IMAGE_BASE_DIR / request_id
+    image_dir.mkdir(parents=True, exist_ok=True)
+
+    all_page_markdowns: list[str] = []
+    downloaded_images: list[str] = []
+    page_num = 0
+
+    for line in lines:
+        parsed = json.loads(line)
+        result = parsed.get("result", {})
+        if not isinstance(result, dict):
+            continue
+
+        layout_results = result.get("layoutParsingResults", [])
+        for lpr in layout_results:
+            page_num += 1
+            md = lpr.get("markdown", {})
+            md_text = md.get("text", "") if isinstance(md, dict) else ""
+            md_images = md.get("images", {}) if isinstance(md, dict) else {}
+
+            # 이미지 다운로드 및 src 경로 치환
+            for img_rel_path, img_url in md_images.items():
+                try:
+                    img_filename = Path(img_rel_path).name
+                    local_path = image_dir / img_filename
+                    img_resp = requests.get(img_url, timeout=60)
+                    img_resp.raise_for_status()
+                    local_path.write_bytes(img_resp.content)
+                    local_rel = str(local_path.relative_to(DATA_DIR))
+                    downloaded_images.append(local_rel)
+                    # markdown 내 src 속성을 로컬 경로로 치환
+                    md_text = md_text.replace(f'src="{img_rel_path}"', f'src="/data/{local_rel}"')
+                    md_text = md_text.replace(f"src='{img_rel_path}'", f"src='/data/{local_rel}'")
+                except Exception as e:
+                    logger.warning(f"[aistudio] 이미지 다운로드 실패 ({img_rel_path}): {e}")
+
+            page_header = f"<!-- Page {page_num} -->\n" if page_num > 1 else ""
+            all_page_markdowns.append(f"{page_header}{md_text}")
+
+    markdown = "\n\n".join(all_page_markdowns)
+    logger.info(f"[aistudio] 변환 완료: {page_num}페이지, {len(downloaded_images)} 이미지")
+
+    return {
+        "markdown": markdown,
+        "images": downloaded_images,
+        "page_count": page_num,
+    }
+
+
+def _do_aistudio_convert(task_id: str, input_path: Path, filename: str) -> None:
+    """AI Studio API를 통한 비동기 변환 작업을 실행한다.
+
+    [Flow: Step 1 (job 제출) -> Step 2 (폴링) -> Step 3 (JSONL 다운로드/파싱) -> Step 4 (결과 저장)]
+    """
+    try:
+        request_id = uuid.uuid4().hex
+        job_id = _aistudio_submit_job(input_path)
+        jsonl_url = _aistudio_poll_job(job_id)
+        ocr_result = _aistudio_download_and_parse(jsonl_url, request_id)
+
+        convert_result = ConvertResponse(
+            markdown=ocr_result["markdown"],
+            images=ocr_result["images"],
+            page_count=ocr_result["page_count"],
+            file_type=_detect_file_type(filename),
+        )
+
+        with _tasks_lock:
+            _tasks[task_id]["status"] = "done"
+            _tasks[task_id]["result"] = convert_result
+            _tasks[task_id]["finished_at"] = time.time()
+
+        logger.info(f"[aistudio-async] {filename} 변환 완료 ({ocr_result['page_count']}페이지)")
+
+    except Exception as e:
+        logger.exception(f"[aistudio-async] {filename} 변환 실패: {e}")
+        with _tasks_lock:
+            _tasks[task_id]["status"] = "error"
+            _tasks[task_id]["error"] = str(e)
+            _tasks[task_id]["finished_at"] = time.time()
+
+
+@app.post("/api/convert", response_model=AsyncConvertResponse)
+async def api_convert(file: UploadFile = File(...)) -> AsyncConvertResponse:
+    """AI Studio API를 호출하여 OCR 변환을 수행한다 (폴백 전용 엔드포인트).
+
+    토큰은 서비스 환경 변수에서만 사용되어 클라이언트에 노출되지 않는다.
+    """
+    if not AISTUDIO_API_TOKEN:
+        raise HTTPException(status_code=503, detail="PADDLEOCR_API_TOKEN이 설정되지 않았습니다")
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="파일 이름이 없습니다")
+
+    ext = Path(file.filename).suffix.lower()
+    image_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp"}
+    if ext not in image_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"AI Studio API는 이미지만 지원합니다 (png/jpg/bmp/tiff/webp): {file.filename}",
+        )
+
+    task_id = uuid.uuid4().hex
+    tmpdir = tempfile.mkdtemp()
+    tmp_path = Path(tmpdir)
+    input_path = tmp_path / (file.filename or "input.bin")
+    input_path.write_bytes(await file.read())
+
+    with _tasks_lock:
+        _tasks[task_id] = {
+            "status": "processing",
+            "result": None,
+            "error": None,
+            "started_at": time.time(),
+            "finished_at": None,
+            "tmpdir": tmpdir,
+        }
+
+    thread = threading.Thread(target=_do_aistudio_convert, args=(task_id, input_path, file.filename), daemon=True)
+    thread.start()
+
+    return AsyncConvertResponse(task_id=task_id, status="processing")
+
+
+@app.get("/api/convert/status/{task_id}", response_model=TaskStatusResponse)
+async def api_convert_status(task_id: str) -> TaskStatusResponse:
+    """AI Studio API 변환 작업의 상태를 조회한다 (/convert/status/{task_id}와 동일 스펙)."""
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="task를 찾을 수 없습니다")
+    return TaskStatusResponse(
+        task_id=task_id,
+        status=task["status"],
+        result=task.get("result"),
+        error=task.get("error"),
+        started_at=task.get("started_at"),
+        finished_at=task.get("finished_at"),
+    )
 
 
 @app.exception_handler(Exception)

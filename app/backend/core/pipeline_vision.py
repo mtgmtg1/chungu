@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 # [Flow: Step 1 (PDF->PNG 렌더) -> Step 2 (페이지 병렬 vision OCR) -> Step 3 (진행률 콜백) -> Step 4 (페이지별 MD 표 수집)]
 # 기존 ocr_run.py 의 vision 파이프라인을 함수형으로 일반화.
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
-from . import ocr_client
+from . import ocr_client, paddleocr_client
+from .paddleocr_fallback import fallback_controller
 from .prompts import build_vision_prompt
 from ..config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def _detect_provider(endpoint: str, model: str = "") -> str:
@@ -70,11 +74,48 @@ def run_vision(
             return media_endpoint, media_model, media_api_key
         return endpoint, model, api_key
 
+    def _try_paddleocr_fallback(img: Path, page_num: int, page_text: str) -> str | None:
+        """PaddleOCR 폴백으로 페이지 이미지를 처리한다.
+
+        텍스트 레이어가 감지된 페이지는 폴백하지 않는다.
+
+        [Flow: Step 1 (텍스트 레이어 확인 — 있으면 None) -> Step 2 (폴백 가능 여부 확인) -> Step 3 (paddleocr_client.convert_image 호출) -> Step 4 (성공 시 consume_fallback, markdown 반환) -> Step 5 (실패 시 None)]
+        """
+        if page_text and page_text.strip():
+            return None
+        if not fallback_controller.can_use_fallback():
+            return None
+        try:
+            md = paddleocr_client.convert_image(img)
+            fallback_controller.consume_fallback()
+            logger.info(f"[vision-fallback] page {page_num} PaddleOCR 폴백 성공")
+            return ocr_client.extract_markdown_content(md)
+        except Exception as e:
+            logger.warning(f"[vision-fallback] page {page_num} PaddleOCR 폴백 실패: {e}")
+            return None
+
     def process(page_idx: int, page_num: int, img: Path) -> tuple[int, str]:
-        ep, mdl, key = resolve_endpoint(page_idx)
         page_text = ocr_client.extract_pdf_page_text(pdf_path, page_num)
-        content, _ = ocr_client.call_vision(img, prompt, ep, mdl, key, max_tokens, page_text=page_text)
-        return page_num, ocr_client.extract_markdown_content(content)
+
+        # 회로가 OPEN이거나 잔액 소진 모드면 폴백을 우선 시도 (텍스트 레이어 없는 페이지만)
+        if fallback_controller.is_fallback_preferred():
+            fb_result = _try_paddleocr_fallback(img, page_num, page_text)
+            if fb_result is not None:
+                return page_num, fb_result
+            # 폴백 실패 시 기본 요청으로 진행
+
+        ep, mdl, key = resolve_endpoint(page_idx)
+        try:
+            content, _ = ocr_client.call_vision(img, prompt, ep, mdl, key, max_tokens, page_text=page_text)
+            fallback_controller.record_success()
+            return page_num, ocr_client.extract_markdown_content(content)
+        except Exception as e:
+            fallback_controller.record_failure()
+            logger.warning(f"[vision] page {page_num} 기본 요청 실패, PaddleOCR 폴백 시도: {e}")
+            fb_result = _try_paddleocr_fallback(img, page_num, page_text)
+            if fb_result is not None:
+                return page_num, fb_result
+            raise
 
     with ThreadPoolExecutor(max_workers=workers if workers is not None else min(total, settings.llm_max_workers)) as executor:
         futures = {executor.submit(process, idx, n, p): n for idx, (n, p) in enumerate(pages)}

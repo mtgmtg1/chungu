@@ -61,6 +61,17 @@ class Settings(BaseSettings):
     docling_max_images_per_doc: int = 20   # 문서당 LLM 전송 이미지 상한
     docling_image_max_size: int = 1920      # 추출 이미지 최대 긴 변 (px)
 
+    # PaddleOCR 폴백 서비스 (AI Studio API 프록시)
+    paddleocr_service_url: str = "http://paddleocr_service:8080"
+    paddleocr_api_token: str = ""
+    paddleocr_api_url: str = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
+    paddleocr_fallback_enabled: bool = True
+    paddleocr_fallback_daily_limit: int = 20000
+    paddleocr_fallback_hourly_quota: int = 800
+    paddleocr_fallback_failure_threshold: int = 3
+    paddleocr_fallback_failure_window_seconds: int = 60
+    paddleocr_fallback_open_seconds: int = 600
+
     # 경로
     data_dir: str = "/data"
 

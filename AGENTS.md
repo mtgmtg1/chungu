@@ -193,6 +193,36 @@ Server `.env` must be updated manually (not overwritten by rsync).
 - Refinement costs: `cost_per_docling_refinement_page_krw` / `cost_per_docling_refinement_page_usd` in `settings_store`.
 - Docs: `app/docs/docs/docling.md` and `app/docs/docs/hwp.md` (HWP Phase 2).
 
+## PaddleOCR Fallback (AI Studio API)
+
+- PaddleOCR AI Studio API (`https://paddleocr.aistudio-app.com/api/v2/ocr/jobs`)를 폴백 OCR 백엔드로 사용한다.
+- AI Studio API는 **이미지 파일만** 지원한다 (png/jpg/bmp/tiff/webp). PDF, 오피스 문서, HWP/HWPX는 직접 전송하지 않는다.
+- 폴백 대상:
+  - **Vision 파이프라인** (`pipeline_vision.py`): PDF 페이지를 PNG로 렌더링 후, 텍스트 레이어가 없는 페이지만 폴백. `ocr_client.extract_pdf_page_text()`로 텍스트 감지.
+  - **Media 파이프라인** (`pipeline_media.py`): 이미지 파일만 폴백 (비디오/오디오 제외).
+  - **Docling 파이프라인** (`pipeline_docling.py`): 폴백 안 함 (이미지가 아닌 문서).
+- 폴백 우선 조건 (`paddleocr_fallback.py:is_fallback_preferred()`):
+  1. **잔액 소진 모드 (drain mode)**: 한도 은행 잔액 ≥ 2×시간당 할당량 (1600) → 회로 차단기 상태 무관하게 폴백 우선
+  2. **회로 차단기 OPEN/HALF_OPEN**: 잔액 > 0 시 폴백 우선
+- 회로 차단기 (Circuit Breaker):
+  - 60초 내 3회 실패 → OPEN (600초)
+  - OPEN 경과 후 → HALF_OPEN → 성공 시 CLOSED 복귀
+- 한도 은행 (Limit Bank):
+  - 시간당 할당량: 800회, 일일 한도: 20,000회
+  - 미사용 시간 할당량은 잔액에 누적 적립 (상한 20,000)
+  - Redis 기반 상태 관리, Redis 불가 시 in-memory fallback
+- `paddleocr_service/main.py`의 `/api/convert` 엔드포인트는 이미지 확장자만 허용하며, AI Studio API에 비동기 job을 제출하고 폴링으로 결과를 수신한다.
+- `paddleocr_client.py`는 `convert_file()` (docling_client 호환 시그니처) 및 `convert_image()` (경량 이미지 전용) 함수를 제공한다.
+- Key files:
+  - `app/backend/core/paddleocr_fallback.py` — 회로 차단기 + 한도 은행 + `is_fallback_preferred()`
+  - `app/backend/core/paddleocr_client.py` — AI Studio API 클라이언트 (이미지 확장자 체크)
+  - `app/backend/paddleocr_service/main.py` — AI Studio API 프록시 서비스 (`/api/convert`)
+  - `app/backend/paddleocr_service/Dockerfile` — AI Studio API 프록시용 컨테이너
+  - `app/backend/core/pipeline_vision.py` — 텍스트 레이어 감지 + 폴백
+  - `app/backend/core/pipeline_media.py` — 이미지 전용 폴백
+- Docker Compose: `paddleocr_service` 서비스 정의, worker/beat에 `PADDLEOCR_SERVICE_URL` 환경변수 전달.
+- 환경변수: `PADDLEOCR_API_TOKEN`, `PADDLEOCR_API_URL`, `PADDLEOCR_SERVICE_URL`, `PADDLEOCR_FALLBACK_ENABLED` 등.
+
 ## GPU OCR Backends (Suspended)
 
 - **Status**: b2 GPU server (RTX 3080) is currently down with boot failures and is scheduled for repair. All GPU OCR backend work is suspended until the server is recovered.

@@ -5,7 +5,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
-from . import docling_client, media_loader, ocr_client
+from . import docling_client, media_loader, ocr_client, paddleocr_client
+from .paddleocr_fallback import fallback_controller
 from .prompts import build_audio_prompt, build_media_prompt, build_video_prompt
 from ..config import settings
 
@@ -80,26 +81,61 @@ def _process_file(
     - 오디오/비디오: prompt를 extra_prompt로 사용해 30초 세그먼트별로 요청 후 병합
     """
     if file_type == "image":
+        # 회로가 OPEN이면 PaddleOCR 폴백을 우선 시도
+        if fallback_controller.is_fallback_preferred():
+            try:
+                fb_md = paddleocr_client.convert_image(file_path)
+                fallback_controller.consume_fallback()
+                logger.info(f"[image-fallback] {file_path.name} PaddleOCR 폴백 성공")
+                return fb_md, ""
+            except Exception as e:
+                logger.warning(f"[image-fallback] {file_path.name} PaddleOCR 폴백 실패, 기본 경로 시도: {e}")
+
         if ocr_model == "basic":
             try:
                 markdown, _images = docling_client.convert_file(file_path, ocr_engine=ocr_engine)
+                fallback_controller.record_success()
                 return markdown, ""
             except Exception as e:
                 logger.warning(f"[image-basic] {file_path.name} Docling 변환 실패: {e}")
+                fallback_controller.record_failure()
+                # PaddleOCR 폴백
+                if fallback_controller.can_use_fallback():
+                    try:
+                        fb_md = paddleocr_client.convert_image(file_path)
+                        fallback_controller.consume_fallback()
+                        logger.info(f"[image-fallback] {file_path.name} Docling 실패 후 PaddleOCR 폴백 성공")
+                        return fb_md, ""
+                    except Exception as e2:
+                        logger.warning(f"[image-fallback] {file_path.name} PaddleOCR 폴백도 실패: {e2}")
                 return "", ""
 
         tiles = ocr_client.tile_large_image(file_path)
         if len(tiles) <= 1:
-            content, _ = ocr_client.call_media(
-                prompt,
-                endpoint,
-                model,
-                api_key,
-                image_paths=[file_path],
-                max_tokens=max_tokens,
-                provider=provider,
-            )
-            return content, ""
+            try:
+                content, _ = ocr_client.call_media(
+                    prompt,
+                    endpoint,
+                    model,
+                    api_key,
+                    image_paths=[file_path],
+                    max_tokens=max_tokens,
+                    provider=provider,
+                )
+                fallback_controller.record_success()
+                return content, ""
+            except Exception as e:
+                logger.warning(f"[image-premium] {file_path.name} LLM 호출 실패: {e}")
+                fallback_controller.record_failure()
+                if fallback_controller.can_use_fallback():
+                    try:
+                        fb_md = paddleocr_client.convert_image(file_path)
+                        fallback_controller.consume_fallback()
+                        logger.info(f"[image-fallback] {file_path.name} LLM 실패 후 PaddleOCR 폴백 성공")
+                        return fb_md, ""
+                    except Exception as e2:
+                        logger.warning(f"[image-fallback] {file_path.name} PaddleOCR 폴백도 실패: {e2}")
+                return "", ""
 
         tile_contents: list[str] = []
         for tile in tiles:
@@ -116,7 +152,22 @@ def _process_file(
                 tile_contents.append(content)
             except Exception as e:
                 logger.warning(f"[image-tile] {file_path.name} 타일 처리 실패: {e}")
-        return "\n\n".join(tile_contents), ""
+
+        if tile_contents:
+            fallback_controller.record_success()
+            return "\n\n".join(tile_contents), ""
+
+        # 모든 타일 실패 시 PaddleOCR 폴백
+        fallback_controller.record_failure()
+        if fallback_controller.can_use_fallback():
+            try:
+                fb_md = paddleocr_client.convert_image(file_path)
+                fallback_controller.consume_fallback()
+                logger.info(f"[image-fallback] {file_path.name} 타일 전체 실패 후 PaddleOCR 폴백 성공")
+                return fb_md, ""
+            except Exception as e2:
+                logger.warning(f"[image-fallback] {file_path.name} PaddleOCR 폴백도 실패: {e2}")
+        return "", ""
 
     if file_type == "audio":
         duration = media_loader.get_media_duration_seconds(file_path)

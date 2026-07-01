@@ -26,7 +26,7 @@ export function AnimatedList({
 export function AnimatedRow({ index = 0, stagger = 30, children }) {
   return (
     <div
-      className="animate-stagger-enter"
+      className="animate-stagger-enter contents"
       style={{ animationDelay: `${index * stagger}ms` }}
     >
       {children}

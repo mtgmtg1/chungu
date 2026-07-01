@@ -40,6 +40,16 @@ const STATUS_CHIP = {
 
 const PAGE_SIZE = 10;
 
+const MOCK_JOBS = import.meta.env.DEV ? [
+  { job_id: "mock-1", filename: "샘플_문서_2024.pdf", file_type: "pdf", file_size: 2456789, status: "done", created_at: "2024-06-15T10:30:00", total_pages: 12, done_pages: 12, source_expires_at: new Date(Date.now() + 36 * 3600 * 1000).toISOString() },
+  { job_id: "mock-2", filename: "재무제표_1분기.xlsx", file_type: "xlsx", file_size: 523456, status: "ocr", created_at: "2024-06-15T09:15:00", total_pages: 8, done_pages: 3, source_expires_at: new Date(Date.now() + 12 * 3600 * 1000).toISOString() },
+  { job_id: "mock-3", filename: "회의록_20240601.hwp", file_type: "hwp", file_size: 1023456, status: "pending", created_at: "2024-06-14T14:20:00", total_pages: 0, done_pages: 0, source_expires_at: new Date(Date.now() + 2 * 3600 * 1000).toISOString() },
+  { job_id: "mock-4", filename: "프레젠테이션_발표자료.pptx", file_type: "pptx", file_size: 3890123, status: "error", created_at: "2024-06-13T16:45:00", total_pages: 15, done_pages: 0, source_expires_at: null },
+  { job_id: "mock-5", filename: "계약서_원본.pdf", file_type: "pdf", file_size: 892345, status: "done", created_at: "2024-06-12T11:00:00", total_pages: 5, done_pages: 5, source_expires_at: null },
+  { job_id: "mock-6", filename: "영수증_스캔_이미지.png", file_type: "image", file_size: 234567, status: "done", created_at: "2024-06-11T08:30:00", total_files: 3, done_files: 3, source_expires_at: null },
+  { job_id: "mock-7", filename: "매출보고서_2024.docx", file_type: "docx", file_size: 1456789, status: "merging", created_at: "2024-06-10T13:15:00", total_pages: 20, done_pages: 18, source_expires_at: new Date(Date.now() + 48 * 3600 * 1000).toISOString() },
+] : [];
+
 export default function JobsPage() {
   const { user, loading: authLoading } = useAuth();
   const { t } = useTranslation();
@@ -63,7 +73,13 @@ export default function JobsPage() {
   const fileTypeLabel = (type) => t(`common:fileType.${type}`) || type;
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      if (import.meta.env.DEV) {
+        setJobs(MOCK_JOBS);
+        setLoading(false);
+      }
+      return;
+    }
     load();
   }, [user]);
 
@@ -232,7 +248,7 @@ export default function JobsPage() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageJobs = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  if (authLoading || !user && !error) {
+  if (authLoading || (!user && !import.meta.env.DEV && !error)) {
     return (
       <div
         className="min-h-screen flex items-center justify-center bg-background"
@@ -247,7 +263,7 @@ export default function JobsPage() {
 
   }
 
-  if (!user) {
+  if (!user && !import.meta.env.DEV) {
     return (
       <div
         className="min-h-screen flex items-center justify-center bg-background"
@@ -494,11 +510,11 @@ export default function JobsPage() {
             data-oid="6k4gubk">
 
             <colgroup>
-              <col className="w-[42%]" />
-              <col className="w-[18%]" />
-              <col className="w-[18%]" />
-              <col className="w-[12%]" />
-              <col className="w-[10%]" />
+              <col className="w-auto" />
+              <col className="w-[150px]" />
+              <col className="w-[150px]" />
+              <col className="w-[130px]" />
+              <col className="w-[110px]" />
             </colgroup>
 
             <thead data-oid="ho01sek">
@@ -569,7 +585,7 @@ export default function JobsPage() {
                 return (
                   <AnimatedRow key={j.job_id} index={idx}>
                   <tr
-                    className="hover:bg-surface-container/30 transition-colors group"
+                    className="hover:bg-surface-container/30 transition-colors group [&_td]:align-middle"
                     data-oid="7iv7mrp">
 
                       <td className="px-gutter py-4" data-oid="onovb9s">
@@ -590,7 +606,7 @@ export default function JobsPage() {
                           </div>
                           <div data-oid="ats28o7">
                             <p
-                            className="font-body-md text-body-md font-medium text-on-surface truncate max-w-[200px]"
+                            className="font-body-md text-body-md font-medium text-on-surface truncate"
                             data-oid="7sy3qzp"
                             title={j.filename}>
 
@@ -630,8 +646,8 @@ export default function JobsPage() {
                             const total = usePages ? j.total_pages : j.total_files;
                             const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
                             return (
-                              <div className="mt-1.5 flex items-center gap-2">
-                                <div className="flex-1 h-1.5 bg-surface-container-high rounded-full overflow-hidden min-w-[80px]">
+                              <div className="mt-1.5 flex items-center gap-2 min-w-0">
+                                <div className="flex-1 h-1.5 bg-surface-container-high rounded-full overflow-hidden min-w-[40px]">
                                   <div
                                     className="h-full bg-primary rounded-full transition-all duration-500"
                                     style={{ width: `${pct}%` }}
@@ -686,18 +702,18 @@ export default function JobsPage() {
                                 <Trash2 size={18} data-oid="fp7w_cf" />
                               </button>
                               <div
-                            className="relative group"
+                            className="relative"
                             data-oid="tnuc:1x">
 
                                 <button
-                              className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-primary transition-colors"
+                              className="group p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-primary transition-colors"
                               title={`${fileTypeLabel(j.file_type)} ${t("page:jobs.download")}`}
                               data-oid="tpz9cfy">
 
                                   <Download size={18} data-oid="x4fihqx" />
                                 </button>
                                 <div
-                              className="absolute right-0 top-full mt-1 w-52 bg-white rounded-lg shadow-lg border border-outline-variant hidden group-hover:flex flex-col z-50 py-1"
+                              className="absolute right-0 top-full mt-1 w-52 bg-white rounded-lg shadow-lg border border-outline-variant hidden group-hover:flex flex-col z-[9999] py-1"
                               data-oid="42.dgaa">
 
                                   <button

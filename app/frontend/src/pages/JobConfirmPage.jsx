@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, Loader2, CreditCard, Settings2, Zap, Sparkles, ScanLine } from "lucide-react";
 import { api } from "../api.js";
+import { SkeletonCard } from "../components/Skeleton.jsx";
 
 export default function JobConfirmPage() {
   const { jobId } = useParams();
@@ -56,13 +57,12 @@ export default function JobConfirmPage() {
   if (loading) {
     return (
       <div
-        className="min-h-screen bg-background flex items-center justify-center"
+        className="min-h-screen bg-background flex items-center justify-center p-6"
         data-oid="djxlz-q">
 
-        <Loader2
-          className="animate-spin text-primary"
-          size={32}
-          data-oid="shu7kyb" />
+        <div className="w-full max-w-xl">
+          <SkeletonCard rows={6} />
+        </div>
 
       </div>);
 
@@ -119,14 +119,14 @@ export default function JobConfirmPage() {
       </nav>
 
       <main
-        className="flex-grow flex items-center justify-center px-gutter py-12"
+        className="flex-grow flex items-center justify-center px-gutter py-10"
         data-oid="lj9rbb1">
 
         <div
-          className="w-full max-w-xl bg-white rounded-[32px] border border-outline-variant shadow-xl shadow-primary/5 p-8 md:p-10"
+          className="w-full max-w-xl bg-white border border-outline-variant shadow-xl shadow-primary/5 p-6 md:p-8"
           data-oid="gslt5ko">
 
-          <div className="flex items-center gap-2 mb-6" data-oid="rte0f89">
+          <div className="flex items-center gap-2 mb-5" data-oid="rte0f89">
             <Link
               to="/"
               className="text-on-surface-variant hover:text-primary transition-colors"
@@ -135,7 +135,7 @@ export default function JobConfirmPage() {
               <ArrowLeft size={20} data-oid=".car4ii" />
             </Link>
             <h1
-              className="text-headline-lg font-bold text-on-surface"
+              className="text-headline-md font-bold text-on-surface"
               data-oid="ujs4:cv">
 
               {t("page:confirm.title")}
@@ -143,14 +143,14 @@ export default function JobConfirmPage() {
           </div>
 
           <p
-            className="text-body-md text-on-surface-variant mb-6"
+            className="text-body-md text-on-surface-variant mb-5"
             data-oid="j143g0.">
 
             {job.filename}
           </p>
 
           <div
-            className="bg-surface-container-low rounded-2xl p-6 space-y-3 mb-6"
+            className="bg-surface-container-low p-5 space-y-3 mb-5"
             data-oid="x8s_b.h">
 
             <div
@@ -241,7 +241,7 @@ export default function JobConfirmPage() {
             </div>
           </div>
 
-          <div className="mb-6" data-oid="model-select">
+          <div className="mb-5" data-oid="model-select">
             <label
               className="block text-sm font-medium text-on-surface mb-3"
               data-oid="model-label">
@@ -253,7 +253,7 @@ export default function JobConfirmPage() {
                 type="button"
                 onClick={() => !hasMedia && setOcrModel("basic")}
                 disabled={hasMedia}
-                className={`border rounded-2xl p-4 text-left transition-all ${
+                className={`border p-3 text-left transition-all ${
                   effectiveModel === "basic"
                     ? "border-primary bg-primary/5 ring-2 ring-primary/20"
                     : "border-outline-variant hover:border-primary/50"
@@ -291,7 +291,7 @@ export default function JobConfirmPage() {
                           key={eng}
                           type="button"
                           onClick={() => setOcrEngine(eng)}
-                          className={`text-xs border rounded-lg py-2 px-1 text-center transition-all ${
+                          className={`text-xs border rounded-lg py-1.5 px-1 text-center transition-all ${
                             ocrEngine === eng
                               ? "border-primary bg-primary/5 text-primary font-medium ring-1 ring-primary/20"
                               : "border-outline-variant text-on-surface-variant hover:border-primary/50"
@@ -310,7 +310,7 @@ export default function JobConfirmPage() {
               <button
                 type="button"
                 onClick={() => setOcrModel("premium")}
-                className={`border rounded-2xl p-4 text-left transition-all cursor-pointer ${
+                className={`border p-3 text-left transition-all cursor-pointer ${
                   effectiveModel === "premium"
                     ? "border-primary bg-primary/5 ring-2 ring-primary/20"
                     : "border-outline-variant hover:border-primary/50"
@@ -416,7 +416,7 @@ export default function JobConfirmPage() {
           <div className="flex gap-3" data-oid=".pwmux7">
             <Link
               to="/"
-              className="flex-1 border border-outline-variant rounded-xl py-3 text-center font-medium text-on-surface hover:bg-surface-container transition-colors"
+              className="flex-1 border border-outline-variant rounded-lg py-2.5 text-center font-medium text-on-surface hover:bg-surface-container transition-colors"
               data-oid="iog_grc">
 
               {t("page:confirm.cancel")}
@@ -424,7 +424,7 @@ export default function JobConfirmPage() {
             <button
               onClick={confirm}
               disabled={submitting || insufficient}
-              className="flex-1 bg-primary text-on-primary rounded-xl py-3 font-medium hover:bg-primary-container transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              className="flex-1 bg-primary text-on-primary rounded-lg py-2.5 font-medium hover:bg-primary-container transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               data-oid="e1yh424">
 
               {submitting ?

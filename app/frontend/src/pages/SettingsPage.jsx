@@ -7,6 +7,8 @@ import { useAuth } from "../AuthContext.jsx";
 import { supabase } from "../supabase.js";
 import i18n from "../i18n.js";
 import SidebarLayout from "../components/SidebarLayout.jsx";
+import { Skeleton, SkeletonTable, SkeletonCard } from "../components/Skeleton.jsx";
+import { AnimatedRow } from "../components/AnimatedList.jsx";
 
 export default function SettingsPage() {
   const { user, loading, signOut } = useAuth();
@@ -29,6 +31,7 @@ export default function SettingsPage() {
   const [revealedKey, setRevealedKey] = useState(null);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
+  const [dataLoading, setDataLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [pwForm, setPwForm] = useState({ current: "", new: "", confirm: "" });
   const [pwLoading, setPwLoading] = useState(false);
@@ -43,6 +46,7 @@ export default function SettingsPage() {
   }, [user, loading, navigate]);
 
   const loadAll = async () => {
+    setDataLoading(true);
     try {
       setError("");
       const [acc, k, p, pkg] = await Promise.all([
@@ -58,6 +62,7 @@ export default function SettingsPage() {
     } catch (e) {
       setError(e.message || t("page:errors.loadFailed"));
     }
+    setDataLoading(false);
   };
 
   const createKey = async () => {
@@ -158,10 +163,16 @@ export default function SettingsPage() {
 
   }
 
+  const renderSkeleton = () =>
+  <div className="space-y-gutter" data-oid="sk-settings">
+      <SkeletonCard rows={2} />
+      <SkeletonTable columns={5} rows={3} />
+    </div>;
+
   const renderApiKeys = () =>
   <div className="space-y-gutter" data-oid="2qe4cte">
-      <div className="glass-panel p-6 rounded-2xl" data-oid="d2pav9b">
-        <div className="flex justify-between items-center mb-4" data-oid="dya03mx">
+      <div className="glass-panel p-5 rounded-2xl" data-oid="d2pav9b">
+        <div className="flex justify-between items-center mb-3" data-oid="dya03mx">
           <h3 className="font-headline-md text-headline-md text-on-surface" data-oid="z68qa0s">
             {t("page:settings.apiKeys")}
           </h3>
@@ -191,8 +202,9 @@ export default function SettingsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant text-body-md" data-oid="bg2x9ov">
-              {keys.map((k) =>
-            <tr key={k.id} className={k.is_active ? "" : "opacity-50"} data-oid="69kgx9v">
+              {keys.map((k, idx) =>
+            <AnimatedRow key={k.id} index={idx}>
+            <tr className={k.is_active ? "" : "opacity-50"} data-oid="69kgx9v">
                   <td className="px-4 py-3" data-oid="u51z6p9">{k.name}</td>
                   <td className="px-4 py-3 font-mono text-xs" data-oid="a-vez9_">{k.prefix}</td>
                   <td className="px-4 py-3 text-right" data-oid="_3kfxj0">
@@ -217,6 +229,7 @@ export default function SettingsPage() {
                     </button>
                   </td>
                 </tr>
+            </AnimatedRow>
             )}
               {keys.length === 0 &&
             <tr data-oid=".j21cpn">
@@ -234,8 +247,8 @@ export default function SettingsPage() {
       </div>
 
       {showCreate &&
-    <div className="glass-panel p-6 rounded-2xl" data-oid="2g_q6-q">
-          <h3 className="font-headline-md text-headline-md text-on-surface mb-4" data-oid="9onqjjl">
+    <div className="glass-panel p-5 rounded-2xl" data-oid="2g_q6-q">
+          <h3 className="font-headline-md text-headline-md text-on-surface mb-3" data-oid="9onqjjl">
             {t("page:settings.createKey")}
           </h3>
           <div className="flex gap-3" data-oid="d9upb3i">
@@ -292,8 +305,8 @@ export default function SettingsPage() {
 
   const renderBilling = () =>
   <div className="space-y-gutter" data-oid="4-uks8s">
-      <div className="glass-panel p-6 rounded-2xl" data-oid="q-z26g6">
-        <div className="flex items-center justify-between mb-6" data-oid="g986wss">
+      <div className="glass-panel p-5 rounded-2xl" data-oid="q-z26g6">
+        <div className="flex items-center justify-between mb-4" data-oid="g986wss">
           <div data-oid="399lxub">
             <p className="text-on-surface-variant text-body-md mb-1" data-oid="kyfb3l8">
               {t("page:settings.pointsBalance")}
@@ -326,10 +339,11 @@ export default function SettingsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant text-body-md" data-oid="wped61_">
-              {payments.map((p) => {
+              {payments.map((p, idx) => {
               const amount = Number(p.amount) || 0;
               return (
-                <tr key={p.id} data-oid="er3.xtf">
+                <AnimatedRow key={p.id} index={idx}>
+                <tr data-oid="er3.xtf">
                     <td className="px-4 py-3" data-oid="qa-ku2v">{formatDate(p.created_at)}</td>
                     <td className="px-4 py-3 uppercase" data-oid="fpk8ym7">{p.provider}</td>
                     <td className="px-4 py-3" data-oid="o2ey7qg">
@@ -345,7 +359,8 @@ export default function SettingsPage() {
                         {p.status}
                       </span>
                     </td>
-                  </tr>);
+                  </tr>
+                </AnimatedRow>);
 
             })}
               {payments.length === 0 &&
@@ -363,19 +378,19 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className="glass-panel p-6 rounded-2xl" data-oid="ign7w4w">
-        <h3 className="font-headline-md text-headline-md text-on-surface mb-4" data-oid="0-q6tix">
+      <div className="glass-panel p-5 rounded-2xl" data-oid="ign7w4w">
+        <h3 className="font-headline-md text-headline-md text-on-surface mb-3" data-oid="0-q6tix">
           {t("page:settings.rechargePackages")}
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-gutter" data-oid="h7_mo94">
-          {packages.map((pkg) => {
+          {packages.map((pkg, idx) => {
           const points = pkg.points || 0;
           const price = pkg.price || pkg.krw || 0;
           const currency = pkg.currency || "KRW";
           return (
+            <AnimatedRow key={pkg.id || `${points}-${price}`} index={idx}>
             <div
-              key={pkg.id || `${points}-${price}`}
-              className="border border-outline-variant rounded-xl p-4 flex flex-col" data-oid="nvybcdw">
+              className="border border-outline-variant p-4 flex flex-col" data-oid="nvybcdw">
 
                 <p className="font-headline-md text-headline-md text-on-surface" data-oid="r6sm-4e">
                   {points.toLocaleString()}P
@@ -391,7 +406,8 @@ export default function SettingsPage() {
 
                   {t("page:settings.select")}
                 </button>
-              </div>);
+              </div>
+            </AnimatedRow>);
 
         })}
           {packages.length === 0 &&
@@ -410,8 +426,8 @@ export default function SettingsPage() {
     const spent = account?.daily_spent_points || 0;
     return (
       <div className="space-y-gutter" data-oid="3jhrpct">
-        <div className="glass-panel p-6 rounded-2xl" data-oid="_29zn6c">
-          <h3 className="font-headline-md text-headline-md text-on-surface mb-6" data-oid="eya.8mo">
+        <div className="glass-panel p-5 rounded-2xl" data-oid="_29zn6c">
+          <h3 className="font-headline-md text-headline-md text-on-surface mb-4" data-oid="eya.8mo">
             {t("page:settings.rateLimit")}
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-gutter" data-oid="8o1xxr0">
@@ -470,8 +486,8 @@ export default function SettingsPage() {
 
   const renderAccount = () =>
   <div className="space-y-gutter" data-oid="5ah-sa5">
-      <div className="glass-panel p-6 rounded-2xl" data-oid="l263bk9">
-        <h3 className="font-headline-md text-headline-md text-on-surface mb-4" data-oid="r1wbsvt">
+      <div className="glass-panel p-5 rounded-2xl" data-oid="l263bk9">
+        <h3 className="font-headline-md text-headline-md text-on-surface mb-3" data-oid="r1wbsvt">
           {t("page:settings.account")}
         </h3>
         <div className="mb-6" data-oid="rjvpra0">
@@ -488,8 +504,8 @@ export default function SettingsPage() {
         </button>
       </div>
 
-      <div className="glass-panel p-6 rounded-2xl" data-oid="mc_4b2z">
-        <h3 className="font-headline-md text-headline-md text-on-surface mb-4" data-oid="ijjpmrr">
+      <div className="glass-panel p-5 rounded-2xl" data-oid="mc_4b2z">
+        <h3 className="font-headline-md text-headline-md text-on-surface mb-3" data-oid="ijjpmrr">
           {t("page:settings.changePassword")}
         </h3>
         <form onSubmit={changePassword} className="space-y-4 max-w-md" data-oid="jg7k0rs">
@@ -575,9 +591,9 @@ export default function SettingsPage() {
 
       <div className="flex flex-col md:flex-row gap-gutter" data-oid="ci89oi2">
         <nav className="md:w-56 shrink-0 space-y-1" data-oid="d:aw:qt">
-          {tabs.map((tab) =>
+          {tabs.map((tab, idx) =>
+          <AnimatedRow key={tab.id} index={idx}>
           <button
-            key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left font-body-md transition-colors ${
             activeTab === tab.id ?
@@ -590,10 +606,13 @@ export default function SettingsPage() {
               </span>
               {tab.label}
             </button>
+          </AnimatedRow>
           )}
         </nav>
 
-        <div className="flex-1 min-w-0" data-oid="i6u7p60">{tabContent[activeTab]()}</div>
+        <div className="flex-1 min-w-0" data-oid="i6u7p60">
+          {dataLoading ? renderSkeleton() : tabContent[activeTab]()}
+        </div>
       </div>
     </SidebarLayout>);
 

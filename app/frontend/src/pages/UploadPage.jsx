@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { FileUp, Loader2, LogIn, Coins } from "lucide-react";
 import GridScan from "../components/GridScan.jsx";
+import { AnimatedRow } from "../components/AnimatedList.jsx";
 import { useAuth } from "../AuthContext.jsx";
 import { api } from "../api.js";
 import { uploadFilesTUS } from "../tusUpload.js";
@@ -195,11 +196,11 @@ export default function UploadPage() {
             <label
               onDrop={handleDrop}
               onDragOver={(e) => e.preventDefault()}
-              className="group relative bg-surface border border-outline-variant/60 rounded-[32px] p-2 shadow-2xl shadow-primary/5 hover:shadow-primary/10 transition-all duration-500 block cursor-pointer" data-oid="lu0z:ql">
+              className="group relative bg-surface border border-outline-variant/60 p-2 shadow-2xl shadow-primary/5 hover:shadow-primary/10 transition-all duration-500 block cursor-pointer" data-oid="lu0z:ql">
 
-              <div className="border-2 border-dashed border-outline-variant/40 group-hover:border-primary/40 rounded-[24px] p-16 flex flex-col items-center justify-center transition-colors bg-surface-container-lowest" data-oid="edljjr1">
-                <div className="w-20 h-20 bg-primary-container/10 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300" data-oid=":jtd.dp">
-                  <FileUp className="text-primary" size={48} data-oid="t2qzlm3" />
+              <div className="border-2 border-dashed border-outline-variant/40 group-hover:border-primary/40 p-12 flex flex-col items-center justify-center transition-colors bg-surface-container-lowest" data-oid="edljjr1">
+                <div className="w-16 h-16 bg-primary-container/10 flex items-center justify-center mb-5 group-hover:scale-110 transition-transform duration-300" data-oid=":jtd.dp">
+                  <FileUp className="text-primary" size={40} data-oid="t2qzlm3" />
                 </div>
                 <h3 className="text-headline-md font-medium text-on-surface mb-2" data-oid="i-mqa2a">
                   {t("page:upload.dropText")}
@@ -214,7 +215,7 @@ export default function UploadPage() {
                       e.preventDefault();
                       document.getElementById("file-input").click();
                     }}
-                    className="px-6 py-3 bg-primary text-on-primary rounded-full font-headline-md hover:bg-primary-container transition-all shadow-md" data-oid="y:11dj9">
+                    className="px-5 py-2.5 bg-primary text-on-primary font-headline-md hover:bg-primary-container transition-all shadow-md" data-oid="y:11dj9">
 
                     {t("page:upload.selectFiles")}
                   </button>
@@ -224,7 +225,7 @@ export default function UploadPage() {
                       e.preventDefault();
                       document.getElementById("folder-input").click();
                     }}
-                    className="px-6 py-3 border border-outline-variant text-on-surface rounded-full font-headline-md hover:bg-surface-container transition-all" data-oid="4ck0s7w">
+                    className="px-5 py-2.5 border border-outline-variant text-on-surface font-headline-md hover:bg-surface-container transition-all" data-oid="4ck0s7w">
 
                     {t("page:upload.selectFolder")}
                   </button>
@@ -252,14 +253,14 @@ export default function UploadPage() {
             </label>
 
             {files.length > 0 &&
-            <div className="mt-4 bg-white rounded-xl border border-outline-variant p-4 text-left max-w-xl mx-auto" data-oid="xcv5knj">
+            <div className="mt-4 bg-white border border-outline-variant p-3 text-left max-w-xl mx-auto" data-oid="xcv5knj">
                 <div className="flex items-center gap-2 mb-3" data-oid="hwp:refinement">
                   <input
                     id="docling-refinement"
                     type="checkbox"
                     checked={doclingRefinement}
                     onChange={(e) => setDoclingRefinement(e.target.checked)}
-                    className="h-4 w-4 rounded border-outline-variant text-primary focus:ring-primary"
+                    className="h-4 w-4 rounded-none border-outline-variant text-primary focus:ring-primary"
                   />
                   <label htmlFor="docling-refinement" className="text-sm text-on-surface">
                     {t("page:upload.doclingRefinement")}
@@ -270,8 +271,9 @@ export default function UploadPage() {
                 </p>
                 <ul className="text-sm text-on-surface-variant space-y-1" data-oid=".1zu2a:">
                   {files.map((f, i) =>
-                <li key={i} className="flex items-center gap-2" data-oid="pj8ozgj">
-                      <span className="bg-surface-container px-2 py-0.5 rounded" data-oid="v5ru_8d">
+                <AnimatedRow key={i} index={i}>
+                <li className="flex items-center gap-2" data-oid="pj8ozgj">
+                      <span className="bg-surface-container px-2 py-0.5" data-oid="v5ru_8d">
                         {f.name}
                       </span>
                       {f.webkitRelativePath &&
@@ -284,6 +286,7 @@ export default function UploadPage() {
                   }
                       <span data-oid="d52i72h">({(f.size / 1024 / 1024).toFixed(2)} MB)</span>
                     </li>
+                </AnimatedRow>
                 )}
                 </ul>
                 {error && <p className="text-red-600 text-sm mt-3" data-oid="-a7o5g0">{error}</p>}
@@ -297,9 +300,9 @@ export default function UploadPage() {
                         {uploadProgress.current + 1}/{uploadProgress.total} ({uploadProgress.percent}%)
                       </span>
                     </div>
-                    <div className="w-full bg-surface-container rounded-full h-2 overflow-hidden" data-oid="prog-bar-bg">
+                    <div className="w-full bg-surface-container h-2 overflow-hidden" data-oid="prog-bar-bg">
                       <div
-                        className="bg-primary h-full rounded-full transition-all duration-300"
+                        className="bg-primary h-full transition-all duration-300"
                         style={{ width: `${uploadProgress.percent}%` }}
                         data-oid="prog-bar-fill"
                       />

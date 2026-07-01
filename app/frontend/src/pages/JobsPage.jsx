@@ -14,6 +14,8 @@ import { useAuth } from "../AuthContext.jsx";
 import { api } from "../api.js";
 import i18n from "../i18n.js";
 import SidebarLayout from "../components/SidebarLayout.jsx";
+import { SkeletonTable } from "../components/Skeleton.jsx";
+import { AnimatedRow } from "../components/AnimatedList.jsx";
 
 const STATUS_CHIP = {
   pending: {
@@ -497,25 +499,25 @@ export default function JobsPage() {
                 data-oid="uzfp9p7">
 
                 <th
-                  className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider"
+                  className="px-gutter py-3 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider"
                   data-oid="0q7xa_:">
 
                   {t("page:jobs.fileName")}
                 </th>
                 <th
-                  className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider"
+                  className="px-gutter py-3 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider"
                   data-oid="d9qbk69">
 
                   {t("page:jobs.status")}
                 </th>
                 <th
-                  className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider"
+                  className="px-gutter py-3 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider"
                   data-oid="hxlgn4f">
 
                   {t("page:jobs.dateCreated")}
                 </th>
                 <th
-                  className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider"
+                  className="px-gutter py-3 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider"
                   data-oid="0i551g5">
 
                   <div className="flex items-center gap-1" data-oid="e4eiju5">
@@ -530,7 +532,7 @@ export default function JobsPage() {
                   </div>
                 </th>
                 <th
-                  className="px-gutter py-4 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider text-right"
+                  className="px-gutter py-3 font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider text-right"
                   data-oid="k8a17n2">
 
                   {t("page:jobs.actions")}
@@ -545,27 +547,24 @@ export default function JobsPage() {
               <tr data-oid="2a4vwvg">
                   <td
                   colSpan={5}
-                  className="text-center py-12"
+                  className="px-gutter py-4"
                   data-oid="2eowq3q">
 
-                    <Loader2
-                    className="animate-spin mx-auto text-primary"
-                    size={24}
-                    data-oid="88atot:" />
+                    <SkeletonTable columns={5} rows={10} />
 
                   </td>
                 </tr> :
 
-              pageJobs.map((j) => {
+              pageJobs.map((j, idx) => {
                 const chip = STATUS_CHIP[j.status] || STATUS_CHIP.pending;
                 const isDone = j.status === "done";
                 return (
+                  <AnimatedRow key={j.job_id} index={idx}>
                   <tr
-                    key={j.job_id}
                     className="hover:bg-surface-container/30 transition-colors group"
                     data-oid="7iv7mrp">
 
-                      <td className="px-gutter py-5" data-oid="onovb9s">
+                      <td className="px-gutter py-4" data-oid="onovb9s">
                         <div
                         className="flex items-center gap-3"
                         data-oid="y2ftyte">
@@ -597,7 +596,7 @@ export default function JobsPage() {
                           </div>
                         </div>
                       </td>
-                      <td className="px-gutter py-5" data-oid="ge54lqm">
+                      <td className="px-gutter py-4" data-oid="ge54lqm">
                         <div
                         className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border border-inherit ${chip.bg} ${chip.text}`}
                         data-oid="1uiycel">
@@ -640,19 +639,19 @@ export default function JobsPage() {
                         )}
                       </td>
                       <td
-                      className="px-gutter py-5 font-body-md text-body-md text-on-surface-variant"
+                      className="px-gutter py-4 font-body-md text-body-md text-on-surface-variant"
                       data-oid="n_ue8pe">
 
                         {formatDate(j.created_at)}
                       </td>
                       <td
-                      className="px-gutter py-5 font-body-md text-body-md text-on-surface-variant"
+                      className="px-gutter py-4 font-body-md text-body-md text-on-surface-variant"
                       data-oid="zmn711w">
 
                         {timeLeft(j.source_expires_at)}
                       </td>
                       <td
-                      className="px-gutter py-5 text-right"
+                      className="px-gutter py-4 text-right"
                       data-oid="jo2op4c">
 
                         <div
@@ -753,7 +752,8 @@ export default function JobsPage() {
                         }
                         </div>
                       </td>
-                    </tr>);
+                    </tr>
+                  </AnimatedRow>);
 
               })
               }

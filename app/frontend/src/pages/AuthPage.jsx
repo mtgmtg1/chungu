@@ -43,7 +43,7 @@ export default function AuthPage() {
 
       <form
         onSubmit={handleSubmit}
-        className="bg-white rounded-xl shadow-sm border p-8 w-full max-w-sm space-y-5"
+        className="bg-white rounded-xl shadow-sm border p-6 w-full max-w-sm space-y-4"
         data-oid="xpfks5y">
 
         <div className="text-center" data-oid="d46vz5f">
@@ -55,7 +55,7 @@ export default function AuthPage() {
 
           <LogIn className="mx-auto text-blue-600 mb-2" data-oid="2p:4802" />
           }
-          <h1 className="text-lg font-bold" data-oid="pr:mnop">
+          <h1 className="text-base font-bold" data-oid="pr:mnop">
             {isSignUp ? t("page:auth.signupTitle") : t("page:auth.loginTitle")}
           </h1>
           <p className="text-sm text-slate-500 mt-1" data-oid="q2apom4">
@@ -65,8 +65,8 @@ export default function AuthPage() {
 
         <div className="relative" data-oid="vw6ih8y">
           <Mail
-            className="absolute left-3 top-2.5 text-slate-400"
-            size={18}
+            className="absolute left-3 top-2 text-slate-400"
+            size={16}
             data-oid="pksi5kx" />
 
 
@@ -82,8 +82,8 @@ export default function AuthPage() {
         </div>
         <div className="relative" data-oid="xlxabbb">
           <Lock
-            className="absolute left-3 top-2.5 text-slate-400"
-            size={18}
+            className="absolute left-3 top-2 text-slate-400"
+            size={16}
             data-oid="ggti-5r" />
 
 
@@ -92,7 +92,7 @@ export default function AuthPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder={t("page:auth.passwordPlaceholder")}
-            className="w-full border rounded-lg pl-10 pr-3 py-2"
+            className="w-full border rounded-lg pl-10 pr-3 py-1.5"
             required
             data-oid="q683z2v" />
 
@@ -107,7 +107,7 @@ export default function AuthPage() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-blue-600 text-white rounded-lg py-2.5 font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
+          className="w-full bg-blue-600 text-white rounded-lg py-2 font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2"
           data-oid="uxs79pg">
 
           {loading ?

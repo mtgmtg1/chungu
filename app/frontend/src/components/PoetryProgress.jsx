@@ -131,23 +131,23 @@ export default function PoetryProgress({ pct, statusLabel, progressText }) {
 
   return (
     <div
-      className="flex-1 flex flex-col items-center justify-center p-6 bg-gradient-to-b from-surface to-surface-container"
+      className="flex-1 flex flex-col items-center justify-center p-5 bg-gradient-to-b from-surface to-surface-container"
       data-oid="poetry-progress"
     >
       {/* 시 슬라이드 */}
       <div
-        className="max-w-lg w-full text-center mb-8 transition-opacity duration-1000"
+        className="max-w-lg w-full text-center mb-6 transition-opacity duration-1000"
         key={slideIdx}
         data-oid="poem-slide"
       >
         <h3
-          className="text-lg font-semibold text-on-surface mb-1"
+          className="text-base font-semibold text-on-surface mb-1"
           data-oid="poem-title"
         >
           {poem.title}
         </h3>
         <p
-          className="text-sm text-on-surface-variant mb-4"
+          className="text-sm text-on-surface-variant mb-3"
           data-oid="poem-author"
         >
           — {poem.author}
@@ -159,7 +159,7 @@ export default function PoetryProgress({ pct, statusLabel, progressText }) {
           {poem.lines.map((line, i) => (
             <p
               key={i}
-              className={`text-base ${line === "" ? "h-4" : "text-on-surface-variant"} ${line === "" ? "" : "font-light"}`}
+              className={`text-sm ${line === "" ? "h-3" : "text-on-surface-variant"} ${line === "" ? "" : "font-light"}`}
               data-oid={`poem-line-${i}`}
             >
               {line || "\u00A0"}
@@ -191,7 +191,7 @@ export default function PoetryProgress({ pct, statusLabel, progressText }) {
           </span>
         </div>
         <div
-          className="h-2 bg-surface-container-high rounded-full overflow-hidden"
+          className="h-1.5 bg-surface-container-high overflow-hidden"
           data-oid="bar-track"
         >
           <div
@@ -209,7 +209,7 @@ export default function PoetryProgress({ pct, statusLabel, progressText }) {
           </p>
         )}
         <p
-          className="text-xs text-on-surface-variant mt-4 text-center"
+          className="text-xs text-on-surface-variant mt-3 text-center"
           data-oid="leave-notice"
         >
           {t("page:result.leaveNotice")}

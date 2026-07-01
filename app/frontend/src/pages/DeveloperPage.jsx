@@ -6,6 +6,8 @@ import { api } from "../api.js";
 import { useAuth } from "../AuthContext.jsx";
 import i18n from "../i18n.js";
 import SidebarLayout from "../components/SidebarLayout.jsx";
+import { Skeleton, SkeletonTable, SkeletonCard } from "../components/Skeleton.jsx";
+import { AnimatedRow } from "../components/AnimatedList.jsx";
 
 const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
 
@@ -28,6 +30,7 @@ export default function DeveloperPage() {
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [period, setPeriod] = useState("7");
+  const [dataLoading, setDataLoading] = useState(true);
 
   useEffect(() => {
     if (loading) return;
@@ -63,6 +66,7 @@ export default function DeveloperPage() {
   };
 
   const loadAll = async () => {
+    setDataLoading(true);
     try {
       setError("");
       const [acc, prc, tx] = await Promise.all([
@@ -77,6 +81,7 @@ export default function DeveloperPage() {
       setError(e.message || t("page:errors.loadFailed"));
     }
     await loadKeys();
+    setDataLoading(false);
   };
 
   const createKey = async () => {
@@ -168,9 +173,9 @@ export default function DeveloperPage() {
         data-oid="ge.yf.c">
 
         <div className="lg:col-span-8 space-y-gutter" data-oid="h4n16u:">
-          <div className="glass-panel p-6 rounded-2xl" data-oid="68mob7w">
+          <div className="glass-panel p-5 rounded-2xl" data-oid="68mob7w">
             <div
-              className="flex justify-between items-center mb-6"
+              className="flex justify-between items-center mb-4"
               data-oid="bqgzc_e">
 
               <h3
@@ -193,6 +198,10 @@ export default function DeveloperPage() {
                 </option>
               </select>
             </div>
+            {dataLoading ?
+            <div className="h-64 px-2" data-oid="v8buroa">
+              <Skeleton className="h-full w-full" />
+            </div> :
             <div
               className="h-64 flex items-end gap-1 px-2 relative"
               data-oid="v8buroa">
@@ -253,6 +262,7 @@ export default function DeveloperPage() {
                 </div>
               }
             </div>
+            }
           </div>
 
           <div
@@ -260,7 +270,7 @@ export default function DeveloperPage() {
             data-oid="lix3r_-">
 
             <div
-              className="p-6 border-b border-outline-variant flex justify-between items-center"
+              className="p-5 border-b border-outline-variant flex justify-between items-center"
               data-oid="mfkii_2">
 
               <h3
@@ -271,6 +281,8 @@ export default function DeveloperPage() {
               </h3>
             </div>
             <div className="overflow-x-auto" data-oid="kkfejw8">
+              {dataLoading ?
+              <SkeletonTable columns={5} rows={3} /> :
               <table className="w-full text-left" data-oid="sp:7h.:">
                 <thead
                   className="bg-surface-container-low text-on-surface-variant font-label-sm text-label-sm uppercase tracking-wider"
@@ -296,9 +308,9 @@ export default function DeveloperPage() {
                   className="divide-y divide-outline-variant text-body-md"
                   data-oid="dk1-96s">
 
-                  {keys.map((k) =>
+                  {keys.map((k, idx) =>
+                  <AnimatedRow key={k.id} index={idx}>
                   <tr
-                    key={k.id}
                     className="hover:bg-primary-container/5 transition-colors"
                     data-oid="e6cr-bn">
 
@@ -368,16 +380,19 @@ export default function DeveloperPage() {
                         </button>
                       </td>
                     </tr>
+                  </AnimatedRow>
                   )}
                 </tbody>
               </table>
+              }
             </div>
           </div>
         </div>
 
         <div className="lg:col-span-4 space-y-gutter" data-oid="jfp8v_w">
-          <div className="glass-panel p-6 rounded-2xl" data-oid="wqku5pr">
-            <div className="flex items-center gap-3 mb-6" data-oid="y-vdrg2">
+          <AnimatedRow index={0}>
+          <div className="glass-panel p-5 rounded-2xl" data-oid="wqku5pr">
+            <div className="flex items-center gap-3 mb-4" data-oid="y-vdrg2">
               <span
                 className="material-symbols-outlined text-primary bg-primary/10 p-2 rounded-lg"
                 data-oid="gfakadq">
@@ -391,7 +406,7 @@ export default function DeveloperPage() {
                 {t("page:developer.rateLimit")}
               </h3>
             </div>
-            <div className="space-y-4" data-oid="8yf5k01">
+            <div className="space-y-3" data-oid="8yf5k01">
               <div
                 className="flex justify-between items-end"
                 data-oid="jo15-rb">
@@ -445,13 +460,15 @@ export default function DeveloperPage() {
               </div>
             </div>
           </div>
+          </AnimatedRow>
 
+          <AnimatedRow index={1}>
           <div
             className="glass-panel rounded-2xl overflow-hidden"
             data-oid="f20d6xz">
 
             <div
-              className="p-6 border-b border-outline-variant"
+              className="p-5 border-b border-outline-variant"
               data-oid="flupcy-">
 
               <h3
@@ -461,7 +478,7 @@ export default function DeveloperPage() {
                 {t("page:developer.quickStart")}
               </h3>
             </div>
-            <div className="p-6 space-y-6" data-oid="wut-6z4">
+            <div className="p-5 space-y-5" data-oid="wut-6z4">
               <div className="space-y-3" data-oid="bglbo4u">
                 <div
                   className="flex justify-between items-center"
@@ -525,9 +542,11 @@ export default function DeveloperPage() {
               </a>
             </div>
           </div>
+          </AnimatedRow>
 
-          <div className="glass-panel p-6 rounded-2xl" data-oid="arqu6p5">
-            <div className="flex items-center gap-3 mb-4" data-oid="gi64:0u">
+          <AnimatedRow index={2}>
+          <div className="glass-panel p-5 rounded-2xl" data-oid="arqu6p5">
+            <div className="flex items-center gap-3 mb-3" data-oid="gi64:0u">
               <span
                 className="material-symbols-outlined text-primary bg-primary/10 p-2 rounded-lg"
                 data-oid="v7md:01">
@@ -604,6 +623,7 @@ export default function DeveloperPage() {
               </button>
             </div>
           </div>
+          </AnimatedRow>
         </div>
       </div>
 

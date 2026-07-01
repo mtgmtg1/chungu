@@ -65,11 +65,11 @@ export default function SidebarLayout({ children, title, subtitle }) {
 
       {/* Sidebar */}
       <aside
-        className={`h-screen fixed left-0 top-0 bg-surface/90 backdrop-blur-xl border-r border-outline-variant z-40 flex flex-col py-6 px-4 transition-all duration-300 ${sidebarWidth} ${mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
+        className={`h-screen fixed left-0 top-0 bg-surface/90 backdrop-blur-xl border-r border-outline-variant z-40 flex flex-col py-5 px-3 transition-all duration-300 ${sidebarWidth} ${mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
         data-oid=".ej7-3u">
 
         <div
-          className={`flex items-center gap-3 mb-10 px-2 ${expanded ? "" : "justify-center"}`}
+          className={`flex items-center gap-3 mb-8 px-2 ${expanded ? "" : "justify-center"}`}
           data-oid="c3oet69">
 
           <div
@@ -113,7 +113,7 @@ export default function SidebarLayout({ children, title, subtitle }) {
               }
               setMobileOpen(false);
             }}
-            className={`flex items-center ${expanded ? "gap-3 px-3" : "justify-center px-2"} py-2.5 rounded-lg transition-colors ${
+            className={`flex items-center ${expanded ? "gap-3 px-3" : "justify-center px-2"} py-2 rounded-lg transition-colors ${
             isActive(item.href) ?
             "text-primary font-bold border-r-2 border-primary bg-primary-container/5" :
             "text-on-surface-variant hover:bg-primary-container/10"}`
@@ -139,7 +139,7 @@ export default function SidebarLayout({ children, title, subtitle }) {
         <div className="mt-auto space-y-3" data-oid="3jg724x">
           <Link
             to="/"
-            className={`w-full bg-primary text-on-primary py-3 px-4 rounded-xl font-body-md text-body-md font-medium shadow-md hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 ${expanded ? "" : "px-0"}`}
+            className={`w-full bg-primary text-on-primary py-2.5 px-3 rounded-xl font-body-md text-body-md font-medium shadow-md hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 ${expanded ? "" : "px-0"}`}
             data-oid="uu7qmwt">
 
             <span className="material-symbols-outlined" data-oid="jfz2785">
@@ -150,7 +150,7 @@ export default function SidebarLayout({ children, title, subtitle }) {
 
           {expanded && user &&
           <div
-            className="p-4 glass-panel rounded-xl border border-primary/10"
+            className="p-3 glass-panel rounded-xl border border-primary/10"
             data-oid="0zn5l59">
 
               <p

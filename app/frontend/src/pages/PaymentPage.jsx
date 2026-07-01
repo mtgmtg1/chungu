@@ -11,6 +11,8 @@ import {
 "lucide-react";
 import { api } from "../api.js";
 import { useAuth } from "../AuthContext.jsx";
+import { SkeletonCard } from "../components/Skeleton.jsx";
+import { AnimatedRow } from "../components/AnimatedList.jsx";
 
 export default function PaymentPage() {
   const { user } = useAuth();
@@ -135,15 +137,17 @@ export default function PaymentPage() {
         {error && <p className="text-red-600 text-sm mb-6" data-oid="kqiknzg">{error}</p>}
 
         {loading ?
-        <div className="text-center py-12" data-oid="_puqmv1">
-            <Loader2 className="animate-spin mx-auto" data-oid="vj-pv36" />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6" data-oid="_puqmv1">
+            {Array.from({ length: 6 }).map((_, i) =>
+          <SkeletonCard key={i} rows={2} />
+          )}
           </div> :
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6" data-oid="8m4cd1y">
-            {packages.map((pkg) =>
+            {packages.map((pkg, idx) =>
+          <AnimatedRow key={pkg.name} index={idx}>
           <div
-            key={pkg.name}
-            className="bg-white rounded-xl border p-6 flex flex-col" data-oid="7h4o0ni">
+            className="bg-white border p-5 flex flex-col" data-oid="7h4o0ni">
 
                 <h2 className="text-lg font-bold mb-1" data-oid="t9ga6p.">{pkg.name}</h2>
                 <p className="text-3xl font-bold text-blue-600 mb-4" data-oid="0ghf_1q">
@@ -156,7 +160,7 @@ export default function PaymentPage() {
                   <button
                 onClick={() => payWithToss(pkg)}
                 disabled={paying}
-                className="w-full bg-blue-600 text-white rounded-lg py-2 font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2" data-oid="s22k1.l">
+                className="w-full bg-blue-600 text-white py-2 font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2" data-oid="s22k1.l">
 
                     {paying ?
                 <Loader2 className="animate-spin" size={16} data-oid="6teove6" /> :
@@ -169,12 +173,13 @@ export default function PaymentPage() {
                   <button
                 onClick={() => payWithPaddle(pkg)}
                 disabled={paying}
-                className="w-full bg-slate-800 text-white rounded-lg py-2 font-medium hover:bg-slate-900 disabled:opacity-50" data-oid=".oou1a9">
+                className="w-full bg-slate-800 text-white py-2 font-medium hover:bg-slate-900 disabled:opacity-50" data-oid=".oou1a9">
 
                     {t("page:payment.paypalUsd")}
                   </button>
                 </div>
               </div>
+          </AnimatedRow>
           )}
           </div>
         }

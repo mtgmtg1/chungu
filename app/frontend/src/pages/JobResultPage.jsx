@@ -21,6 +21,7 @@ import SimpleEditor from "../components/SimpleEditor.jsx";
 import { api } from "../api.js";
 import i18n from "../i18n.js";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+import { SkeletonPageResult } from "../components/Skeleton.jsx";
 
 function downloadByUrl(url, filename) {
   const a = document.createElement("a");
@@ -204,7 +205,7 @@ export default function JobResultPage() {
       data-oid="vl.tj_r">
 
       <header
-        className="h-16 border-b border-outline-variant bg-surface flex items-center justify-between px-6 flex-shrink-0"
+        className="h-14 border-b border-outline-variant bg-surface flex items-center justify-between px-4 flex-shrink-0"
         data-oid="kxse7f.">
 
         <div className="flex items-center gap-4" data-oid="jz8kj2e">
@@ -366,7 +367,7 @@ export default function JobResultPage() {
 
       {saveMessage &&
       <div
-        className="bg-green-50 text-green-700 px-4 py-2 text-sm flex items-center gap-2 border-b border-green-200"
+        className="bg-green-50 text-green-700 px-4 py-1.5 text-sm flex items-center gap-2 border-b border-green-200"
         data-oid="uhtevhw">
 
           <Check size={16} data-oid="jze93xf" />
@@ -376,7 +377,7 @@ export default function JobResultPage() {
 
       {error &&
       <div
-        className="bg-red-50 text-red-700 px-4 py-2 text-sm flex items-center gap-2 border-b border-red-200"
+        className="bg-red-50 text-red-700 px-4 py-1.5 text-sm flex items-center gap-2 border-b border-red-200"
         data-oid="dj7ay27">
 
           <XCircle size={16} data-oid="872vq_g" />
@@ -385,16 +386,7 @@ export default function JobResultPage() {
       }
 
       {loading && !job &&
-      <div
-        className="flex-1 flex items-center justify-center"
-        data-oid="bv9f2yo">
-
-          <Loader2
-          className="animate-spin text-primary"
-          size={32}
-          data-oid="ekpzidb" />
-
-        </div>
+      <SkeletonPageResult data-oid="bv9f2yo" />
       }
 
       {job && job.status !== "done" && job.status !== "error" &&

@@ -7,6 +7,23 @@ body {
   @apply bg-background text-on-background;
 }
 
+@keyframes stagger-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-stagger-enter {
+  animation: stagger-enter 240ms ease-out both;
+  animation-fill-mode: both;
+}
+
+
 .glass-panel {
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(12px);
@@ -33,7 +50,7 @@ body {
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
   background-color: #c3c6d7;
-  border-radius: 4px;
+  border-radius: 0;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
@@ -139,7 +156,7 @@ body {
 
 .ProseMirror mark {
   background-color: #fef08a;
-  border-radius: 0.125rem;
+  border-radius: 0;
   padding: 0 0.125rem;
 }
 

@@ -15,6 +15,8 @@ import { useAuth } from "../AuthContext.jsx";
 import { api } from "../api.js";
 import i18n from "../i18n.js";
 import SidebarLayout from "../components/SidebarLayout.jsx";
+import { SkeletonCard, SkeletonTable } from "../components/Skeleton.jsx";
+import { AnimatedRow } from "../components/AnimatedList.jsx";
 
 const STATUS_COLOR = {
   done: "bg-green-50 text-green-700 border-green-100",
@@ -138,11 +140,20 @@ export default function DashboardPage() {
       }
 
       {/* Summary cards */}
+      {loading ?
       <div
         className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-gutter mb-stack-lg"
         data-oid=".1eyng_">
 
-        <div className="glass-panel p-6 rounded-2xl" data-oid="z-_7iz1">
+        {Array.from({ length: 4 }).map((_, i) =>
+        <SkeletonCard key={i} rows={1} />
+        )}
+      </div> :
+      <div
+        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-gutter mb-stack-lg"
+        data-oid=".1eyng_">
+
+        <div className="glass-panel p-5 rounded-2xl" data-oid="z-_7iz1">
           <div
             className="flex items-center justify-between mb-4"
             data-oid="mth2x:f">
@@ -173,7 +184,7 @@ export default function DashboardPage() {
           </Link>
         </div>
 
-        <div className="glass-panel p-6 rounded-2xl" data-oid="558tma_">
+        <div className="glass-panel p-5 rounded-2xl" data-oid="558tma_">
           <div
             className="flex items-center justify-between mb-4"
             data-oid="u3625no">
@@ -204,7 +215,7 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        <div className="glass-panel p-6 rounded-2xl" data-oid="a4xqfjk">
+        <div className="glass-panel p-5 rounded-2xl" data-oid="a4xqfjk">
           <div
             className="flex items-center justify-between mb-4"
             data-oid="pqm83nu">
@@ -235,7 +246,7 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        <div className="glass-panel p-6 rounded-2xl" data-oid=":v62upd">
+        <div className="glass-panel p-5 rounded-2xl" data-oid=":v62upd">
           <div
             className="flex items-center justify-between mb-4"
             data-oid="816rxv8">
@@ -266,6 +277,7 @@ export default function DashboardPage() {
           </p>
         </div>
       </div>
+      }
 
       <div
         className="grid grid-cols-1 lg:grid-cols-3 gap-gutter mb-stack-lg"
@@ -273,7 +285,7 @@ export default function DashboardPage() {
 
         {/* Status breakdown */}
         <div
-          className="lg:col-span-2 glass-panel rounded-2xl p-6"
+          className="lg:col-span-2 glass-panel rounded-2xl p-5"
           data-oid="hsm2j.7">
 
           <h3
@@ -307,9 +319,9 @@ export default function DashboardPage() {
               label: t("page:dashboard.pending"),
               value: jobs.filter((j) => j.status === "pending").length
             }].
-            map((item) =>
+            map((item, idx) =>
+            <AnimatedRow key={item.key} index={idx}>
             <div
-              key={item.key}
               className="p-4 bg-surface-container-low rounded-xl border border-outline-variant"
               data-oid="1e4:e7w">
 
@@ -326,6 +338,7 @@ export default function DashboardPage() {
                   {item.value}
                 </p>
               </div>
+            </AnimatedRow>
             )}
           </div>
 
@@ -379,7 +392,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Quick actions */}
-        <div className="glass-panel rounded-2xl p-6" data-oid="4c.996x">
+        <div className="glass-panel rounded-2xl p-5" data-oid="4c.996x">
           <h3
             className="font-headline-md text-headline-md text-on-surface mb-6"
             data-oid="4cz7khh">
@@ -465,7 +478,7 @@ export default function DashboardPage() {
         data-oid="p9ir-29">
 
         <div
-          className="p-6 border-b border-outline-variant flex justify-between items-center"
+          className="p-5 border-b border-outline-variant flex justify-between items-center"
           data-oid="9_2:c3z">
 
           <h3
@@ -490,16 +503,16 @@ export default function DashboardPage() {
               data-oid="2286wug">
 
               <tr data-oid="-zp:zq5">
-                <th className="px-gutter py-4" data-oid="or2wf3k">
+                <th className="px-gutter py-3" data-oid="or2wf3k">
                   {t("page:dashboard.fileName")}
                 </th>
-                <th className="px-gutter py-4" data-oid="c_awav2">
+                <th className="px-gutter py-3" data-oid="c_awav2">
                   {t("page:dashboard.status")}
                 </th>
-                <th className="px-gutter py-4" data-oid="di9rk5-">
+                <th className="px-gutter py-3" data-oid="di9rk5-">
                   {t("page:dashboard.date")}
                 </th>
-                <th className="px-gutter py-4 text-right" data-oid=".f-9hez">
+                <th className="px-gutter py-3 text-right" data-oid=".f-9hez">
                   {t("page:dashboard.action")}
                 </th>
               </tr>
@@ -512,33 +525,30 @@ export default function DashboardPage() {
               <tr data-oid="a_lru:a">
                   <td
                   colSpan={4}
-                  className="text-center py-12"
+                  className="px-gutter py-4"
                   data-oid="plwfugn">
 
-                    <Loader2
-                    className="animate-spin mx-auto text-primary"
-                    size={24}
-                    data-oid="01c.i6q" />
+                    <SkeletonTable columns={4} rows={5} />
 
                   </td>
                 </tr> :
 
-              stats.recent.map((j) => {
+              stats.recent.map((j, idx) => {
                 const chipClass =
                 STATUS_COLOR[j.status] || STATUS_COLOR.pending;
                 return (
+                  <AnimatedRow key={j.job_id} index={idx}>
                   <tr
-                    key={j.job_id}
                     className="hover:bg-surface-container/30 transition-colors"
                     data-oid="e8jdxr2">
 
                       <td
-                      className="px-gutter py-4 font-body-md text-body-md text-on-surface"
+                      className="px-gutter py-3 font-body-md text-body-md text-on-surface"
                       data-oid="bhnot4h">
 
                         {j.filename}
                       </td>
-                      <td className="px-gutter py-4" data-oid="y8k-mq8">
+                      <td className="px-gutter py-3" data-oid="y8k-mq8">
                         <span
                         className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${chipClass}`}
                         data-oid="t5vsd:h">
@@ -557,13 +567,13 @@ export default function DashboardPage() {
                         </span>
                       </td>
                       <td
-                      className="px-gutter py-4 font-body-md text-body-md text-on-surface-variant"
+                      className="px-gutter py-3 font-body-md text-body-md text-on-surface-variant"
                       data-oid="_h1pdou">
 
                         {formatDate(j.created_at)}
                       </td>
                       <td
-                      className="px-gutter py-4 text-right"
+                      className="px-gutter py-3 text-right"
                       data-oid="zrlsvdt">
 
                         {j.status === "done" ?
@@ -581,7 +591,8 @@ export default function DashboardPage() {
                           </span>
                       }
                       </td>
-                    </tr>);
+                    </tr>
+                  </AnimatedRow>);
 
               })
               }
@@ -615,11 +626,11 @@ export default function DashboardPage() {
         data-oid="u1p66au">
 
         <div
-          className="col-span-1 md:col-span-2 glass-surface p-gutter rounded-2xl border border-primary/10 flex items-start gap-4"
+          className="col-span-1 md:col-span-2 glass-surface p-5 rounded-2xl border border-primary/10 flex items-start gap-4"
           data-oid="jaaioij">
 
           <div
-            className="p-3 rounded-xl bg-primary/10 text-primary"
+            className="p-2 bg-primary/10 text-primary"
             data-oid="9_fqive">
 
             <span className="material-symbols-outlined" data-oid="8o83_tt">

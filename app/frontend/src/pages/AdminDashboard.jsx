@@ -13,6 +13,7 @@ import {
   CreditCard } from
 "lucide-react";
 import { api } from "../api.js";
+import { AnimatedRow } from "../components/AnimatedList.jsx";
 
 const STATUS_BADGE = {
   done: "bg-green-100 text-green-700",
@@ -130,7 +131,7 @@ export default function AdminDashboard() {
     <div className="min-h-screen" data-oid="jbskpmx">
       <header className="border-b bg-white" data-oid="pnmg02e">
         <div
-          className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between"
+          className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between"
           data-oid="q7f.es.">
 
           <h1 className="text-xl font-bold" data-oid="fgxpadk">
@@ -156,12 +157,12 @@ export default function AdminDashboard() {
       </header>
 
       <main
-        className="max-w-5xl mx-auto px-6 py-8 space-y-8"
+        className="max-w-5xl mx-auto px-4 py-6 space-y-6"
         data-oid="gzx:lhq">
 
         {msg &&
         <div
-          className="bg-blue-50 text-blue-700 text-sm px-4 py-2 rounded-lg"
+          className="bg-blue-50 text-blue-700 text-sm px-4 py-1.5 rounded-lg"
           data-oid="r8n-c_6">
 
             {msg}
@@ -169,7 +170,7 @@ export default function AdminDashboard() {
         }
 
         <section
-          className="bg-white rounded-xl border p-6 space-y-4"
+          className="bg-white rounded-xl border p-5 space-y-3"
           data-oid="hie.gpf">
 
           <h2
@@ -194,7 +195,7 @@ export default function AdminDashboard() {
         </section>
 
         <section
-          className="bg-white rounded-xl border p-6 space-y-4"
+          className="bg-white rounded-xl border p-5 space-y-3"
           data-oid="9jy90j2">
 
           <h2
@@ -216,7 +217,7 @@ export default function AdminDashboard() {
         </section>
 
         <section
-          className="bg-white rounded-xl border p-6 space-y-4"
+          className="bg-white rounded-xl border p-5 space-y-3"
           data-oid="q570ou4">
 
           <h2
@@ -243,7 +244,7 @@ export default function AdminDashboard() {
         </section>
 
         <section
-          className="bg-white rounded-xl border p-6 space-y-4"
+          className="bg-white rounded-xl border p-5 space-y-3"
           data-oid="2_0gacw">
 
           <h2 className="font-semibold" data-oid="eqokfnn">
@@ -257,7 +258,7 @@ export default function AdminDashboard() {
         </section>
 
         <section
-          className="bg-white rounded-xl border p-6 space-y-4"
+          className="bg-white rounded-xl border p-5 space-y-3"
           data-oid="cbt.jh.">
 
           <h2
@@ -304,15 +305,15 @@ export default function AdminDashboard() {
 
         <button
           onClick={save}
-          className="bg-blue-600 text-white rounded-lg px-5 py-2.5 font-medium hover:bg-blue-700 flex items-center gap-2"
+          className="bg-blue-600 text-white rounded-lg px-4 py-2 font-medium hover:bg-blue-700 flex items-center gap-2"
           data-oid="_kj.eul">
 
           <Save size={18} data-oid="4lww7qu" /> 설정 저장
         </button>
 
-        <section className="bg-white rounded-xl border p-6" data-oid="a4yy8tg">
+        <section className="bg-white rounded-xl border p-5" data-oid="a4yy8tg">
           <h2
-            className="font-semibold flex items-center gap-2 mb-4"
+            className="font-semibold flex items-center gap-2 mb-3"
             data-oid="s7b0jv5">
 
             <ListChecks size={18} data-oid="8zefyi1" /> 최근 작업
@@ -324,7 +325,7 @@ export default function AdminDashboard() {
                   className="text-left text-slate-500 border-b"
                   data-oid="l91ul.c">
 
-                  <th className="py-2" data-oid=".1p3b_-">
+                  <th className="py-1.5" data-oid=".1p3b_-">
                     파일
                   </th>
                   <th data-oid="9no:5i3">유형</th>
@@ -336,14 +337,14 @@ export default function AdminDashboard() {
                 </tr>
               </thead>
               <tbody data-oid="uiar1v:">
-                {jobs.map((j) =>
+                {jobs.map((j, idx) =>
+                <AnimatedRow key={j.job_id} index={idx}>
                 <tr
-                  key={j.job_id}
                   className="border-b last:border-0"
                   data-oid="xl2a-1r">
 
                     <td
-                    className="py-2 max-w-[180px] truncate"
+                    className="py-1.5 max-w-[180px] truncate"
                     data-oid="jf39w5j">
 
                       {j.filename}
@@ -368,6 +369,7 @@ export default function AdminDashboard() {
                       {j.created_at?.slice(0, 16).replace("T", " ")}
                     </td>
                   </tr>
+                </AnimatedRow>
                 )}
                 {jobs.length === 0 &&
                 <tr data-oid="ridk95-">

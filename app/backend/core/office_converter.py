@@ -7,6 +7,7 @@ from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 from pptx import Presentation
 from pptx.util import Inches as PptxInches
 
@@ -378,12 +379,253 @@ def _normalize_rows(tables: list[dict]) -> list[dict]:
     return tables
 
 
+# ---------------------------------------------------------------------------
+# 데이터 형식 기반 열 정렬 보정 (basic conversion)
+# [Flow: Step 1 (셀 형식 분류) -> Step 2 (정상 행으로 열 프로파일 구축)
+#        -> Step 3 (열 수 어긋난 행을 순차 정렬로 보정) -> Step 4 (보정 로그 수집)]
+# ---------------------------------------------------------------------------
+
+# 형식 판별용 정규식 (구체적 형식 우선)
+_RE_EMAIL = re.compile(r"^[\w.+-]+@[\w-]+\.[\w.-]+$")
+_RE_RRN = re.compile(r"^\d{6}\s*-\s*\d{7}$")  # 주민등록번호
+_RE_BIZNO = re.compile(r"^\d{3}\s*-\s*\d{2}\s*-\s*\d{5}$")  # 사업자등록번호
+_RE_PHONE = re.compile(r"^(0\d{1,2}|\+?\d{1,3})[\s-]?\d{3,4}[\s-]?\d{4}$")
+_RE_ACCOUNT = re.compile(r"^\d{2,6}([\s-]\d{2,6}){1,4}$")  # 계좌번호 (구분자 포함 숫자 그룹)
+_RE_DATE = re.compile(
+    r"^\d{4}[.\-/]\s?\d{1,2}[.\-/]\s?\d{1,2}\.?$"
+    r"|^\d{4}년\s?\d{1,2}월\s?\d{1,2}일$"
+    r"|^\d{1,2}[.\-/]\d{1,2}$"
+)
+_RE_AMOUNT = re.compile(r"^[₩$]?\s?-?\d{1,3}(,\d{3})+(\.\d+)?\s?(원|KRW|USD)?$")
+_RE_INTEGER = re.compile(r"^-?\d+$")
+_RE_DECIMAL = re.compile(r"^-?\d+\.\d+$")
+_RE_KOREAN_NAME = re.compile(r"^[가-힣]{2,4}$")
+
+
+def _classify_cell(value: str) -> str:
+    """셀 문자열을 데이터 형식으로 분류한다.
+
+    반환값: empty, email, rrn, bizno, phone, account, date, amount,
+            decimal, integer, korean_name, string 중 하나.
+    구체적인 형식을 먼저 검사하고, 일치하지 않으면 일반 문자열로 처리한다.
+    """
+    text = (value or "").strip()
+    if not text:
+        return "empty"
+    if _RE_EMAIL.match(text):
+        return "email"
+    if _RE_RRN.match(text):
+        return "rrn"
+    if _RE_BIZNO.match(text):
+        return "bizno"
+    if _RE_PHONE.match(text):
+        return "phone"
+    if _RE_DATE.match(text):
+        return "date"
+    if _RE_AMOUNT.match(text):
+        return "amount"
+    if _RE_DECIMAL.match(text):
+        return "decimal"
+    if _RE_INTEGER.match(text):
+        # 계좌번호 형태(구분자 포함)는 위에서 account로 처리되지 않으므로 여기서 순수 정수만
+        return "integer"
+    if _RE_ACCOUNT.match(text):
+        return "account"
+    if _RE_KOREAN_NAME.match(text):
+        return "korean_name"
+    return "string"
+
+
+# 형식 그룹: 같은 그룹 내 형식은 부분 일치로 간주하여 페널티를 낮춘다.
+_TYPE_GROUP = {
+    "integer": "numeric",
+    "decimal": "numeric",
+    "amount": "numeric",
+    "account": "numeric",
+    "phone": "numeric",
+    "rrn": "numeric",
+    "bizno": "numeric",
+    "korean_name": "text",
+    "string": "text",
+    "email": "text",
+    "date": "text",
+    "empty": "empty",
+}
+
+
+def _build_column_profiles(headers: list[str], rows: list[list[str]]) -> list[dict]:
+    """열 수가 헤더와 정확히 일치하는 '정상 행'만으로 각 열의 형식 프로파일을 만든다.
+
+    반환: 각 열별 {"dominant": 형식, "confidence": 비율, "counts": {형식: 개수}}.
+    정상 행이 3개 미만이면 신뢰도가 낮으므로 confidence를 0으로 표시한다.
+    """
+    from collections import Counter
+
+    col_count = len(headers)
+    clean_rows = [r for r in rows if len(r) == col_count]
+    profiles: list[dict] = []
+    for col_idx in range(col_count):
+        counter: Counter = Counter()
+        for row in clean_rows:
+            # 빈칸은 형식 판단에 약하게만 반영 (모든 열이 가끔 빌 수 있음)
+            counter[_classify_cell(row[col_idx])] += 1
+        non_empty_total = sum(c for t, c in counter.items() if t != "empty")
+        if counter:
+            dominant, dom_count = counter.most_common(1)[0]
+            # 지배 형식이 empty면 non-empty 중 최빈값을 우선 사용
+            if dominant == "empty" and non_empty_total > 0:
+                non_empty = [(t, c) for t, c in counter.items() if t != "empty"]
+                dominant, dom_count = max(non_empty, key=lambda x: x[1])
+            total = sum(counter.values())
+            confidence = dom_count / total if total else 0.0
+        else:
+            dominant, confidence = "string", 0.0
+        if len(clean_rows) < 3:
+            confidence = 0.0
+        profiles.append({"dominant": dominant, "confidence": confidence, "counts": dict(counter)})
+    return profiles
+
+
+def _type_match_cost(cell_type: str, expected_type: str) -> float:
+    """셀 형식과 기대 형식 간의 불일치 비용(0=완전일치, 1=완전불일치)을 계산한다."""
+    if cell_type == expected_type:
+        return 0.0
+    if cell_type == "empty" or expected_type == "empty":
+        return 0.3  # 빈칸은 어느 열에나 어느 정도 허용
+    if _TYPE_GROUP.get(cell_type) == _TYPE_GROUP.get(expected_type):
+        return 0.4  # 같은 그룹(숫자류/문자류)이면 부분 일치
+    return 1.0
+
+
+_GAP_PENALTY = 0.6   # 열을 빈칸으로 건너뛰는 비용 (M<N)
+_MERGE_PENALTY = 0.5  # 인접 셀을 병합하는 비용 (M>N)
+
+
+def _align_row_to_columns(cells: list[str], profiles: list[dict]) -> tuple[list[str], float]:
+    """관측 셀 M개를 기준 열 N개에 순서를 보존하며 정렬한다 (시퀀스 정렬 DP).
+
+    연산: 매칭(형식 비용), 빈칸 삽입(M<N, gap 페널티),
+          인접 셀 병합(M>N, merge 페널티 후 병합 셀 형식 재평가).
+    반환: (정렬된 N길이 행, confidence 0~1).
+    """
+    m = len(cells)
+    n = len(profiles)
+    if n == 0:
+        return [], 0.0
+    if m == n:
+        # 열 수 일치: 정렬 불필요, 형식 적합도만 계산
+        conf = _row_confidence(cells, profiles)
+        return list(cells), conf
+
+    INF = float("inf")
+    # dp[i][j] = 관측 i개, 기준열 j개까지 정렬한 최소 비용
+    dp = [[INF] * (n + 1) for _ in range(m + 1)]
+    # back[i][j] = (op, prev_i, prev_j, 배치된 값 or None)
+    back: list[list] = [[None] * (n + 1) for _ in range(m + 1)]
+    dp[0][0] = 0.0
+
+    for i in range(m + 1):
+        for j in range(n + 1):
+            if dp[i][j] == INF:
+                continue
+            cur = dp[i][j]
+            # 1) 빈칸 삽입: 기준열 j를 빈칸으로 채우고 다음 열로 (관측 소비 없음)
+            if j < n:
+                cost = cur + _GAP_PENALTY
+                if cost < dp[i][j + 1]:
+                    dp[i][j + 1] = cost
+                    back[i][j + 1] = ("gap", i, j, "")
+            # 2) 매칭: 관측 i를 기준열 j에 배치
+            if i < m and j < n:
+                cell_type = _classify_cell(cells[i])
+                cost = cur + _type_match_cost(cell_type, profiles[j]["dominant"])
+                if cost < dp[i + 1][j + 1]:
+                    dp[i + 1][j + 1] = cost
+                    back[i + 1][j + 1] = ("match", i, j, cells[i])
+            # 3) 병합: 관측 i,i+1을 합쳐 기준열 j에 배치 (M>N 처리)
+            if i + 1 < m and j < n:
+                merged = (cells[i] + " " + cells[i + 1]).strip()
+                merged_type = _classify_cell(merged)
+                cost = cur + _MERGE_PENALTY + _type_match_cost(merged_type, profiles[j]["dominant"])
+                if cost < dp[i + 2][j + 1]:
+                    dp[i + 2][j + 1] = cost
+                    back[i + 2][j + 1] = ("merge", i, j, merged)
+
+    if dp[m][n] == INF:
+        # 정렬 실패: 잘라내거나 빈칸 패딩으로 fallback
+        aligned = (list(cells) + [""] * n)[:n]
+        return aligned, 0.0
+
+    # 역추적으로 정렬된 행 복원
+    aligned = [""] * n
+    i, j = m, n
+    while back[i][j] is not None:
+        op, pi, pj, val = back[i][j]
+        if op in ("match", "merge"):
+            aligned[pj] = val
+        i, j = pi, pj
+
+    conf = _row_confidence(aligned, profiles)
+    return aligned, conf
+
+
+def _row_confidence(row: list[str], profiles: list[dict]) -> float:
+    """정렬된 행이 열 프로파일과 얼마나 잘 맞는지 0~1로 산출한다."""
+    if not profiles:
+        return 0.0
+    total = 0.0
+    for idx, prof in enumerate(profiles):
+        cell = row[idx] if idx < len(row) else ""
+        cost = _type_match_cost(_classify_cell(cell), prof["dominant"])
+        # 프로파일 신뢰도로 가중 (신뢰도 낮은 열은 판단 근거 약함)
+        weight = 0.5 + 0.5 * prof.get("confidence", 0.0)
+        total += (1.0 - cost) * weight
+    max_score = sum(0.5 + 0.5 * p.get("confidence", 0.0) for p in profiles)
+    return total / max_score if max_score else 0.0
+
+
+def _correct_tables(tables: list[dict]) -> tuple[list[dict], list[dict]]:
+    """열 수가 어긋난 행을 형식 기반으로 보정하고 보정 로그를 반환한다.
+
+    반환: (보정된 tables, correction_log).
+    correction_log 각 항목: {table_idx, row_num, original, corrected, confidence, reason}.
+    """
+    correction_log: list[dict] = []
+    for table_idx, table in enumerate(tables):
+        headers = table["headers"]
+        col_count = len(headers)
+        if col_count == 0:
+            continue
+        profiles = _build_column_profiles(headers, table["rows"])
+        new_rows: list[list[str]] = []
+        for row_num, row in enumerate(table["rows"], start=1):
+            if len(row) == col_count:
+                new_rows.append(row)
+                continue
+            aligned, confidence = _align_row_to_columns(row, profiles)
+            new_rows.append(aligned)
+            correction_log.append({
+                "table_idx": table_idx + 1,
+                "row_num": row_num,
+                "original": " | ".join(row),
+                "corrected": " | ".join(aligned),
+                "confidence": round(confidence, 2),
+                "reason": f"열 수 불일치 ({len(row)}→{col_count})",
+            })
+        table["rows"] = new_rows
+    return tables, correction_log
+
+
 def markdown_to_csv_basic(markdown: str, out_path: Path) -> Path:
-    """마크다운 표를 하나의 CSV 파일로 통합한다."""
+    """마크다운 표를 하나의 CSV 파일로 통합한다.
+
+    형식 기반 열 정렬 보정을 적용한다. (보정 로그는 xlsx에만 기록하고 CSV는 보정만 적용)
+    """
     import csv as csv_module
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    tables = _normalize_rows(_merge_tables(_parse_markdown_tables(markdown)))
+    corrected, _log = _correct_tables(_merge_tables(_parse_markdown_tables(markdown)))
+    tables = _normalize_rows(corrected)
     with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv_module.writer(f)
         for idx, table in enumerate(tables):
@@ -396,9 +638,13 @@ def markdown_to_csv_basic(markdown: str, out_path: Path) -> Path:
 
 
 def markdown_to_xlsx_basic(markdown: str, out_path: Path) -> Path:
-    """마크다운 표를 하나의 xlsx 파일(단일 시트)에 통합한다."""
+    """마크다운 표를 하나의 xlsx 파일에 통합한다.
+
+    형식 기반 열 정렬 보정을 적용하고, 보정된 행이 있으면 '보정 내역' 시트를 추가한다.
+    """
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    tables = _normalize_rows(_merge_tables(_parse_markdown_tables(markdown)))
+    corrected, correction_log = _correct_tables(_merge_tables(_parse_markdown_tables(markdown)))
+    tables = _normalize_rows(corrected)
     wb = Workbook()
     ws = wb.active
     ws.title = "Tables"
@@ -431,8 +677,33 @@ def markdown_to_xlsx_basic(markdown: str, out_path: Path) -> Path:
                 pass
         ws.column_dimensions[col_letter].width = min(max_len + 2, 60)
 
+    # 보정된 행이 있으면 '보정 내역' 시트를 추가하여 사용자가 검토할 수 있게 한다
+    if correction_log:
+        _write_correction_sheet(wb, correction_log)
+
     wb.save(out_path)
     return out_path
+
+
+def _write_correction_sheet(wb, correction_log: list[dict]) -> None:
+    """보정 로그를 별도 시트에 기록한다. (열 수 불일치로 형식 기반 재정렬된 행 목록)"""
+    ws = wb.create_sheet("보정 내역")
+    log_headers = ["표 번호", "행 번호", "원본", "보정 결과", "신뢰도", "사유"]
+    for col_idx, h in enumerate(log_headers):
+        cell = ws.cell(1, col_idx + 1, h)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for row_idx, entry in enumerate(correction_log, start=2):
+        ws.cell(row_idx, 1, entry["table_idx"])
+        ws.cell(row_idx, 2, entry["row_num"])
+        ws.cell(row_idx, 3, entry["original"])
+        ws.cell(row_idx, 4, entry["corrected"])
+        ws.cell(row_idx, 5, entry["confidence"])
+        ws.cell(row_idx, 6, entry["reason"])
+    widths = [8, 8, 50, 50, 8, 20]
+    for col_idx, w in enumerate(widths):
+        ws.column_dimensions[get_column_letter(col_idx + 1)].width = w
 
 
 # ---------------------------------------------------------------------------

@@ -74,15 +74,11 @@ def run_vision(
             return media_endpoint, media_model, media_api_key
         return endpoint, model, api_key
 
-    def _try_paddleocr_fallback(img: Path, page_num: int, page_text: str) -> str | None:
+    def _try_paddleocr_fallback(img: Path, page_num: int) -> str | None:
         """PaddleOCR 폴백으로 페이지 이미지를 처리한다.
 
-        텍스트 레이어가 감지된 페이지는 폴백하지 않는다.
-
-        [Flow: Step 1 (텍스트 레이어 확인 — 있으면 None) -> Step 2 (폴백 가능 여부 확인) -> Step 3 (paddleocr_client.convert_image 호출) -> Step 4 (성공 시 consume_fallback, markdown 반환) -> Step 5 (실패 시 None)]
+        [Flow: Step 1 (폴백 가능 여부 확인) -> Step 2 (paddleocr_client.convert_image 호출) -> Step 3 (성공 시 consume_fallback, markdown 반환) -> Step 4 (실패 시 None)]
         """
-        if page_text and page_text.strip():
-            return None
         if not fallback_controller.can_use_fallback():
             return None
         try:
@@ -95,24 +91,22 @@ def run_vision(
             return None
 
     def process(page_idx: int, page_num: int, img: Path) -> tuple[int, str]:
-        page_text = ocr_client.extract_pdf_page_text(pdf_path, page_num)
-
-        # 회로가 OPEN이거나 잔액 소진 모드면 폴백을 우선 시도 (텍스트 레이어 없는 페이지만)
+        # run_vision으로 라우팅된 모든 페이지는 PaddleOCR을 우선 사용한다
         if fallback_controller.is_fallback_preferred():
-            fb_result = _try_paddleocr_fallback(img, page_num, page_text)
+            fb_result = _try_paddleocr_fallback(img, page_num)
             if fb_result is not None:
                 return page_num, fb_result
             # 폴백 실패 시 기본 요청으로 진행
 
         ep, mdl, key = resolve_endpoint(page_idx)
         try:
-            content, _ = ocr_client.call_vision(img, prompt, ep, mdl, key, max_tokens, page_text=page_text)
+            content, _ = ocr_client.call_vision(img, prompt, ep, mdl, key, max_tokens)
             fallback_controller.record_success()
             return page_num, ocr_client.extract_markdown_content(content)
         except Exception as e:
             fallback_controller.record_failure()
             logger.warning(f"[vision] page {page_num} 기본 요청 실패, PaddleOCR 폴백 시도: {e}")
-            fb_result = _try_paddleocr_fallback(img, page_num, page_text)
+            fb_result = _try_paddleocr_fallback(img, page_num)
             if fb_result is not None:
                 return page_num, fb_result
             raise

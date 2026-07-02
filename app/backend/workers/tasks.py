@@ -177,14 +177,14 @@ def run_job(job_id: str) -> dict:
             def on_error(page: int, msg: str) -> None:
                 errors.append(f"p{page}: {msg}")
 
-            # [Flow: Step 1 (페이지 크기 검사) -> Step 2 (전체 초과 시 스킵) -> Step 3 (PDF 텍스트 레이어 있음: Docling / 없음: run_vision — PaddleOCR 폴백 우선) -> Step 4 (비-PDF: Docling)]
+            # [Flow: Step 1 (페이지 크기 검사) -> Step 2 (전체 초과 시 스킵) -> Step 3 (기본변환: 텍스트 레이어 있음→Docling / 없음→run_vision / 고급변환: 무조건 run_vision) -> Step 4 (비-PDF: Docling)]
             oversized, total_pages = count_oversized_pages(input_path)
             if oversized > 0:
                 errors.append(f"{input_path.name}: {oversized}페이지가 350mm를 초과하여 파싱할 수 없습니다")
             if oversized == total_pages and total_pages > 0:
                 page_tables = []
                 fmt = "markdown"
-            elif input_path.suffix.lower() == ".pdf" and has_pdf_text_layer(str(input_path)):
+            elif input_path.suffix.lower() == ".pdf" and ocr_model == "basic" and has_pdf_text_layer(str(input_path)):
                 _set_status(db, job, "ocr")
                 page_tables = run_docling(
                     input_path,

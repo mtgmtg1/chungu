@@ -88,9 +88,11 @@ npm run start        # dev server at localhost:3000
 
 - **Audio/Video**: 100% routed to E4B (llama.cpp, `192.168.1.82:18080`)
 - **PDF routing** (임시 정책 — vLLM/Docling 서버 개선 전까지):
-  - **디지털 PDF** (텍스트 레이어 있음, `ocr_client.has_pdf_text_layer()`로 검사): Docling OCR + optional LLM refinement; no per-page PNG rendering.
-  - **스캔 PDF** (텍스트 레이어 없음): `run_vision`으로 처리 — PaddleOCR 폴백이 우선 적용됨 (`is_fallback_preferred() == True`). 텍스트 레이어가 없는 페이지는 PaddleOCR로 처리, 실패 시 vLLM으로 fallback.
-  - 라우팅 분기 순서: `tasks.py`에서 `has_pdf_text_layer()` → True면 Docling, False면 `run_vision`.
+  - **기본변환** (`ocr_model == "basic"`): `has_pdf_text_layer()` → True면 Docling, False면 `run_vision`(PaddleOCR 우선)
+  - **고급변환** (`ocr_model == "premium"`): 무조건 `run_vision` — 모든 페이지 PaddleOCR 우선, 실패 시 vLLM fallback
+  - **이미지 파일**: `run_media` → PaddleOCR 우선 (`is_fallback_preferred() == True`)
+  - 라우팅 분기 순서: `tasks.py`에서 `ocr_model == "basic" and has_pdf_text_layer()` → True면 Docling, 그 외 PDF는 `run_vision`
+  - `run_vision` 내에서 개별 페이지 텍스트 레이어 검사 없음 — 모든 페이지 동일하게 PaddleOCR 우선 처리
 - **Images/PDF pages (pipeline=vision)**: rendered to PNG by PyMuPDF and sent page-by-page to the vLLM proxy (`192.168.1.69:18080`). The proxy round-robins between two Gemma-4 26B A4B AWQ 4bit instances (`18000` on GPU 1/2, `18001` on GPU 0/3). If the request's `model` name does not match the loaded model on the selected backend, the proxy rewrites it to the actual backend model name before forwarding.
 - **Mixed media batches** (images/audio/video): dynamically routed based on total count, but E4B image load is minimized to prioritize audio/video:
   - ≤6 items: 1:3 (vLLM:E4B) — E4B 1/3

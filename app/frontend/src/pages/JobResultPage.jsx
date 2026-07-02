@@ -394,17 +394,19 @@ export default function JobResultPage() {
           pct={pct}
           statusLabel={statusLabel(job.status)}
           progressText={
-            job.total_pages ?
-              t("page:result.pageProgress", {
-                done: job.done_pages || 0,
-                total: job.total_pages,
-                pct
-              }) :
-              t("page:result.fileProgress", {
-                done: job.done_files || 0,
-                total: job.total_files,
-                pct
-              })
+            job.total_pages === 100
+              ? `${pct}%`
+              : job.total_pages
+                ? t("page:result.pageProgress", {
+                  done: job.done_pages || 0,
+                  total: job.total_pages,
+                  pct
+                }) :
+                t("page:result.fileProgress", {
+                  done: job.done_files || 0,
+                  total: job.total_files,
+                  pct
+                })
           }
         />
       }

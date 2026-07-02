@@ -55,6 +55,7 @@ export default function JobResultPage() {
   const [currentPdfPage, setCurrentPdfPage] = useState(1);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [now, setNow] = useState(Date.now());
+  const startTimeRef = useRef(null);
   const pollRef = useRef(null);
   const editorRef = useRef(null);
 
@@ -78,9 +79,12 @@ export default function JobResultPage() {
     setCurrentPdfPage(1);
   }, [selectedFileIndex]);
 
-  // [Flow: Step 1 (활성 작업 확인) -> Step 2 (1초 간격 now 갱신) -> Step 3 (시간진행바 리렌더링)]
+  // [Flow: Step 1 (활성 작업 확인) -> Step 2 (UI 첫 관측 시점 기록) -> Step 3 (1초 간격 now 갱신) -> Step 4 (시간진행바 리렌더링)]
   useEffect(() => {
     if (job?.status === "done" || job?.status === "error") return;
+    if (!startTimeRef.current) {
+      startTimeRef.current = Date.now();
+    }
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [job?.status]);
@@ -199,7 +203,7 @@ export default function JobResultPage() {
 
   const xlsxCost = job ? (job.total_pages || job.total_files || 1) * 3 : 0;
 
-  const pct = getDisplayProgress(job, 20, now);
+  const pct = getDisplayProgress(job, 20, now, startTimeRef.current);
 
   return (
     <div

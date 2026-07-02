@@ -1,7 +1,8 @@
-// [Flow: Step 1 (실제 진행률 계산) -> Step 2 (created_at을 UTC로 파싱) -> Step 3 (시간 기반 추정 진행률 계산) -> Step 4 (20% cap 및 실제값 우선으로 합산)]
+// [Flow: Step 1 (실제 진행률 계산) -> Step 2 (UI가 처음 본 시점 또는 created_at) -> Step 3 (시간 기반 추정 진행률 계산, 2배 느림) -> Step 4 (20% cap 및 실제값 우선으로 합산)]
 // PDF OCR 작업의 시간진행바(estimated progress) 계산 유틸리티.
 
 const DEFAULT_TIME_CAP = 20;
+const TIME_PROGRESS_SLOWDOWN = 2; // 전체 페이지 수 * 2 초에 100%에 도달하도록 속도 절반
 
 /**
  * ISO 문자열을 UTC 기준 Date로 파싱한다.
@@ -34,17 +35,20 @@ export function getActualProgress(job) {
 
 /**
  * 시간 경과 기반 추정 진행률을 계산한다.
- * job.created_at를 기준으로 초당 100/total_pages %씩 상승하며, maxTimePct(기본 20%)까지만 올라간다.
+ * UI가 처음 본 시점(startTime)을 기준으로 경과 시간을 계산한다. startTime이 없으면 created_at을 폴백으로 사용한다.
+ * 전체 페이지 수의 2배 시간(초)에 100%에 도달하며, maxTimePct(기본 20%)까지만 올라간다.
  * @param {object} job - API에서 받은 job 객체
  * @param {number} maxTimePct - 시간진행바 최대치 (기본 20)
  * @param {number} now - 기준 시간戳 (ms), 기본값 Date.now()
+ * @param {number | null} startTime - UI가 처음 본 시점 (ms), 기본값 null
  * @returns {number} 0~maxTimePct 사이 정수
  */
-export function getTimeProgress(job, maxTimePct = DEFAULT_TIME_CAP, now = Date.now()) {
-  if (!job || !job.created_at) return 0;
+export function getTimeProgress(job, maxTimePct = DEFAULT_TIME_CAP, now = Date.now(), startTime = null) {
+  if (!job) return 0;
   const total = job.total_pages || job.total_files || 1;
-  const elapsedSeconds = (now - parseUtcDate(job.created_at).getTime()) / 1000;
-  const pct = Math.round((elapsedSeconds / total) * 100);
+  const start = startTime || (job.created_at ? parseUtcDate(job.created_at).getTime() : now);
+  const elapsedSeconds = (now - start) / 1000;
+  const pct = Math.round((elapsedSeconds / (total * TIME_PROGRESS_SLOWDOWN)) * 100);
   return Math.min(maxTimePct, Math.min(100, pct));
 }
 
@@ -54,10 +58,11 @@ export function getTimeProgress(job, maxTimePct = DEFAULT_TIME_CAP, now = Date.n
  * @param {object} job - API에서 받은 job 객체
  * @param {number} maxTimePct - 시간진행바 최대치 (기본 20)
  * @param {number} now - 기준 시간戳 (ms), 기본값 Date.now()
+ * @param {number | null} startTime - UI가 처음 본 시점 (ms), 기본값 null
  * @returns {number} 0~100 사이 정수
  */
-export function getDisplayProgress(job, maxTimePct = DEFAULT_TIME_CAP, now = Date.now()) {
+export function getDisplayProgress(job, maxTimePct = DEFAULT_TIME_CAP, now = Date.now(), startTime = null) {
   const actual = getActualProgress(job);
-  const time = getTimeProgress(job, maxTimePct, now);
+  const time = getTimeProgress(job, maxTimePct, now, startTime);
   return Math.max(actual, time);
 }

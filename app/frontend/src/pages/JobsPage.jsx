@@ -165,6 +165,7 @@ export default function JobsPage() {
   const [deleting, setDeleting] = useState({});
   const [now, setNow] = useState(Date.now());
   const pollRef = useRef(null);
+  const jobStartTimes = useRef(new Map());
 
   const statusLabel = (status) => t(`common:status.${status}`) || status;
   const fileTypeLabel = (type) => t(`common:fileType.${type}`) || type;
@@ -209,6 +210,16 @@ export default function JobsPage() {
     if (!hasActive) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
+  }, [jobs]);
+
+  // [Flow: Step 1 (각 활성 작업 첫 관측 시점 기록) -> Step 2 (Map에 job_id별 startTime 저장)]
+  useEffect(() => {
+    const t = Date.now();
+    jobs.forEach((j) => {
+      if (j.status !== "done" && j.status !== "error" && !jobStartTimes.current.has(j.job_id)) {
+        jobStartTimes.current.set(j.job_id, t);
+      }
+    });
   }, [jobs]);
 
   async function load() {
@@ -754,7 +765,7 @@ export default function JobsPage() {
                         </div>
                         {j.status !== "done" && j.status !== "error" && (j.total_pages > 0 || j.total_files > 0) && (
                           (() => {
-                            const displayPct = getDisplayProgress(j, 20, now);
+                            const displayPct = getDisplayProgress(j, 20, now, jobStartTimes.current.get(j.job_id));
                             return (
                               <div className="mt-1.5 flex items-center gap-2 min-w-0">
                                 <div className="flex-1 h-1.5 bg-surface-container-high rounded-full overflow-hidden min-w-[40px]">
@@ -927,7 +938,7 @@ export default function JobsPage() {
                     </div>
                     {j.status !== "done" && j.status !== "error" && (j.total_pages > 0 || j.total_files > 0) && (
                       (() => {
-                        const displayPct = getDisplayProgress(j, 20, now);
+                        const displayPct = getDisplayProgress(j, 20, now, jobStartTimes.current.get(j.job_id));
                         return (
                           <div className="flex items-center gap-2">
                             <div className="flex-1 h-1.5 bg-surface-container-high rounded-full overflow-hidden">

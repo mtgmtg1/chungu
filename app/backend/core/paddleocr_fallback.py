@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-# [Flow: Step 1 (요청 도착) -> Step 2 (한도 은행 정산) -> Step 3 (회로 차단기 상태 확인) -> Step 4 (폴백 가능 여부 판단) -> Step 5 (폴백 사용 시 카운터 차감)]
-# PaddleOCR 폴백 제어 모듈 — 회로 차단기(Circuit Breaker) + 한도 은행(Limit Bank)
+# [Flow: Step 1 (요청 도착) -> Step 2 (회로 차단기 상태 확인) -> Step 3 (폴백 가능 여부 판단)]
+# PaddleOCR 폴백 제어 모듈 — 회로 차단기(Circuit Breaker) only
 # Redis 기반 상태 관리, Redis 불가 시 in-memory fallback
 import logging
 import threading
 import time
-from datetime import datetime, timezone
 
 from ..config import settings
 
@@ -22,20 +21,6 @@ def _now_epoch() -> float:
     return time.time()
 
 
-def _hour_key(dt: datetime | None = None) -> str:
-    """시간 단위 키를 YYYYMMDDHH 형식으로 반환한다."""
-    if dt is None:
-        dt = datetime.now(timezone.utc)
-    return dt.strftime("%Y%m%d%H")
-
-
-def _day_key(dt: datetime | None = None) -> str:
-    """일일 단위 키를 YYYYMMDD 형식으로 반환한다."""
-    if dt is None:
-        dt = datetime.now(timezone.utc)
-    return dt.strftime("%Y%m%d")
-
-
 def _minute_bucket(epoch: float | None = None) -> str:
     """분 단위 버킷 키를 반환한다 (회로 차단기 실패 카운트용)."""
     if epoch is None:
@@ -50,10 +35,6 @@ class _InMemoryState:
         self.cb_state: str = CB_CLOSED
         self.cb_opened_at: float = 0.0
         self.cb_fail_buckets: dict[str, int] = {}
-        self.bank_balance: int = 0
-        self.bank_last_hour: str = _hour_key()
-        self.bank_hourly: dict[str, int] = {}
-        self.bank_daily: dict[str, int] = {}
         self._lock = threading.Lock()
 
     def get(self, key: str) -> str | None:
@@ -62,16 +43,8 @@ class _InMemoryState:
                 return self.cb_state
             if key == "paddleocr:cb:opened_at":
                 return str(self.cb_opened_at) if self.cb_opened_at else None
-            if key == "paddleocr:bank:balance":
-                return str(self.bank_balance)
-            if key == "paddleocr:bank:last_hour":
-                return self.bank_last_hour
             if key.startswith("paddleocr:cb:fail:"):
                 return str(self.cb_fail_buckets.get(key, 0))
-            if key.startswith("paddleocr:bank:hour:"):
-                return str(self.bank_hourly.get(key, 0))
-            if key.startswith("paddleocr:bank:day:"):
-                return str(self.bank_daily.get(key, 0))
             return None
 
     def set(self, key: str, value: str) -> None:
@@ -80,39 +53,23 @@ class _InMemoryState:
                 self.cb_state = value
             elif key == "paddleocr:cb:opened_at":
                 self.cb_opened_at = float(value) if value else 0.0
-            elif key == "paddleocr:bank:balance":
-                self.bank_balance = int(value)
-            elif key == "paddleocr:bank:last_hour":
-                self.bank_last_hour = value
 
     def incr(self, key: str, amount: int = 1) -> int:
         with self._lock:
             if key.startswith("paddleocr:cb:fail:"):
                 self.cb_fail_buckets[key] = self.cb_fail_buckets.get(key, 0) + amount
                 return self.cb_fail_buckets[key]
-            if key.startswith("paddleocr:bank:hour:"):
-                self.bank_hourly[key] = self.bank_hourly.get(key, 0) + amount
-                return self.bank_hourly[key]
-            if key.startswith("paddleocr:bank:day:"):
-                self.bank_daily[key] = self.bank_daily.get(key, 0) + amount
-                return self.bank_daily[key]
-            if key == "paddleocr:bank:balance":
-                self.bank_balance += amount
-                return self.bank_balance
             return 0
 
     def expire(self, key: str, seconds: int) -> None:
-        # in-memory에서는 TTL 미지원 (lazy cleanup은 호출부에서 처리)
         pass
 
 
 class FallbackController:
-    """회로 차단기와 한도 은행을 통합 관리하는 싱글톤 컨트롤러.
+    """회로 차단기를 관리하는 싱글톤 컨트롤러.
 
     [Flow: record_failure() -> 1분 윈도우 실패 카운트 -> 3회 이상 시 OPEN 전환]
-    [Flow: _settle_bank() -> 경과 시간 × 시간당 할당량을 잔액에 적립 -> 상한 20000]
-    [Flow: can_use_fallback() -> 잔액 > 0 AND 일일 한도 미초과]
-    [Flow: consume_fallback() -> 잔액 -1, 시간/일 카운터 +1]
+    [Flow: can_use_fallback() -> fallback_enabled AND 회로 차단기 CLOSED/HALF_OPEN]
     """
 
     _instance: "FallbackController | None" = None
@@ -245,86 +202,24 @@ class FallbackController:
 
         return True
 
-    # ─── 한도 은행 (Limit Bank) ───
-
-    def _settle_bank(self) -> None:
-        """경과한 시간에 대해 미사용 시간당 할당량을 잔액에 적립한다.
-
-        [Flow: Step 1 (last_hour와 현재 시간 비교) -> Step 2 (경과 시간 × 할당량을 잔액에 적립) -> Step 3 (상한 20000 적용) -> Step 4 (last_hour 업데이트)]
-        """
-        current_hour = _hour_key()
-        last_hour = self._get("paddleocr:bank:last_hour") or current_hour
-
-        if last_hour == current_hour:
-            return
-
-        # 경과한 시간 수 계산
-        try:
-            last_dt = datetime.strptime(last_hour, "%Y%m%d%H").replace(tzinfo=timezone.utc)
-            current_dt = datetime.strptime(current_hour, "%Y%m%d%H").replace(tzinfo=timezone.utc)
-            hours_elapsed = int((current_dt - last_dt).total_seconds() / 3600)
-        except (ValueError, TypeError):
-            hours_elapsed = 0
-
-        if hours_elapsed <= 0:
-            return
-
-        quota = settings.paddleocr_fallback_hourly_quota
-        accrued = hours_elapsed * quota
-        current_balance = int(self._get("paddleocr:bank:balance") or "0")
-        new_balance = min(current_balance + accrued, settings.paddleocr_fallback_daily_limit)
-
-        self._set("paddleocr:bank:balance", str(new_balance))
-        self._set("paddleocr:bank:last_hour", current_hour)
-
-        if accrued > 0:
-            logger.info(
-                f"[paddleocr-fallback] 한도 은행 적립: +{accrued} "
-                f"({hours_elapsed}h × {quota}), 잔액={new_balance}/{settings.paddleocr_fallback_daily_limit}"
-            )
-
     def can_use_fallback(self) -> bool:
-        """폴백 사용 가능 여부를 반환한다 (잔액 > 0 AND 일일 한도 미초과).
+        """폴백 사용 가능 여부를 반환한다.
 
         Returns:
-            True if 잔액 > 0 and 일일 사용량 < 일일 한도
+            True if fallback_enabled AND 회로 차단기가 OPEN이 아님
         """
         if not settings.paddleocr_fallback_enabled:
             return False
 
-        self._settle_bank()
-
-        balance = int(self._get("paddleocr:bank:balance") or "0")
-        if balance <= 0:
-            return False
-
-        day_key = f"paddleocr:bank:day:{_day_key()}"
-        daily_used = int(self._get(day_key) or "0")
-        if daily_used >= settings.paddleocr_fallback_daily_limit:
-            logger.warning(
-                f"[paddleocr-fallback] 일일 한도 초과: {daily_used}/{settings.paddleocr_fallback_daily_limit}"
-            )
+        state = self._check_and_transition()
+        if state == CB_OPEN:
             return False
 
         return True
 
     def consume_fallback(self) -> None:
-        """폴백 사용을 기록한다: 잔액 -1, 시간/일 카운터 +1.
-
-        [Flow: Step 1 (잔액 차감) -> Step 2 (시간당 카운터 +1) -> Step 3 (일일 카운터 +1)]
-        """
-        self._incr("paddleocr:bank:balance", -1)
-
-        hour_key = f"paddleocr:bank:hour:{_hour_key()}"
-        self._incr(hour_key)
-        self._expire(hour_key, 90000)  # 25시간 TTL
-
-        day_key = f"paddleocr:bank:day:{_day_key()}"
-        self._incr(day_key)
-        self._expire(day_key, 172800)  # 48시간 TTL
-
-        balance = int(self._get("paddleocr:bank:balance") or "0")
-        logger.debug(f"[paddleocr-fallback] 폴백 사용 기록: 잔액={balance}")
+        """폴백 사용을 기록한다 (현재 no-op — 한도 은행 제거됨)."""
+        pass
 
     # ─── 통합 인터페이스 ───
 
@@ -332,23 +227,12 @@ class FallbackController:
         """현재 폴백 시스템 상태를 반환한다 (모니터링용).
 
         Returns:
-            회로 차단기 상태, 잔액, 시간/일 사용량을 포함한 dict
+            회로 차단기 상태를 포함한 dict
         """
-        self._settle_bank()
         state = self._check_and_transition()
-        balance = int(self._get("paddleocr:bank:balance") or "0")
-        hour_key = f"paddleocr:bank:hour:{_hour_key()}"
-        day_key = f"paddleocr:bank:day:{_day_key()}"
-        hourly_used = int(self._get(hour_key) or "0")
-        daily_used = int(self._get(day_key) or "0")
 
         return {
             "circuit_breaker_state": state,
-            "bank_balance": balance,
-            "hourly_used": hourly_used,
-            "hourly_quota": settings.paddleocr_fallback_hourly_quota,
-            "daily_used": daily_used,
-            "daily_limit": settings.paddleocr_fallback_daily_limit,
             "fallback_enabled": settings.paddleocr_fallback_enabled,
         }
 

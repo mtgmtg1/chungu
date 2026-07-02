@@ -207,28 +207,23 @@ Server `.env` must be updated manually (not overwritten by rsync).
   - **Media 파이프라인** (`pipeline_media.py`): 이미지 파일만 폴백 (비디오/오디오 제외).
   - **Docling 파이프라인** (`pipeline_docling.py`): 폴백 안 함 (이미지가 아닌 문서).
 - 폴백 우선 조건 (`paddleocr_fallback.py:is_fallback_preferred()`):
-  - **임시 정책** (vLLM/Docling 서버 개선 전까지): `paddleocr_fallback_enabled == True`이면 항상 `True` 반환 — 모든 변환 요청이 PaddleOCR을 우선 사용.
-  - 기존 로직 (서버 개선 후 복귀 예정):
-    1. **잔액 소진 모드 (drain mode)**: 한도 은행 잔액 ≥ 2×시간당 할당량 (1600) → 회로 차단기 상태 무관하게 폴백 우선
-    2. **회로 차단기 OPEN/HALF_OPEN**: 잔액 > 0 시 폴백 우선
+  - `paddleocr_fallback_enabled == True`이면 항상 `True` 반환 — 모든 변환 요청이 PaddleOCR을 우선 사용.
 - 회로 차단기 (Circuit Breaker):
   - 60초 내 3회 실패 → OPEN (600초)
   - OPEN 경과 후 → HALF_OPEN → 성공 시 CLOSED 복귀
-- 한도 은행 (Limit Bank):
-  - 시간당 할당량: 800회, 일일 한도: 20,000회
-  - 미사용 시간 할당량은 잔액에 누적 적립 (상한 20,000)
-  - Redis 기반 상태 관리, Redis 불가 시 in-memory fallback
+  - `can_use_fallback()`: fallback_enabled AND 회로 차단기가 OPEN이 아님
+  - 한도 은행(Limit Bank) 시스템은 제거됨 — 사용량 제한 없음
 - `paddleocr_service/main.py`의 `/api/convert` 엔드포인트는 이미지 확장자만 허용하며, AI Studio API에 비동기 job을 제출하고 폴링으로 결과를 수신한다.
 - `paddleocr_client.py`는 `convert_file()` (docling_client 호환 시그니처) 및 `convert_image()` (경량 이미지 전용) 함수를 제공한다.
 - Key files:
-  - `app/backend/core/paddleocr_fallback.py` — 회로 차단기 + 한도 은행 + `is_fallback_preferred()`
+  - `app/backend/core/paddleocr_fallback.py` — 회로 차단기 + `is_fallback_preferred()`
   - `app/backend/core/paddleocr_client.py` — AI Studio API 클라이언트 (이미지 확장자 체크)
   - `app/backend/paddleocr_service/main.py` — AI Studio API 프록시 서비스 (`/api/convert`)
   - `app/backend/paddleocr_service/Dockerfile` — AI Studio API 프록시용 컨테이너
-  - `app/backend/core/pipeline_vision.py` — 텍스트 레이어 감지 + 폴백
+  - `app/backend/core/pipeline_vision.py` — PaddleOCR 우선 + vLLM fallback
   - `app/backend/core/pipeline_media.py` — 이미지 전용 폴백
   - `app/backend/core/ocr_client.py` — `has_pdf_text_layer()` PDF 텍스트 레이어 검사
-  - `app/backend/workers/tasks.py` — PDF 라우팅 분기 (텍스트 레이어 → Docling / 스캔 → run_vision)
+  - `app/backend/workers/tasks.py` — PDF 라우팅 분기 (기본변환: 텍스트 레이어 → Docling / 스캔 → run_vision / 고급변환: 무조건 run_vision)
 - Docker Compose: `paddleocr_service` 서비스 정의, worker/beat에 `PADDLEOCR_SERVICE_URL` 환경변수 전달.
 - 환경변수: `PADDLEOCR_API_TOKEN`, `PADDLEOCR_API_URL`, `PADDLEOCR_SERVICE_URL`, `PADDLEOCR_FALLBACK_ENABLED` 등.
 

@@ -1,7 +1,24 @@
-// [Flow: Step 1 (실제 진행률 계산) -> Step 2 (시간 기반 추정 진행률 계산) -> Step 3 (20% cap 및 실제값 우선으로 합산)]
+// [Flow: Step 1 (실제 진행률 계산) -> Step 2 (created_at을 UTC로 파싱) -> Step 3 (시간 기반 추정 진행률 계산) -> Step 4 (20% cap 및 실제값 우선으로 합산)]
 // PDF OCR 작업의 시간진행바(estimated progress) 계산 유틸리티.
 
 const DEFAULT_TIME_CAP = 20;
+
+/**
+ * ISO 문자열을 UTC 기준 Date로 파싱한다.
+ * 서버에서 timezone 마커 없이 전달된 naive datetime을 UTC로 처리하여, 클라이언트 로컬 타임존과 무관하게 경과 시간을 계산한다.
+ * @param {string} dateStr - ISO 문자열
+ * @returns {Date} UTC 기준 Date
+ */
+function parseUtcDate(dateStr) {
+  if (!dateStr) return new Date(0);
+  const s = String(dateStr).trim();
+  // 이미 Z 또는 +HH:MM/-HH:MM 형식이면 그대로 파싱
+  if (s.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(s)) {
+    return new Date(s);
+  }
+  // timezone 마커가 없으면 UTC로 해석
+  return new Date(`${s}Z`);
+}
 
 /**
  * 실제 done/total 기반 진행률을 계산한다.
@@ -26,7 +43,7 @@ export function getActualProgress(job) {
 export function getTimeProgress(job, maxTimePct = DEFAULT_TIME_CAP, now = Date.now()) {
   if (!job || !job.created_at) return 0;
   const total = job.total_pages || job.total_files || 1;
-  const elapsedSeconds = (now - new Date(job.created_at).getTime()) / 1000;
+  const elapsedSeconds = (now - parseUtcDate(job.created_at).getTime()) / 1000;
   const pct = Math.round((elapsedSeconds / total) * 100);
   return Math.min(maxTimePct, Math.min(100, pct));
 }

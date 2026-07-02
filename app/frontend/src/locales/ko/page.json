@@ -174,8 +174,6 @@
     "unknownError": "알 수 없는 오류",
     "pageProgress": "{{done}} / {{total}} 페이지 ({{pct}}%)",
     "fileProgress": "{{done}} / {{total}} 파일 ({{pct}}%)",
-    "pageList": "페이지 목록",
-    "totalPages": "총 {{total}}페이지",
     "originalImage": "원본 이미지 {{number}}",
     "leaveNotice": "이 페이지를 나가셔도 됩니다. 완료 시 완료 이메일을 보내드립니다."
   },

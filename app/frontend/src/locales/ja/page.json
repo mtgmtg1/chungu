@@ -174,8 +174,6 @@
     "unknownError": "不明なエラー",
     "pageProgress": "{{done}} / {{total}} ページ ({{pct}}%)",
     "fileProgress": "{{done}} / {{total}} ファイル ({{pct}}%)",
-    "pageList": "ページリスト",
-    "totalPages": "合計 {{total}} ページ",
     "originalImage": "元の画像 {{number}}",
     "leaveNotice": "このページから離れても構いません。完了時に完了メールをお送りします。"
   },

@@ -431,7 +431,6 @@ export default function JobResultPage() {
         sourceType={sourceType}
         sourceFiles={sourceFiles}
         imageUrls={imageUrls}
-        sidebarOpen={sidebarOpen}
         data-oid="x.dznfp" />
 
       }

@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
-# [Flow: Step 1 (마크다운 블록 파싱) -> Step 2 (docx/pptx/xlsx 작성) -> Step 3 (파일 경로 반환)]
+# [Flow: Step 1 (마크다운/HTML 블록 파싱) -> Step 2 (docx/pptx/xlsx 작성) -> Step 3 (파일 경로 반환)]
+import base64
 import html as html_module
+import io
 import re
 from pathlib import Path
+from urllib.parse import urlparse
+
+import lxml.html
+from lxml.etree import Comment as _CommentFunc
+from PIL import Image as PILImage
 
 from docx import Document
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -148,6 +158,455 @@ def _split_text_inline(text: str) -> list[tuple[str, dict]]:
 
 
 # ---------------------------------------------------------------------------
+# HTML helper utilities (PaddleOCR HTML output)
+# ---------------------------------------------------------------------------
+
+# [Flow: Step 1 (HTML 태그 패턴 검사) -> Step 2 (Boolean 반환)]
+def _contains_html(text: str) -> bool:
+    """마크다운 문자열에 변환이 필요한 HTML 태그가 포함되어 있는지 확인한다."""
+    if not text:
+        return False
+    return bool(
+        re.search(
+            r"<(/?)(table|tr|td|th|thead|tbody|tfoot|caption|img|div|p|h[1-6]|ul|ol|li|br|b|strong|i|em|u|s|strike|del|a|span|pre|code|blockquote|hr|html|body|head)\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
+# [Flow: Step 1 (주석 텍스트에서 페이지 마커 패턴 검사) -> Step 2 (Boolean 반환)]
+def _is_page_marker(text: str | None) -> bool:
+    """HTML 주석이 페이지 구분 마커인지 확인한다."""
+    if not text:
+        return False
+    return bool(re.search(r"페이지\s*\d+|page\s*\d+", text, re.IGNORECASE))
+
+
+# [Flow: Step 1 (HTML 노드의 모든 직후/자식 텍스트 수집) -> Step 2 (단일 문자열 반환)]
+def _get_inner_text(node) -> str:
+    """HTML 노드의 모든 직후 및 자식 텍스트를 순서대로 하나의 문자열로 반환한다."""
+    parts = [node.text or ""]
+    for child in node.iterchildren():
+        parts.append(_get_inner_text(child))
+        parts.append(child.tail or "")
+    return "".join(parts)
+
+
+# [Flow: Step 1 (data URI 또는 http URL 파싱) -> Step 2 (base64/HTTP 디코딩) -> Step 3 (PIL로 이미지 열기) -> Step 4 (BytesIO, width, height 반환)]
+def _decode_image_from_src(src: str) -> tuple[io.BytesIO, int, int] | None:
+    """이미지 src를 디코딩하여 메모리 버퍼와 원본 크기를 반환한다.
+
+    data:image/...;base64,... 형식과 http(s) URL을 지원한다.
+    """
+    if not src:
+        return None
+
+    src = src.strip()
+    image_stream: io.BytesIO | None = None
+    if src.startswith("data:"):
+        if ";base64," not in src:
+            return None
+        _, b64_data = src.split(";base64,", 1)
+        try:
+            image_bytes = base64.b64decode(b64_data)
+        except Exception:
+            return None
+        image_stream = io.BytesIO(image_bytes)
+    elif src.startswith(("http://", "https://")):
+        try:
+            import requests
+
+            response = requests.get(src, timeout=30)
+            response.raise_for_status()
+            image_stream = io.BytesIO(response.content)
+        except Exception:
+            return None
+    else:
+        return None
+
+    if image_stream is None:
+        return None
+
+    try:
+        with PILImage.open(image_stream) as img:
+            width, height = img.size
+            image_stream.seek(0)
+            return image_stream, width, height
+    except Exception:
+        return None
+
+
+# [Flow: Step 1 (하이퍼링크 관계 생성) -> Step 2 (w:hyperlink 요소 작성) -> Step 3 (문단에 추가)]
+def _add_html_hyperlink(paragraph, url: str, text: str) -> None:
+    """문단에 클릭 가능한 하이퍼링크 run을 추가한다."""
+    if not url or not text:
+        if text:
+            paragraph.add_run(text)
+        return
+
+    part = paragraph.part
+    r_id = part.relate_to(url, RT.HYPERLINK, is_external=True)
+
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), r_id)
+
+    run = OxmlElement("w:r")
+    rPr = OxmlElement("w:rPr")
+    color = OxmlElement("w:color")
+    color.set(qn("w:val"), "0000FF")
+    rPr.append(color)
+    u = OxmlElement("w:u")
+    u.set(qn("w:val"), "single")
+    rPr.append(u)
+    run.append(rPr)
+
+    t = OxmlElement("w:t")
+    t.text = text
+    run.append(t)
+    hyperlink.append(run)
+    paragraph._p.append(hyperlink)
+
+
+# [Flow: Step 1 (노드 텍스트 수집) -> Step 2 (자식 태그에 따른 서식 갱신) -> Step 3 (재귀 수집) -> Step 4 (tail 텍스트 수집)]
+def _collect_html_inline_runs(node, fmt: dict | None = None) -> list[dict]:
+    """HTML 노드의 인라인 콘텐츠를 {"type", "text", "fmt", "url"} 형태로 수집한다.
+
+    type은 "text", "break", "link" 중 하나다.
+    """
+    if fmt is None:
+        fmt = {}
+
+    items: list[dict] = []
+    if node.text and node.text:
+        items.append({"type": "text", "text": node.text, "fmt": fmt.copy()})
+
+    for child in node.iterchildren():
+        if child.tag is _CommentFunc:
+            continue
+
+        child_tag = child.tag.lower() if isinstance(child.tag, str) else ""
+        child_fmt = fmt.copy()
+
+        if child_tag == "br":
+            items.append({"type": "break"})
+        elif child_tag in ("b", "strong"):
+            child_fmt["bold"] = True
+            items.extend(_collect_html_inline_runs(child, child_fmt))
+        elif child_tag in ("i", "em"):
+            child_fmt["italic"] = True
+            items.extend(_collect_html_inline_runs(child, child_fmt))
+        elif child_tag == "u":
+            child_fmt["underline"] = True
+            items.extend(_collect_html_inline_runs(child, child_fmt))
+        elif child_tag in ("s", "strike", "del"):
+            child_fmt["strike"] = True
+            items.extend(_collect_html_inline_runs(child, child_fmt))
+        elif child_tag == "code":
+            child_fmt["code"] = True
+            items.extend(_collect_html_inline_runs(child, child_fmt))
+        elif child_tag == "a":
+            items.append({"type": "link", "url": child.get("href", ""), "text": _get_inner_text(child)})
+        else:
+            items.extend(_collect_html_inline_runs(child, child_fmt))
+
+        if child.tail and child.tail:
+            items.append({"type": "text", "text": child.tail, "fmt": fmt.copy()})
+
+    return items
+
+
+# [Flow: Step 1 (수집된 인라인 요소 순회) -> Step 2 (run 또는 하이퍼링크 추가)]
+def _add_html_runs_to_paragraph(paragraph, node) -> None:
+    """HTML 노드의 인라인 콘텐츠를 문단에 run으로 추가한다."""
+    for item in _collect_html_inline_runs(node):
+        kind = item.get("type")
+        if kind == "break":
+            run = paragraph.add_run()
+            run.add_break()
+            continue
+
+        if kind == "link":
+            _add_html_hyperlink(paragraph, item.get("url", ""), item.get("text", ""))
+            continue
+
+        text = item.get("text", "")
+        if not text:
+            continue
+
+        fmt = item.get("fmt", {})
+        run = paragraph.add_run(text)
+        if fmt.get("bold"):
+            run.bold = True
+        if fmt.get("italic"):
+            run.italic = True
+        if fmt.get("underline"):
+            run.font.underline = True
+        if fmt.get("strike"):
+            run.font.strike = True
+        if fmt.get("code"):
+            run.font.name = "Courier New"
+            run.font.size = Pt(10)
+
+
+# [Flow: Step 1 (HTML tr/td/th 노드 수집) -> Step 2 (DOCX 표 생성) -> Step 3 (셀 콘텐츠 작성)]
+def _add_html_table_to_doc(doc, table_node) -> None:
+    """HTML table 노드를 DOCX 표로 변환한다."""
+    rows: list[list] = []
+    for tr in table_node.iterchildren():
+        tr_tag = tr.tag.lower() if isinstance(tr.tag, str) else ""
+        if tr_tag != "tr":
+            continue
+        cells = []
+        for cell in tr.iterchildren():
+            cell_tag = cell.tag.lower() if isinstance(cell.tag, str) else ""
+            if cell_tag in ("td", "th"):
+                cells.append(cell)
+        if cells:
+            rows.append(cells)
+
+    if not rows:
+        return
+
+    max_cols = max(len(r) for r in rows)
+    if max_cols == 0:
+        return
+
+    doc_table = doc.add_table(rows=len(rows), cols=max_cols)
+    doc_table.style = "Table Grid"
+
+    for r_idx, row_cells in enumerate(rows):
+        for c_idx, cell_node in enumerate(row_cells):
+            if c_idx >= max_cols:
+                continue
+            cell = doc_table.rows[r_idx].cells[c_idx]
+            cell.text = ""
+            p = cell.paragraphs[0]
+            _add_html_runs_to_paragraph(p, cell_node)
+            if cell_node.tag.lower() == "th":
+                for run in p.runs:
+                    run.font.bold = True
+
+    doc.add_paragraph()
+
+
+# [Flow: Step 1 (src 디코딩) -> Step 2 (이미지 크기 제한) -> Step 3 (DOCX에 삽입)]
+def _add_html_image_to_doc(doc, img_node) -> None:
+    """HTML img 노드를 DOCX에 이미지로 추가한다."""
+    src = img_node.get("src", "")
+    result = _decode_image_from_src(src)
+    if result is None:
+        alt = img_node.get("alt", "")
+        if alt:
+            doc.add_paragraph(alt)
+        return
+
+    image_stream, width_px, _height_px = result
+    max_width = Inches(6.0)
+    original_width = Inches(width_px / 96.0)
+    if original_width > max_width:
+        doc.add_picture(image_stream, width=max_width)
+    else:
+        doc.add_picture(image_stream)
+
+
+# [Flow: Step 1 (HTML ul/ol li 노드 순회) -> Step 2 (DOCX 목록 항목 추가)]
+def _add_html_list_to_doc(doc, list_node, ordered: bool) -> None:
+    """HTML ul/ol 노드를 DOCX 목록으로 변환한다."""
+    style = "List Number" if ordered else "List Bullet"
+    for li in list_node.iterchildren():
+        li_tag = li.tag.lower() if isinstance(li.tag, str) else ""
+        if li_tag != "li":
+            continue
+        p = doc.add_paragraph(style=style)
+        _add_html_runs_to_paragraph(p, li)
+
+
+# [Flow: Step 1 (HTML 문자열 파싱) -> Step 2 (body 또는 단독 요소 확인) -> Step 3 (DOCX 블록/인라인 요소 추가)]
+_CONTENT_TAGS = frozenset(
+    {"table", "img", "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "pre", "blockquote", "br", "hr", "span"}
+)
+
+
+def _html_to_docx(html_text: str, doc: Document) -> None:
+    """HTML 콘텐츠를 DOCX 문서에 추가한다."""
+    if not html_text or not html_text.strip():
+        return
+
+    parser = lxml.html.HTMLParser(recover=True)
+    try:
+        root = lxml.html.fromstring(html_text, parser=parser)
+    except Exception:
+        return
+
+    body = root if root.tag == "body" else root.find("body")
+    if body is None:
+        if isinstance(root.tag, str) and root.tag.lower() in _CONTENT_TAGS:
+            body = lxml.html.fromstring(f"<html><body>{html_text}</body></html>", parser=parser).find("body")
+        if body is None:
+            body = root
+
+    for child in body.iterchildren():
+        if child.tag is _CommentFunc:
+            if _is_page_marker(child.text):
+                doc.add_page_break()
+            continue
+
+        if not isinstance(child.tag, str):
+            continue
+
+        tag = child.tag.lower()
+        if tag == "img":
+            _add_html_image_to_doc(doc, child)
+        elif tag == "table":
+            _add_html_table_to_doc(doc, child)
+        elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            level = int(tag[1])
+            p = doc.add_heading(level=min(level, 6))
+            _add_html_runs_to_paragraph(p, child)
+        elif tag == "p":
+            p = doc.add_paragraph()
+            _add_html_runs_to_paragraph(p, child)
+        elif tag in ("div", "pre", "blockquote"):
+            p = doc.add_paragraph()
+            _add_html_runs_to_paragraph(p, child)
+        elif tag == "ul":
+            _add_html_list_to_doc(doc, child, ordered=False)
+        elif tag == "ol":
+            _add_html_list_to_doc(doc, child, ordered=True)
+        elif tag == "br":
+            doc.add_paragraph()
+        else:
+            p = doc.add_paragraph()
+            _add_html_runs_to_paragraph(p, child)
+
+
+# [Flow: Step 1 (HTML tr/td/th 노드 수집) -> Step 2 (PPT 표 모양 추가) -> Step 3 (셀 텍스트 작성)]
+def _add_html_table_to_pptx_slide(slide, table_node) -> None:
+    """HTML table 노드를 PPT 슬라이드 표 모양으로 추가한다."""
+    rows: list[list[str]] = []
+    for tr in table_node.iterchildren():
+        tr_tag = tr.tag.lower() if isinstance(tr.tag, str) else ""
+        if tr_tag != "tr":
+            continue
+        cells = []
+        for cell in tr.iterchildren():
+            cell_tag = cell.tag.lower() if isinstance(cell.tag, str) else ""
+            if cell_tag in ("td", "th"):
+                cells.append(_get_inner_text(cell))
+        if cells:
+            rows.append(cells)
+
+    if not rows:
+        return
+
+    max_cols = max(len(r) for r in rows)
+    if max_cols == 0:
+        return
+
+    x, y = PptxInches(0.5), PptxInches(1.2)
+    cx, cy = PptxInches(9), PptxInches(5.5)
+    table_shape = slide.shapes.add_table(len(rows), max_cols, x, y, cx, cy)
+    pptx_table = table_shape.table
+
+    for r_idx, row in enumerate(rows):
+        for c_idx, val in enumerate(row):
+            cell = pptx_table.cell(r_idx, c_idx)
+            cell.text = val
+
+
+# [Flow: Step 1 (HTML 문자열 파싱) -> Step 2 (body 또는 단독 요소 확인) -> Step 3 (페이지 마커별 슬라이드 그룹화) -> Step 4 (슬라이드 요소 추가)]
+def _html_to_pptx(html_text: str, prs: Presentation) -> None:
+    """HTML 콘텐츠를 PPT 슬라이드로 변환한다."""
+    if not html_text or not html_text.strip():
+        return
+
+    parser = lxml.html.HTMLParser(recover=True)
+    try:
+        root = lxml.html.fromstring(html_text, parser=parser)
+    except Exception:
+        return
+
+    body = root if root.tag == "body" else root.find("body")
+    if body is None:
+        if isinstance(root.tag, str) and root.tag.lower() in _CONTENT_TAGS:
+            body = lxml.html.fromstring(f"<html><body>{html_text}</body></html>", parser=parser).find("body")
+        if body is None:
+            body = root
+
+    slide_groups: list[list] = []
+    current: list = []
+    for child in body.iterchildren():
+        if child.tag is _CommentFunc and _is_page_marker(child.text):
+            if current:
+                slide_groups.append(current)
+                current = []
+            continue
+        current.append(child)
+    if current:
+        slide_groups.append(current)
+
+    if not slide_groups:
+        slide_groups = [list(body.iterchildren())]
+
+    for group in slide_groups:
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        title_text = ""
+        body_texts: list[str] = []
+        has_image = False
+        has_table = False
+
+        for elem in group:
+            if elem.tag is _CommentFunc:
+                continue
+            tag = elem.tag.lower() if isinstance(elem.tag, str) else ""
+
+            if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                title_text = _get_inner_text(elem)
+            elif tag == "img":
+                has_image = True
+                result = _decode_image_from_src(elem.get("src", ""))
+                if result:
+                    image_stream, width_px, _height_px = result
+                    max_width = PptxInches(9)
+                    original_width = PptxInches(width_px / 96.0)
+                    if original_width > max_width:
+                        slide.shapes.add_picture(image_stream, PptxInches(0.5), PptxInches(1.5), width=max_width)
+                    else:
+                        slide.shapes.add_picture(image_stream, PptxInches(0.5), PptxInches(1.5))
+            elif tag == "table":
+                has_table = True
+                _add_html_table_to_pptx_slide(slide, elem)
+            elif tag in ("p", "div", "pre", "blockquote"):
+                body_texts.append(_get_inner_text(elem))
+            elif tag in ("ul", "ol"):
+                for li in elem.iterchildren():
+                    if li.tag.lower() == "li":
+                        prefix = "• " if tag == "ul" else f"{len(body_texts) + 1}. "
+                        body_texts.append(prefix + _get_inner_text(li))
+
+        if not has_image and not has_table and (title_text or body_texts):
+            if title_text:
+                title_box = slide.shapes.add_textbox(
+                    PptxInches(0.5), PptxInches(0.3), PptxInches(9), PptxInches(0.8)
+                )
+                title_box.text_frame.text = title_text
+                for paragraph in title_box.text_frame.paragraphs:
+                    paragraph.font.size = Pt(20)
+                    paragraph.font.bold = True
+
+            if body_texts:
+                body_box = slide.shapes.add_textbox(
+                    PptxInches(0.5), PptxInches(1.2), PptxInches(9), PptxInches(5.5)
+                )
+                tf = body_box.text_frame
+                tf.text = "\n".join(body_texts)
+                tf.word_wrap = True
+                for paragraph in tf.paragraphs:
+                    paragraph.font.size = Pt(12)
+
+
+# ---------------------------------------------------------------------------
 # DOCX
 # ---------------------------------------------------------------------------
 
@@ -166,9 +625,19 @@ def _add_docx_runs(paragraph, text: str) -> None:
 def markdown_to_docx(markdown: str, out_path: Path) -> Path:
     """마크다운 전체 콘텐츠를 Word 문서로 변환한다."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    blocks = _parse_markdown_blocks(markdown)
     doc = Document()
 
+    if not markdown or not markdown.strip():
+        doc.add_paragraph("변환할 콘텐츠가 없습니다.")
+        doc.save(out_path)
+        return out_path
+
+    if _contains_html(markdown):
+        _html_to_docx(markdown, doc)
+        doc.save(out_path)
+        return out_path
+
+    blocks = _parse_markdown_blocks(markdown)
     if not blocks:
         doc.add_paragraph("변환할 콘텐츠가 없습니다.")
         doc.save(out_path)
@@ -250,9 +719,22 @@ def _blocks_to_slide_text(blocks: list[dict]) -> str:
 def markdown_to_pptx(markdown: str, out_path: Path) -> Path:
     """마크다운 전체 콘텐츠를 PowerPoint로 변환한다."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    blocks = _parse_markdown_blocks(markdown)
     prs = Presentation()
 
+    if not markdown or not markdown.strip():
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        slide.shapes.add_textbox(
+            PptxInches(0.5), PptxInches(0.5), PptxInches(9), PptxInches(1)
+        ).text_frame.text = "변환할 콘텐츠가 없습니다."
+        prs.save(out_path)
+        return out_path
+
+    if _contains_html(markdown):
+        _html_to_pptx(markdown, prs)
+        prs.save(out_path)
+        return out_path
+
+    blocks = _parse_markdown_blocks(markdown)
     if not blocks:
         slide = prs.slides.add_slide(prs.slide_layouts[6])
         slide.shapes.add_textbox(

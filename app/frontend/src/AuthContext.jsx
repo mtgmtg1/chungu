@@ -13,7 +13,20 @@ export function AuthProvider({ children }) {
   const { setLanguage } = useLanguage();
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session && import.meta.env.DEV) {
+        // 개발 모드 자동 로그인
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: "mtgmtg@naver.com",
+          password: "admin1234!",
+        });
+        if (error) {
+          console.warn("[DEV auto-login] 실패:", error.message);
+        } else {
+          session = data.session;
+          console.log("[DEV auto-login] 성공:", session?.user?.email);
+        }
+      }
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);

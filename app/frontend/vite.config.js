@@ -8,6 +8,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': 'http://localhost:28181',
+      '/supabase': 'http://localhost:28181',
     },
   },
   build: {

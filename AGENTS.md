@@ -290,10 +290,17 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
 - Developer portal: `/developer` in the web UI
 - Docusaurus docs site: `/docs/` (served by FastAPI from `docs/build/`)
 
-## Office Conversion (DOCX) & Excel Basic/Advanced Conversion
+## Office Conversion (DOCX/PPTX) & Excel Basic/Advanced Conversion
 
 - Conversion is handled by `app/backend/core/office_converter.py` (basic) and `app/backend/core/xlsx_advanced_converter.py` (advanced).
 - **DOCX**: renders headings, paragraphs with inline formatting (`**bold**`, `*italic*`, `~~strike~~`), bullet/numbered lists, tables, and code blocks. Free of charge.
+- **HTML-aware DOCX/PPTX conversion**: PaddleOCR 등 HTML을 반환하는 OCR 엔진의 결과를 DOCX/PPTX로 변환할 때 HTML 태그를 정상적으로 파싱하여 포맷된 문서로 변환한다.
+  - `_contains_html()`로 HTML 태그 감지 (`<table>`, `<img>`, `<div>`, `<p>`, `<h1>`~`<h6>` 등).
+  - HTML 감지 시 `_html_to_docx()` / `_html_to_pptx()` 경로로 라우팅, 순수 마크다운은 기존 경로 유지.
+  - 변환 매핑: `<img src="data:image/...;base64,...">` → 임베디드 이미지, `<table>` → DOCX 표 (Table Grid), `<h1>`~`<h6>` → 제목, `<p>`/`<div>` → 문단, `<ul>`/`<ol>` → 목록, `<b>`/`<i>`/`<strong>` → 인라인 서식, `<!-- 페이지 N -->` → 페이지 브레이크 (DOCX) / 슬라이드 분할 (PPTX).
+  - 단독 HTML 요소(`<table>`만 입력 등) 처리를 위해 `<html><body>` 래핑 후 lxml 파싱.
+  - 의존성: `lxml.html` (HTML 파싱), `Pillow` (base64 이미지 디코딩), `python-docx` (DOCX 생성), `python-pptx` (PPTX 생성).
+  - 단위 테스트: `app/backend/tests/test_office_converter.py` (18개 테스트 — HTML 감지, HTML→DOCX 변환, 순수 마크다운 회귀, HTML→PPTX 변환).
 - **PPTX**: removed from the UI. Backend code remains but no button is exposed.
 - **Excel Basic** (`xlsx_basic` / `csv_basic`):
   - `_parse_markdown_tables()` extracts markdown tables → `_merge_tables()` merges consecutive tables with identical headers → `_normalize_rows()` pads all rows to the same column count.
@@ -317,7 +324,8 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
 - **Backward compatibility**: legacy `xlsx`/`csv` format requests are aliased to `xlsx_basic`/`csv_basic` via `_convert_format_alias()`. `result_xlsx_storage_path` is still set for backward compatibility.
 - Conversion endpoints: `/api/jobs/{id}/convert` (web) and `/api/v1/jobs/{id}/convert` (API).
 - Key files:
-  - `app/backend/core/office_converter.py` — `_parse_markdown_tables`, `_merge_tables`, `_normalize_rows`, `markdown_to_csv_basic`, `markdown_to_xlsx_basic`
+  - `app/backend/core/office_converter.py` — `_parse_markdown_tables`, `_merge_tables`, `_normalize_rows`, `markdown_to_csv_basic`, `markdown_to_xlsx_basic`, `_contains_html`, `_html_to_docx`, `_html_to_pptx`
+  - `app/backend/tests/test_office_converter.py` — HTML→DOCX/PPTX 변환 및 순수 마크다운 회귀 단위 테스트
   - `app/backend/core/xlsx_advanced_converter.py` — LLM + vision advanced conversion pipeline
   - `app/backend/workers/tasks.py` — `convert_xlsx_advanced` Celery task
   - `app/backend/api/jobs.py` — web convert/download/xlsx-advanced-action endpoints

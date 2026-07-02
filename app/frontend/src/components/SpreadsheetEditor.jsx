@@ -21,6 +21,12 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
 
     async function init() {
       try {
+        // jQuery를 먼저 로드하여 전역에 노출 (Luckysheet는 $에 의존)
+        if (!window.jQuery) {
+          const jqueryModule = await import("jquery");
+          window.jQuery = jqueryModule.default || jqueryModule;
+          window.$ = window.jQuery;
+        }
         // Vite + ESM 환경에서 CommonJS 기반 luckysheet를 동적으로 import
         await import("luckysheet/dist/plugins/css/pluginsCss.css");
         await import("luckysheet/dist/plugins/js/plugin.js");

@@ -319,6 +319,7 @@ export default function GridScan({
 
   const [modelsReady, setModelsReady] = useState(false);
   const [uiFaceActive, setUiFaceActive] = useState(false);
+  const [glFailed, setGlFailed] = useState(false);
 
   const lookTarget = useRef(new THREE.Vector2(0, 0));
   const tiltTarget = useRef(0);
@@ -427,7 +428,14 @@ export default function GridScan({
     const container = containerRef.current;
     if (!container) return;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    let renderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    } catch (err) {
+      console.warn("GridScan: WebGL renderer not available", err);
+      setGlFailed(true);
+      return;
+    }
     rendererRef.current = renderer;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(container.clientWidth, container.clientHeight);
@@ -835,6 +843,8 @@ export default function GridScan({
       }
     };
   }, [enableWebcam, modelsReady, depthResponse]);
+
+  if (glFailed) return null;
 
   return (
     <div

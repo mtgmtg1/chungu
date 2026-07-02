@@ -295,9 +295,17 @@ Server `.env` must be updated manually (not overwritten by rsync).
 - 드래그앤드롭, 파일 선택, 폴더 선택 모두 기존 파일 리스트에 **누적 추가**된다 (이전에는 대체).
 - 동일한 이름+크기의 파일은 중복으로 간주하여 **건너뛴다**.
 - 파일 입력 `<input>`은 선택 후 `e.target.value = ""`로 초기화하여 같은 파일 재선택이 가능하다.
-- 드래그앤드롭 영역이 `<label>`에서 `<div>`로 변경되었으며, `onDragEnter`/`onDragOver`/`onDragLeave`/`onDrop` 모두 `preventDefault` + `stopPropagation`으로 브라우저 기본 동작 간섭을 차단한다.
+- 드래그앤드롭 영역이 `<label>`에서 `<div>`로 변경되었으며, `onDragOver`/`onDrop`에 `preventDefault`를 사용해 브라우저 기본 동작을 차단한다.
+- `document` capture phase에서 전역 `dragover`/`drop` 기본 동작을 차단하여, drop zone 밖에 떨어뜨려도 브라우저가 파일을 열지 않는다.
+- `handleDrop()`에서 `dataTransfer.items` 외에 `dataTransfer.files`를 fallback로 사용하여 브라우저 호환성을 높인다.
 - 각 파일 항목에 개별 삭제 버튼(X 아이콘)이 있으며, "취소" 버튼은 전체 리스트 초기화 역할을 유지한다.
 - Key file: `app/frontend/src/pages/UploadPage.jsx` — `addFiles()`, `removeFile()`, `handleDrop()`
+
+## GridScan WebGL Fallback
+
+- `GridScan`은 Three.js WebGLRenderer를 사용한 배경 시각 효과 컴포넌트이다.
+- WebGL 컨텍스트를 생성할 수 없는 환경(일부 headless 브라우저, WebGL 비활성화 등)에서 전체 페이지가 crash되지 않도록, 렌더러 생성 실패 시 `glFailed` 상태를 설정하고 `null`을 반환한다.
+- Key file: `app/frontend/src/components/GridScan.jsx`
 
 ## UI/UX Design System
 

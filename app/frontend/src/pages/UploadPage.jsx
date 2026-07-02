@@ -48,6 +48,17 @@ export default function UploadPage() {
     catch(() => {});
   }, [user]);
 
+  // [Flow: document capture 단계에서 드래그 기본 동작 차단 -> drop zone 밖/안 모두 브라우저가 파일 열지 않도록 설정]
+  useEffect(() => {
+    const preventDefault = (e) => { e.preventDefault(); };
+    document.addEventListener("dragover", preventDefault, true);
+    document.addEventListener("drop", preventDefault, true);
+    return () => {
+      document.removeEventListener("dragover", preventDefault, true);
+      document.removeEventListener("drop", preventDefault, true);
+    };
+  }, []);
+
   async function traverseEntry(entry, collected, basePath = "") {
     if (entry.isFile) {
       const file = await new Promise((resolve) => entry.file(resolve));
@@ -66,18 +77,21 @@ export default function UploadPage() {
 
   async function handleDrop(e) {
     e.preventDefault();
-    e.stopPropagation();
-    const items = Array.from(e.dataTransfer.items || []);
-    if (!items.length) return;
     const collected = [];
-    for (const item of items) {
-      const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
-      if (entry) {
-        await traverseEntry(entry, collected);
-      } else {
-        const file = item.getAsFile ? item.getAsFile() : null;
-        if (file) collected.push(file);
+    const items = Array.from(e.dataTransfer.items || []);
+    if (items.length) {
+      for (const item of items) {
+        const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+        if (entry) {
+          await traverseEntry(entry, collected);
+        } else {
+          const file = item.getAsFile ? item.getAsFile() : null;
+          if (file) collected.push(file);
+        }
       }
+    } else {
+      const files = Array.from(e.dataTransfer.files || []);
+      collected.push(...files);
     }
     if (collected.length) addFiles(collected);
   }
@@ -215,8 +229,8 @@ export default function UploadPage() {
 
           <form
             onSubmit={handleUpload}
-            onDrop={(e) => { e.preventDefault(); e.stopPropagation(); }}
-            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            onDrop={(e) => { e.preventDefault(); }}
+            onDragOver={(e) => { e.preventDefault(); }}
             data-oid="uhu483v">
             <div
               onDrop={handleDrop}

@@ -50,7 +50,10 @@ export default function UploadPage() {
 
   // [Flow: document capture 단계에서 드래그 기본 동작 차단 -> drop zone 밖/안 모두 브라우저가 파일 열지 않도록 설정]
   useEffect(() => {
-    const preventDefault = (e) => { e.preventDefault(); };
+    const preventDefault = (e) => {
+      e.preventDefault();
+      console.log("[document capture]", e.type, "target=", e.target.tagName, "defaultPrevented=", e.defaultPrevented);
+    };
     document.addEventListener("dragover", preventDefault, true);
     document.addEventListener("drop", preventDefault, true);
     return () => {
@@ -61,7 +64,8 @@ export default function UploadPage() {
 
   async function traverseEntry(entry, collected, basePath = "") {
     if (entry.isFile) {
-      const file = await new Promise((resolve) => entry.file(resolve));
+      const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+      if (!file) return;
       file.webkitRelativePath = basePath + file.name;
       collected.push(file);
     } else if (entry.isDirectory) {
@@ -77,23 +81,36 @@ export default function UploadPage() {
 
   async function handleDrop(e) {
     e.preventDefault();
+    console.log("[handleDrop] triggered", "types=", e.dataTransfer.types, "items=", e.dataTransfer.items?.length, "files=", e.dataTransfer.files?.length);
     const collected = [];
-    const items = Array.from(e.dataTransfer.items || []);
-    if (items.length) {
-      for (const item of items) {
-        const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
-        if (entry) {
-          await traverseEntry(entry, collected);
-        } else {
-          const file = item.getAsFile ? item.getAsFile() : null;
-          if (file) collected.push(file);
+    try {
+      const items = Array.from(e.dataTransfer.items || []);
+      if (items.length) {
+        for (const item of items) {
+          const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+          console.log("[handleDrop] item kind=", item.kind, "entry=", entry, "isDirectory=", entry?.isDirectory);
+          if (entry?.isDirectory) {
+            try {
+              await traverseEntry(entry, collected);
+            } catch (err) {
+              console.error("[handleDrop] traverseEntry error", err);
+            }
+          } else {
+            const file = item.getAsFile ? item.getAsFile() : null;
+            console.log("[handleDrop] getAsFile=", file);
+            if (file) collected.push(file);
+          }
         }
+      } else {
+        const files = Array.from(e.dataTransfer.files || []);
+        console.log("[handleDrop] fallback files=", files.length);
+        collected.push(...files);
       }
-    } else {
-      const files = Array.from(e.dataTransfer.files || []);
-      collected.push(...files);
+      console.log("[handleDrop] collected=", collected.length);
+      if (collected.length) addFiles(collected);
+    } catch (err) {
+      console.error("[handleDrop] error", err);
     }
-    if (collected.length) addFiles(collected);
   }
 
   async function handleUpload(e) {
@@ -229,12 +246,14 @@ export default function UploadPage() {
 
           <form
             onSubmit={handleUpload}
-            onDrop={(e) => { e.preventDefault(); }}
-            onDragOver={(e) => { e.preventDefault(); }}
+            onDrop={(e) => { e.preventDefault(); console.log("[form onDrop]"); }}
+            onDragOver={(e) => { e.preventDefault(); console.log("[form onDragOver]"); }}
             data-oid="uhu483v">
             <div
               onDrop={handleDrop}
-              onDragOver={(e) => { e.preventDefault(); }}
+              onDragOver={(e) => { e.preventDefault(); console.log("[dropzone onDragOver]"); }}
+              onDragEnter={(e) => { e.preventDefault(); console.log("[dropzone onDragEnter]"); }}
+              onDragLeave={(e) => { e.preventDefault(); console.log("[dropzone onDragLeave]"); }}
               className="group relative bg-surface border border-outline-variant/60 p-2 shadow-2xl shadow-primary/5 hover:shadow-primary/10 transition-all duration-500 block cursor-pointer" data-oid="lu0z:ql">
 
               <div className="border-2 border-dashed border-outline-variant/40 group-hover:border-primary/40 p-12 flex flex-col items-center justify-center transition-colors bg-surface-container-lowest" data-oid="edljjr1">

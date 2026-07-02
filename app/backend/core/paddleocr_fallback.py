@@ -235,35 +235,15 @@ class FallbackController:
     def is_fallback_preferred(self) -> bool:
         """폴백을 우선시할지 여부를 반환한다.
 
-        두 가지 조건에서 폴백 우선:
-        1. 회로 차단기가 OPEN/HALF_OPEN이고 잔액 > 0
-        2. 잔액 >= 2시간 분량 (1600) — 잔액 소진 모드 (drain mode)
-
-        [Flow: Step 1 (활성화 확인) -> Step 2 (잔액 정산) -> Step 3 (잔액 >= 1600 시 True) -> Step 4 (회로 OPEN/HALF_OPEN 시 True)]
+        임시: vLLM/Docling 서버 개선 전까지 항상 True를 반환하여 PaddleOCR을 우선 사용.
 
         Returns:
-            True if 잔액 >= 2*hourly_quota OR (회로 OPEN/HALF_OPEN AND 잔액 > 0)
+            True (항상 — 임시 정책)
         """
         if not settings.paddleocr_fallback_enabled:
             return False
 
-        self._settle_bank()
-        balance = int(self._get("paddleocr:bank:balance") or "0")
-
-        # 잔액 소진 모드: 2시간 분량 이상 적립 시 회로 상태 무관하게 폴백 우선
-        drain_threshold = settings.paddleocr_fallback_hourly_quota * 2
-        if balance >= drain_threshold:
-            logger.info(
-                f"[paddleocr-fallback] 잔액 소진 모드: balance={balance} >= threshold={drain_threshold}"
-            )
-            return True
-
-        # 회로 차단기 OPEN/HALF_OPEN 시 폴백 우선
-        state = self._check_and_transition()
-        if state in (CB_OPEN, CB_HALF_OPEN) and balance > 0:
-            return True
-
-        return False
+        return True
 
     # ─── 한도 은행 (Limit Bank) ───
 

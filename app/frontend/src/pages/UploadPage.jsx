@@ -254,18 +254,6 @@ export default function UploadPage() {
 
             {files.length > 0 &&
             <div className="mt-4 bg-white border border-outline-variant p-3 text-left max-w-xl mx-auto" data-oid="xcv5knj">
-                <div className="flex items-center gap-2 mb-3" data-oid="hwp:refinement">
-                  <input
-                    id="docling-refinement"
-                    type="checkbox"
-                    checked={doclingRefinement}
-                    onChange={(e) => setDoclingRefinement(e.target.checked)}
-                    className="h-4 w-4 rounded-none border-outline-variant text-primary focus:ring-primary"
-                  />
-                  <label htmlFor="docling-refinement" className="text-sm text-on-surface">
-                    {t("page:upload.doclingRefinement")}
-                  </label>
-                </div>
                 <p className="text-sm font-medium text-on-surface mb-2" data-oid="y_ncx1w">
                   {t("page:upload.selectedFiles")}
                 </p>

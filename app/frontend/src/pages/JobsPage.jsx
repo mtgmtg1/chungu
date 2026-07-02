@@ -744,6 +744,7 @@ export default function JobsPage() {
                         </div>
                         {j.status !== "done" && j.status !== "error" && (j.total_pages > 0 || j.total_files > 0) && (
                           (() => {
+                            const isPercent = j.total_pages === 100;
                             const usePages = j.total_pages > 0 && j.done_pages > 0;
                             const done = usePages ? j.done_pages : j.done_files;
                             const total = usePages ? j.total_pages : j.total_files;
@@ -757,9 +758,11 @@ export default function JobsPage() {
                                   />
                                 </div>
                                 <span className="font-label-sm text-label-sm text-on-surface-variant whitespace-nowrap">
-                                  {usePages
-                                    ? t("page:jobs.progressPages", { done: done || 0, total: total })
-                                    : t("page:jobs.progressFiles", { done: done || 0, total: total })}
+                                  {isPercent
+                                    ? `${pct}%`
+                                    : usePages
+                                      ? t("page:jobs.progressPages", { done: done || 0, total: total })
+                                      : t("page:jobs.progressFiles", { done: done || 0, total: total })}
                                 </span>
                               </div>
                             );

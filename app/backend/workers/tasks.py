@@ -16,6 +16,7 @@ from ..celery_app import celery
 from celery.signals import worker_ready
 from ..config import settings
 from ..core import archive_handler, converter, excel_writer, media_loader, merge, supabase_client
+from ..core.ocr_client import has_pdf_text_layer
 from ..core.pipeline_docling import run_docling, run_hwp
 from ..core.pipeline_hybrid import run_hybrid
 from ..core.pipeline_media import run_media
@@ -176,14 +177,14 @@ def run_job(job_id: str) -> dict:
             def on_error(page: int, msg: str) -> None:
                 errors.append(f"p{page}: {msg}")
 
-            # [Flow: Step 1 (페이지 크기 검사) -> Step 2 (전체 초과 시 스킵) -> Step 3 (기본변환: Docling OCR / 고급변환: Gemma4 vision)]
+            # [Flow: Step 1 (페이지 크기 검사) -> Step 2 (전체 초과 시 스킵) -> Step 3 (PDF 텍스트 레이어 있음: Docling / 없음: run_vision — PaddleOCR 폴백 우선) -> Step 4 (비-PDF: Docling)]
             oversized, total_pages = count_oversized_pages(input_path)
             if oversized > 0:
                 errors.append(f"{input_path.name}: {oversized}페이지가 350mm를 초과하여 파싱할 수 없습니다")
             if oversized == total_pages and total_pages > 0:
                 page_tables = []
                 fmt = "markdown"
-            elif ocr_model == "basic" and input_path.suffix.lower() == ".pdf":
+            elif input_path.suffix.lower() == ".pdf" and has_pdf_text_layer(str(input_path)):
                 _set_status(db, job, "ocr")
                 page_tables = run_docling(
                     input_path,
@@ -193,7 +194,7 @@ def run_job(job_id: str) -> dict:
                     model,
                     api_key,
                     extra_prompt=job.prompt,
-                    use_refinement=False,
+                    use_refinement=use_refinement,
                     max_tokens=10000,
                     media_endpoint=media_ep,
                     media_model=media_mdl,
@@ -203,7 +204,7 @@ def run_job(job_id: str) -> dict:
                     ocr_engine=ocr_engine,
                 )
                 fmt = "markdown"
-            elif job.pipeline == "vision" and input_path.suffix.lower() == ".pdf":
+            elif input_path.suffix.lower() == ".pdf":
                 _set_status(db, job, "ocr")
                 page_tables = run_vision(
                     str(input_path),

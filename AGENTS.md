@@ -87,8 +87,11 @@ npm run start        # dev server at localhost:3000
 ## LLM Routing & Load Balancing
 
 - **Audio/Video**: 100% routed to E4B (llama.cpp, `192.168.1.82:18080`)
+- **PDF routing** (임시 정책 — vLLM/Docling 서버 개선 전까지):
+  - **디지털 PDF** (텍스트 레이어 있음, `ocr_client.has_pdf_text_layer()`로 검사): Docling OCR + optional LLM refinement; no per-page PNG rendering.
+  - **스캔 PDF** (텍스트 레이어 없음): `run_vision`으로 처리 — PaddleOCR 폴백이 우선 적용됨 (`is_fallback_preferred() == True`). 텍스트 레이어가 없는 페이지는 PaddleOCR로 처리, 실패 시 vLLM으로 fallback.
+  - 라우팅 분기 순서: `tasks.py`에서 `has_pdf_text_layer()` → True면 Docling, False면 `run_vision`.
 - **Images/PDF pages (pipeline=vision)**: rendered to PNG by PyMuPDF and sent page-by-page to the vLLM proxy (`192.168.1.69:18080`). The proxy round-robins between two Gemma-4 26B A4B AWQ 4bit instances (`18000` on GPU 1/2, `18001` on GPU 0/3). If the request's `model` name does not match the loaded model on the selected backend, the proxy rewrites it to the actual backend model name before forwarding.
-- **PDF pages (pipeline=docling)**: Docling OCR + optional LLM refinement; no per-page PNG rendering.
 - **Mixed media batches** (images/audio/video): dynamically routed based on total count, but E4B image load is minimized to prioritize audio/video:
   - ≤6 items: 1:3 (vLLM:E4B) — E4B 1/3
   - 7~59 items: 1:5 (vLLM:E4B) — E4B 1/5
@@ -202,8 +205,10 @@ Server `.env` must be updated manually (not overwritten by rsync).
   - **Media 파이프라인** (`pipeline_media.py`): 이미지 파일만 폴백 (비디오/오디오 제외).
   - **Docling 파이프라인** (`pipeline_docling.py`): 폴백 안 함 (이미지가 아닌 문서).
 - 폴백 우선 조건 (`paddleocr_fallback.py:is_fallback_preferred()`):
-  1. **잔액 소진 모드 (drain mode)**: 한도 은행 잔액 ≥ 2×시간당 할당량 (1600) → 회로 차단기 상태 무관하게 폴백 우선
-  2. **회로 차단기 OPEN/HALF_OPEN**: 잔액 > 0 시 폴백 우선
+  - **임시 정책** (vLLM/Docling 서버 개선 전까지): `paddleocr_fallback_enabled == True`이면 항상 `True` 반환 — 모든 변환 요청이 PaddleOCR을 우선 사용.
+  - 기존 로직 (서버 개선 후 복귀 예정):
+    1. **잔액 소진 모드 (drain mode)**: 한도 은행 잔액 ≥ 2×시간당 할당량 (1600) → 회로 차단기 상태 무관하게 폴백 우선
+    2. **회로 차단기 OPEN/HALF_OPEN**: 잔액 > 0 시 폴백 우선
 - 회로 차단기 (Circuit Breaker):
   - 60초 내 3회 실패 → OPEN (600초)
   - OPEN 경과 후 → HALF_OPEN → 성공 시 CLOSED 복귀
@@ -220,6 +225,8 @@ Server `.env` must be updated manually (not overwritten by rsync).
   - `app/backend/paddleocr_service/Dockerfile` — AI Studio API 프록시용 컨테이너
   - `app/backend/core/pipeline_vision.py` — 텍스트 레이어 감지 + 폴백
   - `app/backend/core/pipeline_media.py` — 이미지 전용 폴백
+  - `app/backend/core/ocr_client.py` — `has_pdf_text_layer()` PDF 텍스트 레이어 검사
+  - `app/backend/workers/tasks.py` — PDF 라우팅 분기 (텍스트 레이어 → Docling / 스캔 → run_vision)
 - Docker Compose: `paddleocr_service` 서비스 정의, worker/beat에 `PADDLEOCR_SERVICE_URL` 환경변수 전달.
 - 환경변수: `PADDLEOCR_API_TOKEN`, `PADDLEOCR_API_URL`, `PADDLEOCR_SERVICE_URL`, `PADDLEOCR_FALLBACK_ENABLED` 등.
 

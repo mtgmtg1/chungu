@@ -177,6 +177,25 @@ def extract_pdf_page_text(pdf_path: str, page_num: int) -> str:
         return ""
 
 
+def has_pdf_text_layer(pdf_path: str, min_chars: int = 50) -> bool:
+    """PDF에 텍스트 레이어가 있는지 전체 페이지에서 빠르게 검사한다.
+
+    Args:
+        pdf_path: PDF 파일 경로
+        min_chars: 텍스트 레이어 존재로 판단할 최소 문자 수
+    Returns:
+        True if 텍스트 레이어가 충분히 존재함
+    """
+    try:
+        result = subprocess.run(
+            ["pdftotext", "-layout", str(pdf_path), "-"],
+            capture_output=True, text=True, check=False, timeout=60,
+        )
+        return len(result.stdout.strip()) >= min_chars
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # 이미지 base64 인코딩
 # ---------------------------------------------------------------------------

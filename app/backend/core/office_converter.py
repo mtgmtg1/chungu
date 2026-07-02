@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # [Flow: Step 1 (마크다운 블록 파싱) -> Step 2 (docx/pptx/xlsx 작성) -> Step 3 (파일 경로 반환)]
+import html as html_module
 import re
 from pathlib import Path
 
@@ -318,6 +319,7 @@ def _parse_markdown_tables(markdown: str) -> list[dict]:
 
     반환 형식: {"headers": [...], "rows": [[...], ...], "has_header": bool}
     """
+    # 기존 로직과 동일
     lines = markdown.splitlines()
     tables: list[dict] = []
     i = 0
@@ -357,6 +359,43 @@ def _parse_markdown_tables(markdown: str) -> list[dict]:
         if headers or rows:
             tables.append({"headers": headers, "rows": rows, "has_header": has_header})
     return tables
+
+
+def _parse_html_tables(markdown: str) -> list[dict]:
+    """마크다운 내에 포함된 HTML <table> 블록을 표로 추출한다.
+
+    OCR 파이프라인이 마크다운 대신 HTML 테이블을 생성할 때 사용된다.
+    반환 형식: {"headers": [...], "rows": [[...], ...], "has_header": bool}.
+    """
+    tables: list[dict] = []
+    # <table ...> ... </table> 블록 추출 (base64 이미지 등 무시)
+    for table_html in re.findall(r"<table[^>]*>.*?</table>", markdown, flags=re.DOTALL | re.IGNORECASE):
+        rows: list[list[str]] = []
+        for tr in re.findall(r"<tr[^>]*>.*?</tr>", table_html, flags=re.DOTALL | re.IGNORECASE):
+            cells: list[str] = []
+            for cell in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, flags=re.DOTALL | re.IGNORECASE):
+                # 내부 HTML 태그 제거, HTML 엔티티 디코드, 공백 정리
+                text = re.sub(r"<[^>]+>", "", cell)
+                text = html_module.unescape(text)
+                cells.append(text.strip())
+            if cells:
+                rows.append(cells)
+        if not rows:
+            continue
+        # 첫 행이 실제 헤더인지 판단
+        if _is_valid_header(rows[0]):
+            tables.append({"headers": rows[0], "rows": rows[1:], "has_header": True})
+        else:
+            tables.append({"headers": [], "rows": rows, "has_header": False})
+    return tables
+
+
+def _extract_tables(markdown: str) -> list[dict]:
+    """마크다운 표와 HTML 표를 모두 추출하여 하나의 목록으로 반환한다.
+
+    [Flow: Step 1 (마크다운 표 파싱) -> Step 2 (HTML 표 파싱) -> Step 3 (순서대로 결합)]
+    """
+    return _parse_markdown_tables(markdown) + _parse_html_tables(markdown)
 
 
 def _majority_col_count(rows: list[list[str]]) -> int:
@@ -746,7 +785,7 @@ def markdown_to_csv_basic(markdown: str, out_path: Path) -> Path:
     import csv as csv_module
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    corrected, _log = _correct_tables(_merge_tables(_parse_markdown_tables(markdown)))
+    corrected, _log = _correct_tables(_merge_tables(_extract_tables(markdown)))
     tables = _normalize_rows(corrected)
     with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv_module.writer(f)
@@ -766,7 +805,7 @@ def markdown_to_xlsx_basic(markdown: str, out_path: Path) -> Path:
     헤더가 다른 표는 별도 워크시트('table1', 'table2'...)로 분리된다.
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    corrected, correction_log = _correct_tables(_merge_tables(_parse_markdown_tables(markdown)))
+    corrected, correction_log = _correct_tables(_merge_tables(_extract_tables(markdown)))
     tables = _normalize_rows(corrected)
     wb = Workbook()
     if tables:

@@ -62,6 +62,7 @@ export default function JobResultPage() {
   const startTimeRef = useRef(null);
   const pollRef = useRef(null);
   const editorRef = useRef(null);
+  const pagedViewerRef = useRef(null);
 
   const [previewMode, setPreviewMode] = useState("markdown"); // "markdown" | "xlsxBasic" | "xlsxAdvanced"
   const [basicUrl, setBasicUrl] = useState(null);
@@ -176,19 +177,24 @@ export default function JobResultPage() {
   }
 
   async function saveMarkdown() {
-    if (!editorRef.current) return;
-    const updated = editorRef.current.getMarkdown();
     setSaving(true);
     setSaveMessage("");
     try {
-      if (hasFileMarkdowns) {
-        const next = [...fileMarkdowns];
-        next[selectedFileIndex] = updated;
-        setFileMarkdowns(next);
-        await api.saveResultFileMarkdowns(jobId, next);
+      if (needsPagedMode(job) && pagedViewerRef.current) {
+        // 100페이지 초과 페이징 모드: PagedResultViewer가 현재 페이지 저장
+        await pagedViewerRef.current.save();
       } else {
-        await api.saveResultMarkdown(jobId, updated);
-        setMarkdown(updated);
+        if (!editorRef.current) return;
+        const updated = editorRef.current.getMarkdown();
+        if (hasFileMarkdowns) {
+          const next = [...fileMarkdowns];
+          next[selectedFileIndex] = updated;
+          setFileMarkdowns(next);
+          await api.saveResultFileMarkdowns(jobId, next);
+        } else {
+          await api.saveResultMarkdown(jobId, updated);
+          setMarkdown(updated);
+        }
       }
       setSaveMessage(t("page:result.saved"));
       setTimeout(() => setSaveMessage(""), 2000);
@@ -518,6 +524,7 @@ export default function JobResultPage() {
 
       {job?.status === "done" && !loading && needsPagedMode(job) &&
       <PagedResultViewer
+        ref={pagedViewerRef}
         jobId={jobId}
         pages={pages}
         sourceUrl={sourceUrl}

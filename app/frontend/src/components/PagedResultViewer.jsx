@@ -1,26 +1,23 @@
 // [Flow: Step 1 (페이지 메타데이터 로드) -> Step 2 (현재 페이지 markdown/이미지/PDF 동기 로드) -> Step 3 (SimpleEditor로 페이지 편집) -> Step 4 (저장만 노출, 페이지네이션은 소스 뷰어에 위임)]
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { useTranslation } from "react-i18next";
-import { Save, Loader2, Check } from "lucide-react";
 import { api } from "../api.js";
 import SourcePanel from "./SourcePanel.jsx";
 import SimpleEditor from "./SimpleEditor.jsx";
 
-export default function PagedResultViewer({
+const PagedResultViewer = forwardRef(function PagedResultViewer({
   jobId,
   pages,
   sourceUrl,
   sourceType,
   sourceFiles,
   imageUrls
-}) {
+}, ref) {
   const { t } = useTranslation();
   const [currentPage, setCurrentPage] = useState(pages[0]?.page_num || 1);
   const [pageMarkdown, setPageMarkdown] = useState("");
   const [loadingPage, setLoadingPage] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saveMessage, setSaveMessage] = useState("");
   const [error, setError] = useState("");
   const editorRef = useRef(null);
 
@@ -48,19 +45,18 @@ export default function PagedResultViewer({
   const saveCurrentPage = async () => {
     if (!editorRef.current) return;
     const updated = editorRef.current.getMarkdown();
-    setSaving(true);
-    setSaveMessage("");
     setError("");
     try {
       await api.saveResultPage(jobId, currentPage, updated);
-      setSaveMessage(t("page:result.saved"));
-      setTimeout(() => setSaveMessage(""), 2000);
     } catch (e) {
       setError(e.message || t("page:errors.unknown"));
-    } finally {
-      setSaving(false);
+      throw e;
     }
   };
+
+  useImperativeHandle(ref, () => ({
+    save: saveCurrentPage
+  }));
 
   const hasSourcePanel =
   sourceType === "pdf" ||
@@ -73,38 +69,6 @@ export default function PagedResultViewer({
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden" data-oid="9grrz:c">
-      <div
-        className="h-12 border-b border-outline-variant bg-white flex items-center justify-end px-4 flex-shrink-0"
-        data-oid="j643u-y">
-
-        <div className="flex items-center gap-2" data-oid="0opfhtl">
-          {saveMessage &&
-          <span
-            className="text-xs text-green-600 flex items-center gap-1"
-            data-oid="j5b.:l.">
-
-              <Check size={12} data-oid="iob5p09" />
-              {saveMessage}
-            </span>
-          }
-          <button
-            onClick={saveCurrentPage}
-            disabled={saving}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-bold hover:opacity-90 disabled:opacity-50"
-            data-oid="0s0s0bf">
-
-            {saving ?
-            <Loader2
-              size={14}
-              className="animate-spin"
-              data-oid="jwkn1rb" /> :
-            <Save size={14} data-oid="tlhbcof" />
-            }
-            {t("page:result.save")}
-          </button>
-        </div>
-      </div>
-
       {error &&
       <div
         className="bg-red-50 text-red-700 px-4 py-2 text-sm flex items-center gap-2 border-b border-red-200 flex-shrink-0"
@@ -197,4 +161,6 @@ export default function PagedResultViewer({
       }
     </div>);
 
-}
+});
+
+export default PagedResultViewer;

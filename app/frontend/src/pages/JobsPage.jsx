@@ -71,13 +71,6 @@ function DownloadMenu({ job, fileTypeLabel, download, convertAndDownload, conver
         {t("page:jobs.markdownFree")}
       </button>
       <button
-        onClick={() => { convertAndDownload(job.job_id, "csv_basic"); onMenuItemClick?.(); }}
-        disabled={converting[job.job_id]}
-        className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-      >
-        {job.xlsx_basic_converted ? t("page:jobs.csvBasicDownload") : t("page:jobs.csvBasicCost", { cost: xlsxBasicCost(job).toLocaleString() })}
-      </button>
-      <button
         onClick={() => { convertAndDownload(job.job_id, "xlsx_basic"); onMenuItemClick?.(); }}
         disabled={converting[job.job_id]}
         className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
@@ -285,7 +278,7 @@ export default function JobsPage() {
     const base = job?.filename ?
     job.filename.replace(/\.[^/.]+$/, "") :
     "result";
-    const ext = type === "md" ? "md" : type === "csv_basic" ? "csv" : type.startsWith("xlsx") ? "xlsx" : type;
+    const ext = type === "md" ? "md" : type.startsWith("xlsx") ? "xlsx" : type;
     const a = document.createElement("a");
     a.href = download_url;
     a.download = `${base}.${ext}`;
@@ -303,7 +296,7 @@ export default function JobsPage() {
       const base = job?.filename ?
       job.filename.replace(/\.[^/.]+$/, "") :
       "result";
-      const ext = format === "csv_basic" ? "csv" : format.startsWith("xlsx") ? "xlsx" : format;
+      const ext = format.startsWith("xlsx") ? "xlsx" : format;
       if (res.status === "processing") {
         await loadJobs();
         return;

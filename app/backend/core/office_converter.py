@@ -702,29 +702,43 @@ def markdown_to_xlsx_basic(markdown: str, out_path: Path) -> Path:
     """마크다운 표를 하나의 xlsx 파일에 통합한다.
 
     형식 기반 열 정렬 보정을 적용하고, 보정된 행이 있으면 '보정 내역' 시트를 추가한다.
+    헤더가 다른 표는 별도 워크시트('table1', 'table2'...)로 분리된다.
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     corrected, correction_log = _correct_tables(_merge_tables(_parse_markdown_tables(markdown)))
     tables = _normalize_rows(corrected)
     wb = Workbook()
-    ws = wb.active
-    ws.title = "Tables"
+    if tables:
+        default_sheet = wb.active
+        if default_sheet is not None:
+            wb.remove(default_sheet)
+        for idx, table in enumerate(tables, start=1):
+            sheet_name = _safe_sheet_name(f"table{idx}", idx)
+            ws = wb.create_sheet(title=sheet_name)
+            _write_table_to_sheet(ws, table["headers"], table["rows"])
+    else:
+        default_sheet = wb.active
+        if default_sheet is not None:
+            default_sheet.title = "Tables"
 
-    row = 1
-    for idx, table in enumerate(tables):
-        if idx > 0:
-            row += 1
-        headers = table["headers"]
-        for col_idx, h in enumerate(headers):
-            cell = ws.cell(row, col_idx + 1, h)
-            cell.font = Font(bold=True)
-            cell.fill = PatternFill(start_color="E0E7FF", end_color="E0E7FF", fill_type="solid")
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        row += 1
-        for table_row in table["rows"]:
-            for col_idx, val in enumerate(table_row):
-                ws.cell(row, col_idx + 1, val)
-            row += 1
+    # 보정된 행이 있으면 '보정 내역' 시트를 추가하여 사용자가 검토할 수 있게 한다
+    if correction_log:
+        _write_correction_sheet(wb, correction_log)
+
+    wb.save(out_path)
+    return out_path
+
+
+def _write_table_to_sheet(ws, headers: list[str], rows: list[list[str]]) -> None:
+    """표의 헤더와 데이터 행을 워크시트에 작성하고 컬럼 너비를 조정한다."""
+    for col_idx, h in enumerate(headers):
+        cell = ws.cell(1, col_idx + 1, h)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color="E0E7FF", end_color="E0E7FF", fill_type="solid")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for row_idx, table_row in enumerate(rows, start=2):
+        for col_idx, val in enumerate(table_row):
+            ws.cell(row_idx, col_idx + 1, val)
 
     # 컬럼 너비 자동 조정
     for col in ws.columns:
@@ -737,13 +751,6 @@ def markdown_to_xlsx_basic(markdown: str, out_path: Path) -> Path:
             except Exception:
                 pass
         ws.column_dimensions[col_letter].width = min(max_len + 2, 60)
-
-    # 보정된 행이 있으면 '보정 내역' 시트를 추가하여 사용자가 검토할 수 있게 한다
-    if correction_log:
-        _write_correction_sheet(wb, correction_log)
-
-    wb.save(out_path)
-    return out_path
 
 
 def _write_correction_sheet(wb, correction_log: list[dict]) -> None:

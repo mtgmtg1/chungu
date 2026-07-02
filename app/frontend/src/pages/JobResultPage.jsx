@@ -204,7 +204,7 @@ export default function JobResultPage() {
     const base = job?.filename ?
     job.filename.replace(/\.[^/.]+$/, "") :
     "result";
-    const ext = type === "md" ? "md" : type === "csv_basic" ? "csv" : type.startsWith("xlsx") ? "xlsx" : type;
+    const ext = type === "md" ? "md" : type.startsWith("xlsx") ? "xlsx" : type;
     downloadByUrl(download_url, `${base}.${ext}`);
   }
 
@@ -216,7 +216,7 @@ export default function JobResultPage() {
       const base = job?.filename ?
       job.filename.replace(/\.[^/.]+$/, "") :
       "result";
-      const ext = format === "csv_basic" ? "csv" : format.startsWith("xlsx") ? "xlsx" : format;
+      const ext = format.startsWith("xlsx") ? "xlsx" : format;
       downloadByUrl(download_url, `${base}.${ext}`);
       await loadJob();
     } catch (e) {
@@ -371,16 +371,6 @@ export default function JobResultPage() {
                 className="absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-lg border border-outline-variant hidden group-hover:flex flex-col z-50 py-1"
                 data-oid="excel-dropdown">
 
-                  <button
-                  onClick={() => convertAndDownload("csv_basic")}
-                  disabled={converting}
-                  className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                  data-oid="csv-basic-btn">
-
-                    {job.xlsx_basic_converted ?
-                  t("page:result.csvBasicDownload") :
-                  t("page:result.csvBasic", { cost: xlsxBasicCost.toLocaleString() })}
-                  </button>
                   <button
                   onClick={() => convertAndDownload("xlsx_basic")}
                   disabled={converting}

@@ -176,31 +176,12 @@ def run_job(job_id: str) -> dict:
             def on_error(page: int, msg: str) -> None:
                 errors.append(f"p{page}: {msg}")
 
-            # [Flow: Step 1 (페이지 크기 검사) -> Step 2 (전체 초과 시 스킵) -> Step 3 (vision: Gemma4 직접 / docling: Docling OCR + refinement)]
+            # [Flow: Step 1 (페이지 크기 검사) -> Step 2 (전체 초과 시 스킵) -> Step 3 (기본변환: Docling OCR / 고급변환: Gemma4 vision)]
             oversized, total_pages = count_oversized_pages(input_path)
             if oversized > 0:
                 errors.append(f"{input_path.name}: {oversized}페이지가 350mm를 초과하여 파싱할 수 없습니다")
             if oversized == total_pages and total_pages > 0:
                 page_tables = []
-                fmt = "markdown"
-            elif job.pipeline == "vision" and input_path.suffix.lower() == ".pdf":
-                _set_status(db, job, "ocr")
-                page_tables = run_vision(
-                    str(input_path),
-                    str(work_dir),
-                    columns,
-                    endpoint,
-                    model,
-                    api_key,
-                    extra_prompt=job.prompt,
-                    dpi=job.dpi,
-                    max_tokens=10000,
-                    media_endpoint=media_ep,
-                    media_model=media_mdl,
-                    media_api_key=media_key,
-                    on_progress=on_progress,
-                    on_error=on_error,
-                )
                 fmt = "markdown"
             elif ocr_model == "basic" and input_path.suffix.lower() == ".pdf":
                 _set_status(db, job, "ocr")
@@ -220,6 +201,25 @@ def run_job(job_id: str) -> dict:
                     on_progress=on_progress,
                     on_error=on_error,
                     ocr_engine=ocr_engine,
+                )
+                fmt = "markdown"
+            elif job.pipeline == "vision" and input_path.suffix.lower() == ".pdf":
+                _set_status(db, job, "ocr")
+                page_tables = run_vision(
+                    str(input_path),
+                    str(work_dir),
+                    columns,
+                    endpoint,
+                    model,
+                    api_key,
+                    extra_prompt=job.prompt,
+                    dpi=job.dpi,
+                    max_tokens=10000,
+                    media_endpoint=media_ep,
+                    media_model=media_mdl,
+                    media_api_key=media_key,
+                    on_progress=on_progress,
+                    on_error=on_error,
                 )
                 fmt = "markdown"
             else:

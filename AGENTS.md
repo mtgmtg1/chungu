@@ -295,9 +295,10 @@ Server `.env` must be updated manually (not overwritten by rsync).
 - 드래그앤드롭, 파일 선택, 폴더 선택 모두 기존 파일 리스트에 **누적 추가**된다 (이전에는 대체).
 - 동일한 이름+크기의 파일은 중복으로 간주하여 **건너뛴다**.
 - 파일 입력 `<input>`은 선택 후 `e.target.value = ""`로 초기화하여 같은 파일 재선택이 가능하다.
-- 드래그앤드롭 영역이 `<label>`에서 `<div>`로 변경되었으며, `onDragOver`/`onDrop`에 `preventDefault`를 사용해 브라우저 기본 동작을 차단한다.
+- 드래그앤드롭 영역이 `<label>`에서 `<div>`로 변경되었으며, `onDragOver`/`onDrop`/`onDragEnter`/`onDragLeave`에 `preventDefault`를 사용해 브라우저 기본 동작을 차단한다.
 - `document` capture phase에서 전역 `dragover`/`drop` 기본 동작을 차단하여, drop zone 밖에 떨어뜨려도 브라우저가 파일을 열지 않는다.
-- `handleDrop()`에서 `dataTransfer.items` 외에 `dataTransfer.files`를 fallback로 사용하여 브라우저 호환성을 높인다.
+- `handleDrop()`에서 파일 아이템은 `item.getAsFile()`로 직접 수집하고, 디렉토리 아이템만 `webkitGetAsEntry()` + `traverseEntry()`로 재귀 처리한다. `dataTransfer.items`가 없으면 `dataTransfer.files`를 fallback로 사용한다.
+- `handleDrop()`과 `traverseEntry()`에서 발생하는 예외를 catch하여 전체 페이지가 멈추지 않도록 한다.
 - 각 파일 항목에 개별 삭제 버튼(X 아이콘)이 있으며, "취소" 버튼은 전체 리스트 초기화 역할을 유지한다.
 - Key file: `app/frontend/src/pages/UploadPage.jsx` — `addFiles()`, `removeFile()`, `handleDrop()`
 

@@ -33,7 +33,7 @@ export function getTimeProgress(job, maxTimePct = DEFAULT_TIME_CAP, now = Date.n
 
 /**
  * 화면에 표시할 진행률을 계산한다.
- * 실제 진행률이 maxTimePct(84%) 이상이면 실제값을, 그 전까지는 실제값과 시간추정값 중 큰 값을 사용한다.
+ * 실제 진행률과 시간추정 진행률 중 더 높은 값을 사용한다. 시간추정값은 84%로 cap되므로, 84%를 넘어가는 구간은 자연스럽게 실제 진행률만 표시된다.
  * @param {object} job - API에서 받은 job 객체
  * @param {number} maxTimePct - 시간진행바 최대치 (기본 84)
  * @param {number} now - 기준 시간戳 (ms), 기본값 Date.now()
@@ -42,6 +42,5 @@ export function getTimeProgress(job, maxTimePct = DEFAULT_TIME_CAP, now = Date.n
 export function getDisplayProgress(job, maxTimePct = DEFAULT_TIME_CAP, now = Date.now()) {
   const actual = getActualProgress(job);
   const time = getTimeProgress(job, maxTimePct, now);
-  if (actual >= maxTimePct) return actual;
   return Math.max(actual, time);
 }

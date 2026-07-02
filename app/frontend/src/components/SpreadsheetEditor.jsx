@@ -14,6 +14,20 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [initialOptions, setInitialOptions] = useState(null);
+  const [libsLoaded, setLibsLoaded] = useState(false);
+
+  // 스크립트 태그로 외부 JS 로드 (UMD/CJS 모듈용)
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[src="${src}"]`);
+      if (existing) { resolve(); return; }
+      const script = document.createElement("script");
+      script.src = src;
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
 
   // Luckysheet 라이브러리 동적 로드
   useEffect(() => {
@@ -29,14 +43,20 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
         }
         // Vite + ESM 환경에서 CommonJS 기반 luckysheet를 동적으로 import
         await import("luckysheet/dist/plugins/css/pluginsCss.css");
-        await import("luckysheet/dist/plugins/js/plugin.js");
         await import("luckysheet/dist/css/luckysheet.css");
         await import("luckysheet/dist/assets/iconfont/iconfont.css");
-        const luckysheetModule = await import("luckysheet");
-        const luckysheet = luckysheetModule.default || luckysheetModule;
+        // plugin.js, luckysheet.umd.js, luckyexcel.umd.js 모두 스크립트 태그로 로드
+        // 전역 jQuery를 공유하여 plugin.js의 mousewheel 등 확장이 luckysheet에 적용됨
+        const pluginUrl = (await import("luckysheet/dist/plugins/js/plugin.js?url")).default;
+        await loadScript(pluginUrl);
+        const luckysheetUrl = (await import("luckysheet/dist/luckysheet.umd.js?url")).default;
+        await loadScript(luckysheetUrl);
+        const luckyExcelUrl = (await import("luckyexcel/dist/luckyexcel.umd.js?url")).default;
+        await loadScript(luckyExcelUrl);
         if (!mounted) return;
+        const luckysheet = window.luckysheet;
         luckysheetRef.current = luckysheet;
-        await loadExcel(luckysheet);
+        setLibsLoaded(true);
       } catch (e) {
         if (mounted) setError(e.message || t("page:result.spreadsheetInitError"));
       } finally {
@@ -53,14 +73,15 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
     };
   }, []);
 
+  // 라이브러리 로드 완료 후 downloadUrl이 있으면 loadExcel 호출
   // downloadUrl 변경 시 데이터 다시 로드
   useEffect(() => {
-    if (!luckysheetRef.current || !initialOptions) return;
+    if (!libsLoaded || !downloadUrl) return;
     if (typeof luckysheetRef.current.destroy === "function") {
       luckysheetRef.current.destroy();
     }
     loadExcel(luckysheetRef.current);
-  }, [downloadUrl]);
+  }, [downloadUrl, libsLoaded]);
 
   // [Flow: Step 1 (편집본 URL 시도) -> Step 2 (있으면 편집본 사용, 없으면 원본 사용) -> Step 3 (LuckyExcel 변환) -> Step 4 (luckysheet.create)]
   async function loadExcel(luckysheet) {
@@ -68,7 +89,9 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
     setLoading(true);
     setError("");
     try {
-      const LuckyExcel = await import("luckyexcel");
+      // window.LuckyExcel (UMD 스크립트로 로드됨)
+      const LuckyExcel = window.LuckyExcel;
+      if (!LuckyExcel) throw new Error("LuckyExcel not loaded");
 
       // 저장된 편집본이 있는지 확인
       let effectiveUrl = downloadUrl;
@@ -87,7 +110,7 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
       const file = new File([arrayBuffer], fileName || "result.xlsx", {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
       });
-      const transform = (LuckyExcel.default || LuckyExcel).transformExcelToLucky;
+      const transform = LuckyExcel.transformExcelToLucky;
 
       transform(file, (exportJson) => {
         if (!exportJson || !exportJson.sheets) {
@@ -96,46 +119,23 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
           return;
         }
         const options = {
-          container: containerRef.current,
+          container: "luckysheet-container",
           showinfobar: false,
           showtoolbar: true,
-          showtoolbarConfig: {
-            undoRedo: true,
-            paintFormat: true,
-            currencyFormat: true,
-            percentageFormat: true,
-            numberDecrease: true,
-            numberIncrease: true,
-            moreFormats: true,
-            font: true,
-            alignment: true,
-            freezen: true,
-            sortAndFilter: true,
-            link: true,
-            chart: true,
-            image: true,
-            print: true
-          },
           showsheetbar: true,
-          showsheetbarConfig: {
-            add: true,
-            menu: true,
-            sheets: true
-          },
           showstatisticBar: true,
-          showstatisticBarConfig: {
-            count: true,
-            view: true,
-            zoom: true
-          },
           allowEdit: true,
           enableAddRow: true,
           enableAddBackTop: true,
           data: exportJson.sheets
         };
         setInitialOptions(options);
-        luckysheet.create(options);
-        setLoading(false);
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            luckysheet.create(options);
+            setLoading(false);
+          });
+        });
       });
     } catch (e) {
       setError(e.message || t("page:result.spreadsheetLoadError"));
@@ -307,7 +307,7 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
           {t("page:result.excelLoading")}
         </div>
         }
-        <div ref={containerRef} className="w-full h-full" data-oid="luckysheet-container" />
+        <div ref={containerRef} id="luckysheet-container" className="w-full h-full" style={{ margin: 0, padding: 0, position: "absolute", width: "100%", height: "100%", left: 0, top: 0 }} data-oid="luckysheet-container" />
       </div>
     </div>
   );

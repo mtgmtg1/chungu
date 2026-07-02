@@ -333,12 +333,20 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
 ## Spreadsheet Editor (Luckysheet)
 
 - Excel Basic / Excel Advanced 미리보기가 읽기 전용 `ExcelPreview.jsx`에서 완전한 스프레드시트 편집기 `SpreadsheetEditor.jsx`로 교체되었다.
-- **Luckysheet** (`luckysheet` npm package)를 동적으로 로드하여 사용한다 (CSS 3종 + JS plugin + ESM module). Vite + ESM 환경에서 CommonJS 기반 라이브러리를 `await import()`로 지연 로드한다.
+- **라이브러리 로드 방식 (UMD 스크립트 태그)**: Vite + ESM 환경에서 CommonJS 기반 Luckysheet를 사용하기 위해, `plugin.js`, `luckysheet.umd.js`, `luckyexcel.umd.js`를 모두 `<script>` 태그로 동적 로드한다. 이는 전역 jQuery를 공유하여 `mousewheel` 플러그인 등이 정상 작동하도록 보장한다.
+  - jQuery는 먼저 `import("jquery")`로 로드하여 `window.jQuery` / `window.$`에 노출한다.
+  - CSS 3종 (`pluginsCss.css`, `luckysheet.css`, `iconfont.css`)은 `await import()`로 로드한다.
+  - `loadScript()` 헬퍼 함수로 Vite `?url` import 경로를 받아 `<script>` 태그를 생성한다.
+  - 로드 완료 후 `window.luckysheet`와 `window.LuckyExcel` 전역 객체를 사용한다.
+- **Race condition 해결**: `libsLoaded` 상태 플래그로 스크립트 로드 완료 시점과 `downloadUrl` 설정 시점을 동기화한다. 첫 `useEffect`에서 스크립트 로드 완료 시 `setLibsLoaded(true)`, 두 번째 `useEffect`에서 `libsLoaded && downloadUrl` 모두 만족 시 `loadExcel` 호출.
+- **컨테이너 스타일**: `position: absolute`, `width: 100%`, `height: 100%` 인라인 스타일로 Luckysheet가 컨테이너 offset을 정상 읽도록 보장한다.
+- **툴바 설정**: `showtoolbar: true`만 사용하고 `showtoolbarConfig` 커스텀 설정은 제거한다. 커스텀 설정 시 일부 툴바 버튼이 DOM에 존재하지 않아 `offset().left`가 undefined가 되는 버그(`Cannot read properties of undefined (reading 'left')`)를 방지.
+- **luckysheet.create 호출 시점**: `requestAnimationFrame` 2회 중첩으로 DOM 렌더링을 보장한 후 호출한다.
 - **LuckyExcel** (`luckyexcel` npm package)로 XLSX 파일을 Luckysheet JSON으로 변환한다. `transformExcelToLucky(file, callback)`에 `File` 객체를 전달한다.
 - **SheetJS** (`xlsx` npm package)로 Luckysheet 데이터를 XLSX Blob으로 변환한다. `getAllSheets()` → `luckysheetDataToWorkbook()` → `XLSX.write()` → Blob.
-- **편집 기능**: 풀 툴바 (undo/redo, 서식, 글꼴, 정렬, 정렬/필터, 차트, 이미지, 인쇄), 시트 추가/삭제, 줌, 상태 표시줄.
+- **편집 기능**: 기본 툴바 (undo/redo, 서식, 글꼴, 정렬, 정렬/필터, 차트, 이미지, 인쇄), 시트 추가/삭제, 줌, 상태 표시줄.
 - **서버 저장**: `POST /api/jobs/{job_id}/save-edited-xlsx` — 편집된 XLSX를 Supabase Storage `results` 버킷에 업로드하고 `job.result_edited_xlsx_storage_path`에 경로를 저장한다.
-- **편집본 재조회**: `GET /api/jobs/{job_id}/edited-xlsx-url` — 저장된 편집본의 signed URL을 반환한다. `SpreadsheetEditor` 로드 시 편집본이 있으면 원본 대신 편집본을 우선 로드한다.
+- **편집본 재조회**: `GET /api/jobs/{job_id}/edited-xlsx-url` — 저장된 편집본의 signed URL을 반환한다. `SpreadsheetEditor` 로드 시 편집본이 있으면 원본 대신 편집본을 우선 로드한다. 편집본이 없으면 404가 반환되며 정상 동작이다.
 - **로컬 다운로드**: 편집된 데이터를 XLSX Blob으로 생성하여 브라우저에서 직접 다운로드한다.
 - **초기화**: 원본(또는 편집본) 데이터로 `luckysheet.create()`를 다시 호출하여 편집 내용을 되돌린다.
 - **언마운트/재로드**: `luckysheet.destroy()`를 호출하여 메모리 누수를 방지한다.

@@ -18,7 +18,7 @@ import { SkeletonTable } from "../components/Skeleton.jsx";
 import { AnimatedRow } from "../components/AnimatedList.jsx";
 import { getDisplayProgress } from "../utils/progress.js";
 
-function DownloadMenu({ job, fileTypeLabel, download, convertAndDownload, converting, xlsxCost, onMenuItemClick, children }) {
+function DownloadMenu({ job, fileTypeLabel, download, convertAndDownload, converting, xlsxBasicCost, xlsxAdvancedCost, onMenuItemClick, children }) {
   // [Flow: Step 1 (버튼 위치 추적) -> Step 2 (호버 상태) -> Step 3 (document.body에 Portal로 메뉴 렌더링) -> Step 4 (위치 계산)]
   const { t } = useTranslation();
   const btnRef = useRef(null);
@@ -53,10 +53,13 @@ function DownloadMenu({ job, fileTypeLabel, download, convertAndDownload, conver
     };
   }, [open]);
 
+  const advancedProcessing = job.xlsx_advanced_status === "processing";
+  const advancedDone = job.xlsx_advanced_converted;
+
   const menu = (
     <div
       ref={menuRef}
-      className="fixed w-52 bg-white rounded-lg shadow-lg border border-outline-variant flex flex-col z-[99999] py-1"
+      className="fixed w-56 bg-white rounded-lg shadow-lg border border-outline-variant flex flex-col z-[99999] py-1"
       style={{ top: pos.top, right: pos.right }}
       onMouseEnter={handleEnter}
       onMouseLeave={handleLeave}
@@ -68,17 +71,27 @@ function DownloadMenu({ job, fileTypeLabel, download, convertAndDownload, conver
         {t("page:jobs.markdownFree")}
       </button>
       <button
-        onClick={() => { download(job.job_id, "csv"); onMenuItemClick?.(); }}
-        className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-      >
-        {t("page:jobs.csvExcel")}
-      </button>
-      <button
-        onClick={() => { convertAndDownload(job.job_id, "xlsx"); onMenuItemClick?.(); }}
+        onClick={() => { convertAndDownload(job.job_id, "csv_basic"); onMenuItemClick?.(); }}
         disabled={converting[job.job_id]}
         className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
       >
-        {t("page:jobs.excelCost", { cost: xlsxCost(job).toLocaleString() })}
+        {job.xlsx_basic_converted ? t("page:jobs.csvBasicDownload") : t("page:jobs.csvBasicCost", { cost: xlsxBasicCost(job).toLocaleString() })}
+      </button>
+      <button
+        onClick={() => { convertAndDownload(job.job_id, "xlsx_basic"); onMenuItemClick?.(); }}
+        disabled={converting[job.job_id]}
+        className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+      >
+        {job.xlsx_basic_converted ? t("page:jobs.xlsxBasicDownload") : t("page:jobs.xlsxBasicCost", { cost: xlsxBasicCost(job).toLocaleString() })}
+      </button>
+      <button
+        onClick={() => { convertAndDownload(job.job_id, "xlsx_advanced"); onMenuItemClick?.(); }}
+        disabled={converting[job.job_id] || advancedProcessing}
+        className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+      >
+        {advancedProcessing ? t("page:jobs.xlsxAdvancedProcessing") :
+          advancedDone ? t("page:jobs.xlsxAdvancedDownload") :
+          t("page:jobs.xlsxAdvancedCost", { cost: xlsxAdvancedCost(job).toLocaleString() })}
       </button>
       <button
         onClick={() => { convertAndDownload(job.job_id, "docx"); onMenuItemClick?.(); }}
@@ -86,13 +99,6 @@ function DownloadMenu({ job, fileTypeLabel, download, convertAndDownload, conver
         className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
       >
         {t("page:jobs.wordFree")}
-      </button>
-      <button
-        onClick={() => { convertAndDownload(job.job_id, "pptx"); onMenuItemClick?.(); }}
-        disabled={converting[job.job_id]}
-        className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-      >
-        {t("page:jobs.pptFree")}
       </button>
     </div>
   );
@@ -181,10 +187,11 @@ export default function JobsPage() {
     load();
   }, [user]);
 
-  // [Flow: Step 1 (활성 작업 존재 확인) -> Step 2 (5초 간격 폴링) -> Step 3 (완료 시 폴링 중지)]
+  // [Flow: Step 1 (활성 작업 또는 Excel 고급 변환 중인 작업 존재 확인) -> Step 2 (5초 간격 폴링) -> Step 3 (완료/에러 시 폴링 중지)]
   useEffect(() => {
     const hasActive = jobs.some((j) => j.status !== "done" && j.status !== "error");
-    if (!hasActive) {
+    const hasAdvancedProcessing = jobs.some((j) => j.xlsx_advanced_status === "processing");
+    if (!hasActive && !hasAdvancedProcessing) {
       clearInterval(pollRef.current);
       pollRef.current = null;
       return;
@@ -278,7 +285,7 @@ export default function JobsPage() {
     const base = job?.filename ?
     job.filename.replace(/\.[^/.]+$/, "") :
     "result";
-    const ext = type === "md" ? "md" : type;
+    const ext = type === "md" ? "md" : type === "csv_basic" ? "csv" : type.startsWith("xlsx") ? "xlsx" : type;
     const a = document.createElement("a");
     a.href = download_url;
     a.download = `${base}.${ext}`;
@@ -291,18 +298,24 @@ export default function JobsPage() {
   async function convertAndDownload(id, format) {
     setConverting((prev) => ({ ...prev, [id]: true }));
     try {
-      const { download_url } = await api.convertJob(id, format);
+      const res = await api.convertJob(id, format);
       const job = jobs.find((j) => j.job_id === id);
       const base = job?.filename ?
       job.filename.replace(/\.[^/.]+$/, "") :
       "result";
+      const ext = format === "csv_basic" ? "csv" : format.startsWith("xlsx") ? "xlsx" : format;
+      if (res.status === "processing") {
+        await loadJobs();
+        return;
+      }
       const a = document.createElement("a");
-      a.href = download_url;
-      a.download = `${base}.${format}`;
+      a.href = res.download_url;
+      a.download = `${base}.${ext}`;
       a.style.display = "none";
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+      await loadJobs();
     } catch (e) {
       setError(e.message || t("page:errors.unknown"));
     } finally {
@@ -333,7 +346,11 @@ export default function JobsPage() {
     }
   }
 
-  function xlsxCost(job) {
+  function xlsxBasicCost(job) {
+    return (job.total_pages || job.total_files || 1) * 1;
+  }
+
+  function xlsxAdvancedCost(job) {
     return (job.total_pages || job.total_files || 1) * 3;
   }
 
@@ -818,7 +835,8 @@ export default function JobsPage() {
                                 download={download}
                                 convertAndDownload={convertAndDownload}
                                 converting={converting}
-                                xlsxCost={xlsxCost}
+                                xlsxBasicCost={xlsxBasicCost}
+                                xlsxAdvancedCost={xlsxAdvancedCost}
                                 onMenuItemClick={() => {}}
                               >
                                 <Download size={18} data-oid="x4fihqx" />
@@ -913,7 +931,8 @@ export default function JobsPage() {
                             download={download}
                             convertAndDownload={convertAndDownload}
                             converting={converting}
-                            xlsxCost={xlsxCost}
+                            xlsxBasicCost={xlsxBasicCost}
+                            xlsxAdvancedCost={xlsxAdvancedCost}
                             onMenuItemClick={() => {}}
                           >
                             <Download size={18} />

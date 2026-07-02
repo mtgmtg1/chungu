@@ -75,6 +75,16 @@ class Job(Base):
     result_pptx_storage_path: Mapped[str] = mapped_column(String(1024), default="")
     result_edited_md_storage_path: Mapped[str] = mapped_column(String(1024), default="")
 
+    # 엑셀 기본/고급 변환 결과 (기존 xlsx는 기본 변환으로 통합)
+    result_xlsx_basic_storage_path: Mapped[str] = mapped_column(String(1024), default="")
+    result_xlsx_advanced_storage_path: Mapped[str] = mapped_column(String(1024), default="")
+    result_xlsx_advanced_job_id: Mapped[str] = mapped_column(String(32), default="")
+    xlsx_basic_converted: Mapped[bool] = mapped_column(Boolean, default=False)
+    xlsx_advanced_converted: Mapped[bool] = mapped_column(Boolean, default=False)
+    xlsx_advanced_status: Mapped[str] = mapped_column(String(20), default="")
+    xlsx_advanced_recovery_notes: Mapped[list] = mapped_column(JSON, default=list)
+    xlsx_advanced_refundable: Mapped[bool] = mapped_column(Boolean, default=False)
+
     # 하위 호환: 로컬 파일 경로
     result_csv_path: Mapped[str] = mapped_column(String(1024), default="")
     result_md_path: Mapped[str] = mapped_column(String(1024), default="")

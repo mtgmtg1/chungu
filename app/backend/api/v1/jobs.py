@@ -67,6 +67,12 @@ def _job_summary(job: Job) -> dict:
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
         "downloadable": job.status == "done",
         "xlsx_converted": bool(job.result_xlsx_storage_path),
+        "xlsx_basic_converted": bool(job.result_xlsx_basic_storage_path),
+        "xlsx_advanced_converted": bool(job.result_xlsx_advanced_storage_path),
+        "xlsx_advanced_status": job.xlsx_advanced_status,
+        "xlsx_advanced_job_id": job.result_xlsx_advanced_job_id,
+        "xlsx_advanced_refundable": job.xlsx_advanced_refundable,
+        "xlsx_advanced_recovery_notes": job.xlsx_advanced_recovery_notes,
     }
 
 
@@ -382,27 +388,38 @@ def _get_markdown_content(job: Job) -> str:
     return ""
 
 
-def _ensure_xlsx_bundle(job: Job, db: Session) -> int:
-    """CSV/XLSX 다운로드가 가능하도록 xlsx 변환을 한 번 수행한다. 이미 변환된 경우 0을 반환한다."""
-    if job.result_xlsx_storage_path:
+def _convert_format_alias(fmt: str) -> str:
+    """구형 'xlsx'/'csv' 요청을 새 기본 변환 포맷으로 매핑한다."""
+    return {"xlsx": "xlsx_basic", "csv": "csv_basic"}.get(fmt, fmt)
+
+
+def _ensure_xlsx_basic_bundle(job: Job, db: Session) -> int:
+    """CSV/XLSX 기본 변환 번들을 한 번 수행한다. 이미 변환된 경우 0을 반환한다."""
+    if job.result_xlsx_basic_storage_path and job.result_csv_storage_path:
         return 0
     db_user = db.get(User, job.user_id)
     if db_user is None:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
     units = job.total_pages if job.total_pages else (job.total_files or 1)
-    cost = units * 3
+    cost = units * 1
     try:
-        points_service.spend_points(db, db_user, cost, f"API xlsx 변환: {job.original_filename}")
+        points_service.spend_points(db, db_user, cost, f"API Excel 기본변환: {job.original_filename}")
     except ValueError as e:
         raise HTTPException(status_code=402, detail=str(e))
     markdown = _get_markdown_content(job)
     if not markdown.strip():
         raise HTTPException(status_code=400, detail="변환할 마크다운 결과가 없습니다")
     with tempfile.TemporaryDirectory() as tmpdir:
-        out_path = Path(tmpdir) / "result.xlsx"
-        office_converter.markdown_to_xlsx(markdown, out_path)
-        storage_path = supabase_client.upload_office_result(job.id, out_path, "xlsx")
-    job.result_xlsx_storage_path = storage_path
+        xlsx_path = Path(tmpdir) / "result.xlsx"
+        csv_path = Path(tmpdir) / "result.csv"
+        office_converter.markdown_to_xlsx_basic(markdown, xlsx_path)
+        office_converter.markdown_to_csv_basic(markdown, csv_path)
+        xlsx_storage_path = supabase_client.upload_office_result(job.id, xlsx_path, "xlsx")
+        csv_storage_path = supabase_client.upload_office_result(job.id, csv_path, "csv")
+    job.result_xlsx_basic_storage_path = xlsx_storage_path
+    job.result_xlsx_storage_path = xlsx_storage_path  # 하위 호환
+    job.result_csv_storage_path = csv_storage_path
+    job.xlsx_basic_converted = True
     db.commit()
     return cost
 
@@ -425,15 +442,17 @@ def download_job(
     if job.status != "done":
         raise HTTPException(status_code=400, detail="완료된 작업만 다운로드할 수 있습니다")
 
-    # csv와 xlsx는 번들: xlsx 변환 완료 시에만 다운로드, 미변환 시 동일 요금으로 변환 후 제공
+    # csv/xlsx 기본 변환은 동일한 번들로 처리; advanced는 별도 경로 사용
+    type = _convert_format_alias(type)
     points_spent = 0
-    if type in ("csv", "xlsx"):
-        points_spent = _ensure_xlsx_bundle(job, db)
+    if type in ("csv_basic", "xlsx_basic"):
+        points_spent = _ensure_xlsx_basic_bundle(job, db)
 
     path_map = {
-        "csv": job.result_csv_storage_path,
+        "csv_basic": job.result_csv_storage_path,
         "md": job.result_edited_md_storage_path or job.result_md_storage_path,
-        "xlsx": job.result_xlsx_storage_path,
+        "xlsx_basic": job.result_xlsx_basic_storage_path,
+        "xlsx_advanced": job.result_xlsx_advanced_storage_path,
         "docx": job.result_docx_storage_path,
         "pptx": job.result_pptx_storage_path,
     }
@@ -472,17 +491,87 @@ def convert_job(
     if job.status != "done":
         raise HTTPException(status_code=400, detail="완료된 작업만 변환할 수 있습니다")
 
-    fmt = str(payload.get("format", "")).lower()
-    if fmt not in ("xlsx", "docx", "pptx"):
+    fmt = _convert_format_alias(str(payload.get("format", "")).lower())
+    if fmt not in ("xlsx_basic", "csv_basic", "xlsx_advanced", "docx", "pptx"):
         raise HTTPException(status_code=400, detail="지원하지 않는 변환 형식입니다")
 
     db_user = db.get(User, job.user_id)
     if db_user is None:
         raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
 
-    # 이미 변환된 파일이 있으면 비용 없이 재사용
+    # Excel 기본/고급 변환: 이미 변환된 파일이 있으면 비용 없이 재사용
+    if fmt in ("xlsx_basic", "csv_basic"):
+        existing_path = {
+            "xlsx_basic": job.result_xlsx_basic_storage_path,
+            "csv_basic": job.result_csv_storage_path,
+        }.get(fmt)
+        if existing_path:
+            try:
+                url = supabase_client.get_signed_download_url(existing_path, bucket="results", expires_in=3600)
+                _log_api_usage(
+                    db, api_key, uuid.UUID(user.user_id), "/api/v1/jobs/convert", 200,
+                    points_spent=0, job_id=job.id,
+                    client_ip=request.client.host if request.client else "",
+                )
+                return {"download_url": url, "format": fmt, "storage_path": existing_path}
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+        points_spent = _ensure_xlsx_basic_bundle(job, db)
+        storage_path = {
+            "xlsx_basic": job.result_xlsx_basic_storage_path,
+            "csv_basic": job.result_csv_storage_path,
+        }.get(fmt)
+        if not storage_path:
+            raise HTTPException(status_code=502, detail="변환 결과 경로가 없습니다")
+        try:
+            url = supabase_client.get_signed_download_url(storage_path, bucket="results", expires_in=3600)
+            add_daily_spent_points(api_key.id, points_spent)
+            _log_api_usage(
+                db, api_key, uuid.UUID(user.user_id), "/api/v1/jobs/convert", 200,
+                points_spent=points_spent, job_id=job.id,
+                client_ip=request.client.host if request.client else "",
+            )
+            return {"download_url": url, "format": fmt, "storage_path": storage_path}
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+
+    if fmt == "xlsx_advanced":
+        if job.result_xlsx_advanced_storage_path:
+            try:
+                url = supabase_client.get_signed_download_url(job.result_xlsx_advanced_storage_path, bucket="results", expires_in=3600)
+                _log_api_usage(
+                    db, api_key, uuid.UUID(user.user_id), "/api/v1/jobs/convert", 200,
+                    points_spent=0, job_id=job.id,
+                    client_ip=request.client.host if request.client else "",
+                )
+                return {"download_url": url, "format": fmt, "storage_path": job.result_xlsx_advanced_storage_path}
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+        if job.xlsx_advanced_status == "processing":
+            raise HTTPException(status_code=409, detail="이미 고급 변환이 진행 중입니다")
+        units = job.total_pages if job.total_pages else (job.total_files or 1)
+        cost = units * 3
+        try:
+            points_service.spend_points(db, db_user, cost, f"API Excel 고급변환: {job.original_filename}")
+        except ValueError as e:
+            raise HTTPException(status_code=402, detail=str(e))
+        job.xlsx_advanced_status = "processing"
+        job.xlsx_advanced_refundable = False
+        db.commit()
+        from ...workers import tasks
+        task = tasks.convert_xlsx_advanced.delay(job_id)
+        job.result_xlsx_advanced_job_id = task.id
+        db.commit()
+        add_daily_spent_points(api_key.id, cost)
+        _log_api_usage(
+            db, api_key, uuid.UUID(user.user_id), "/api/v1/jobs/convert", 200,
+            points_spent=cost, job_id=job.id,
+            client_ip=request.client.host if request.client else "",
+        )
+        return {"job_id": task.id, "format": fmt, "status": "processing"}
+
+    # docx / pptx 변환 (기존 동기 방식, 비용 무료)
     existing_path = {
-        "xlsx": job.result_xlsx_storage_path,
         "docx": job.result_docx_storage_path,
         "pptx": job.result_pptx_storage_path,
     }.get(fmt)
@@ -498,16 +587,6 @@ def convert_job(
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
 
-    points_spent = 0
-    if fmt == "xlsx":
-        units = job.total_pages if job.total_pages else (job.total_files or 1)
-        cost = units * 3
-        points_spent = cost
-        try:
-            points_service.spend_points(db, db_user, cost, f"API xlsx 변환: {job.original_filename}")
-        except ValueError as e:
-            raise HTTPException(status_code=402, detail=str(e))
-
     def _get_markdown() -> str:
         client = supabase_client.get_service_client()
         if job.result_edited_md_storage_path:
@@ -520,9 +599,7 @@ def convert_job(
         markdown = _get_markdown()
         with tempfile.TemporaryDirectory() as tmpdir:
             out_path = Path(tmpdir) / f"result.{fmt}"
-            if fmt == "xlsx":
-                office_converter.markdown_to_xlsx(markdown, out_path)
-            elif fmt == "docx":
+            if fmt == "docx":
                 office_converter.markdown_to_docx(markdown, out_path)
             else:
                 office_converter.markdown_to_pptx(markdown, out_path)
@@ -530,9 +607,7 @@ def convert_job(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"변환 실패: {e}")
 
-    if fmt == "xlsx":
-        job.result_xlsx_storage_path = storage_path
-    elif fmt == "docx":
+    if fmt == "docx":
         job.result_docx_storage_path = storage_path
     else:
         job.result_pptx_storage_path = storage_path
@@ -543,10 +618,66 @@ def convert_job(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
 
-    add_daily_spent_points(api_key.id, points_spent)
     _log_api_usage(
         db, api_key, uuid.UUID(user.user_id), "/api/v1/jobs/convert", 200,
-        points_spent=points_spent, job_id=job.id,
+        points_spent=0, job_id=job.id,
         client_ip=request.client.host if request.client else "",
     )
     return {"download_url": url, "format": fmt, "storage_path": storage_path}
+
+
+@router.post("/{job_id}/xlsx-advanced-action")
+def xlsx_advanced_action(
+    request: Request,
+    job_id: str,
+    payload: dict = Body(...),
+    auth: tuple[CurrentUser, ApiKey] = Depends(require_api_key_with_key),
+    db: Session = Depends(get_db),
+):
+    """Excel 고급 변환 완전 실패 시 재시도 또는 포인트 환불을 처리한다."""
+    user, api_key = auth
+    enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
+
+    job = db.get(Job, job_id)
+    if job is None or str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+    if job.xlsx_advanced_status != "error" or not job.xlsx_advanced_refundable:
+        raise HTTPException(status_code=400, detail="환불/재시도할 수 있는 상태가 아닙니다")
+
+    action = str(payload.get("action", "")).lower()
+    if action not in ("retry", "refund"):
+        raise HTTPException(status_code=400, detail="지원하지 않는 action입니다")
+
+    db_user = db.get(User, job.user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+
+    units = job.total_pages if job.total_pages else (job.total_files or 1)
+    cost = units * 3
+
+    if action == "refund":
+        points_service.refund_points(db, db_user, cost, f"API Excel 고급변환 환불: {job.original_filename}")
+        job.xlsx_advanced_refundable = False
+        db.commit()
+        add_daily_spent_points(api_key.id, -cost)
+        _log_api_usage(
+            db, api_key, uuid.UUID(user.user_id), "/api/v1/jobs/xlsx-advanced-action", 200,
+            points_spent=-cost, job_id=job.id,
+            client_ip=request.client.host if request.client else "",
+        )
+        return {"refunded": True, "points": cost}
+
+    job.xlsx_advanced_status = "processing"
+    job.xlsx_advanced_refundable = False
+    job.result_xlsx_advanced_storage_path = ""
+    db.commit()
+    from ...workers import tasks
+    task = tasks.convert_xlsx_advanced.delay(job_id)
+    job.result_xlsx_advanced_job_id = task.id
+    db.commit()
+    _log_api_usage(
+        db, api_key, uuid.UUID(user.user_id), "/api/v1/jobs/xlsx-advanced-action", 200,
+        points_spent=0, job_id=job.id,
+        client_ip=request.client.host if request.client else "",
+    )
+    return {"job_id": task.id, "status": "processing"}

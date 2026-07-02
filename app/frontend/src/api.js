@@ -61,6 +61,8 @@ export const api = {
   convertJob: (id, format) =>
     request(`/api/jobs/${id}/convert`, { method: 'POST', body: JSON.stringify({ format }) }),
   downloadJob: (id, type) => request(`/api/jobs/${id}/download?type=${type}`),
+  xlsxAdvancedAction: (id, action) =>
+    request(`/api/jobs/${id}/xlsx-advanced-action`, { method: 'POST', body: JSON.stringify({ action }) }),
   downloadUrl: (id, type) => `/api/jobs/${id}/download?type=${type}`,
   deleteJob: (id) => request(`/api/jobs/${id}`, { method: 'DELETE' }),
 

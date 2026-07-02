@@ -282,14 +282,43 @@ Server `.env` must be updated manually (not overwritten by rsync).
 - Developer portal: `/developer` in the web UI
 - Docusaurus docs site: `/docs/` (served by FastAPI from `docs/build/`)
 
-## Office Conversion (DOCX/PPTX/XLSX)
+## Office Conversion (DOCX) & Excel Basic/Advanced Conversion
 
-- Conversion is handled by `app/backend/core/office_converter.py`.
-- All markdown content is preserved: headings, paragraphs, lists, tables, and code blocks. No data is lost.
-- `docx`: renders headings, paragraphs with inline formatting (`**bold**`, `*italic*`, `~~strike~~`), bullet/numbered lists, tables, and code blocks.
-- `pptx`: splits content into slides by headings; each slide contains the heading as a title and the following content as body text.
-- `xlsx`: creates a `Content` sheet with all text/list/code content and a separate sheet per markdown table.
-- Conversion endpoints: `/api/jobs/{id}/convert` (web) and `/api/v1/jobs/{id}/convert` (API). xlsx conversion still deducts points per page/file.
+- Conversion is handled by `app/backend/core/office_converter.py` (basic) and `app/backend/core/xlsx_advanced_converter.py` (advanced).
+- **DOCX**: renders headings, paragraphs with inline formatting (`**bold**`, `*italic*`, `~~strike~~`), bullet/numbered lists, tables, and code blocks. Free of charge.
+- **PPTX**: removed from the UI. Backend code remains but no button is exposed.
+- **Excel Basic** (`xlsx_basic` / `csv_basic`):
+  - `_parse_markdown_tables()` extracts markdown tables → `_merge_tables()` merges consecutive tables with identical headers → `_normalize_rows()` pads all rows to the same column count.
+  - `markdown_to_csv_basic()` writes a single CSV file with all merged tables.
+  - `markdown_to_xlsx_basic()` writes a single-sheet xlsx with bold headers and auto-width columns.
+  - Cost: **1 point/page** (deducted once per bundle — csv + xlsx generated together).
+  - Already-converted files are reused (no double charging).
+- **Excel Advanced** (`xlsx_advanced`):
+  - LLM-based multi-pass conversion via `xlsx_advanced_converter.py` + Celery task `convert_xlsx_advanced`.
+  - Pipeline: load markdown → split by pages → extract common column structure from first page (LLM text) → per-page: normalize with LLM text → if invalid, reconstruct with vision LLM (up to 3 retries with evaluation) → merge all tables → write xlsx.
+  - Cost: **3 points/page**. On failure, user can retry (no extra charge) or refund.
+  - Status tracked via `job.xlsx_advanced_status` (`""` → `"processing"` → `"done"` / `"error"`).
+  - Recovery notes (`job.xlsx_advanced_recovery_notes`) record pages where vision reconstruction had issues.
+  - `job.xlsx_advanced_refundable` indicates whether the user can request a refund.
+  - Retry/refund endpoints: `/api/jobs/{id}/xlsx-advanced-action` (web) and `/api/v1/jobs/{id}/xlsx-advanced-action` (API).
+- **Frontend**:
+  - `JobResultPage.jsx`: Excel dropdown group (CSV Basic, Excel Basic, Excel Advanced) + Office dropdown group (DOCX only). Preview tabs for Markdown / Excel Basic / Excel Advanced using `ExcelPreview.jsx` (SheetJS-based xlsx viewer).
+  - `JobsPage.jsx`: `DownloadMenu` shows Markdown (free), CSV Basic, Excel Basic, Excel Advanced, Word (free). Polling includes `xlsx_advanced_status === "processing"` jobs.
+  - `ExcelPreview.jsx`: fetches signed xlsx URL, parses with SheetJS (`xlsx` npm package), renders first sheet as an HTML table.
+- **DB migration**: `013_add_xlsx_conversion_fields.sql` adds `result_xlsx_basic_storage_path`, `result_xlsx_advanced_storage_path`, `result_xlsx_advanced_job_id`, `xlsx_basic_converted`, `xlsx_advanced_converted`, `xlsx_advanced_status`, `xlsx_advanced_recovery_notes` (JSONB), `xlsx_advanced_refundable` columns.
+- **Backward compatibility**: legacy `xlsx`/`csv` format requests are aliased to `xlsx_basic`/`csv_basic` via `_convert_format_alias()`. `result_xlsx_storage_path` is still set for backward compatibility.
+- Conversion endpoints: `/api/jobs/{id}/convert` (web) and `/api/v1/jobs/{id}/convert` (API).
+- Key files:
+  - `app/backend/core/office_converter.py` — `_parse_markdown_tables`, `_merge_tables`, `_normalize_rows`, `markdown_to_csv_basic`, `markdown_to_xlsx_basic`
+  - `app/backend/core/xlsx_advanced_converter.py` — LLM + vision advanced conversion pipeline
+  - `app/backend/workers/tasks.py` — `convert_xlsx_advanced` Celery task
+  - `app/backend/api/jobs.py` — web convert/download/xlsx-advanced-action endpoints
+  - `app/backend/api/v1/jobs.py` — API v1 convert/download/xlsx-advanced-action endpoints
+  - `app/frontend/src/pages/JobResultPage.jsx` — Excel/Office button groups, preview tabs
+  - `app/frontend/src/pages/JobsPage.jsx` — DownloadMenu with new formats
+  - `app/frontend/src/components/ExcelPreview.jsx` — SheetJS-based xlsx preview
+  - `app/frontend/src/api.js` — `xlsxAdvancedAction` API method
+  - `app/backend/db/migrations/013_add_xlsx_conversion_fields.sql` — DB migration
 
 ## DOCX/HWP Preview
 

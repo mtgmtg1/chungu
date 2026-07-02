@@ -309,7 +309,128 @@ def markdown_to_pptx(markdown: str, out_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# XLSX
+# Markdown table extraction (basic conversion)
+# ---------------------------------------------------------------------------
+
+def _parse_markdown_tables(markdown: str) -> list[dict]:
+    """마크다운에서 표만 추출한다.
+
+    반환 형식: {"headers": [...], "rows": [[...], ...]}
+    """
+    lines = markdown.splitlines()
+    tables: list[dict] = []
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        if not stripped.startswith("|"):
+            i += 1
+            continue
+        table_lines: list[str] = []
+        while i < len(lines) and lines[i].strip().startswith("|"):
+            table_lines.append(lines[i].strip())
+            i += 1
+        if len(table_lines) < 2:
+            continue
+        # 헤더 구분선(|---|---|)은 건너뜀
+        data_lines = [table_lines[0]] + [
+            line for line in table_lines[1:] if not re.match(r"^\|?[\s\-:|]+\|?$", line)
+        ]
+        if len(data_lines) < 1:
+            continue
+        headers = [c.strip() for c in data_lines[0].split("|")[1:-1]]
+        rows = []
+        for row_line in data_lines[1:]:
+            cells = [c.strip() for c in row_line.split("|")[1:-1]]
+            if cells:
+                rows.append(cells)
+        if headers or rows:
+            tables.append({"headers": headers, "rows": rows})
+    return tables
+
+
+def _merge_tables(tables: list[dict]) -> list[dict]:
+    """동일 헤더를 가진 연속된 표를 하나로 병합한다."""
+    if not tables:
+        return []
+    merged: list[dict] = [tables[0]]
+    for table in tables[1:]:
+        last = merged[-1]
+        if table["headers"] == last["headers"]:
+            last["rows"].extend(table["rows"])
+        else:
+            merged.append(table)
+    return merged
+
+
+def _normalize_rows(tables: list[dict]) -> list[dict]:
+    """각 표의 모든 행을 동일한 컬럼 수로 맞춘다."""
+    for table in tables:
+        col_count = max(len(table["headers"]), max((len(row) for row in table["rows"]), default=0))
+        table["headers"] = table["headers"] + [""] * (col_count - len(table["headers"]))
+        for row in table["rows"]:
+            row.extend([""] * (col_count - len(row)))
+    return tables
+
+
+def markdown_to_csv_basic(markdown: str, out_path: Path) -> Path:
+    """마크다운 표를 하나의 CSV 파일로 통합한다."""
+    import csv as csv_module
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tables = _normalize_rows(_merge_tables(_parse_markdown_tables(markdown)))
+    with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv_module.writer(f)
+        for idx, table in enumerate(tables):
+            if idx > 0:
+                writer.writerow([])
+            writer.writerow(table["headers"])
+            for row in table["rows"]:
+                writer.writerow(row)
+    return out_path
+
+
+def markdown_to_xlsx_basic(markdown: str, out_path: Path) -> Path:
+    """마크다운 표를 하나의 xlsx 파일(단일 시트)에 통합한다."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tables = _normalize_rows(_merge_tables(_parse_markdown_tables(markdown)))
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Tables"
+
+    row = 1
+    for idx, table in enumerate(tables):
+        if idx > 0:
+            row += 1
+        headers = table["headers"]
+        for col_idx, h in enumerate(headers):
+            cell = ws.cell(row, col_idx + 1, h)
+            cell.font = Font(bold=True)
+            cell.fill = PatternFill(start_color="E0E7FF", end_color="E0E7FF", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        row += 1
+        for table_row in table["rows"]:
+            for col_idx, val in enumerate(table_row):
+                ws.cell(row, col_idx + 1, val)
+            row += 1
+
+    # 컬럼 너비 자동 조정
+    for col in ws.columns:
+        max_len = 0
+        col_letter = col[0].column_letter
+        for cell in col:
+            try:
+                if cell.value:
+                    max_len = max(max_len, len(str(cell.value)))
+            except Exception:
+                pass
+        ws.column_dimensions[col_letter].width = min(max_len + 2, 60)
+
+    wb.save(out_path)
+    return out_path
+
+
+# ---------------------------------------------------------------------------
+# XLSX (legacy full markdown conversion)
 # ---------------------------------------------------------------------------
 
 def _safe_sheet_name(name: str, index: int) -> str:

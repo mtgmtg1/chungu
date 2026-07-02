@@ -15,7 +15,7 @@ from sqlalchemy import text as sql_text
 from ..celery_app import celery
 from celery.signals import worker_ready
 from ..config import settings
-from ..core import archive_handler, converter, excel_writer, media_loader, merge, supabase_client
+from ..core import archive_handler, converter, excel_writer, media_loader, merge, supabase_client, xlsx_advanced_converter
 from ..core.ocr_client import has_pdf_text_layer
 from ..core.pipeline_docling import run_docling, run_hwp
 from ..core.pipeline_hybrid import run_hybrid
@@ -632,3 +632,9 @@ def cleanup_expired_uploads() -> dict:
         return {"error": str(e)}
     finally:
         db.close()
+
+
+@celery.task(name="backend.workers.tasks.convert_xlsx_advanced")
+def convert_xlsx_advanced(parent_job_id: str) -> dict:
+    """마크다운 결과를 LLM 기반 고급 변환으로 xlsx로 변환한다."""
+    return xlsx_advanced_converter.run(parent_job_id)

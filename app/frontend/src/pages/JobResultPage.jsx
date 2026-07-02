@@ -3,13 +3,16 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
   Download,
+  FileSpreadsheet,
   FileText,
   Loader2,
   PanelLeft,
   PanelLeftClose,
+  RefreshCw,
   Save,
   Table2,
   XCircle } from
@@ -18,6 +21,7 @@ import SourcePanel from "../components/SourcePanel.jsx";
 import PoetryProgress from "../components/PoetryProgress.jsx";
 import PagedResultViewer from "../components/PagedResultViewer.jsx";
 import SimpleEditor from "../components/SimpleEditor.jsx";
+import ExcelPreview from "../components/ExcelPreview.jsx";
 import { api } from "../api.js";
 import i18n from "../i18n.js";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
@@ -59,6 +63,11 @@ export default function JobResultPage() {
   const pollRef = useRef(null);
   const editorRef = useRef(null);
 
+  const [previewMode, setPreviewMode] = useState("markdown"); // "markdown" | "xlsxBasic" | "xlsxAdvanced"
+  const [basicUrl, setBasicUrl] = useState(null);
+  const [advancedUrl, setAdvancedUrl] = useState(null);
+  const [xlsxAdvancedPolling, setXlsxAdvancedPolling] = useState(false);
+
   const PAGE_THRESHOLD = 100;
   const needsPagedMode = (j) =>
   (j?.total_pages || 0) > PAGE_THRESHOLD ||
@@ -93,6 +102,9 @@ export default function JobResultPage() {
     try {
       const data = await api.getJob(jobId);
       setJob(data);
+      if (data.xlsx_advanced_status === "done" || data.xlsx_advanced_status === "error") {
+        setXlsxAdvancedPolling(false);
+      }
       if (data.status === "done") {
         clearInterval(pollRef.current);
         await loadPreview();
@@ -114,6 +126,9 @@ export default function JobResultPage() {
       try {
         const data = await api.getJob(jobId);
         setJob(data);
+        if (data.xlsx_advanced_status === "done" || data.xlsx_advanced_status === "error") {
+          setXlsxAdvancedPolling(false);
+        }
         if (data.status === "done") {
           clearInterval(pollRef.current);
           await loadPreview();
@@ -126,6 +141,14 @@ export default function JobResultPage() {
         /* 무시 */}
     }, 2000);
   }
+
+  useEffect(() => {
+    if (!xlsxAdvancedPolling) return;
+    const interval = setInterval(() => {
+      loadJob();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [xlsxAdvancedPolling, jobId]);
 
   async function loadPreview() {
     try {
@@ -181,7 +204,7 @@ export default function JobResultPage() {
     const base = job?.filename ?
     job.filename.replace(/\.[^/.]+$/, "") :
     "result";
-    const ext = type === "md" ? "md" : type;
+    const ext = type === "md" ? "md" : type === "csv_basic" ? "csv" : type.startsWith("xlsx") ? "xlsx" : type;
     downloadByUrl(download_url, `${base}.${ext}`);
   }
 
@@ -193,7 +216,9 @@ export default function JobResultPage() {
       const base = job?.filename ?
       job.filename.replace(/\.[^/.]+$/, "") :
       "result";
-      downloadByUrl(download_url, `${base}.${format}`);
+      const ext = format === "csv_basic" ? "csv" : format.startsWith("xlsx") ? "xlsx" : format;
+      downloadByUrl(download_url, `${base}.${ext}`);
+      await loadJob();
     } catch (e) {
       setError(e.message || t("page:errors.unknown"));
     } finally {
@@ -201,7 +226,57 @@ export default function JobResultPage() {
     }
   }
 
-  const xlsxCost = job ? (job.total_pages || job.total_files || 1) * 3 : 0;
+  async function startXlsxAdvanced() {
+    setConverting(true);
+    setError("");
+    try {
+      const res = await api.convertJob(jobId, "xlsx_advanced");
+      if (res.status === "processing") {
+        setXlsxAdvancedPolling(true);
+        setPreviewMode("xlsxAdvanced");
+      }
+      await loadJob();
+    } catch (e) {
+      setError(e.message || t("page:errors.unknown"));
+    } finally {
+      setConverting(false);
+    }
+  }
+
+  async function handleXlsxAdvancedAction(action) {
+    setConverting(true);
+    setError("");
+    try {
+      await api.xlsxAdvancedAction(jobId, action);
+      await loadJob();
+      if (action === "retry") {
+        setXlsxAdvancedPolling(true);
+      }
+    } catch (e) {
+      setError(e.message || t("page:errors.unknown"));
+    } finally {
+      setConverting(false);
+    }
+  }
+
+  useEffect(() => {
+    if (previewMode === "xlsxBasic" && job?.xlsx_basic_converted && !basicUrl) {
+      api.downloadJob(jobId, "xlsx_basic")
+        .then(res => setBasicUrl(res.download_url))
+        .catch(e => setError(e.message || t("page:errors.unknown")));
+    }
+  }, [previewMode, job?.xlsx_basic_converted, basicUrl, jobId]);
+
+  useEffect(() => {
+    if (previewMode === "xlsxAdvanced" && job?.xlsx_advanced_converted && !advancedUrl) {
+      api.downloadJob(jobId, "xlsx_advanced")
+        .then(res => setAdvancedUrl(res.download_url))
+        .catch(e => setError(e.message || t("page:errors.unknown")));
+    }
+  }, [previewMode, job?.xlsx_advanced_converted, advancedUrl, jobId]);
+
+  const xlsxBasicCost = job ? (job.total_pages || job.total_files || 1) * 1 : 0;
+  const xlsxAdvancedCost = job ? (job.total_pages || job.total_files || 1) * 3 : 0;
 
   const pct = getDisplayProgress(job, 20, now, startTimeRef.current);
 
@@ -283,69 +358,97 @@ export default function JobResultPage() {
                 <FileText size={16} data-oid="go.4duu" />
                 {t("page:result.md")}
               </button>
-              <button
-              onClick={() => {
-                if (!job.xlsx_converted) {
-                  if (
-                  !window.confirm(
-                    t("page:result.csvConfirm", {
-                      cost: xlsxCost.toLocaleString()
-                    })
-                  ))
 
-                  return;
-                }
-                download("csv");
-              }}
-              className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
-              data-oid="00coi-x">
-
-                <Table2 size={16} data-oid="0yo:c7a" />
-                {job.xlsx_converted ?
-              t("page:result.csv") :
-              t("page:result.csvCost", {
-                cost: xlsxCost.toLocaleString()
-              })}
-              </button>
-              <div className="relative group" data-oid="e5fsbni">
+              <div className="relative group" data-oid="excel-group">
                 <button
                 className="flex items-center gap-1.5 px-3 py-2 bg-primary text-white rounded-lg font-bold hover:opacity-90 transition-colors shadow-sm"
-                data-oid="du_8s4p">
+                data-oid="excel-group-btn">
 
-                  <Download size={16} data-oid="d46ozw7" />
+                  <FileSpreadsheet size={16} data-oid="excel-icon" />
+                  {t("page:result.excel")}
+                </button>
+                <div
+                className="absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-lg border border-outline-variant hidden group-hover:flex flex-col z-50 py-1"
+                data-oid="excel-dropdown">
+
+                  <button
+                  onClick={() => convertAndDownload("csv_basic")}
+                  disabled={converting}
+                  className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+                  data-oid="csv-basic-btn">
+
+                    {job.xlsx_basic_converted ?
+                  t("page:result.csvBasicDownload") :
+                  t("page:result.csvBasic", { cost: xlsxBasicCost.toLocaleString() })}
+                  </button>
+                  <button
+                  onClick={() => convertAndDownload("xlsx_basic")}
+                  disabled={converting}
+                  className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+                  data-oid="xlsx-basic-btn">
+
+                    {job.xlsx_basic_converted ?
+                  t("page:result.xlsxBasicDownload") :
+                  t("page:result.xlsxBasic", { cost: xlsxBasicCost.toLocaleString() })}
+                  </button>
+                  <button
+                  onClick={() => startXlsxAdvanced()}
+                  disabled={converting || xlsxAdvancedPolling}
+                  className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+                  data-oid="xlsx-advanced-btn">
+
+                    {xlsxAdvancedPolling ?
+                  t("page:result.xlsxAdvancedProcessing") :
+                  job.xlsx_advanced_converted ?
+                  t("page:result.xlsxAdvancedDownload") :
+                  t("page:result.xlsxAdvanced", { cost: xlsxAdvancedCost.toLocaleString() })}
+                  </button>
+                </div>
+              </div>
+
+              {job?.xlsx_advanced_status === "error" && job?.xlsx_advanced_refundable &&
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-700 rounded-lg text-sm border border-red-200" data-oid="xlsx-advanced-error">
+                <AlertTriangle size={14} data-oid="alert-icon" />
+                <span>{t("page:result.xlsxAdvancedFailed")}</span>
+                <button
+                onClick={() => handleXlsxAdvancedAction("retry")}
+                disabled={converting}
+                className="flex items-center gap-1 px-2 py-1 bg-white rounded border border-red-200 hover:bg-red-100 transition-colors"
+                data-oid="retry-btn">
+
+                  <RefreshCw size={14} data-oid="retry-icon" />
+                  {t("page:result.retry")}
+                </button>
+                <button
+                onClick={() => handleXlsxAdvancedAction("refund")}
+                disabled={converting}
+                className="px-2 py-1 bg-white rounded border border-red-200 hover:bg-red-100 transition-colors"
+                data-oid="refund-btn">
+
+                  {t("page:result.refund")}
+                </button>
+              </div>
+              }
+
+              <div className="relative group" data-oid="office-group">
+                <button
+                className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
+                data-oid="office-group-btn">
+
+                  <Download size={16} data-oid="office-icon" />
                   {t("page:result.office")}
                 </button>
                 <div
                 className="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg border border-outline-variant hidden group-hover:flex flex-col z-50 py-1"
-                data-oid="4ia:xlm">
+                data-oid="office-dropdown">
 
-                  <button
-                  onClick={() => convertAndDownload("xlsx")}
-                  disabled={converting}
-                  className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                  data-oid="e_iw.cl">
-
-                    {job.xlsx_converted ?
-                  t("page:result.excelDownload") :
-                  t("page:result.excel", {
-                    cost: xlsxCost.toLocaleString()
-                  })}
-                  </button>
                   <button
                   onClick={() => convertAndDownload("docx")}
                   disabled={converting}
                   className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                  data-oid="s80vrqg">
+                  data-oid="docx-btn">
 
                     {t("page:result.word")}
-                  </button>
-                  <button
-                  onClick={() => convertAndDownload("pptx")}
-                  disabled={converting}
-                  className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                  data-oid="8663wlk">
-
-                    {t("page:result.ppt")}
                   </button>
                 </div>
               </div>
@@ -436,11 +539,61 @@ export default function JobResultPage() {
       }
 
       {job?.status === "done" && !loading && !needsPagedMode(job) &&
-      <div className="flex-1 flex overflow-hidden min-h-0" data-oid="ww-27ni">
-          {sidebarOpen && (sourceUrl || sourceFiles.length > 0) ?
+      <div className="flex-1 flex flex-col overflow-hidden min-h-0" data-oid="ww-27ni">
+          {(job?.xlsx_basic_converted || job?.xlsx_advanced_converted || xlsxAdvancedPolling) &&
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-outline-variant bg-surface flex-shrink-0" data-oid="preview-tabs">
+            <button
+            onClick={() => setPreviewMode("markdown")}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "markdown" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
+            data-oid="tab-markdown">
+
+              Markdown
+            </button>
+            {job?.xlsx_basic_converted &&
+            <button
+            onClick={() => setPreviewMode("xlsxBasic")}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "xlsxBasic" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
+            data-oid="tab-xlsx-basic">
+
+              Excel Basic
+            </button>
+            }
+            {(job?.xlsx_advanced_converted || xlsxAdvancedPolling) &&
+            <button
+            onClick={() => setPreviewMode("xlsxAdvanced")}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "xlsxAdvanced" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
+            data-oid="tab-xlsx-advanced">
+
+              Excel Advanced
+            </button>
+            }
+          </div>
+          }
+
+          {previewMode !== "markdown" && xlsxAdvancedPolling &&
+          <div className="px-4 py-2 bg-blue-50 text-blue-700 text-sm border-b border-blue-200 flex items-center gap-2 flex-shrink-0" data-oid="advanced-progress">
+            <Loader2 className="animate-spin" size={16} data-oid="advanced-spinner" />
+            {t("page:result.xlsxAdvancedProcessing")}
+          </div>
+          }
+
+          {previewMode === "xlsxAdvanced" && (job?.xlsx_advanced_status === "done" || job?.xlsx_advanced_status === "error") && job?.xlsx_advanced_recovery_notes?.length > 0 &&
+          <div className="px-4 py-2 bg-amber-50 text-amber-800 text-sm border-b border-amber-200 flex-shrink-0" data-oid="recovery-notes">
+            <strong>{t("page:result.recoveryNotes")}</strong>
+            <ul className="list-disc ml-5 mt-1">
+              {job.xlsx_advanced_recovery_notes.map((note, idx) => (
+                <li key={idx}>
+                  {t("page:result.recoveryNotePage", { page: note.page })}: {note.reason} ({t("page:result.recoveryNoteCell", { cell: note.cell })})
+                </li>
+              ))}
+            </ul>
+          </div>
+          }
+
+          {previewMode === "markdown" && (sidebarOpen && (sourceUrl || sourceFiles.length > 0) ?
         <PanelGroup
           direction="horizontal"
-          className="flex-1 flex"
+          className="flex-1 flex min-h-0"
           data-oid="wn6pn3w">
 
               <Panel
@@ -494,7 +647,18 @@ export default function JobResultPage() {
             data-oid="r9i48wh" />
 
             </div>
-        }
+        )}
+
+          {previewMode === "xlsxBasic" &&
+          <div className="flex-1 min-h-0 overflow-hidden" data-oid="xlsx-basic-preview">
+            <ExcelPreview downloadUrl={basicUrl} />
+          </div>
+          }
+          {previewMode === "xlsxAdvanced" &&
+          <div className="flex-1 min-h-0 overflow-hidden" data-oid="xlsx-advanced-preview">
+            <ExcelPreview downloadUrl={advancedUrl} />
+          </div>
+          }
         </div>
       }
     </div>);

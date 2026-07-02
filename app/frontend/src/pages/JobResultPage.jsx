@@ -199,7 +199,7 @@ export default function JobResultPage() {
 
   const xlsxCost = job ? (job.total_pages || job.total_files || 1) * 3 : 0;
 
-  const pct = getDisplayProgress(job, 84, now);
+  const pct = getDisplayProgress(job, 20, now);
 
   return (
     <div
@@ -395,21 +395,7 @@ export default function JobResultPage() {
         <PoetryProgress
           pct={pct}
           statusLabel={statusLabel(job.status)}
-          progressText={
-            job.total_pages === 100
-              ? `${pct}%`
-              : job.total_pages
-                ? t("page:result.pageProgress", {
-                  done: job.done_pages || 0,
-                  total: job.total_pages,
-                  pct
-                }) :
-                t("page:result.fileProgress", {
-                  done: job.done_files || 0,
-                  total: job.total_files,
-                  pct
-                })
-          }
+          progressText={`${pct}%`}
         />
       }
 

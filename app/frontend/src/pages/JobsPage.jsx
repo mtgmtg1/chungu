@@ -754,11 +754,7 @@ export default function JobsPage() {
                         </div>
                         {j.status !== "done" && j.status !== "error" && (j.total_pages > 0 || j.total_files > 0) && (
                           (() => {
-                            const isPercent = j.total_pages === 100;
-                            const usePages = j.total_pages > 0 && j.done_pages > 0;
-                            const done = usePages ? j.done_pages : j.done_files;
-                            const total = usePages ? j.total_pages : j.total_files;
-                            const displayPct = getDisplayProgress(j, 84, now);
+                            const displayPct = getDisplayProgress(j, 20, now);
                             return (
                               <div className="mt-1.5 flex items-center gap-2 min-w-0">
                                 <div className="flex-1 h-1.5 bg-surface-container-high rounded-full overflow-hidden min-w-[40px]">
@@ -768,11 +764,7 @@ export default function JobsPage() {
                                   />
                                 </div>
                                 <span className="font-label-sm text-label-sm text-on-surface-variant whitespace-nowrap">
-                                  {isPercent
-                                    ? `${displayPct}%`
-                                    : usePages
-                                      ? t("page:jobs.progressPages", { done: done || 0, total: total })
-                                      : t("page:jobs.progressFiles", { done: done || 0, total: total })}
+                                  {`${displayPct}%`}
                                 </span>
                               </div>
                             );
@@ -935,18 +927,14 @@ export default function JobsPage() {
                     </div>
                     {j.status !== "done" && j.status !== "error" && (j.total_pages > 0 || j.total_files > 0) && (
                       (() => {
-                        const isPercent = j.total_pages === 100;
-                        const usePages = j.total_pages > 0 && j.done_pages > 0;
-                        const done = usePages ? j.done_pages : j.done_files;
-                        const total = usePages ? j.total_pages : j.total_files;
-                        const displayPct = getDisplayProgress(j, 84, now);
+                        const displayPct = getDisplayProgress(j, 20, now);
                         return (
                           <div className="flex items-center gap-2">
                             <div className="flex-1 h-1.5 bg-surface-container-high rounded-full overflow-hidden">
                               <div className="h-full bg-primary rounded-full transition-all duration-500" style={{ width: `${displayPct}%` }} />
                             </div>
                             <span className="font-label-sm text-label-sm text-on-surface-variant whitespace-nowrap">
-                              {isPercent ? `${displayPct}%` : usePages ? t("page:jobs.progressPages", { done: done || 0, total: total }) : t("page:jobs.progressFiles", { done: done || 0, total: total })}
+                              {`${displayPct}%`}
                             </span>
                           </div>
                         );

@@ -524,9 +524,15 @@ def run_job(job_id: str) -> dict:
                 converter.write_markdown(merged_rows, columns, md_path)
 
         # Step 5: Storage에 결과 업로드
-        storage_paths = supabase_client.upload_result(
-            job_id, csv_path=csv_path, md_path=md_path
-        )
+        logger.info(f"[run_job:{job_id}] Step 5 시작: csv_path={csv_path}, md_path={md_path}, exists={csv_path.exists()}, {md_path.exists()}")
+        try:
+            storage_paths = supabase_client.upload_result(
+                job_id, csv_path=csv_path, md_path=md_path
+            )
+            logger.info(f"[run_job:{job_id}] Storage 업로드 결과: {storage_paths}")
+        except Exception as upload_err:
+            logger.exception(f"[run_job:{job_id}] Storage 업로드 실패: {upload_err}")
+            raise
 
         # Step 6: DB 업데이트
         expire_days = int(settings_store.get_setting(db, "download_expire_days") or "7")
@@ -538,7 +544,9 @@ def run_job(job_id: str) -> dict:
         job.expires_at = datetime.now(timezone.utc) + timedelta(days=expire_days)
         job.error_log = "\n".join(errors)
         job.finished_at = datetime.now(timezone.utc)
+        logger.info(f"[run_job:{job_id}] DB 업데이트 직전: md_storage={job.result_md_storage_path}, csv_storage={job.result_csv_storage_path}, status={job.status}")
         _set_status(db, job, "done")
+        logger.info(f"[run_job:{job_id}] DB 업데이트 완료: status={job.status}")
 
         # Step 7: 완료 이메일
         try:

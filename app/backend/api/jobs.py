@@ -902,7 +902,8 @@ def preview_job(
     if job is None or str(job.user_id) != user.user_id:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
     if not job.result_md_storage_path and not job.result_edited_md_storage_path:
-        raise HTTPException(status_code=400, detail="결과 파일이 준비되지 않았습니다")
+        detail = f"결과 파일이 준비되지 않았습니다 (status={job.status}, md_path={job.result_md_storage_path or '-'}, edited_path={job.result_edited_md_storage_path or '-'}, error_log={job.error_log or '-'}"
+        raise HTTPException(status_code=400, detail=detail)
 
     try:
         markdown = _get_markdown_content(job)
@@ -968,7 +969,8 @@ def preview_job_pages(
     if job is None or str(job.user_id) != user.user_id:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
     if not job.result_md_storage_path and not job.result_edited_md_storage_path:
-        raise HTTPException(status_code=400, detail="결과 파일이 준비되지 않았습니다")
+        detail = f"결과 파일이 준비되지 않았습니다 (status={job.status}, md_path={job.result_md_storage_path or '-'}, edited_path={job.result_edited_md_storage_path or '-'}, error_log={job.error_log or '-'}"
+        raise HTTPException(status_code=400, detail=detail)
 
     try:
         markdown = _get_markdown_content(job)

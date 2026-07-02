@@ -462,13 +462,14 @@ def _merge_tables(tables: list[dict], threshold: float | None = None) -> list[di
             else:
                 merged.append({"headers": list(headers), "rows": [list(r) for r in rows]})
         else:
-            # 헤더 없는 연속 표: 이전 표의 헤더를 상속받아 병합
+            # 헤더 없는 연속 표: 이전 표의 헤더를 상속받아 병합 (가장 흔한 케이스)
             if rows:
                 current_col_count = _majority_col_count(rows)
-                if current_col_count == last_col_count:
+                # 열 수가 같거나, 열 수가 달라도 형식 유사도가 임계값 이상이면 병합
+                if current_col_count == last_col_count or _table_similarity(last, table) >= sim_threshold:
                     last["rows"].extend([list(r) for r in rows])
                 else:
-                    # 열 수가 다르면 독립 표로 시작 (첫 행을 헤더로 승격)
+                    # 형식이 다르면 독립 표로 시작 (첫 행을 헤더로 승격)
                     merged.append({"headers": list(rows[0]), "rows": [list(r) for r in rows[1:]]})
             else:
                 merged.append({"headers": list(headers), "rows": []})

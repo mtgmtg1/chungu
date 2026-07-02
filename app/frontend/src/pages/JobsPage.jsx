@@ -16,6 +16,7 @@ import i18n from "../i18n.js";
 import SidebarLayout from "../components/SidebarLayout.jsx";
 import { SkeletonTable } from "../components/Skeleton.jsx";
 import { AnimatedRow } from "../components/AnimatedList.jsx";
+import { getDisplayProgress } from "../utils/progress.js";
 
 function DownloadMenu({ job, fileTypeLabel, download, convertAndDownload, converting, xlsxCost, onMenuItemClick, children }) {
   // [Flow: Step 1 (버튼 위치 추적) -> Step 2 (호버 상태) -> Step 3 (document.body에 Portal로 메뉴 렌더링) -> Step 4 (위치 계산)]
@@ -162,6 +163,7 @@ export default function JobsPage() {
   const [dateTo, setDateTo] = useState("");
   const [deleteModal, setDeleteModal] = useState({ open: false, job: null });
   const [deleting, setDeleting] = useState({});
+  const [now, setNow] = useState(Date.now());
   const pollRef = useRef(null);
 
   const statusLabel = (status) => t(`common:status.${status}`) || status;
@@ -199,6 +201,14 @@ export default function JobsPage() {
       clearInterval(pollRef.current);
       pollRef.current = null;
     };
+  }, [jobs]);
+
+  // [Flow: Step 1 (활성 작업 존재 확인) -> Step 2 (1초 간격 now 갱신) -> Step 3 (시간진행바 리렌더링)]
+  useEffect(() => {
+    const hasActive = jobs.some((j) => j.status !== "done" && j.status !== "error");
+    if (!hasActive) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
   }, [jobs]);
 
   async function load() {
@@ -606,7 +616,7 @@ export default function JobsPage() {
         className="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm overflow-hidden"
         data-oid="3f8sszo">
 
-        <div className="overflow-x-auto custom-scrollbar" data-oid="gz-rlzc">
+        <div className="overflow-x-auto custom-scrollbar hidden lg:block" data-oid="gz-rlzc">
           <table
             className="w-full text-left border-collapse table-fixed"
             data-oid="6k4gubk">
@@ -670,7 +680,7 @@ export default function JobsPage() {
               data-oid="kas6s2w">
 
               {loading ?
-              <tr data-oid="2a4vwvg">
+              <tr className="hidden lg:table-row" data-oid="2a4vwvg">
                   <td
                   colSpan={5}
                   className="px-gutter py-4"
@@ -748,18 +758,18 @@ export default function JobsPage() {
                             const usePages = j.total_pages > 0 && j.done_pages > 0;
                             const done = usePages ? j.done_pages : j.done_files;
                             const total = usePages ? j.total_pages : j.total_files;
-                            const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+                            const displayPct = getDisplayProgress(j, 84, now);
                             return (
                               <div className="mt-1.5 flex items-center gap-2 min-w-0">
                                 <div className="flex-1 h-1.5 bg-surface-container-high rounded-full overflow-hidden min-w-[40px]">
                                   <div
                                     className="h-full bg-primary rounded-full transition-all duration-500"
-                                    style={{ width: `${pct}%` }}
+                                    style={{ width: `${displayPct}%` }}
                                   />
                                 </div>
                                 <span className="font-label-sm text-label-sm text-on-surface-variant whitespace-nowrap">
                                   {isPercent
-                                    ? `${pct}%`
+                                    ? `${displayPct}%`
                                     : usePages
                                       ? t("page:jobs.progressPages", { done: done || 0, total: total })
                                       : t("page:jobs.progressFiles", { done: done || 0, total: total })}
@@ -848,6 +858,117 @@ export default function JobsPage() {
               }
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile/Tablet cards */}
+        <div className="lg:hidden flex flex-col gap-gutter p-gutter bg-surface-container-lowest" data-oid="mobile-cards">
+          {loading ? (
+            Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="bg-surface rounded-xl border border-outline-variant p-gutter animate-pulse" data-oid={`m-skel-${i}`}>
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-surface-container-high shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-4 bg-surface-container-high rounded w-3/4" />
+                    <div className="h-3 bg-surface-container-high rounded w-1/2" />
+                  </div>
+                </div>
+                <div className="mt-3 h-8 bg-surface-container-high rounded w-24" />
+              </div>
+            ))
+          ) : (
+            pageJobs.map((j) => {
+              const chip = STATUS_CHIP[j.status] || STATUS_CHIP.pending;
+              const isDone = j.status === "done";
+              return (
+                <div key={j.job_id} className="bg-surface rounded-xl border border-outline-variant p-gutter" data-oid="mobile-card">
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0" data-oid="m-icon">
+                      <span className="material-symbols-outlined">{isDone ? "table_chart" : "description"}</span>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <Link to={`/jobs/${j.job_id}`} className="font-body-md text-body-md font-medium text-on-surface hover:text-primary hover:underline block break-all" title={j.filename}>
+                        {j.filename}
+                      </Link>
+                      <p className="font-label-sm text-label-sm text-outline mt-0.5">
+                        {fileSize(j.file_size)} · {pageCount(j)}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-1" data-oid="m-actions">
+                      {isDone ? (
+                        <>
+                          <button
+                            onClick={() => openDeleteModal(j)}
+                            className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
+                            title={`${fileTypeLabel(j.file_type)} ${t("page:jobs.delete")}`}
+                            data-oid="m-delete"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                          <DownloadMenu
+                            job={j}
+                            fileTypeLabel={fileTypeLabel}
+                            download={download}
+                            convertAndDownload={convertAndDownload}
+                            converting={converting}
+                            xlsxCost={xlsxCost}
+                            onMenuItemClick={() => {}}
+                          >
+                            <Download size={18} />
+                          </DownloadMenu>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => openDeleteModal(j)}
+                          className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
+                          title={`${fileTypeLabel(j.file_type)} ${t("page:jobs.delete")}`}
+                          data-oid="m-delete"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-col gap-2">
+                    <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border border-inherit ${chip.bg} ${chip.text} w-fit`} data-oid="m-chip">
+                      <span className={`material-symbols-outlined text-[16px] ${j.status === "ocr" || j.status === "merging" || j.status === "queued" ? "animate-spin" : ""}`}>{chip.icon}</span>
+                      <span className="font-label-sm text-label-sm font-semibold">{statusLabel(j.status)}</span>
+                    </div>
+                    {j.status !== "done" && j.status !== "error" && (j.total_pages > 0 || j.total_files > 0) && (
+                      (() => {
+                        const isPercent = j.total_pages === 100;
+                        const usePages = j.total_pages > 0 && j.done_pages > 0;
+                        const done = usePages ? j.done_pages : j.done_files;
+                        const total = usePages ? j.total_pages : j.total_files;
+                        const displayPct = getDisplayProgress(j, 84, now);
+                        return (
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 h-1.5 bg-surface-container-high rounded-full overflow-hidden">
+                              <div className="h-full bg-primary rounded-full transition-all duration-500" style={{ width: `${displayPct}%` }} />
+                            </div>
+                            <span className="font-label-sm text-label-sm text-on-surface-variant whitespace-nowrap">
+                              {isPercent ? `${displayPct}%` : usePages ? t("page:jobs.progressPages", { done: done || 0, total: total }) : t("page:jobs.progressFiles", { done: done || 0, total: total })}
+                            </span>
+                          </div>
+                        );
+                      })()
+                    )}
+                    <div className="flex items-center justify-between font-body-md text-body-md text-on-surface-variant pt-2 border-t border-outline-variant/50">
+                      <span>{formatDate(j.created_at)}</span>
+                      <span>{timeLeft(j.source_expires_at)}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+          {!loading && pageJobs.length === 0 && (
+            <div className="text-center py-12 text-on-surface-variant">
+              <p>{t("page:jobs.noJobs")}</p>
+              <Link to="/" className="text-primary hover:underline mt-2 inline-block">
+                {t("page:jobs.firstUpload")}
+              </Link>
+            </div>
+          )}
         </div>
 
         {/* Pagination */}

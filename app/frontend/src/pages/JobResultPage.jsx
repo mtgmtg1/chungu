@@ -22,6 +22,7 @@ import { api } from "../api.js";
 import i18n from "../i18n.js";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { SkeletonPageResult } from "../components/Skeleton.jsx";
+import { getDisplayProgress } from "../utils/progress.js";
 
 function downloadByUrl(url, filename) {
   const a = document.createElement("a");
@@ -53,6 +54,7 @@ export default function JobResultPage() {
   const [selectedFileIndex, setSelectedFileIndex] = useState(0);
   const [currentPdfPage, setCurrentPdfPage] = useState(1);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [now, setNow] = useState(Date.now());
   const pollRef = useRef(null);
   const editorRef = useRef(null);
 
@@ -75,6 +77,13 @@ export default function JobResultPage() {
   useEffect(() => {
     setCurrentPdfPage(1);
   }, [selectedFileIndex]);
+
+  // [Flow: Step 1 (활성 작업 확인) -> Step 2 (1초 간격 now 갱신) -> Step 3 (시간진행바 리렌더링)]
+  useEffect(() => {
+    if (job?.status === "done" || job?.status === "error") return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [job?.status]);
 
   async function loadJob() {
     try {
@@ -190,14 +199,7 @@ export default function JobResultPage() {
 
   const xlsxCost = job ? (job.total_pages || job.total_files || 1) * 3 : 0;
 
-  const pct =
-  job && (job.total_pages || job.total_files) ?
-  Math.round(
-    (job.done_pages || job.done_files || 0) / (
-    job.total_pages || job.total_files || 1) *
-    100
-  ) :
-  0;
+  const pct = getDisplayProgress(job, 84, now);
 
   return (
     <div

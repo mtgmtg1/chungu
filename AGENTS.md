@@ -229,6 +229,11 @@ Server `.env` must be updated manually (not overwritten by rsync).
 ## OCR Progress Reporting
 
 - `status == "ocr"`일 때 프론트엔드는 `job.done_pages / job.total_pages * 100`으로 퍼센트를 표시한다.
+- **시간진행바 (Time Progress Bar)**:
+  - 실제 진행률이 늦게 보고될 때 프로그레스 바가 멈춘 것처럼 느껴지는 문제를 해결하기 위해, 경과 시간 기반 추정 진행률을 추가한다.
+  - `timePct = min(84, round((elapsedSeconds / totalPages) * 100))`, `elapsedSeconds`는 `job.created_at` 기준이다.
+  - 화면에 표시할 진행률은 `displayPct = actualPct >= 84 ? actualPct : max(actualPct, timePct)`이다.
+  - 1초마다 프론트엔드를 리렌더링하여 시간진행바가 자연스럽게 증가한다. 시간진행바는 최대 84%까지만 상승하며, 84%에서 100% 구간은 실제 진행률만 진행할 수 있다.
 - **Vision 파이프라인** (`pipeline_vision.py` / `run_vision`):
   - PDF -> PNG 렌더링과 OCR을 겹쳐 실행한다. 페이지가 렌더링되자마자 `ocr_client.render_pdf()`의 `on_page_rendered` 콜백으로 해당 페이지를 OCR executor에 즉시 제출한다.
   - 전체 작업을 2×N 단위로 보고: 각 페이지는 렌더링(1단위) + OCR(1단위). 프로그레스는 `(rendered_count + ocr_done_count) / (2 * total_pages) * 100`으로 계산한다.
@@ -239,6 +244,9 @@ Server `.env` must be updated manually (not overwritten by rsync).
   - `app/backend/core/ocr_client.py` — `render_pdf()` 진행률 콜백, `on_page_rendered` 콜백, 64 workers
   - `app/backend/core/pipeline_vision.py` — 렌더링/OCR 스트리밍, 2×N 진행률
   - `app/backend/core/docling_client.py` — Docling 폴링 진행률 추정
+  - `app/frontend/src/utils/progress.js` — `getDisplayProgress`, `getTimeProgress`, `getActualProgress`
+  - `app/frontend/src/pages/JobsPage.jsx` — 1초 타이머, 데스크톱/모바일 시간진행바 적용
+  - `app/frontend/src/pages/JobResultPage.jsx` — `PoetryProgress`에 시간진행바 적용
 
 ## GPU OCR Backends (Suspended)
 

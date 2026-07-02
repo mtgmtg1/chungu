@@ -3,6 +3,7 @@
 # PaddleOCR-VL 1.6 FastAPI 서비스 — 기존 docling_client.py API 스펙 호환
 # vLLM 서버(http://vllm:8080)에 VLM 추론 위임, PP-DocLayoutV2로 레이아웃 분석
 # AI Studio API 폴백 엔드포인트(/api/convert) 포함: 외부 API 호출을 서비스 내부로 캡슐화
+import base64
 import json
 import logging
 import os
@@ -515,19 +516,17 @@ def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, A
             md_text = md.get("text", "") if isinstance(md, dict) else ""
             md_images = md.get("images", {}) if isinstance(md, dict) else {}
 
-            # 이미지 다운로드 및 src 경로 치환
+            # 이미지 다운로드 및 base64 data URI로 markdown에 직접 삽입
             for img_rel_path, img_url in md_images.items():
                 try:
-                    img_filename = Path(img_rel_path).name
-                    local_path = image_dir / img_filename
                     img_resp = requests.get(img_url, timeout=60)
                     img_resp.raise_for_status()
-                    local_path.write_bytes(img_resp.content)
-                    local_rel = str(local_path.relative_to(DATA_DIR))
-                    downloaded_images.append(local_rel)
-                    # markdown 내 src 속성을 로컬 경로로 치환
-                    md_text = md_text.replace(f'src="{img_rel_path}"', f'src="/data/{local_rel}"')
-                    md_text = md_text.replace(f"src='{img_rel_path}'", f"src='/data/{local_rel}'")
+                    img_b64 = base64.b64encode(img_resp.content).decode("ascii")
+                    mime = "image/png" if Path(img_rel_path).suffix.lower() == ".png" else "image/jpeg"
+                    data_uri = f"data:{mime};base64,{img_b64}"
+                    md_text = md_text.replace(f'src="{img_rel_path}"', f'src="{data_uri}"')
+                    md_text = md_text.replace(f"src='{img_rel_path}'", f"src='{data_uri}'")
+                    downloaded_images.append(img_rel_path)
                 except Exception as e:
                     logger.warning(f"[aistudio] 이미지 다운로드 실패 ({img_rel_path}): {e}")
 

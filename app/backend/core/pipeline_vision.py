@@ -40,15 +40,7 @@ def run_vision(
     on_progress: Callable[[int, int], None] | None = None,
     on_error: Callable[[int, str], None] | None = None,
 ) -> list[tuple[int, str]]:
-    """Vision 파이프라인 실행 -> [(page_num, markdown_table)] 반환.
-
-    media_endpoint가 제공되면 페이지를 처리량에 따라 동적 분배한다.
-    속도가 유사하므로 페이지를 vLLM에 집중하고, E4B는 오디오/비디오 우선 처리를 위해
-    이미지 부하를 크게 줄인다.
-    - ≤6: 1:3 (E4B 1/3)
-    - 7~59: 1:5 (E4B 1/5)
-    - ≥60: 1:10 (E4B 1/10)
-    """
+    
     work = Path(work_dir)
     img_dir = work / "img"
     images = ocr_client.render_pdf(pdf_path, str(img_dir), dpi=dpi)

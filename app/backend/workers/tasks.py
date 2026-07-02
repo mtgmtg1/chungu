@@ -523,18 +523,30 @@ def run_job(job_id: str) -> dict:
             if merged_rows:
                 converter.write_markdown(merged_rows, columns, md_path)
 
-        # Step 5: Storage에 결과 업로드
-        logger.info(f"[run_job:{job_id}] Step 5 시작: csv_path={csv_path}, md_path={md_path}, exists={csv_path.exists()}, {md_path.exists()}")
+        # Step 5: 결과 파일 존재 여부 확인 — 결과가 없으면 error 처리
+        has_md = md_path.exists() and md_path.stat().st_size > 0
+        has_csv = csv_path.exists() and csv_path.stat().st_size > 0
+        if not has_md and not has_csv:
+            error_detail = "\n".join(errors) or "모든 페이지 처리 실패"
+            logger.error(f"[run_job:{job_id}] 결과 파일 없음, error로 전환: {error_detail}")
+            job.status = "error"
+            job.error_log = error_detail
+            job.finished_at = datetime.now(timezone.utc)
+            db.commit()
+            return {"job_id": job_id, "error": "no result", "errors": len(errors)}
+
+        # Step 6: Storage에 결과 업로드
+        logger.info(f"[run_job:{job_id}] Step 6 시작: csv_path={csv_path}, md_path={md_path}, exists={csv_path.exists()}, {md_path.exists()}")
         try:
             storage_paths = supabase_client.upload_result(
-                job_id, csv_path=csv_path, md_path=md_path
+                job_id, csv_path=csv_path if has_csv else None, md_path=md_path if has_md else None
             )
             logger.info(f"[run_job:{job_id}] Storage 업로드 결과: {storage_paths}")
         except Exception as upload_err:
             logger.exception(f"[run_job:{job_id}] Storage 업로드 실패: {upload_err}")
             raise
 
-        # Step 6: DB 업데이트
+        # Step 7: DB 업데이트
         expire_days = int(settings_store.get_setting(db, "download_expire_days") or "7")
         job.result_csv_path = str(csv_path)
         job.result_md_path = str(md_path)

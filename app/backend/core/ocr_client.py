@@ -11,6 +11,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Callable
 
 from PIL import Image
 
@@ -35,7 +36,15 @@ def _render_single_page(args: tuple[int, str, str, float]) -> Path:
     return out_path
 
 
-def render_pdf(pdf_path: str, img_dir: str, dpi: int = 300, start: int = 1, end: int = 0) -> list[Path]:
+def render_pdf(
+    pdf_path: str,
+    img_dir: str,
+    dpi: int = 300,
+    start: int = 1,
+    end: int = 0,
+    on_progress: Callable[[int, int], None] | None = None,
+    on_page_rendered: Callable[[int, Path], None] | None = None,
+) -> list[Path]:
     """PDF 페이지를 PNG 이미지로 변환한다 (PyMuPDF 멀티스레드).
 
     [Flow: Step 1 (PDF 열기/페이지 수 확인) -> Step 2 (페이지 범위 계산) -> Step 3 (ThreadPoolExecutor로 병렬 렌더링) -> Step 4 (정렬된 PNG 경로 목록 반환)]
@@ -61,13 +70,25 @@ def render_pdf(pdf_path: str, img_dir: str, dpi: int = 300, start: int = 1, end:
 
     page_indices = range(page_start, page_end)
     tasks = [(i, pdf_path, str(out), zoom) for i in page_indices]
+    render_total = len(tasks)
+
+    if on_progress and render_total > 0:
+        on_progress(0, render_total)
 
     results: list[Path] = []
-    max_workers = min(len(tasks), 16)
+    done = 0
+    max_workers = min(len(tasks), 64)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(_render_single_page, t): t[0] for t in tasks}
         for future in as_completed(futures):
-            results.append(future.result())
+            page_idx = futures[future]
+            img_path = future.result()
+            results.append(img_path)
+            if on_page_rendered:
+                on_page_rendered(page_idx, img_path)
+            done += 1
+            if on_progress and render_total > 0:
+                on_progress(done, render_total)
 
     return sorted(out.glob("page-*.png"))
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-# [Flow: Step 1 (PDF->PNG 렌더) -> Step 2 (페이지 병렬 vision OCR) -> Step 3 (진행률 콜백) -> Step 4 (페이지별 MD 표 수집)]
+# [Flow: Step 1 (PDF->PNG 렌더, 완료 페이지 즉시 OCR 제출) -> Step 2 (페이지 병렬 vision OCR) -> Step 3 (2×N 단위 진행률 콜백) -> Step 4 (페이지별 MD 표 수집)]
 # 기존 ocr_run.py 의 vision 파이프라인을 함수형으로 일반화.
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
@@ -40,18 +41,32 @@ def run_vision(
     on_progress: Callable[[int, int], None] | None = None,
     on_error: Callable[[int, str], None] | None = None,
 ) -> list[tuple[int, str]]:
-    
+    """PDF를 PNG로 렌더링하면서 렌더링이 완료된 페이지는 즉시 OCR에 제출한다.
+
+    [Flow: Step 1 (총 페이지 수 계산) -> Step 2 (OCR executor 생성) -> Step 3 (render_pdf에 on_page_rendered 콜백 전달, 렌더링 완료 페이지 즉시 OCR 제출) -> Step 4 (모든 OCR future 수집/대기) -> Step 5 (페이지 번호 순서로 결과 반환)]
+    """
     work = Path(work_dir)
     img_dir = work / "img"
-    images = ocr_client.render_pdf(pdf_path, str(img_dir), dpi=dpi)
-    pages = [(ocr_client.find_page_number(p), p) for p in images]
-    pages = [(n, p) for n, p in pages if n is not None]
-    pages.sort(key=lambda x: x[0])
-    total = len(pages)
-    prompt = build_vision_prompt(columns, extra_prompt)
 
+    # Step 1: 총 페이지 수 미리 계산
+    import fitz
+    doc = fitz.open(pdf_path)
+    total_pages = len(doc)
+    doc.close()
+
+    prompt = build_vision_prompt(columns, extra_prompt)
+    lock = threading.Lock()
+    rendered_count = 0
+    ocr_done_count = 0
+    ocr_futures: set = set()
+    future_to_page_num: dict = {}
     results: list[tuple[int, str]] = []
-    done = 0
+
+    def update_progress() -> None:
+        if not on_progress or total_pages <= 0:
+            return
+        progress = min(100, int((rendered_count + ocr_done_count) / (2 * total_pages) * 100))
+        on_progress(progress, 100)
 
     def resolve_endpoint(idx: int) -> tuple[str, str, str]:
         return endpoint, model, api_key
@@ -73,37 +88,70 @@ def run_vision(
             return None
 
     def process(page_idx: int, page_num: int, img: Path) -> tuple[int, str]:
-        # run_vision으로 라우팅된 모든 페이지는 PaddleOCR을 우선 사용한다
-        if fallback_controller.is_fallback_preferred():
-            fb_result = _try_paddleocr_fallback(img, page_num)
-            if fb_result is not None:
-                return page_num, fb_result
-            # 폴백 실패 시 기본 요청으로 진행
+        """단일 페이지 이미지를 OCR 처리한다.
 
-        ep, mdl, key = resolve_endpoint(page_idx)
+        [Flow: Step 1 (PaddleOCR 폴백 우선 시도) -> Step 2 (폴백 실패 시 LLM vision 호출) -> Step 3 (예외 발생 시 최종 폴백 시도) -> Step 4 (완료 시 진행률 갱신)]
+        """
+        nonlocal ocr_done_count
         try:
-            content, _ = ocr_client.call_vision(img, prompt, ep, mdl, key, max_tokens)
-            fallback_controller.record_success()
-            return page_num, ocr_client.extract_markdown_content(content)
-        except Exception as e:
-            fallback_controller.record_failure()
-            logger.warning(f"[vision] page {page_num} 기본 요청 실패, PaddleOCR 폴백 시도: {e}")
-            fb_result = _try_paddleocr_fallback(img, page_num)
-            if fb_result is not None:
-                return page_num, fb_result
-            raise
+            # run_vision으로 라우팅된 모든 페이지는 PaddleOCR을 우선 사용한다
+            if fallback_controller.is_fallback_preferred():
+                fb_result = _try_paddleocr_fallback(img, page_num)
+                if fb_result is not None:
+                    return page_num, fb_result
+                # 폴백 실패 시 기본 요청으로 진행
 
-    with ThreadPoolExecutor(max_workers=workers if workers is not None else min(total, settings.llm_max_workers)) as executor:
-        futures = {executor.submit(process, idx, n, p): n for idx, (n, p) in enumerate(pages)}
-        for future in as_completed(futures):
-            page_num = futures[future]
+            ep, mdl, key = resolve_endpoint(page_idx)
             try:
-                results.append(future.result())
+                content, _ = ocr_client.call_vision(img, prompt, ep, mdl, key, max_tokens)
+                fallback_controller.record_success()
+                return page_num, ocr_client.extract_markdown_content(content)
+            except Exception as e:
+                fallback_controller.record_failure()
+                logger.warning(f"[vision] page {page_num} 기본 요청 실패, PaddleOCR 폴백 시도: {e}")
+                fb_result = _try_paddleocr_fallback(img, page_num)
+                if fb_result is not None:
+                    return page_num, fb_result
+                raise
+        finally:
+            with lock:
+                ocr_done_count += 1
+                update_progress()
+
+    ocr_workers = workers if workers is not None else min(total_pages, settings.llm_max_workers)
+    with ThreadPoolExecutor(max_workers=ocr_workers) as ocr_executor:
+        def on_page_rendered(page_idx: int, img_path: Path) -> None:
+            """페이지 렌더링이 완료되면 즉시 OCR 작업을 제출하고 진행률을 갱신한다.
+
+            [Flow: Step 1 (페이지 번호 추출) -> Step 2 (렌더링 카운트 증가 및 진행률 갱신) -> Step 3 (OCR executor에 작업 제출)]
+            """
+            nonlocal rendered_count
+            page_num = ocr_client.find_page_number(img_path)
+            if page_num is None:
+                return
+            with lock:
+                rendered_count += 1
+                update_progress()
+            future = ocr_executor.submit(process, page_idx, page_num, img_path)
+            with lock:
+                ocr_futures.add(future)
+                future_to_page_num[future] = page_num
+
+        # Step 3: 렌더링 시작, 완료된 페이지는 즉시 OCR로 제출
+        ocr_client.render_pdf(pdf_path, str(img_dir), dpi=dpi, on_page_rendered=on_page_rendered)
+
+        # Step 4: 모든 OCR 작업 대기
+        with lock:
+            pending_futures = list(ocr_futures)
+        for future in as_completed(pending_futures):
+            page_num = future_to_page_num.get(future)
+            try:
+                page_num, result = future.result()
+                results.append((page_num, result))
             except Exception as e:  # noqa: BLE001
-                if on_error:
+                if on_error and page_num is not None:
                     on_error(page_num, str(e))
-            finally:
-                done += 1
-                if on_progress:
-                    on_progress(done, total)
+
+    # Step 5: 페이지 번호 순서로 정렬하여 반환
+    results.sort(key=lambda x: x[0])
     return results

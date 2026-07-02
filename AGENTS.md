@@ -86,20 +86,18 @@ npm run start        # dev server at localhost:3000
 
 ## LLM Routing & Load Balancing
 
-- **Audio/Video**: 100% routed to E4B (llama.cpp, `192.168.1.82:18080`)
+- **Audio/Video**: E4B (llama.cpp, `192.168.1.82:18080`) — **현재 서버 다운, 비활성화**
 - **PDF routing** (임시 정책 — vLLM/Docling 서버 개선 전까지):
   - **기본변환** (`ocr_model == "basic"`): `has_pdf_text_layer()` → True면 Docling, False면 `run_vision`(PaddleOCR 우선)
   - **고급변환** (`ocr_model == "premium"`): 무조건 `run_vision` — 모든 페이지 PaddleOCR 우선, 실패 시 vLLM fallback
   - **이미지 파일**: `run_media` → PaddleOCR 우선 (`is_fallback_preferred() == True`)
   - 라우팅 분기 순서: `tasks.py`에서 `ocr_model == "basic" and has_pdf_text_layer()` → True면 Docling, 그 외 PDF는 `run_vision`
   - `run_vision` 내에서 개별 페이지 텍스트 레이어 검사 없음 — 모든 페이지 동일하게 PaddleOCR 우선 처리
-- **Images/PDF pages (pipeline=vision)**: rendered to PNG by PyMuPDF and sent page-by-page to the vLLM proxy (`192.168.1.69:18080`). The proxy round-robins between two Gemma-4 26B A4B AWQ 4bit instances (`18000` on GPU 1/2, `18001` on GPU 0/3). If the request's `model` name does not match the loaded model on the selected backend, the proxy rewrites it to the actual backend model name before forwarding.
-- **Mixed media batches** (images/audio/video): dynamically routed based on total count, but E4B image load is minimized to prioritize audio/video:
-  - ≤6 items: 1:3 (vLLM:E4B) — E4B 1/3
-  - 7~59 items: 1:5 (vLLM:E4B) — E4B 1/5
-  - ≥60 items: 1:10 (vLLM:E4B) — E4B 1/10
+- **PDF pages (pipeline=vision)**: rendered to PNG by PyMuPDF and sent page-by-page to the vLLM proxy (`192.168.1.69:18080`). The proxy round-robins between two Gemma-4 26B A4B AWQ 4bit instances (`18000` on GPU 1/2, `18001` on GPU 0/3). `run_vision`은 항상 vLLM endpoint로 라우팅 (E4B media endpoint 라우팅 제거됨).
+- **Mixed media batches** (images/audio/video): `pipeline_media.py:_resolve()`에서 동적 라우팅 — E4B 서버 다운 시 media_endpoint 없이 vLLM만 사용
 - Routing logic in `pipeline_media.py:_resolve()` and `pipeline_vision.py:resolve_endpoint()`
-- E4B has 4 parallel slots (`--parallel 4`), vLLM is optimized for high-batch throughput
+- E4B has 4 parallel slots (`--parallel 4`) — **현재 다운, 비활성화**
+- vLLM is optimized for high-batch throughput
 - Celery worker concurrency: 8 (prefork)
 - Thread limits per job: `llm_max_workers=64` (vLLM), `media_max_workers=8` (E4B), `ocr_max_workers=8` (Tesseract)
 - `max_pages=10000` per file (configurable via settings_store)
@@ -203,7 +201,7 @@ Server `.env` must be updated manually (not overwritten by rsync).
 - PaddleOCR AI Studio API (`https://paddleocr.aistudio-app.com/api/v2/ocr/jobs`)를 폴백 OCR 백엔드로 사용한다.
 - AI Studio API는 **이미지 파일만** 지원한다 (png/jpg/bmp/tiff/webp). PDF, 오피스 문서, HWP/HWPX는 직접 전송하지 않는다.
 - 폴백 대상:
-  - **Vision 파이프라인** (`pipeline_vision.py`): PDF 페이지를 PNG로 렌더링 후, 텍스트 레이어가 없는 페이지만 폴백. `ocr_client.extract_pdf_page_text()`로 텍스트 감지.
+  - **Vision 파이프라인** (`pipeline_vision.py`): PDF 페이지를 PNG로 렌더링 후, 모든 페이지를 PaddleOCR 우선 처리. 개별 페이지 텍스트 레이어 검사 없음.
   - **Media 파이프라인** (`pipeline_media.py`): 이미지 파일만 폴백 (비디오/오디오 제외).
   - **Docling 파이프라인** (`pipeline_docling.py`): 폴백 안 함 (이미지가 아닌 문서).
 - 폴백 우선 조건 (`paddleocr_fallback.py:is_fallback_preferred()`):
@@ -214,6 +212,7 @@ Server `.env` must be updated manually (not overwritten by rsync).
   - `can_use_fallback()`: fallback_enabled AND 회로 차단기가 OPEN이 아님
   - 한도 은행(Limit Bank) 시스템은 제거됨 — 사용량 제한 없음
 - `paddleocr_service/main.py`의 `/api/convert` 엔드포인트는 이미지 확장자만 허용하며, AI Studio API에 비동기 job을 제출하고 폴링으로 결과를 수신한다.
+- PaddleOCR 결과에 포함된 이미지는 **base64 data URI**로 markdown에 직접 삽입된다 (컨테이너 내부 경로 의존성 제거, 프론트엔드에서 직접 표시 가능).
 - `paddleocr_client.py`는 `convert_file()` (docling_client 호환 시그니처) 및 `convert_image()` (경량 이미지 전용) 함수를 제공한다.
 - Key files:
   - `app/backend/core/paddleocr_fallback.py` — 회로 차단기 + `is_fallback_preferred()`

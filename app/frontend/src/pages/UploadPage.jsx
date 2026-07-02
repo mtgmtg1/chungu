@@ -213,12 +213,14 @@ export default function UploadPage() {
             {t("page:upload.subtitle")}
           </p>
 
-          <form onSubmit={handleUpload} data-oid="uhu483v">
+          <form
+            onSubmit={handleUpload}
+            onDrop={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            data-oid="uhu483v">
             <div
               onDrop={handleDrop}
-              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-              onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); }}
-              onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onDragOver={(e) => { e.preventDefault(); }}
               className="group relative bg-surface border border-outline-variant/60 p-2 shadow-2xl shadow-primary/5 hover:shadow-primary/10 transition-all duration-500 block cursor-pointer" data-oid="lu0z:ql">
 
               <div className="border-2 border-dashed border-outline-variant/40 group-hover:border-primary/40 p-12 flex flex-col items-center justify-center transition-colors bg-surface-container-lowest" data-oid="edljjr1">

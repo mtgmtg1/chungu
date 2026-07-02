@@ -139,15 +139,23 @@ npm run start        # dev server at localhost:3000
 
 ## Deployment
 
-Use the provided scripts:
+Docker 이미지 빌드는 **a1 서버에서 수행**한다. 로컬에서 Docker 빌드를 하지 않는다.
 
 ```bash
-bash build_backend.sh
 bash deploy_a1.sh
 ```
 
-This syncs `app/` to the `a1` server (via WAN host `wan-1`), rebuilds Docker images, and restarts containers.
-Server `.env` must be updated manually (not overwritten by rsync).
+이 스크립트는 다음을 수행한다:
+1. LAN(a1) 또는 WAN(wan-1)으로 SSH 연결
+2. `rsync`로 로컬 `app/` 디렉토리를 서버 `~/chungu-app/`에 동기화 (`.env` 제외)
+3. 서버에서 `docker compose down && docker compose up --build -d` 실행 (이미지 빌드 + 컨테이너 재시작)
+4. 컨테이너 상태 확인
+
+서버 `.env`는 rsync로 덮어쓰지 않으므로 수동으로 관리해야 한다.
+DB 마이그레이션 SQL 파일은 배포 후 서버에서 수동으로 적용한다:
+```bash
+ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu < backend/db/migrations/013_add_xlsx_conversion_fields.sql'
+```
 
 ## Storage Retention & Source Cleanup
 

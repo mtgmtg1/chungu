@@ -62,16 +62,6 @@ def run_vision(
     done = 0
 
     def resolve_endpoint(idx: int) -> tuple[str, str, str]:
-        if not (media_endpoint and media_model):
-            return endpoint, model, api_key
-        if total <= 6:
-            use_media = (idx % 3 == 0)       # 1:3 (E4B 1/3)
-        elif total < 60:
-            use_media = (idx % 5 == 0)       # 1:5 (E4B 1/5)
-        else:
-            use_media = (idx % 10 == 0)      # 1:10 (E4B 1/10)
-        if use_media:
-            return media_endpoint, media_model, media_api_key
         return endpoint, model, api_key
 
     def _try_paddleocr_fallback(img: Path, page_num: int) -> str | None:

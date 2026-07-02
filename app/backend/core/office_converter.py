@@ -316,7 +316,7 @@ def markdown_to_pptx(markdown: str, out_path: Path) -> Path:
 def _parse_markdown_tables(markdown: str) -> list[dict]:
     """마크다운에서 표만 추출한다.
 
-    반환 형식: {"headers": [...], "rows": [[...], ...]}
+    반환 형식: {"headers": [...], "rows": [[...], ...], "has_header": bool}
     """
     lines = markdown.splitlines()
     tables: list[dict] = []
@@ -332,41 +332,87 @@ def _parse_markdown_tables(markdown: str) -> list[dict]:
             i += 1
         if len(table_lines) < 2:
             continue
-        # 헤더 구분선(|---|---|)은 건너뜀
-        data_lines = [table_lines[0]] + [
-            line for line in table_lines[1:] if not re.match(r"^\|?[\s\-:|]+\|?$", line)
+        has_separator = any(
+            re.match(r"^\|?[\s\-:|]+\|?$", line) for line in table_lines
+        )
+        data_lines = [
+            line for line in table_lines if not re.match(r"^\|?[\s\-:|]+\|?$", line)
         ]
-        if len(data_lines) < 1:
+        if not data_lines:
             continue
-        headers = [c.strip() for c in data_lines[0].split("|")[1:-1]]
-        rows = []
-        for row_line in data_lines[1:]:
-            cells = [c.strip() for c in row_line.split("|")[1:-1]]
-            if cells:
-                rows.append(cells)
+        first_row = [c.strip() for c in data_lines[0].split("|")[1:-1]]
+        rows = [
+            [c.strip() for c in line.split("|")[1:-1]]
+            for line in data_lines[1:]
+        ]
+        rows = [r for r in rows if r]
+        if has_separator and _is_valid_header(first_row):
+            headers = first_row
+            has_header = True
+        else:
+            # 헤더가 없는 연속 페이지: 첫 행도 데이터로 취급
+            headers = []
+            rows = [first_row] + rows
+            has_header = False
         if headers or rows:
-            tables.append({"headers": headers, "rows": rows})
+            tables.append({"headers": headers, "rows": rows, "has_header": has_header})
     return tables
 
 
-def _merge_tables(tables: list[dict]) -> list[dict]:
-    """동일 헤더를 가진 모든 표를 헤더 기준으로 그룹화하여 하나로 병합한다.
+def _majority_col_count(rows: list[list[str]]) -> int:
+    """행 목록에서 가장 많이 나타나는 열 수를 반환한다."""
+    if not rows:
+        return 0
+    counts: dict[int, int] = {}
+    for row in rows:
+        counts[len(row)] = counts.get(len(row), 0) + 1
+    return max(counts.items(), key=lambda item: item[1])[0]
 
-    페이지 마커(<!-- 페이지 N -->) 등으로 분리된 동일 구조의 표도
-    헤더가 같으면 모두 하나의 표로 통합한다.
+
+def _merge_tables(tables: list[dict]) -> list[dict]:
+    """동일 헤더를 가진 표와 헤더 없는 연속 표를 통합한다.
+
+    페이지 마커(<!-- 페이지 N -->) 등으로 분리된 표 중,
+    헤더가 같거나 후속 페이지가 헤더 없이 데이터 행만 있는 경우
+    하나의 표로 통합한다.
     """
     if not tables:
         return []
-    by_header: dict[tuple, dict] = {}
-    order: list[tuple] = []
+    merged: list[dict] = []
     for table in tables:
-        key = tuple(table["headers"])
-        if key in by_header:
-            by_header[key]["rows"].extend(table["rows"])
+        has_header = table.get("has_header", True)
+        headers = table.get("headers", [])
+        rows = table.get("rows", [])
+        if not merged:
+            if has_header and headers:
+                merged.append({"headers": list(headers), "rows": [list(r) for r in rows]})
+            else:
+                # 첫 표부터 헤더가 없으면 첫 데이터 행을 헤더로 승격 (fallback)
+                all_rows = ([list(headers)] + [list(r) for r in rows]) if headers else [list(r) for r in rows]
+                if all_rows:
+                    merged.append({"headers": all_rows[0], "rows": all_rows[1:]})
+                else:
+                    merged.append({"headers": [], "rows": []})
+            continue
+        last = merged[-1]
+        last_col_count = len(last["headers"])
+        if has_header and headers:
+            if tuple(headers) == tuple(last["headers"]):
+                last["rows"].extend([list(r) for r in rows])
+            else:
+                merged.append({"headers": list(headers), "rows": [list(r) for r in rows]})
         else:
-            by_header[key] = {"headers": list(table["headers"]), "rows": list(table["rows"])}
-            order.append(key)
-    return [by_header[key] for key in order]
+            # 헤더 없는 연속 표: 이전 표의 헤더를 상속받아 병합
+            if rows:
+                current_col_count = _majority_col_count(rows)
+                if current_col_count == last_col_count:
+                    last["rows"].extend([list(r) for r in rows])
+                else:
+                    # 열 수가 다르면 독립 표로 시작 (첫 행을 헤더로 승격)
+                    merged.append({"headers": list(rows[0]), "rows": [list(r) for r in rows[1:]]})
+            else:
+                merged.append({"headers": list(headers), "rows": []})
+    return merged
 
 
 def _normalize_rows(tables: list[dict]) -> list[dict]:
@@ -434,6 +480,21 @@ def _classify_cell(value: str) -> str:
     if _RE_KOREAN_NAME.match(text):
         return "korean_name"
     return "string"
+
+
+def _is_valid_header(row: list[str]) -> bool:
+    """표 헤더 행이 실제로 유효한 헤더인지 판단한다.
+
+    데이터 행(금액, 날짜, 순번 등)이 헤더로 잘못 인식되는 것을 막는다.
+    """
+    if not row:
+        return False
+    non_empty = [cell for cell in row if cell.strip()]
+    if not non_empty:
+        return False
+    data_like_types = {"integer", "decimal", "amount", "date", "rrn", "bizno", "phone", "account"}
+    data_like_count = sum(1 for cell in non_empty if _classify_cell(cell) in data_like_types)
+    return data_like_count <= len(non_empty) / 2
 
 
 # 형식 그룹: 같은 그룹 내 형식은 부분 일치로 간주하여 페널티를 낮춘다.

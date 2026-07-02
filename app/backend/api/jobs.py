@@ -1211,6 +1211,55 @@ def convert_job(
     return {"download_url": url, "format": fmt, "storage_path": storage_path}
 
 
+@router.post("/jobs/{job_id}/save-edited-xlsx")
+async def save_edited_xlsx(
+    job_id: str,
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """사용자가 편집한 xlsx 파일을 업로드하고 Storage 경로를 저장한다."""
+    job = db.get(Job, job_id)
+    if job is None or str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+    if job.status != "done":
+        raise HTTPException(status_code=400, detail="완료된 작업만 편집할 수 있습니다")
+
+    try:
+        data = await file.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="빈 파일입니다")
+        storage_path = supabase_client.upload_edited_xlsx(job_id, data, file.filename or "result_edited.xlsx")
+        job.result_edited_xlsx_storage_path = storage_path
+        db.commit()
+        url = supabase_client.get_signed_download_url(storage_path, bucket="results", expires_in=3600)
+        return {"download_url": url, "storage_path": storage_path}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("[save_edited_xlsx] 저장 실패: %s", e)
+        raise HTTPException(status_code=502, detail=f"편집본 저장 실패: {e}")
+
+
+@router.get("/jobs/{job_id}/edited-xlsx-url")
+def get_edited_xlsx_url(
+    job_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """저장된 편집 xlsx의 signed download URL을 반환한다."""
+    job = db.get(Job, job_id)
+    if job is None or str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+    if not job.result_edited_xlsx_storage_path:
+        raise HTTPException(status_code=404, detail="저장된 편집본이 없습니다")
+    try:
+        url = supabase_client.get_signed_download_url(job.result_edited_xlsx_storage_path, bucket="results", expires_in=3600)
+        return {"download_url": url, "storage_path": job.result_edited_xlsx_storage_path}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+
+
 @router.post("/jobs/{job_id}/xlsx-advanced-action")
 def xlsx_advanced_action(
     job_id: str,

@@ -310,9 +310,9 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
   - `job.xlsx_advanced_refundable` indicates whether the user can request a refund.
   - Retry/refund endpoints: `/api/jobs/{id}/xlsx-advanced-action` (web) and `/api/v1/jobs/{id}/xlsx-advanced-action` (API).
 - **Frontend**:
-  - `JobResultPage.jsx`: Excel dropdown group (CSV Basic, Excel Basic, Excel Advanced) + Office dropdown group (DOCX only). Preview tabs for Markdown / Excel Basic / Excel Advanced using `ExcelPreview.jsx` (SheetJS-based xlsx viewer).
+  - `JobResultPage.jsx`: Excel dropdown group (CSV Basic, Excel Basic, Excel Advanced) + Office dropdown group (DOCX only). Preview tabs for Markdown / Excel Basic / Excel Advanced using `SpreadsheetEditor.jsx` (Luckysheet-based xlsx editor).
   - `JobsPage.jsx`: `DownloadMenu` shows Markdown (free), CSV Basic, Excel Basic, Excel Advanced, Word (free). Polling includes `xlsx_advanced_status === "processing"` jobs.
-  - `ExcelPreview.jsx`: fetches signed xlsx URL, parses with SheetJS (`xlsx` npm package), renders first sheet as an HTML table.
+  - `ExcelPreview.jsx`: deprecated, replaced by `SpreadsheetEditor.jsx`.
 - **DB migration**: `013_add_xlsx_conversion_fields.sql` adds `result_xlsx_basic_storage_path`, `result_xlsx_advanced_storage_path`, `result_xlsx_advanced_job_id`, `xlsx_basic_converted`, `xlsx_advanced_converted`, `xlsx_advanced_status`, `xlsx_advanced_recovery_notes` (JSONB), `xlsx_advanced_refundable` columns.
 - **Backward compatibility**: legacy `xlsx`/`csv` format requests are aliased to `xlsx_basic`/`csv_basic` via `_convert_format_alias()`. `result_xlsx_storage_path` is still set for backward compatibility.
 - Conversion endpoints: `/api/jobs/{id}/convert` (web) and `/api/v1/jobs/{id}/convert` (API).
@@ -324,9 +324,33 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
   - `app/backend/api/v1/jobs.py` — API v1 convert/download/xlsx-advanced-action endpoints
   - `app/frontend/src/pages/JobResultPage.jsx` — Excel/Office button groups, preview tabs
   - `app/frontend/src/pages/JobsPage.jsx` — DownloadMenu with new formats
-  - `app/frontend/src/components/ExcelPreview.jsx` — SheetJS-based xlsx preview
-  - `app/frontend/src/api.js` — `xlsxAdvancedAction` API method
+  - `app/frontend/src/components/SpreadsheetEditor.jsx` — Luckysheet-based xlsx editor (replaces `ExcelPreview.jsx`)
+  - `app/frontend/src/components/ExcelPreview.jsx` — deprecated, no longer imported
+  - `app/frontend/src/api.js` — `xlsxAdvancedAction`, `saveEditedXlsx`, `editedXlsxUrl` API methods
   - `app/backend/db/migrations/013_add_xlsx_conversion_fields.sql` — DB migration
+  - `app/backend/db/migrations/014_add_edited_xlsx_path.sql` — adds `result_edited_xlsx_storage_path` column
+
+## Spreadsheet Editor (Luckysheet)
+
+- Excel Basic / Excel Advanced 미리보기가 읽기 전용 `ExcelPreview.jsx`에서 완전한 스프레드시트 편집기 `SpreadsheetEditor.jsx`로 교체되었다.
+- **Luckysheet** (`luckysheet` npm package)를 동적으로 로드하여 사용한다 (CSS 3종 + JS plugin + ESM module). Vite + ESM 환경에서 CommonJS 기반 라이브러리를 `await import()`로 지연 로드한다.
+- **LuckyExcel** (`luckyexcel` npm package)로 XLSX 파일을 Luckysheet JSON으로 변환한다. `transformExcelToLucky(file, callback)`에 `File` 객체를 전달한다.
+- **SheetJS** (`xlsx` npm package)로 Luckysheet 데이터를 XLSX Blob으로 변환한다. `getAllSheets()` → `luckysheetDataToWorkbook()` → `XLSX.write()` → Blob.
+- **편집 기능**: 풀 툴바 (undo/redo, 서식, 글꼴, 정렬, 정렬/필터, 차트, 이미지, 인쇄), 시트 추가/삭제, 줌, 상태 표시줄.
+- **서버 저장**: `POST /api/jobs/{job_id}/save-edited-xlsx` — 편집된 XLSX를 Supabase Storage `results` 버킷에 업로드하고 `job.result_edited_xlsx_storage_path`에 경로를 저장한다.
+- **편집본 재조회**: `GET /api/jobs/{job_id}/edited-xlsx-url` — 저장된 편집본의 signed URL을 반환한다. `SpreadsheetEditor` 로드 시 편집본이 있으면 원본 대신 편집본을 우선 로드한다.
+- **로컬 다운로드**: 편집된 데이터를 XLSX Blob으로 생성하여 브라우저에서 직접 다운로드한다.
+- **초기화**: 원본(또는 편집본) 데이터로 `luckysheet.create()`를 다시 호출하여 편집 내용을 되돌린다.
+- **언마운트/재로드**: `luckysheet.destroy()`를 호출하여 메모리 누수를 방지한다.
+- **DB 마이그레이션**: `014_add_edited_xlsx_path.sql`이 `result_edited_xlsx_storage_path` 컬럼을 `jobs` 테이블에 추가한다.
+- Key files:
+  - `app/frontend/src/components/SpreadsheetEditor.jsx` — Luckysheet 기반 스프레드시트 편집기
+  - `app/frontend/src/api.js` — `saveEditedXlsx`, `editedXlsxUrl` API 메서드
+  - `app/backend/api/jobs.py` — `save_edited_xlsx`, `get_edited_xlsx_url` 엔드포인트
+  - `app/backend/core/supabase_client.py` — `upload_edited_xlsx()` 함수
+  - `app/backend/db/models.py` — `result_edited_xlsx_storage_path` 필드
+  - `app/backend/db/migrations/014_add_edited_xlsx_path.sql` — DB 마이그레이션
+  - `app/frontend/src/pages/JobResultPage.jsx` — Excel Basic/Advanced 탭에서 `SpreadsheetEditor` 렌더링
 
 ## DOCX/HWP Preview
 

@@ -63,6 +63,12 @@ export const api = {
   downloadJob: (id, type) => request(`/api/jobs/${id}/download?type=${type}`),
   xlsxAdvancedAction: (id, action) =>
     request(`/api/jobs/${id}/xlsx-advanced-action`, { method: 'POST', body: JSON.stringify({ action }) }),
+  saveEditedXlsx: (id, blob, filename = 'result_edited.xlsx') => {
+    const formData = new FormData()
+    formData.append('file', blob, filename)
+    return request(`/api/jobs/${id}/save-edited-xlsx`, { method: 'POST', body: formData })
+  },
+  editedXlsxUrl: (id) => request(`/api/jobs/${id}/edited-xlsx-url`),
   downloadUrl: (id, type) => `/api/jobs/${id}/download?type=${type}`,
   deleteJob: (id) => request(`/api/jobs/${id}`, { method: 'DELETE' }),
 

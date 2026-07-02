@@ -107,6 +107,19 @@ def upload_office_result(job_id: str, path: Path, ext: str) -> str:
     return storage_path
 
 
+def upload_edited_xlsx(job_id: str, data: bytes, filename: str = "result_edited.xlsx") -> str:
+    """사용자가 편집한 xlsx 파일을 results 버킷에 업로드하고 경로를 반환합니다."""
+    client = get_service_client()
+    safe_filename = _sanitize_storage_filename(filename)
+    storage_path = f"{job_id}/{safe_filename}"
+    client.storage.from_("results").upload(
+        storage_path,
+        data,
+        {"content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "upsert": "true"}
+    )
+    return storage_path
+
+
 def download_pdf(storage_path: str) -> BytesIO:
     """pdfs 버킷에서 PDF를 다운로드합니다."""
     client = get_service_client()

@@ -74,6 +74,7 @@ class Job(Base):
     result_docx_storage_path: Mapped[str] = mapped_column(String(1024), default="")
     result_pptx_storage_path: Mapped[str] = mapped_column(String(1024), default="")
     result_edited_md_storage_path: Mapped[str] = mapped_column(String(1024), default="")
+    result_edited_xlsx_storage_path: Mapped[str] = mapped_column(String(1024), default="")
 
     # 엑셀 기본/고급 변환 결과 (기존 xlsx는 기본 변환으로 통합)
     result_xlsx_basic_storage_path: Mapped[str] = mapped_column(String(1024), default="")

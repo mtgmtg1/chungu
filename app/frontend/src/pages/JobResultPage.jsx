@@ -21,7 +21,7 @@ import SourcePanel from "../components/SourcePanel.jsx";
 import PoetryProgress from "../components/PoetryProgress.jsx";
 import PagedResultViewer from "../components/PagedResultViewer.jsx";
 import SimpleEditor from "../components/SimpleEditor.jsx";
-import ExcelPreview from "../components/ExcelPreview.jsx";
+import SpreadsheetEditor from "../components/SpreadsheetEditor.jsx";
 import { api } from "../api.js";
 import i18n from "../i18n.js";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
@@ -648,12 +648,12 @@ export default function JobResultPage() {
 
           {previewMode === "xlsxBasic" &&
           <div className="flex-1 min-h-0 overflow-hidden" data-oid="xlsx-basic-preview">
-            <ExcelPreview downloadUrl={basicUrl} />
+            <SpreadsheetEditor downloadUrl={basicUrl} jobId={jobId} fileName={job?.original_filename || "result.xlsx"} />
           </div>
           }
           {previewMode === "xlsxAdvanced" &&
           <div className="flex-1 min-h-0 overflow-hidden" data-oid="xlsx-advanced-preview">
-            <ExcelPreview downloadUrl={advancedUrl} />
+            <SpreadsheetEditor downloadUrl={advancedUrl} jobId={jobId} fileName={job?.original_filename || "result.xlsx"} />
           </div>
           }
         </div>

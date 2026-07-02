@@ -103,6 +103,8 @@
     "progressPages": "{{done}}/{{total}} 페이지",
     "progressFiles": "{{done}}/{{total}} 파일",
     "progressPercent": "{{pct}}%",
+    "pageCount": "페이지",
+    "fileCount": "파일",
     "unparsablePages": "{{count}}페이지를 파싱할 수 없습니다 (용지 크기 350mm 초과)"
   },
   "confirm": {

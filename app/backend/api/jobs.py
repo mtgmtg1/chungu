@@ -159,6 +159,7 @@ async def upload_job(
         ocr_model=ocr_model,
         ocr_engine=ocr_engine,
         original_filename=original_filename,
+        file_size=total_size,
         status="pending",
     )
     db.add(job)
@@ -442,6 +443,7 @@ async def create_job(
         raise HTTPException(status_code=400, detail="파일 정보가 없습니다")
 
     is_single_file = len(files_info) == 1
+    total_size = sum(f.get("size", 0) for f in files_info)
     pages = 0
     image_count = 0
     audio_seconds = 0
@@ -449,6 +451,7 @@ async def create_job(
     total_files = 0
 
     try:
+        job.file_size = total_size
         if is_single_file:
             info = files_info[0]
             storage_path = info["storage_path"]
@@ -1176,6 +1179,7 @@ def _job_summary(job: Job) -> dict:
         "done_pages": job.done_pages,
         "total_files": job.total_files,
         "done_files": job.done_files,
+        "file_size": job.file_size,
         "media_duration_seconds": job.media_duration_seconds,
         "docling_refinement": job.use_docling_refinement,
         "docling_refinement_pages": job.total_pages if job.use_docling_refinement else 0,

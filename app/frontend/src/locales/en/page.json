@@ -103,6 +103,8 @@
     "progressPages": "{{done}}/{{total}} pages",
     "progressFiles": "{{done}}/{{total}} files",
     "progressPercent": "{{pct}}%",
+    "pageCount": "pages",
+    "fileCount": "files",
     "unparsablePages": "{{count}} page(s) could not be parsed (page size exceeds 350mm)"
   },
   "confirm": {

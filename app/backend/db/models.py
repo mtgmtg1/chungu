@@ -59,6 +59,7 @@ class Job(Base):
     done_pages: Mapped[int] = mapped_column(Integer, default=0)
     total_files: Mapped[int] = mapped_column(Integer, default=0)
     done_files: Mapped[int] = mapped_column(Integer, default=0)
+    file_size: Mapped[int] = mapped_column(Integer, default=0)
     media_duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
     extracted_files: Mapped[list] = mapped_column(JSON, default=list)
     error_log: Mapped[str] = mapped_column(Text, default="")

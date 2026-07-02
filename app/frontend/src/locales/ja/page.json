@@ -103,6 +103,8 @@
     "progressPages": "{{done}}/{{total}}ページ",
     "progressFiles": "{{done}}/{{total}}ファイル",
     "progressPercent": "{{pct}}%",
+    "pageCount": "ページ",
+    "fileCount": "ファイル",
     "unparsablePages": "{{count}}ページを解析できません（用紙サイズ350mm超過）"
   },
   "confirm": {

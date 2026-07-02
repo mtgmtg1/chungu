@@ -4,7 +4,6 @@ import { createPortal } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
-  Eye,
   Download,
   Trash2,
   Loader2,
@@ -142,7 +141,7 @@ const MOCK_JOBS = import.meta.env.DEV ? [
   { job_id: "mock-3", filename: "회의록_20240601.hwp", file_type: "hwp", file_size: 1023456, status: "pending", created_at: "2024-06-14T14:20:00", total_pages: 0, done_pages: 0, source_expires_at: new Date(Date.now() + 2 * 3600 * 1000).toISOString() },
   { job_id: "mock-4", filename: "프레젠테이션_발표자료.pptx", file_type: "pptx", file_size: 3890123, status: "error", created_at: "2024-06-13T16:45:00", total_pages: 15, done_pages: 0, source_expires_at: null },
   { job_id: "mock-5", filename: "계약서_원본.pdf", file_type: "pdf", file_size: 892345, status: "done", created_at: "2024-06-12T11:00:00", total_pages: 5, done_pages: 5, source_expires_at: null },
-  { job_id: "mock-6", filename: "영수증_스캔_이미지.png", file_type: "image", file_size: 234567, status: "done", created_at: "2024-06-11T08:30:00", total_files: 3, done_files: 3, source_expires_at: null },
+  { job_id: "mock-6", filename: "영수증_스캔_이미지.png", file_type: "image", file_size: 234567, status: "done", created_at: "2024-06-11T08:30:00", total_pages: 1, total_files: 3, done_files: 3, source_expires_at: null },
   { job_id: "mock-7", filename: "매출보고서_2024.docx", file_type: "docx", file_size: 1456789, status: "merging", created_at: "2024-06-10T13:15:00", total_pages: 20, done_pages: 18, source_expires_at: new Date(Date.now() + 48 * 3600 * 1000).toISOString() },
 ] : [];
 
@@ -243,6 +242,13 @@ export default function JobsPage() {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function pageCount(job) {
+    const total = job.total_pages || job.total_files || 0;
+    if (total === 0) return "-";
+    if (job.total_pages > 0) return `${total} ${t("page:jobs.pageCount", { count: total })}`;
+    return `${total} ${t("page:jobs.fileCount", { count: total })}`;
   }
 
   async function download(id, type) {
@@ -700,19 +706,20 @@ export default function JobsPage() {
                               {isDone ? "table_chart" : "description"}
                             </span>
                           </div>
-                          <div data-oid="ats28o7">
-                            <p
-                            className="font-body-md text-body-md font-medium text-on-surface truncate"
+                          <div className="min-w-0" data-oid="ats28o7">
+                            <Link
+                            to={`/jobs/${j.job_id}`}
+                            className="font-body-md text-body-md font-medium text-on-surface truncate hover:text-primary hover:underline block"
                             data-oid="7sy3qzp"
                             title={j.filename}>
 
                               {j.filename}
-                            </p>
+                            </Link>
                             <p
                             className="font-label-sm text-label-sm text-outline"
                             data-oid="i0y1sq2">
 
-                              {fileSize(j.file_size)}
+                              {fileSize(j.file_size)} · {pageCount(j)}
                             </p>
                           </div>
                         </div>
@@ -781,14 +788,6 @@ export default function JobsPage() {
 
                           {isDone ?
                         <>
-                              <Link
-                            to={`/jobs/${j.job_id}`}
-                            className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-primary transition-colors"
-                            title={`${fileTypeLabel(j.file_type)} ${t("page:jobs.view")}`}
-                            data-oid="czg0jxq">
-
-                                <Eye size={18} data-oid="yxvpdkc" />
-                              </Link>
                               <button
                             onClick={() => openDeleteModal(j)}
                             className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"

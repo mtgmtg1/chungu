@@ -112,7 +112,7 @@ ref)
     TaskList,
     TaskItem.configure({ nested: true }),
     Link.configure({ openOnClick: false, autolink: true }),
-    Image.configure({ inline: true }),
+    Image.configure({ inline: true, allowBase64: true }),
     Placeholder.configure({
       placeholder: t("page:components.editorPlaceholder")
     })],

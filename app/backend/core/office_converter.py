@@ -369,15 +369,72 @@ def _majority_col_count(rows: list[list[str]]) -> int:
     return max(counts.items(), key=lambda item: item[1])[0]
 
 
-def _merge_tables(tables: list[dict]) -> list[dict]:
+def _resolve_merge_threshold(threshold: float | None) -> float:
+    """병합 유사도 임계값을 결정한다. 인자가 없으면 설정값을 사용한다."""
+    if threshold is not None:
+        return threshold
+    try:
+        from ..config import settings
+        return float(settings.table_merge_similarity_threshold)
+    except Exception:
+        # 설정 로드 실패 시 안전한 기본값
+        return 0.75
+
+
+def _table_similarity(prev: dict, table: dict) -> float:
+    """이전 표와 현재 표의 형식 유사도를 0~1로 산출한다.
+
+    [Flow: Step 1 (이전 표 열 프로파일 구축) -> Step 2 (현재 표 데이터행 정렬 confidence 평균)
+            -> Step 3 (헤더 문자열 유사도) -> Step 4 (가중 결합 점수 반환)]
+
+    데이터 점수(정렬 적합도)와 헤더 문자열 유사도를 결합한다.
+    헤더 정보가 없으면 데이터 점수만 사용한다.
+    """
+    from difflib import SequenceMatcher
+
+    prev_headers = prev.get("headers", [])
+    prev_rows = prev.get("rows", [])
+    cur_headers = table.get("headers", [])
+    cur_rows = table.get("rows", [])
+    prev_col_count = len(prev_headers)
+    if prev_col_count == 0 or not cur_rows:
+        return 0.0
+
+    # 열 수 차이가 큰 표(±2 초과)는 다른 표로 간주하여 병합 후보 제외
+    cur_col_count = _majority_col_count(cur_rows)
+    if abs(cur_col_count - prev_col_count) > 2:
+        return 0.0
+
+    # Step 1~2: 이전 표 프로파일에 현재 표 데이터행을 정렬해 confidence 평균 계산
+    profiles = _build_column_profiles(prev_headers, prev_rows)
+    sample_rows = cur_rows[:20]  # 성능을 위해 상위 20행만 표본 사용
+    confidences = [_align_row_to_columns(row, profiles)[1] for row in sample_rows]
+    data_score = sum(confidences) / len(confidences) if confidences else 0.0
+
+    # Step 3: 헤더 문자열 유사도 (양쪽 헤더가 있고 열 수가 같을 때만)
+    header_score = None
+    if cur_headers and prev_col_count == len(cur_headers):
+        prev_text = " ".join(prev_headers)
+        cur_text = " ".join(cur_headers)
+        header_score = SequenceMatcher(None, prev_text, cur_text).ratio()
+
+    # Step 4: 가중 결합 (헤더 점수가 없으면 데이터 점수만)
+    if header_score is None:
+        return data_score
+    return 0.7 * data_score + 0.3 * header_score
+
+
+def _merge_tables(tables: list[dict], threshold: float | None = None) -> list[dict]:
     """동일 헤더를 가진 표와 헤더 없는 연속 표를 통합한다.
 
     페이지 마커(<!-- 페이지 N -->) 등으로 분리된 표 중,
-    헤더가 같거나 후속 페이지가 헤더 없이 데이터 행만 있는 경우
-    하나의 표로 통합한다.
+    헤더가 같거나 후속 페이지가 헤더 없이 데이터 행만 있는 경우,
+    또는 형식 유사도가 임계값 이상인 연속 표를 하나의 표로 통합한다.
+    유사도 병합 시 이전 표 헤더를 유지하고 현재 표 헤더는 데이터로 흡수한다.
     """
     if not tables:
         return []
+    sim_threshold = _resolve_merge_threshold(threshold)
     merged: list[dict] = []
     for table in tables:
         has_header = table.get("has_header", True)
@@ -398,6 +455,9 @@ def _merge_tables(tables: list[dict]) -> list[dict]:
         last_col_count = len(last["headers"])
         if has_header and headers:
             if tuple(headers) == tuple(last["headers"]):
+                last["rows"].extend([list(r) for r in rows])
+            elif _table_similarity(last, table) >= sim_threshold:
+                # 형식 유사: 이전 표 헤더를 유지하고 현재 표 헤더는 버림(중복 헤더로 간주), 데이터 행만 병합
                 last["rows"].extend([list(r) for r in rows])
             else:
                 merged.append({"headers": list(headers), "rows": [list(r) for r in rows]})

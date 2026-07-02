@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     max_pages: int = 10000
     download_expire_days: int = 7
 
+    # 표 병합 (Excel Basic): 형식 유사도가 이 값 이상이면 연속 표를 병합
+    table_merge_similarity_threshold: float = 0.75
+
     # 스레드 상한 (대용량 처리 안정화)
     llm_max_workers: int = 64       # vLLM 동시 요청 상한 (고배치 최적화)
     media_max_workers: int = 8      # E4B(llama.cpp) 동시 요청 상한 (4슬롯 + 여유)

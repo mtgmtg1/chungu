@@ -290,6 +290,15 @@ Server `.env` must be updated manually (not overwritten by rsync).
 - The `save_result_markdown` backend endpoint accepts `file_markdowns` (array) to update `extracted_files` and rebuild the combined markdown.
 - When adding new source media types, update `SourcePanel.jsx` and add i18n keys to `page:result` and `page:components`.
 
+## Upload Page File Management
+
+- 드래그앤드롭, 파일 선택, 폴더 선택 모두 기존 파일 리스트에 **누적 추가**된다 (이전에는 대체).
+- 동일한 이름+크기의 파일은 중복으로 간주하여 **건너뛴다**.
+- 파일 입력 `<input>`은 선택 후 `e.target.value = ""`로 초기화하여 같은 파일 재선택이 가능하다.
+- 드래그앤드롭 영역이 `<label>`에서 `<div>`로 변경되었으며, `onDragEnter`/`onDragOver`/`onDragLeave`/`onDrop` 모두 `preventDefault` + `stopPropagation`으로 브라우저 기본 동작 간섭을 차단한다.
+- 각 파일 항목에 개별 삭제 버튼(X 아이콘)이 있으며, "취소" 버튼은 전체 리스트 초기화 역할을 유지한다.
+- Key file: `app/frontend/src/pages/UploadPage.jsx` — `addFiles()`, `removeFile()`, `handleDrop()`
+
 ## UI/UX Design System
 
 - **Skeleton Loading**: All dynamic data areas use skeleton components (`Skeleton`, `SkeletonCard`, `SkeletonTable`, `SkeletonPageResult`) from `app/frontend/src/components/Skeleton.jsx` instead of spinner loaders. Pages with `dataLoading` state: DashboardPage, JobsPage, JobResultPage, PaymentPage, DeveloperPage, SettingsPage, JobConfirmPage.

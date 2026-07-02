@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { FileUp, Loader2, LogIn, Coins } from "lucide-react";
+import { FileUp, Loader2, LogIn, Coins, X } from "lucide-react";
 import GridScan from "../components/GridScan.jsx";
 import { AnimatedRow } from "../components/AnimatedList.jsx";
 import { useAuth } from "../AuthContext.jsx";
@@ -19,6 +19,26 @@ export default function UploadPage() {
   const [error, setError] = useState("");
   const [doclingRefinement, setDoclingRefinement] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, percent: 0, fileName: "" });
+
+  // [Flow: 새 파일 배열을 기존 리스트에 병합 -> 이름+크기 중복 시 건너뛰기 -> 최종 리스트 반환]
+  function addFiles(newFiles) {
+    setFiles((prev) => {
+      const existing = new Set(prev.map((f) => `${f.name}|${f.size}`));
+      const merged = [...prev];
+      for (const f of newFiles) {
+        const key = `${f.name}|${f.size}`;
+        if (!existing.has(key)) {
+          existing.add(key);
+          merged.push(f);
+        }
+      }
+      return merged;
+    });
+  }
+
+  function removeFile(index) {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
+  }
 
   useEffect(() => {
     if (!user) return;
@@ -46,6 +66,7 @@ export default function UploadPage() {
 
   async function handleDrop(e) {
     e.preventDefault();
+    e.stopPropagation();
     const items = Array.from(e.dataTransfer.items || []);
     if (!items.length) return;
     const collected = [];
@@ -58,7 +79,7 @@ export default function UploadPage() {
         if (file) collected.push(file);
       }
     }
-    if (collected.length) setFiles(collected);
+    if (collected.length) addFiles(collected);
   }
 
   async function handleUpload(e) {
@@ -193,9 +214,11 @@ export default function UploadPage() {
           </p>
 
           <form onSubmit={handleUpload} data-oid="uhu483v">
-            <label
+            <div
               onDrop={handleDrop}
-              onDragOver={(e) => e.preventDefault()}
+              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); }}
               className="group relative bg-surface border border-outline-variant/60 p-2 shadow-2xl shadow-primary/5 hover:shadow-primary/10 transition-all duration-500 block cursor-pointer" data-oid="lu0z:ql">
 
               <div className="border-2 border-dashed border-outline-variant/40 group-hover:border-primary/40 p-12 flex flex-col items-center justify-center transition-colors bg-surface-container-lowest" data-oid="edljjr1">
@@ -236,7 +259,7 @@ export default function UploadPage() {
                   multiple
                   className="hidden"
                   accept=".pdf,.zip,.rar,.7z,.tar.gz,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.mp4,.avi,.mov,.mkv,.webm,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.html,.htm,.hwp,.hwpx"
-                  onChange={(e) => setFiles(Array.from(e.target.files || []))} data-oid="kc2h.f3" />
+                  onChange={(e) => { addFiles(Array.from(e.target.files || [])); e.target.value = ""; }} data-oid="kc2h.f3" />
 
 
                 <input
@@ -247,10 +270,10 @@ export default function UploadPage() {
                   multiple
                   className="hidden"
                   accept=".pdf,.zip,.rar,.7z,.tar.gz,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.mp4,.avi,.mov,.mkv,.webm,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.html,.htm,.hwp,.hwpx"
-                  onChange={(e) => setFiles(Array.from(e.target.files || []))} data-oid="vf8-08s" />
+                  onChange={(e) => { addFiles(Array.from(e.target.files || [])); e.target.value = ""; }} data-oid="vf8-08s" />
 
               </div>
-            </label>
+            </div>
 
             {files.length > 0 &&
             <div className="mt-4 bg-white border border-outline-variant p-3 text-left max-w-xl mx-auto" data-oid="xcv5knj">
@@ -273,6 +296,13 @@ export default function UploadPage() {
                         </span>
                   }
                       <span data-oid="d52i72h">({(f.size / 1024 / 1024).toFixed(2)} MB)</span>
+                      <button
+                        type="button"
+                        onClick={() => removeFile(i)}
+                        className="ml-auto text-outline hover:text-red-500 transition-colors flex-shrink-0"
+                        data-oid={`rm-${i}`}>
+                        <X size={16} />
+                      </button>
                     </li>
                 </AnimatedRow>
                 )}

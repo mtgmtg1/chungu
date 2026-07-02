@@ -1,5 +1,6 @@
 // [Flow: Step 1 (사용자 확인 + 작업 목록 로드) -> Step 2 (검색/필터 상태) -> Step 3 (테이블 렌더링 + Actions) -> Step 4 (페이지네이션)]
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -16,6 +17,101 @@ import i18n from "../i18n.js";
 import SidebarLayout from "../components/SidebarLayout.jsx";
 import { SkeletonTable } from "../components/Skeleton.jsx";
 import { AnimatedRow } from "../components/AnimatedList.jsx";
+
+function DownloadMenu({ job, fileTypeLabel, download, convertAndDownload, converting, xlsxCost, onMenuItemClick, children }) {
+  // [Flow: Step 1 (버튼 위치 추적) -> Step 2 (호버 상태) -> Step 3 (document.body에 Portal로 메뉴 렌더링) -> Step 4 (위치 계산)]
+  const { t } = useTranslation();
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, right: 0 });
+
+  function updatePos() {
+    if (!btnRef.current) return;
+    const rect = btnRef.current.getBoundingClientRect();
+    setPos({ top: rect.bottom + window.scrollY + 4, right: window.innerWidth - rect.right - window.scrollX });
+  }
+
+  const handleEnter = () => {
+    updatePos();
+    setOpen(true);
+  };
+
+  const handleLeave = () => {
+    setOpen(false);
+  };
+
+  useEffect(() => {
+    if (open) {
+      updatePos();
+      window.addEventListener("scroll", updatePos, true);
+      window.addEventListener("resize", updatePos);
+    }
+    return () => {
+      window.removeEventListener("scroll", updatePos, true);
+      window.removeEventListener("resize", updatePos);
+    };
+  }, [open]);
+
+  const menu = (
+    <div
+      ref={menuRef}
+      className="fixed w-52 bg-white rounded-lg shadow-lg border border-outline-variant flex flex-col z-[99999] py-1"
+      style={{ top: pos.top, right: pos.right }}
+      onMouseEnter={handleEnter}
+      onMouseLeave={handleLeave}
+    >
+      <button
+        onClick={() => { download(job.job_id, "md"); onMenuItemClick?.(); }}
+        className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+      >
+        {t("page:jobs.markdownFree")}
+      </button>
+      <button
+        onClick={() => { download(job.job_id, "csv"); onMenuItemClick?.(); }}
+        className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+      >
+        {t("page:jobs.csvExcel")}
+      </button>
+      <button
+        onClick={() => { convertAndDownload(job.job_id, "xlsx"); onMenuItemClick?.(); }}
+        disabled={converting[job.job_id]}
+        className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+      >
+        {t("page:jobs.excelCost", { cost: xlsxCost(job).toLocaleString() })}
+      </button>
+      <button
+        onClick={() => { convertAndDownload(job.job_id, "docx"); onMenuItemClick?.(); }}
+        disabled={converting[job.job_id]}
+        className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+      >
+        {t("page:jobs.wordFree")}
+      </button>
+      <button
+        onClick={() => { convertAndDownload(job.job_id, "pptx"); onMenuItemClick?.(); }}
+        disabled={converting[job.job_id]}
+        className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+      >
+        {t("page:jobs.pptFree")}
+      </button>
+    </div>
+  );
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onMouseEnter={handleEnter}
+        onMouseLeave={handleLeave}
+        className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-primary transition-colors"
+        title={`${fileTypeLabel(job.file_type)} ${t("page:jobs.download")}`}
+      >
+        {children}
+      </button>
+      {open && createPortal(menu, document.body)}
+    </>
+  );
+}
 
 const STATUS_CHIP = {
   pending: {
@@ -701,69 +797,17 @@ export default function JobsPage() {
 
                                 <Trash2 size={18} data-oid="fp7w_cf" />
                               </button>
-                              <div
-                            className="relative"
-                            data-oid="tnuc:1x">
-
-                                <button
-                              className="group p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-primary transition-colors"
-                              title={`${fileTypeLabel(j.file_type)} ${t("page:jobs.download")}`}
-                              data-oid="tpz9cfy">
-
-                                  <Download size={18} data-oid="x4fihqx" />
-                                </button>
-                                <div
-                              className="absolute right-0 top-full mt-1 w-52 bg-white rounded-lg shadow-lg border border-outline-variant hidden group-hover:flex flex-col z-[9999] py-1"
-                              data-oid="42.dgaa">
-
-                                  <button
-                                onClick={() => download(j.job_id, "md")}
-                                className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                                data-oid="l3on:rn">
-
-                                    {t("page:jobs.markdownFree")}
-                                  </button>
-                                  <button
-                                onClick={() => download(j.job_id, "csv")}
-                                className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                                data-oid="1f026pp">
-
-                                    {t("page:jobs.csvExcel")}
-                                  </button>
-                                  <button
-                                onClick={() =>
-                                convertAndDownload(j.job_id, "xlsx")
-                                }
-                                disabled={converting[j.job_id]}
-                                className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                                data-oid="8hk1t8z">
-
-                                    {t("page:jobs.excelCost", {
-                                  cost: xlsxCost(j).toLocaleString()
-                                })}
-                                  </button>
-                                  <button
-                                onClick={() =>
-                                convertAndDownload(j.job_id, "docx")
-                                }
-                                disabled={converting[j.job_id]}
-                                className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                                data-oid="eb.9d4f">
-
-                                    {t("page:jobs.wordFree")}
-                                  </button>
-                                  <button
-                                onClick={() =>
-                                convertAndDownload(j.job_id, "pptx")
-                                }
-                                disabled={converting[j.job_id]}
-                                className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                                data-oid="t2i707y">
-
-                                    {t("page:jobs.pptFree")}
-                                  </button>
-                                </div>
-                              </div>
+                              <DownloadMenu
+                                job={j}
+                                fileTypeLabel={fileTypeLabel}
+                                download={download}
+                                convertAndDownload={convertAndDownload}
+                                converting={converting}
+                                xlsxCost={xlsxCost}
+                                onMenuItemClick={() => {}}
+                              >
+                                <Download size={18} data-oid="x4fihqx" />
+                              </DownloadMenu>
                             </> :
 
                         <button

@@ -231,8 +231,8 @@ Server `.env` must be updated manually (not overwritten by rsync).
 - `status == "ocr"`일 때 프론트엔드는 `job.done_pages / job.total_pages * 100`으로 퍼센트를 표시한다.
 - **시간진행바 (Time Progress Bar)**:
   - 실제 진행률이 늦게 보고될 때 프로그레스 바가 멈춘 것처럼 느껴지는 문제를 해결하기 위해, 경과 시간 기반 추정 진행률을 추가한다.
-  - `timePct = min(84, round((elapsedSeconds / totalPages) * 100))`, `elapsedSeconds`는 `job.created_at` 기준이다.
-  - 화면에 표시할 진행률은 `displayPct = max(actualPct, timePct)`이다. 시간진행바가 84%로 cap되어 있으므로, 84% 이상 구간은 자연스럽게 실제 진행률만 표시된다.
+  - `timePct = min(20, round((elapsedSeconds / totalPages) * 100))`, `elapsedSeconds`는 `job.created_at` 기준이다.
+  - 화면에 표시할 진행률은 `displayPct = max(actualPct, timePct)`이다. 시간진행바가 20%로 cap되어 있으므로, 20% 이상 구간은 자연스럽게 실제 진행률만 표시된다.
 - **Vision 파이프라인** (`pipeline_vision.py` / `run_vision`):
   - PDF -> PNG 렌더링과 OCR을 겹쳐 실행한다. 페이지가 렌더링되자마자 `ocr_client.render_pdf()`의 `on_page_rendered` 콜백으로 해당 페이지를 OCR executor에 즉시 제출한다.
   - 전체 작업을 2×N 단위로 보고: 각 페이지는 렌더링(1단위) + OCR(1단위). 프로그레스는 `(rendered_count + ocr_done_count) / (2 * total_pages) * 100`으로 계산한다.

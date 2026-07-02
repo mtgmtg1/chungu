@@ -530,6 +530,9 @@ def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, A
                 except Exception as e:
                     logger.warning(f"[aistudio] 이미지 다운로드 실패 ({img_rel_path}): {e}")
 
+            # div 래퍼 제거 (ProseMirror 호환성)
+            md_text = re.sub(r'<div[^>]*>(<img[^>]*>)</div>', r'\1', md_text)
+
             page_header = f"<!-- Page {page_num} -->\n" if page_num > 1 else ""
             all_page_markdowns.append(f"{page_header}{md_text}")
 

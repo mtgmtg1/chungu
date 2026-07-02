@@ -349,17 +349,23 @@ def _parse_markdown_tables(markdown: str) -> list[dict]:
 
 
 def _merge_tables(tables: list[dict]) -> list[dict]:
-    """동일 헤더를 가진 연속된 표를 하나로 병합한다."""
+    """동일 헤더를 가진 모든 표를 헤더 기준으로 그룹화하여 하나로 병합한다.
+
+    페이지 마커(<!-- 페이지 N -->) 등으로 분리된 동일 구조의 표도
+    헤더가 같으면 모두 하나의 표로 통합한다.
+    """
     if not tables:
         return []
-    merged: list[dict] = [tables[0]]
-    for table in tables[1:]:
-        last = merged[-1]
-        if table["headers"] == last["headers"]:
-            last["rows"].extend(table["rows"])
+    by_header: dict[tuple, dict] = {}
+    order: list[tuple] = []
+    for table in tables:
+        key = tuple(table["headers"])
+        if key in by_header:
+            by_header[key]["rows"].extend(table["rows"])
         else:
-            merged.append(table)
-    return merged
+            by_header[key] = {"headers": list(table["headers"]), "rows": list(table["rows"])}
+            order.append(key)
+    return [by_header[key] for key in order]
 
 
 def _normalize_rows(tables: list[dict]) -> list[dict]:

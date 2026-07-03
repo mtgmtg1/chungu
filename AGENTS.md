@@ -12,7 +12,7 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **Database**: PostgreSQL via Supabase (`supabase-chungu-db`)
 - **LLM Inference (Images/PDF)**: vLLM proxy (`192.168.1.69:18080`) — round-robin load balancer to two Gemma-4 26B A4B AWQ 4bit instances (`18000` on GPU 1/2, `18001` on GPU 0/3); proxy auto-rewrites the request `model` name to the actual model loaded on the chosen backend
 - **LLM Inference (Audio/Video/Images)**: llama.cpp (`192.168.1.82:18080`) — Gemma-4 12B GGUF Q4_K_M, 4 parallel slots
-- **Deployment**: Docker Compose on `a1` (local server), exposed via Cloudflare Tunnel at `chungu.teamcat.app`
+- **Deployment**: Docker Compose on `a1` (local server), exposed via Cloudflare Tunnel at `proof.teamcat.app`
 
 ## Directory Structure
 
@@ -122,19 +122,19 @@ npm run start        # dev server at localhost:3000
 
 ## Public URL & Email Confirmation
 
-- All externally visible URLs must use the public domain (`https://chungu.teamcat.app`), never internal IPs.
-- `app/backend/config.py` defaults `public_base_url` to `https://chungu.teamcat.app` and `supabase_public_url` to `https://chungu.teamcat.app/supabase` so that missing `.env` values do not leak internal addresses.
+- All externally visible URLs must use the public domain (`https://proof.teamcat.app`), never internal IPs.
+- `app/backend/config.py` defaults `public_base_url` to `https://proof.teamcat.app` and `supabase_public_url` to `https://proof.teamcat.app/supabase` so that missing `.env` values do not leak internal addresses.
 - In `app/.env` (and on the server):
-  - `PUBLIC_BASE_URL=https://chungu.teamcat.app` (used by `email_sender.py` for download links)
-  - `SUPABASE_PUBLIC_URL=https://chungu.teamcat.app/supabase` (used by `supabase_client.py` to rewrite signed Storage URLs)
+  - `PUBLIC_BASE_URL=https://proof.teamcat.app` (used by `email_sender.py` for download links)
+  - `SUPABASE_PUBLIC_URL=https://proof.teamcat.app/supabase` (used by `supabase_client.py` to rewrite signed Storage URLs)
 - For self-hosted Supabase (`/opt/supabase-chungu/.env` on `a1`):
-  - `SITE_URL=https://chungu.teamcat.app`
-  - `ADDITIONAL_REDIRECT_URLS=https://chungu.teamcat.app/**`
+  - `SITE_URL=https://proof.teamcat.app`
+  - `ADDITIONAL_REDIRECT_URLS=https://proof.teamcat.app/**`
   - `MAILER_URLPATHS_CONFIRMATION="/supabase/auth/v1/verify"`
   - `MAILER_URLPATHS_INVITE="/supabase/auth/v1/verify"`
   - `MAILER_URLPATHS_RECOVERY="/supabase/auth/v1/verify"`
   - `MAILER_URLPATHS_EMAIL_CHANGE="/supabase/auth/v1/verify"`
-- With this setup, Supabase Auth emails generate links like `https://chungu.teamcat.app/supabase/auth/v1/verify?token=...&type=signup`, which are proxied by FastAPI's `/supabase/*` route to the internal Supabase Auth service (`192.168.1.50:28000`).
+- With this setup, Supabase Auth emails generate links like `https://proof.teamcat.app/supabase/auth/v1/verify?token=...&type=signup`, which are proxied by FastAPI's `/supabase/*` route to the internal Supabase Auth service (`192.168.1.50:28000`).
 - Internal IPs (`192.168.1.x`, `localhost`, `127.0.0.1`) are reserved for backend-only services: LLM endpoints, Docling service, and the internal `SUPABASE_URL`.
 
 ## Deployment

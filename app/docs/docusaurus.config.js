@@ -11,7 +11,7 @@ const config = {
     v4: true,
   },
 
-  url: 'https://chungu.app',
+  url: 'https://proof.teamcat.app',
   baseUrl: '/docs/',
 
   onBrokenLinks: 'warn',

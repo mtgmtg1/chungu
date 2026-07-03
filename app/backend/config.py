@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     # 서비스
     app_port: int = 28181
-    public_base_url: str = "https://chungu.teamcat.app"
+    public_base_url: str = "https://proof.teamcat.app"
 
     # 인프라
     database_url: str = "postgresql+psycopg2://chungu:changeme_postgres@postgres:5432/chungu"
@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # Supabase (셀프호스트 on a1)
     supabase_url: str = "http://192.168.1.50:28000"
-    supabase_public_url: str = "https://chungu.teamcat.app/supabase"  # 외부 노출 URL (빈 값이면 supabase_url 사용)
+    supabase_public_url: str = "https://proof.teamcat.app/supabase"  # 외부 노출 URL (빈 값이면 supabase_url 사용)
     supabase_service_key: str = ""
     supabase_anon_key: str = ""
     supabase_jwt_secret: str = ""

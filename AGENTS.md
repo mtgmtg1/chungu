@@ -159,8 +159,8 @@ npm run start        # dev server at localhost:3000
 ## Model Selection UI
 
 - `JobConfirmPage.jsx`에서 OCR 엔진 선택 및 고급 옵션 UI 제거 — "기본 모델"과 "고급 모델" 두 가지 선택지만 제공.
-- 기본 모델: Hybrid model (텍스트 레이어 PDF에 최적, 1P/페이지, 매일 100페이지 무료).
-- 고급 모델: high performance AI(26B) 비전 모델 (스캔/손글씨/표/이미지/회전 문서 완벽 처리, 오디오/비디오 지원, 5P/페이지).
+- 기본 모델: 대량의 스캔된 PDF에 최적화된 빠른 OCR 및 데이터 변환 (1P/페이지, 매일 100페이지 무료).
+- 고급 모델: high performance AI 비전 모델 (모든 페이지 정밀 분석, 비전 AI 에이전트 교차 검증 복원, 오디오/비디오/이미지 변환 지원, 5P/페이지).
 - 오디오/비디오 파일이 포함된 경우 기본 모델 비활성화, 고급 모델 강제.
 - i18n 키: `basicFeature1-3`, `premiumFeature1-3` (ko/en/ja).
 

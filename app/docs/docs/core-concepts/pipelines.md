@@ -24,7 +24,7 @@ curl -X POST https://your-domain.com/api/v1/jobs/upload \
 
 ## Premium model (`ocr_model=premium`)
 
-The premium model uses high performance AI(26B) vision model for all pages, providing superior accuracy for complex documents, scanned images, handwritten text, rotated pages, and tables.
+The premium model uses high performance AI vision model for all pages, providing superior accuracy for complex documents, scanned images, handwritten text, rotated pages, and tables.
 
 - **Best for**: Scanned documents, handwritten text, complex tables, images, audio/video
 - **Speed**: Moderate — one LLM call per page

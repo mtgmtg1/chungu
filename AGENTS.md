@@ -159,8 +159,8 @@ npm run start        # dev server at localhost:3000
 ## Model Selection UI
 
 - `JobConfirmPage.jsx`에서 OCR 엔진 선택 및 고급 옵션 UI 제거 — "기본 모델"과 "고급 모델" 두 가지 선택지만 제공.
-- 기본 모델: Docling + Tesseract OCR (텍스트 레이어 PDF에 최적, 1P/페이지, 매일 5페이지 무료).
-- 고급 모델: Gemma 4 AI (26B) 비전 모델 (스캔/손글씨/표/이미지/회전 문서 완벽 처리, 오디오/비디오 지원, 5P/페이지).
+- 기본 모델: Hybrid model (텍스트 레이어 PDF에 최적, 1P/페이지, 매일 100페이지 무료).
+- 고급 모델: high performance AI(26B) 비전 모델 (스캔/손글씨/표/이미지/회전 문서 완벽 처리, 오디오/비디오 지원, 5P/페이지).
 - 오디오/비디오 파일이 포함된 경우 기본 모델 비활성화, 고급 모델 강제.
 - i18n 키: `basicFeature1-3`, `premiumFeature1-3` (ko/en/ja).
 
@@ -358,6 +358,7 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
   - `_parse_markdown_tables()` extracts markdown tables → `_merge_tables()` merges consecutive tables with identical headers → `_normalize_rows()` pads all rows to the same column count.
   - `markdown_to_csv_basic()` writes a single CSV file with all merged tables.
   - `markdown_to_xlsx_basic()` writes a single-sheet xlsx with bold headers and auto-width columns.
+  - **Pricing**: Excel Basic export is free of charge (`page:price.exportExcelBasicPrice` = "Free" / "무료" / "無料"). CSV Basic is also free.
   - Cost: **1 point/page** (deducted once per bundle — csv + xlsx generated together).
   - Already-converted files are reused (no double charging).
 - **Excel Advanced** (`xlsx_advanced`):
@@ -447,6 +448,7 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
 
 ## Upload Page File Management
 
+- Upload page hero title: `page:upload.title` — "수백개 자료도 원클릭 데이터 변환" (ko), "Hundreds of files, one-click data conversion" (en), "数百のファイルもワンクリックでデータ変換" (ja).
 - 드래그앤드롭, 파일 선택, 폴더 선택 모두 기존 파일 리스트에 **누적 추가**된다 (이전에는 대체).
 - 동일한 이름+크기의 파일은 중복으로 간주하여 **건너뛴다**.
 - 파일 입력 `<input>`은 선택 후 `e.target.value = ""`로 초기화하여 같은 파일 재선택이 가능하다.

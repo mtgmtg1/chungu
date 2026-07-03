@@ -20,7 +20,7 @@ import JobResultPage from "./pages/JobResultPage.jsx";
 import SettingsPage from "./pages/SettingsPage.jsx";
 import LegalTermsPage from "./pages/LegalTermsPage.jsx";
 import LegalPrivacyPage from "./pages/LegalPrivacyPage.jsx";
-import OnPremisePage from "./pages/OnPremisePage.jsx";
+import PricePage from "./pages/PricePage.jsx";
 import CookieConsent from "./components/CookieConsent.jsx";
 
 const rootEl = document.getElementById("root");
@@ -62,9 +62,9 @@ ReactDOM.createRoot(rootEl).render(
 
 
               <Route
-                path="/on-premise"
-                element={<OnPremisePage data-oid="onprem-route" />}
-                data-oid="onprem-route-r" />
+                path="/price"
+                element={<PricePage data-oid="price-route" />}
+                data-oid="price-route-r" />
 
 
               <Route

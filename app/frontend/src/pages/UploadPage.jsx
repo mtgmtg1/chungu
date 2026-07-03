@@ -181,6 +181,13 @@ export default function UploadPage() {
             </Link>
           </div>
           <div className="flex items-center gap-6" data-oid="azbdxm0">
+            <Link
+              to="/price"
+              className="text-body-md text-on-surface-variant hover:text-primary transition-colors font-medium"
+              data-oid="upload-price-link"
+            >
+              {t("page:upload.price")}
+            </Link>
             {user ?
             <>
                 <Link
@@ -258,7 +265,7 @@ export default function UploadPage() {
                   {t("page:upload.fileTypes")}
                 </p>
                 <p className="text-label-sm text-outline mt-3 max-w-md mx-auto" data-oid="upload-notice">
-                  ⚠️ {t("legal.consent.uploadNotice")}
+                  {/* ⚠️ {t("legal.consent.uploadNotice")} */}
                 </p>
                 <div className="mt-8 flex items-center gap-3" data-oid="9pgvpvb">
                   <button

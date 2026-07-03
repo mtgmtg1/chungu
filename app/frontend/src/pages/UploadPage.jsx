@@ -423,11 +423,11 @@ export default function UploadPage() {
               className="hover:text-primary transition-colors" data-oid="upload-footer-refund">
               {t("common:footer.refundPolicy")}
             </Link>
-            <Link
-              to="/developer"
-              className="hover:text-primary transition-colors" data-oid="6zrgl05">
+            <a
+              href="/docs"
+              className="hover:text-primary transition-colors" data-oid="upload-footer-docs">
               {t("page:upload.api")}
-            </Link>
+            </a>
             <a href="/admin" className="hover:text-primary transition-colors" data-oid="i457pgw">
               {t("page:upload.admin")}
             </a>

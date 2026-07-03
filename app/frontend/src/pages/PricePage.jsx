@@ -12,6 +12,7 @@ import {
   Sparkles,
   Table2,
 } from "lucide-react";
+import GlobalFooter from "../components/GlobalFooter.jsx";
 
 /**
  *보내기 형식 하나를 아이콘과 가격이 포함된 카드로 렌더링합니다.
@@ -311,22 +312,27 @@ export default function PricePage() {
               <p className="text-sm text-slate-500 mb-1">{t("page:price.creditExamples")}</p>
             </div>
           </div>
-          <p className="text-sm text-slate-500 mb-2">
-            ↩ {t("legal.consent.taxNotice")}
-          </p>
-          <p className="text-sm text-slate-500 mb-6">
-            {t("page:price.refundNotice")}
-          </p>
-          <Link
-            to="/payment"
-            className="inline-flex items-center justify-center gap-2 w-full sm:w-auto bg-gradient-to-r from-blue-500 to-cyan-500 text-white px-6 py-3 rounded-xl font-semibold hover:from-blue-600 hover:to-cyan-600 transition-all shadow-sm"
-            data-oid="price-recharge-link"
-          >
-            <Coins size={18} />
-            {t("page:price.rechargeButton")}
-          </Link>
+          <div className="text-center mb-6">
+            <p className="text-sm text-slate-500 mb-1">
+              {t("legal.consent.taxNotice")}
+            </p>
+            <p className="text-sm text-slate-500">
+              {t("page:price.refundNotice")}
+            </p>
+          </div>
+          <div className="flex justify-center">
+            <Link
+              to="/payment"
+              className="inline-flex items-center justify-center gap-2 w-full sm:w-auto bg-gradient-to-r from-blue-500 to-cyan-500 text-white px-6 py-3 rounded-xl font-semibold hover:from-blue-600 hover:to-cyan-600 transition-all shadow-sm"
+              data-oid="price-recharge-link"
+            >
+              <Coins size={18} />
+              {t("page:price.rechargeButton")}
+            </Link>
+          </div>
         </div>
       </main>
+      <GlobalFooter />
     </div>
   );
 }

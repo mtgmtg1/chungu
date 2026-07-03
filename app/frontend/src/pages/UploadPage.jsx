@@ -8,6 +8,7 @@ import { AnimatedRow } from "../components/AnimatedList.jsx";
 import { useAuth } from "../AuthContext.jsx";
 import { api } from "../api.js";
 import { uploadFilesTUS } from "../tusUpload.js";
+import GlobalFooter from "../components/GlobalFooter.jsx";
 
 export default function UploadPage() {
   const { user, loading: authLoading } = useAuth();
@@ -402,38 +403,7 @@ export default function UploadPage() {
         </div>
       </main>
 
-      <footer className="w-full py-8 border-t border-outline-variant/20" data-oid="tcsqbqv">
-        <div className="max-w-container-max mx-auto px-gutter flex flex-col md:flex-row justify-between items-center gap-4 text-label-sm text-outline" data-oid="nxq6d5t">
-          <div className="flex items-center gap-4" data-oid="vblxy38">
-            <p data-oid="zwnm7_d">{t("page:upload.copyright")}</p>
-          </div>
-          <div className="flex items-center gap-6" data-oid="2.0d1h3">
-            <Link
-              to="/terms"
-              className="hover:text-primary transition-colors" data-oid="upload-footer-terms">
-              {t("common:footer.terms")}
-            </Link>
-            <Link
-              to="/privacy"
-              className="hover:text-primary transition-colors" data-oid="upload-footer-privacy">
-              {t("common:footer.privacy")}
-            </Link>
-            <Link
-              to="/terms#refund-policy"
-              className="hover:text-primary transition-colors" data-oid="upload-footer-refund">
-              {t("common:footer.refundPolicy")}
-            </Link>
-            <a
-              href="/docs"
-              className="hover:text-primary transition-colors" data-oid="upload-footer-docs">
-              {t("page:upload.api")}
-            </a>
-            <a href="/admin" className="hover:text-primary transition-colors" data-oid="i457pgw">
-              {t("page:upload.admin")}
-            </a>
-          </div>
-        </div>
-      </footer>
+      <GlobalFooter />
     </div>);
 
 }

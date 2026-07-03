@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, Building2, CheckCircle2, Globe, HardDrive, Loader2, Mail, MessageSquare, Server, ShieldCheck, User, Wrench, Zap } from "lucide-react";
 import { api } from "../api.js";
+import GlobalFooter from "../components/GlobalFooter.jsx";
 
 const MIN_PAGES = 3000;
 const MAX_PAGES = 12000;
@@ -300,6 +301,7 @@ export default function OnPremisePage() {
           </form>
         </div>
       </main>
+      <GlobalFooter />
     </div>
   );
 }

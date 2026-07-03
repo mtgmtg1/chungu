@@ -1,6 +1,7 @@
 // [Flow: Step 1 (페이지 진입) -> Step 2 (i18n으로 12조 개인정보처리방침 렌더링) -> Step 3 (뒤로 가기 버튼)]
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
+import GlobalFooter from "../components/GlobalFooter.jsx";
 
 const LEGAL_EMAIL = "admin@proof.teamcat.app";
 
@@ -71,6 +72,7 @@ export default function LegalPrivacyPage() {
           </section>
         </div>
       </div>
+      <GlobalFooter />
     </div>
   );
 }

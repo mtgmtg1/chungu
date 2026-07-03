@@ -171,8 +171,15 @@ npm run start        # dev server at localhost:3000
   - 모델 카드: 기능 목록 중앙 정렬, 고급 모델에 "추천" 배지.
   - 크레딧 구매 카드: 단가($1.00/credit), 최소 충전액($5.00), 예시 금액 표시.
   - i18n 키: `creditTitle`, `creditDesc`, `creditProduct`, `creditUnitPrice`, `creditMinimum`, `creditExamples`, `mostPopular` (ko/en/ja).
-- **PaymentPage** (`app/frontend/src/pages/PaymentPage.jsx`): 충전 금액 입력 위에 단가/최소 금액 안내 추가. 결제 동의 안내는 크레딧 충전 카드 내부 오른쪽에 배치.
+- **PaymentPage** (`app/frontend/src/pages/PaymentPage.jsx`): 충전 금액 입력 위에 단가/최소 금액 안내 추가. 결제 동의 안내는 크레딧 충전 카드 내부 오른쪽에 배치. 환불 안내 문구에 `/refund-policy` 링크 추가.
 - **세금 안내**: `taxNotice` i18n 키를 "세금은 결제 시 별도로 계산되어 추가될 수 있습니다"로 변경 (ko/en/ja).
+
+## Global Footer
+
+- **GlobalFooter** (`app/frontend/src/components/GlobalFooter.jsx`): 모든 페이지에서 공통으로 사용하는 글로벌 푸터 컴포넌트. 저작권, 서비스 이용약관, 개인정보처리방침, 환불 정책, API 문서, 관리자 링크 포함.
+- 푸터가 있는 페이지: UploadPage, PricePage, PaymentPage, OnPremisePage, LegalTermsPage, LegalPrivacyPage, LegalRefundPage, SidebarLayout 사용 페이지 (Dashboard, Developer, Jobs, Settings).
+- 푸터가 없는 페이지 (의도적): AuthPage, AdminLogin, AdminDashboard, JobConfirmPage, JobResultPage.
+- UploadPage는 기존 인라인 푸터를 `GlobalFooter` 컴포넌트로 교체.
 
 ## Logout Fix
 
@@ -544,10 +551,13 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
   - i18n 키: `legal.terms.ch1Title`~`ch6Title`, `legal.terms.s1Title`~`s18Title`, `legal.terms.s1Body`~`s18Body`, `legal.terms.contactTitle/contactBody`.
   - 시행일: 2026-07-03.
 - `/privacy` — Privacy Policy (`LegalPrivacyPage.jsx`, i18n).
+- `/refund-policy` — Refund Policy (`LegalRefundPage.jsx`, i18n).
+  - Paddle 심사 통과를 위한 별도 페이지. 미사용 크레딧 14일 환불, 사용 후 불가, 청구 방법, 처리 기간 안내.
+  - i18n 키: `legal.refund.title`, `legal.refund.lastUpdated`, `legal.refund.effectiveDate`, `legal.refund.body` (ko/en/ja).
 - `CookieConsent` component shown on all pages (bottom banner).
 - Legal contact email: `admin@proof.teamcat.app`.
-- Key files: `app/frontend/src/pages/LegalTermsPage.jsx`, `app/frontend/src/pages/LegalPrivacyPage.jsx`, `app/frontend/src/components/CookieConsent.jsx`.
-- Locale files: `src/locales/{ko,en,ja}/common.json` — `legal.terms` 및 `legal.privacy` 섹션.
+- Key files: `app/frontend/src/pages/LegalTermsPage.jsx`, `app/frontend/src/pages/LegalPrivacyPage.jsx`, `app/frontend/src/pages/LegalRefundPage.jsx`, `app/frontend/src/components/CookieConsent.jsx`, `app/frontend/src/components/GlobalFooter.jsx`.
+- Locale files: `src/locales/{ko,en,ja}/common.json` — `legal.terms`, `legal.privacy`, `legal.refund` 섹션.
 
 ## Docusaurus Docs Site
 

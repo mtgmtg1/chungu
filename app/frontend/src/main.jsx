@@ -20,6 +20,7 @@ import JobResultPage from "./pages/JobResultPage.jsx";
 import SettingsPage from "./pages/SettingsPage.jsx";
 import LegalTermsPage from "./pages/LegalTermsPage.jsx";
 import LegalPrivacyPage from "./pages/LegalPrivacyPage.jsx";
+import LegalRefundPage from "./pages/LegalRefundPage.jsx";
 import PricePage from "./pages/PricePage.jsx";
 import CookieConsent from "./components/CookieConsent.jsx";
 
@@ -112,6 +113,12 @@ ReactDOM.createRoot(rootEl).render(
                 path="/privacy"
                 element={<LegalPrivacyPage data-oid="lglpriv" />}
                 data-oid="lglpriv_r" />
+
+
+              <Route
+                path="/refund-policy"
+                element={<LegalRefundPage data-oid="lglrefund" />}
+                data-oid="lglrefund_r" />
 
 
             </Routes>

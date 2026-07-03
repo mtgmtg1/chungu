@@ -13,6 +13,7 @@ import {
 } from
 "lucide-react";
 import { api } from "../api.js";
+import GlobalFooter from "../components/GlobalFooter.jsx";
 import { useAuth } from "../AuthContext.jsx";
 import { SkeletonCard } from "../components/Skeleton.jsx";
 
@@ -187,8 +188,8 @@ export default function PaymentPage() {
 
                 <div className="flex flex-col justify-end" data-oid="charge-right">
                   <div className="mb-4 space-y-1 text-sm text-slate-500" data-oid="pay-legal-info">
-                    <p data-oid="pay-refund-summary">↩ {t("legal.consent.refundSummary")}</p>
-                    <p data-oid="pay-tax-notice">↩ {t("legal.consent.taxNotice")}</p>
+                    <p data-oid="pay-refund-summary">↩ {t("legal.consent.refundSummary")}{" "}<Link to="/refund-policy" className="text-blue-600 hover:underline" data-oid="pay-refund-link">{t("common:footer.refundPolicy")}</Link></p>
+                    <p data-oid="pay-tax-notice">{t("legal.consent.taxNotice")}</p>
                   </div>
                   <label className="flex items-start gap-2 text-sm text-slate-600" data-oid="pay-consent">
                     <input
@@ -304,6 +305,7 @@ export default function PaymentPage() {
           </>
         )}
       </main>
+      <GlobalFooter />
     </div>
   );
 }

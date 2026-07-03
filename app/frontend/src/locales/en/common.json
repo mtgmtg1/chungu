@@ -151,6 +151,12 @@
       "contactTitle": "Contact",
       "contactBody": "For inquiries about these Terms, please contact us at:"
     },
+    "refund": {
+      "title": "Refund Policy",
+      "lastUpdated": "Effective date",
+      "effectiveDate": "July 3, 2026",
+      "body": "This Refund Policy outlines the conditions and procedures for refunds on credits purchased through the PROOF service operated by Teamcat. The Paddle Buyer Terms and Refund Policy also apply to your purchase.\n\n1. Unused Credit Refunds\nCredits that have not been used within 14 days of purchase are eligible for a full refund. Refunds will be returned to the original payment method used for the purchase.\n\n2. Used Credits\nCredits that have already been used for service conversions are non-refundable. Credits are not eligible for refund after 14 days from the purchase date, regardless of usage.\n\n3. How to Request a Refund\nTo request a refund, please email admin@proof.teamcat.app or submit a refund request through your account settings page. Please include your account email and the refund amount in your request.\n\n4. Refund Processing Time\nRefunds are processed within 5-10 business days of receiving the request. Additional time may be required for the funds to appear in your account depending on your payment method.\n\n5. Disputing a Charge\nIf you have concerns about a refund, you may raise a dispute through Paddle customer support (https://www.paddle.com/).\n\n6. Legal Rights\nThis Refund Policy does not limit any statutory consumer refund rights granted by your jurisdiction. EU residents have the right of withdrawal within 14 days of purchase."
+    },
     "privacy": {
       "title": "PROOF Global Master Privacy Policy",
       "lastUpdated": "Effective date",
@@ -198,7 +204,7 @@
       "mustAgree": "You must agree to all terms to continue",
       "uploadNotice": "You are responsible for the copyright and privacy of files you upload. Do not upload files that infringe on others' rights.",
       "refundSummary": "Unused credits refundable within 14 days, used credits non-refundable",
-      "taxNotice": "Taxes may apply and will be calculated at checkout.",
+      "taxNotice": "All prices include VAT (Value-Added Tax). No additional taxes will be added at checkout.",
       "dataRights": "Data Rights",
       "exportData": "Export My Data",
       "exportDataDesc": "Download your account data under GDPR/CCPA",

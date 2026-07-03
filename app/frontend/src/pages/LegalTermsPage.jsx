@@ -1,6 +1,7 @@
 // [Flow: Step 1 (페이지 진입) -> Step 2 (i18n으로 다국어 약관 렌더링, 18조 6장 구조) -> Step 3 (뒤로 가기 버튼)]
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
+import GlobalFooter from "../components/GlobalFooter.jsx";
 
 const LEGAL_EMAIL = "admin@proof.teamcat.app";
 
@@ -83,6 +84,7 @@ export default function LegalTermsPage() {
           </section>
         </div>
       </div>
+      <GlobalFooter />
     </div>
   );
 }

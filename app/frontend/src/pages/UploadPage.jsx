@@ -403,6 +403,12 @@ export default function UploadPage() {
         </div>
       </main>
 
+      <div className="w-full bg-white/60 border-t border-outline-variant py-4 px-gutter text-center" data-oid="upload-price-summary">
+        <Link to="/price" className="text-sm text-on-surface-variant hover:text-primary transition-colors font-medium" data-oid="upload-price-summary-link">
+          {t("page:upload.priceSummary")}
+        </Link>
+      </div>
+
       <GlobalFooter />
     </div>);
 

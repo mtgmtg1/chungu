@@ -21,6 +21,7 @@
     "badgeInstant": "즉시",
     "badgeProcessing": "처리",
     "badgeLanguages": "100+ 언어",
+    "priceSummary": "PROOF Credit: $1.00/credit · 최소 $5 · 기본 모델 $0.001/페이지 · 고급 모델 $0.005/페이지",
     "copyright": "© 2026 TeamCat",
     "api": "API",
     "admin": "관리자"
@@ -130,7 +131,7 @@
     "basicFeature1": "Hybrid model 엔진으로 텍스트 추출",
     "basicFeature2": "텍스트 레이어가 있는 PDF에 최적화 — 빠르고 정확한 추출",
     "basicFeature3": "처리 속도: 페이지당 약 1-3초 (대량 문서에 적합)",
-    "basicPrice": "$0.001/page (5 free pages daily)",
+    "basicPrice": "$0.001/page (매일 100페이지 무료)",
     "freeRemaining": "오늘 무료 {{count}}페이지 남음",
     "premiumModel": "고급 모델",
     "premiumFeature1": "high performance AI 비전 모델로 모든 페이지 정밀 분석",

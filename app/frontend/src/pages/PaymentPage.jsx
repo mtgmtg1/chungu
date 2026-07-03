@@ -59,13 +59,26 @@ export default function PaymentPage() {
     }
   }
 
+  // [Flow: Step 1 (Paddle.Initialize) -> Step 2 (트랜잭션 생성 API 호출) -> Step 3 (Paddle.Checkout.open 오버레이)]
+  useEffect(() => {
+    if (window.Paddle) {
+      window.Paddle.Initialize({ token: "live_7809a123ef46120bc1f57e7aba5" });
+    }
+  }, []);
+
   async function payWithPaddle() {
     setPaying(true);
     setError("");
     setSuccess(false);
     try {
       const checkout = await api.createPaddleCheckout({ amount: chargeAmount });
-      window.open(checkout.checkout_url, "_blank");
+      if (window.Paddle && checkout.transaction_id) {
+        window.Paddle.Checkout.open({ transactionId: checkout.transaction_id });
+      } else if (checkout.checkout_url) {
+        window.open(checkout.checkout_url, "_blank");
+      } else {
+        throw new Error("No checkout URL or transaction ID returned");
+      }
       setSuccess(true);
     } catch (e) {
       setError(e.message);

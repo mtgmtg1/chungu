@@ -223,6 +223,55 @@ export default function PricePage() {
           </p>
         </div>
 
+        {/* 크레딧 구매 섹션 (최상단 — Paddle 체크아웃과 동일한 상품/가격) */}
+        <div
+          className="bg-white border border-slate-200 rounded-3xl p-6 md:p-8 shadow-lg mb-14"
+          data-oid="price-credit-card"
+        >
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-12 h-12 bg-gradient-to-br from-emerald-100 to-teal-50 rounded-xl flex items-center justify-center shadow-sm">
+              <Coins className="text-emerald-600" size={24} />
+            </div>
+            <h2 className="text-xl font-bold text-slate-900">
+              {t("page:price.creditTitle")}
+            </h2>
+          </div>
+          <p className="text-slate-600 mb-4">
+            {t("page:price.creditDesc")}
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+            <div className="bg-slate-50 rounded-2xl p-4 text-center">
+              <p className="text-sm text-slate-500 mb-1">{t("page:price.creditProduct")}</p>
+              <p className="text-3xl font-extrabold text-emerald-600">
+                {t("page:price.creditUnitPrice")}
+              </p>
+              <p className="text-sm text-slate-500 mt-1">{t("page:price.creditMinimum")}</p>
+            </div>
+            <div className="bg-slate-50 rounded-2xl p-4 flex flex-col justify-center">
+              <p className="text-sm text-slate-500 mb-1">{t("page:price.creditExamples")}</p>
+            </div>
+          </div>
+          <div className="text-center mb-6">
+            <p className="text-sm text-slate-500 mb-1">
+              {t("legal.consent.taxNotice")}
+            </p>
+            <p className="text-sm text-slate-500">
+              {t("page:price.refundNotice")}
+            </p>
+          </div>
+          <div className="flex justify-center">
+            <Link
+              to="/payment"
+              className="inline-flex items-center justify-center gap-2 w-full sm:w-auto bg-gradient-to-r from-blue-500 to-cyan-500 text-white px-6 py-3 rounded-xl font-semibold hover:from-blue-600 hover:to-cyan-600 transition-all shadow-sm"
+              data-oid="price-recharge-link"
+            >
+              <Coins size={18} />
+              {t("page:price.rechargeButton")}
+            </Link>
+          </div>
+        </div>
+
+        {/* 크레딧 사용률 (모델별 페이지당 가격) */}
         <h2
           className="text-xl font-bold text-slate-900 mb-6 text-center"
           data-oid="price-models-title"
@@ -283,53 +332,6 @@ export default function PricePage() {
           {exportFormats.map((format) => (
             <ExportFormatCard key={format.key} {...format} />
           ))}
-        </div>
-
-        <div
-          className="bg-white border border-slate-200 rounded-3xl p-6 md:p-8 shadow-lg"
-          data-oid="price-credit-card"
-        >
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-emerald-100 to-teal-50 rounded-xl flex items-center justify-center shadow-sm">
-              <Coins className="text-emerald-600" size={24} />
-            </div>
-            <h2 className="text-xl font-bold text-slate-900">
-              {t("page:price.creditTitle")}
-            </h2>
-          </div>
-          <p className="text-slate-600 mb-4">
-            {t("page:price.creditDesc")}
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-            <div className="bg-slate-50 rounded-2xl p-4 text-center">
-              <p className="text-sm text-slate-500 mb-1">{t("page:price.creditProduct")}</p>
-              <p className="text-3xl font-extrabold text-emerald-600">
-                {t("page:price.creditUnitPrice")}
-              </p>
-              <p className="text-sm text-slate-500 mt-1">{t("page:price.creditMinimum")}</p>
-            </div>
-            <div className="bg-slate-50 rounded-2xl p-4 flex flex-col justify-center">
-              <p className="text-sm text-slate-500 mb-1">{t("page:price.creditExamples")}</p>
-            </div>
-          </div>
-          <div className="text-center mb-6">
-            <p className="text-sm text-slate-500 mb-1">
-              {t("legal.consent.taxNotice")}
-            </p>
-            <p className="text-sm text-slate-500">
-              {t("page:price.refundNotice")}
-            </p>
-          </div>
-          <div className="flex justify-center">
-            <Link
-              to="/payment"
-              className="inline-flex items-center justify-center gap-2 w-full sm:w-auto bg-gradient-to-r from-blue-500 to-cyan-500 text-white px-6 py-3 rounded-xl font-semibold hover:from-blue-600 hover:to-cyan-600 transition-all shadow-sm"
-              data-oid="price-recharge-link"
-            >
-              <Coins size={18} />
-              {t("page:price.rechargeButton")}
-            </Link>
-          </div>
         </div>
       </main>
       <GlobalFooter />

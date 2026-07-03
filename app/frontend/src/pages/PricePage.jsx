@@ -5,7 +5,6 @@ import {
   ArrowLeft,
   Check,
   Coins,
-  CreditCard,
   FileCode,
   FileSpreadsheet,
   FileText,
@@ -287,18 +286,33 @@ export default function PricePage() {
 
         <div
           className="bg-white border border-slate-200 rounded-3xl p-6 md:p-8 shadow-lg"
-          data-oid="price-payment-card"
+          data-oid="price-credit-card"
         >
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-blue-100 to-cyan-50 rounded-xl flex items-center justify-center shadow-sm">
-              <CreditCard className="text-blue-600" size={24} />
+            <div className="w-12 h-12 bg-gradient-to-br from-emerald-100 to-teal-50 rounded-xl flex items-center justify-center shadow-sm">
+              <Coins className="text-emerald-600" size={24} />
             </div>
             <h2 className="text-xl font-bold text-slate-900">
-              {t("page:price.paymentTitle")}
+              {t("page:price.creditTitle")}
             </h2>
           </div>
-          <p className="text-slate-600 mb-2">
-            {t("page:price.paymentDesc")}
+          <p className="text-slate-600 mb-4">
+            {t("page:price.creditDesc")}
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+            <div className="bg-slate-50 rounded-2xl p-4 text-center">
+              <p className="text-sm text-slate-500 mb-1">{t("page:price.creditProduct")}</p>
+              <p className="text-3xl font-extrabold text-emerald-600">
+                {t("page:price.creditUnitPrice")}
+              </p>
+              <p className="text-sm text-slate-500 mt-1">{t("page:price.creditMinimum")}</p>
+            </div>
+            <div className="bg-slate-50 rounded-2xl p-4 flex flex-col justify-center">
+              <p className="text-sm text-slate-500 mb-1">{t("page:price.creditExamples")}</p>
+            </div>
+          </div>
+          <p className="text-sm text-slate-500 mb-2">
+            ↩ {t("legal.consent.taxNotice")}
           </p>
           <p className="text-sm text-slate-500 mb-6">
             {t("page:price.refundNotice")}

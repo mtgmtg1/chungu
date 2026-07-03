@@ -357,6 +357,12 @@
     "paymentDesc": "USD建てクレジットをPaddleで安全に決済します。最小$5からチャージでき、残高不足時は自動チャージを設定できます。",
     "rechargeButton": "クレジットをチャージ",
     "refundNotice": "未使用クレジットは購入後14日以内に返金可能です。",
+    "creditTitle": "クレジット購入",
+    "creditDesc": "USDでPROOF Creditを購入します。1クレジット=$1.00、$5〜$500の任意の金額を購入できます。",
+    "creditProduct": "PROOF Credit",
+    "creditUnitPrice": "$1.00 / クレジット",
+    "creditMinimum": "最小購入: $5.00",
+    "creditExamples": "例: $5.00(5クレジット)、$10.00(10クレジット)、$25.00(25クレジット)、$50.00(50クレジット)、$100.00(100クレジット)",
     "mostPopular": "おすすめ"
   },
   "onPremise": {

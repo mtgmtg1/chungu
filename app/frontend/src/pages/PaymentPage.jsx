@@ -148,6 +148,9 @@ export default function PaymentPage() {
                     <label className="block text-sm text-slate-600 mb-1" data-oid="amount-label">
                       {t("page:payment.chargeAmount")}
                     </label>
+                    <p className="text-xs text-slate-500 mb-2" data-oid="credit-unit-notice">
+                      {t("page:price.creditUnitPrice")} · {t("page:price.creditMinimum")}
+                    </p>
                     <div className="flex items-center gap-2" data-oid="amount-input-row">
                       <span className="text-2xl font-bold text-slate-700" data-oid="dollar-sign">$</span>
                       <input

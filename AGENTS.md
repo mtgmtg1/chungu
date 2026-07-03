@@ -164,6 +164,16 @@ npm run start        # dev server at localhost:3000
 - 오디오/비디오 파일이 포함된 경우 기본 모델 비활성화, 고급 모델 강제.
 - i18n 키: `basicFeature1-3`, `premiumFeature1-3` (ko/en/ja).
 
+## Price & Payment Page
+
+- **PricePage** (`app/frontend/src/pages/PricePage.jsx`): 카드형 디자인으로 파일 형식(MD, CSV, XLSX, DOCX)과 모델(기본/고급)을 아이콘과 함께 표시.
+  - 파일 형식 카드: 고정 너비, `flex-wrap` 배치, PowerPoint 제외.
+  - 모델 카드: 기능 목록 중앙 정렬, 고급 모델에 "추천" 배지.
+  - 크레딧 구매 카드: 단가($1.00/credit), 최소 충전액($5.00), 예시 금액 표시.
+  - i18n 키: `creditTitle`, `creditDesc`, `creditProduct`, `creditUnitPrice`, `creditMinimum`, `creditExamples`, `mostPopular` (ko/en/ja).
+- **PaymentPage** (`app/frontend/src/pages/PaymentPage.jsx`): 충전 금액 입력 위에 단가/최소 금액 안내 추가. 결제 동의 안내는 크레딧 충전 카드 내부 오른쪽에 배치.
+- **세금 안내**: `taxNotice` i18n 키를 "세금은 결제 시 별도로 계산되어 추가될 수 있습니다"로 변경 (ko/en/ja).
+
 ## Logout Fix
 
 - `SidebarLayout.jsx`: `signOut()` 후 `navigate("/")`로 랜딩 페이지 이동. (기존 `signOut()`만 호출하면 `onAuthStateChange`로 인한 재렌더링이 `DashboardPage`의 `!user && !error` 로딩 조건을 만족시켜 무한 스피너가 표시됨)
@@ -311,6 +321,11 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
   - `app/frontend/src/pages/JobsPage.jsx` — 1초 타이머, 데스크톱/모바일 시간진행바 적용
   - `app/frontend/src/pages/JobResultPage.jsx` — `PoetryProgress`에 시간진행바 적용, `PagedResultViewer` 호출
   - `app/frontend/src/components/PagedResultViewer.jsx` — 100페이지 초과 결과 보기 (페이지네이션 제거, 저장 버튼만 유지)
+- **PoetryProgress** (`app/frontend/src/components/PoetryProgress.jsx`):
+  - 작업 진행 중 로딩 화면에 한국 명시를 표시하며, 30초 간격으로 랜덤하게 시가 교체됩니다.
+  - 76편의 시가 수록되어 있으며 (윤동주 21편, 김소월 48편, 기존 7편), 시 데이터는 `ko/page.json`의 `poems` 배열에서 i18n으로 로드됩니다.
+  - 같은 시가 연속으로 표시되지 않도록 중복 방지 로직이 포함되어 있습니다.
+  - `SLIDE_INTERVAL = 30000` (30초, 기존 10초의 3배).
 
 ## GPU OCR Backends (Suspended)
 
@@ -505,6 +520,14 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
 - Only active when `DEV_BYPASS_AUTH=true` in `.env`.
 - `POST /api/dev/login` issues a Supabase-compatible JWT for a fixed dev user (`dev@proof.local`).
 - **Never enable in production.**
+- **Frontend Dev Mock Mode** (`import.meta.env.DEV`):
+  - Vite dev 모드에서 자동 활성화되며, 백엔드 `/api/dev/login` 우선 시도 후 실패 시 mock 사용자로 폴백합니다.
+  - `app/frontend/src/dev/mockUser.js` — mock 사용자/세션 객체.
+  - `app/frontend/src/dev/mockApi.js` — 모든 API 요청을 가로채 mock 응답 반환 (빈 목록, 기본 프로필, 더미 작업 등).
+  - `app/frontend/src/components/DevBypassBanner.jsx` — mock 모드 활성 시 상단에 안내 배너 표시.
+  - `app/frontend/src/AuthContext.jsx` — `AuthProvider`가 dev 모드에서 초기 mock 세션 설정, 실제 세션 감지 시 mock 비활성화.
+  - `app/frontend/src/api.js` — `devMockEnabled` 플래그로 `mockRequest()` 라우팅.
+  - 실제 백엔드 세션이 감지되면 자동으로 mock 모드가 비활성화됩니다.
 
 ## GDPR / Account Data
 

@@ -1,6 +1,13 @@
 // [Flow: Step 1 (access token 획득) -> Step 2 (fetch 래퍼) -> Step 3 (JSON 파싱 + 에러 throw)]
 import { supabase } from './supabase.js'
 import i18n from './i18n.js'
+import { mockRequest } from './dev/mockApi.js'
+
+let devMockEnabled = import.meta.env.DEV ?? false
+
+export function enableDevMock(enabled) {
+  devMockEnabled = enabled
+}
 
 async function getToken() {
   const { data } = await supabase.auth.getSession()
@@ -8,6 +15,9 @@ async function getToken() {
 }
 
 async function request(path, options = {}) {
+  if (devMockEnabled) {
+    return mockRequest(path, options)
+  }
   const token = await getToken()
   const headers = { ...(options.headers || {}) }
   if (token) headers.Authorization = `Bearer ${token}`

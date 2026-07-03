@@ -514,10 +514,15 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
 ## Legal Pages & Cookie Consent
 
 - `/terms` — Terms of Service (`LegalTermsPage.jsx`, i18n).
+  - 6장 18조 구조: 제1장 총칙·이용계약(s1–s5), 제2장 서비스 아키텍처·기술적 한계(s6–s7), 제3장 데이터 국지화·개인정보 보호(s8–s9), 제4장 자체 호스팅 AI 지식재산권·환각 면책(s10–s12), 제5장 API 모네타이제이션·B2B 책임 통제(s13–s14), 제6장 책임 제한·수출 통제·분쟁 해결(s15–s18).
+  - `renderParagraphs()` 헬퍼로 `\n` 기준 다단락 렌더링, `h2`(장) + `h3`(조) 계층 구조.
+  - i18n 키: `legal.terms.ch1Title`~`ch6Title`, `legal.terms.s1Title`~`s18Title`, `legal.terms.s1Body`~`s18Body`, `legal.terms.contactTitle/contactBody`.
+  - 시행일: 2026-07-03.
 - `/privacy` — Privacy Policy (`LegalPrivacyPage.jsx`, i18n).
 - `CookieConsent` component shown on all pages (bottom banner).
 - Legal contact email: `admin@proof.teamcat.app`.
 - Key files: `app/frontend/src/pages/LegalTermsPage.jsx`, `app/frontend/src/pages/LegalPrivacyPage.jsx`, `app/frontend/src/components/CookieConsent.jsx`.
+- Locale files: `src/locales/{ko,en,ja}/common.json` — `legal.terms` 및 `legal.privacy` 섹션.
 
 ## Docusaurus Docs Site
 

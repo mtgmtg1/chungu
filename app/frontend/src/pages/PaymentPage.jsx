@@ -139,46 +139,69 @@ export default function PaymentPage() {
           <>
             {/* 자유 금액 충전 카드 */}
             <div className="bg-white border rounded-xl p-6 mb-6" data-oid="charge-card">
-              <h2 className="text-lg font-bold mb-4 flex items-center gap-2" data-oid="charge-title">
-                <CreditCard size={20} data-oid="charge-icon" /> {t("page:payment.chargeTitle")}
-              </h2>
-              <div className="space-y-4" data-oid="charge-body">
-                <div data-oid="amount-input-wrap">
-                  <label className="block text-sm text-slate-600 mb-1" data-oid="amount-label">
-                    {t("page:payment.chargeAmount")}
-                  </label>
-                  <div className="flex items-center gap-2" data-oid="amount-input-row">
-                    <span className="text-2xl font-bold text-slate-700" data-oid="dollar-sign">$</span>
-                    <input
-                      type="number"
-                      min={limits.min_amount}
-                      max={limits.max_amount}
-                      step="1"
-                      value={chargeAmount}
-                      onChange={(e) => setChargeAmount(Math.max(1, parseInt(e.target.value) || 0))}
-                      className="w-32 border rounded-lg px-3 py-2 text-lg font-semibold"
-                      data-oid="amount-input"
-                    />
-                    <span className="text-sm text-slate-400" data-oid="amount-hint">
-                      ({t("page:payment.chargeLimits", { min: limits.min_amount, max: limits.max_amount })})
-                    </span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6" data-oid="charge-grid">
+                <div className="space-y-4" data-oid="charge-left">
+                  <h2 className="text-lg font-bold mb-4 flex items-center gap-2" data-oid="charge-title">
+                    <CreditCard size={20} data-oid="charge-icon" /> {t("page:payment.chargeTitle")}
+                  </h2>
+                  <div data-oid="amount-input-wrap">
+                    <label className="block text-sm text-slate-600 mb-1" data-oid="amount-label">
+                      {t("page:payment.chargeAmount")}
+                    </label>
+                    <div className="flex items-center gap-2" data-oid="amount-input-row">
+                      <span className="text-2xl font-bold text-slate-700" data-oid="dollar-sign">$</span>
+                      <input
+                        type="number"
+                        min={limits.min_amount}
+                        max={limits.max_amount}
+                        step="1"
+                        value={chargeAmount}
+                        onChange={(e) => setChargeAmount(Math.max(1, parseInt(e.target.value) || 0))}
+                        className="w-32 border rounded-lg px-3 py-2 text-lg font-semibold"
+                        data-oid="amount-input"
+                      />
+                      <span className="text-sm text-slate-400" data-oid="amount-hint">
+                        ({t("page:payment.chargeLimits", { min: limits.min_amount, max: limits.max_amount })})
+                      </span>
+                    </div>
                   </div>
+                  <button
+                    onClick={payWithPaddle}
+                    disabled={paying || !agreePayment || chargeAmount < limits.min_amount || chargeAmount > limits.max_amount}
+                    className="w-full bg-blue-600 text-white py-3 font-medium hover:bg-blue-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-2"
+                    data-oid="pay-btn"
+                  >
+                    {paying ? (
+                      <Loader2 className="animate-spin" size={18} data-oid="pay-spinner" />
+                    ) : (
+                      <>
+                        <CreditCard size={18} data-oid="pay-card-icon" />
+                        {t("page:payment.chargeButton", { amount: chargeAmount })}
+                      </>
+                    )}
+                  </button>
                 </div>
-                <button
-                  onClick={payWithPaddle}
-                  disabled={paying || !agreePayment || chargeAmount < limits.min_amount || chargeAmount > limits.max_amount}
-                  className="w-full bg-blue-600 text-white py-3 font-medium hover:bg-blue-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-2"
-                  data-oid="pay-btn"
-                >
-                  {paying ? (
-                    <Loader2 className="animate-spin" size={18} data-oid="pay-spinner" />
-                  ) : (
-                    <>
-                      <CreditCard size={18} data-oid="pay-card-icon" />
-                      {t("page:payment.chargeButton", { amount: chargeAmount })}
-                    </>
-                  )}
-                </button>
+
+                <div className="flex flex-col justify-end" data-oid="charge-right">
+                  <div className="mb-4 space-y-1 text-sm text-slate-500" data-oid="pay-legal-info">
+                    <p data-oid="pay-refund-summary">↩ {t("legal.consent.refundSummary")}</p>
+                    <p data-oid="pay-tax-notice">↩ {t("legal.consent.taxNotice")}</p>
+                  </div>
+                  <label className="flex items-start gap-2 text-sm text-slate-600" data-oid="pay-consent">
+                    <input
+                      type="checkbox"
+                      checked={agreePayment}
+                      onChange={(e) => setAgreePayment(e.target.checked)}
+                      className="mt-0.5"
+                      data-oid="chk-pay-consent"
+                    />
+                    <span>
+                      <Link to="/terms" target="_blank" className="text-blue-600 hover:underline" data-oid="lnk-pay-terms">
+                        {t("legal.consent.agreePayment")}
+                      </Link>
+                    </span>
+                  </label>
+                </div>
               </div>
             </div>
 
@@ -278,27 +301,6 @@ export default function PaymentPage() {
           </>
         )}
       </main>
-
-      <div className="max-w-3xl mx-auto px-6 pb-8" data-oid="pay-consent-wrap">
-        <div className="mb-4 space-y-1 text-sm text-slate-500" data-oid="pay-legal-info">
-          <p data-oid="pay-refund-summary">↩ {t("legal.consent.refundSummary")}</p>
-          <p data-oid="pay-tax-notice">↩ {t("legal.consent.taxNotice")}</p>
-        </div>
-        <label className="flex items-start gap-2 text-sm text-slate-600" data-oid="pay-consent">
-          <input
-            type="checkbox"
-            checked={agreePayment}
-            onChange={(e) => setAgreePayment(e.target.checked)}
-            className="mt-0.5"
-            data-oid="chk-pay-consent"
-          />
-          <span>
-            <Link to="/terms" target="_blank" className="text-blue-600 hover:underline" data-oid="lnk-pay-terms">
-              {t("legal.consent.agreePayment")}
-            </Link>
-          </span>
-        </label>
-      </div>
     </div>
   );
 }

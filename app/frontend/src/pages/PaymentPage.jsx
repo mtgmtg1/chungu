@@ -15,6 +15,7 @@ import {
 import { api } from "../api.js";
 import GlobalFooter from "../components/GlobalFooter.jsx";
 import { useAuth } from "../AuthContext.jsx";
+import { useLanguage } from "../LanguageContext.jsx";
 import { SkeletonCard } from "../components/Skeleton.jsx";
 
 /** milli-USD를 USD 달러 문자열로 변환 */
@@ -25,6 +26,7 @@ function mdToUsd(md) {
 
 export default function PaymentPage() {
   const { user } = useAuth();
+  const { language } = useLanguage();
   const { t } = useTranslation();
   const [profile, setProfile] = useState(null);
   const [limits, setLimits] = useState({ min_amount: 5, max_amount: 500, krw_unit_price: 1500 });
@@ -34,7 +36,13 @@ export default function PaymentPage() {
   const [error, setError] = useState("");
   const [agreePayment, setAgreePayment] = useState(false);
   const [chargeAmount, setChargeAmount] = useState(10);
-  const [currency, setCurrency] = useState("USD");
+  const [currency, setCurrency] = useState(language === "ko" ? "KRW" : "USD");
+
+  useEffect(() => {
+    if (!currency) {
+      setCurrency(language === "ko" ? "KRW" : "USD");
+    }
+  }, [language]);
 
   // 자동 충전
   const [autoRecharge, setAutoRecharge] = useState({ enabled: false, threshold: 2000, amount: 10, has_payment_method: false, retries: 0 });

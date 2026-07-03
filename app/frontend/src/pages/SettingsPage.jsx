@@ -27,7 +27,6 @@ export default function SettingsPage() {
   const [account, setAccount] = useState(null);
   const [keys, setKeys] = useState([]);
   const [payments, setPayments] = useState([]);
-  const [packages, setPackages] = useState([]);
   const [newKeyName, setNewKeyName] = useState("");
   const [revealedKey, setRevealedKey] = useState(null);
   const [error, setError] = useState("");
@@ -51,16 +50,14 @@ export default function SettingsPage() {
     setDataLoading(true);
     try {
       setError("");
-      const [acc, k, p, pkg] = await Promise.all([
-      api.me(),
-      api.listApiKeys(),
-      api.paymentHistory(),
-      api.getPackages()]
-      );
+      const [acc, k, p] = await Promise.all([
+        api.me(),
+        api.listApiKeys(),
+        api.paymentHistory(),
+      ]);
       setAccount(acc);
       setKeys(k);
       setPayments(p);
-      setPackages(pkg?.packages || pkg || []);
     } catch (e) {
       setError(e.message || t("page:errors.loadFailed"));
     }
@@ -433,47 +430,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className="glass-panel p-5 rounded-2xl" data-oid="ign7w4w">
-        <h3 className="font-headline-md text-headline-md text-on-surface mb-3" data-oid="0-q6tix">
-          {t("page:settings.rechargePackages")}
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-gutter" data-oid="h7_mo94">
-          {packages.map((pkg, idx) => {
-          const points = pkg.points || 0;
-          const price = pkg.price || pkg.krw || 0;
-          const currency = pkg.currency || "KRW";
-          return (
-            <AnimatedRow key={pkg.id || `${points}-${price}`} index={idx}>
-            <div
-              className="border border-outline-variant p-4 flex flex-col" data-oid="nvybcdw">
-
-                <p className="font-headline-md text-headline-md text-on-surface" data-oid="r6sm-4e">
-                  {points.toLocaleString()}P
-                </p>
-                <p className="text-on-surface-variant text-body-md mb-4" data-oid="f-gtlyp">
-                  {price.toLocaleString()} {currency}
-                </p>
-                <button
-                onClick={() =>
-                navigate("/payment", { state: { selectedPackage: pkg } })
-                }
-                className="mt-auto w-full bg-primary text-on-primary py-2 rounded-lg font-body-md hover:bg-primary/90" data-oid="wm:b444">
-
-                  {t("page:settings.select")}
-                </button>
-              </div>
-            </AnimatedRow>);
-
-        })}
-          {packages.length === 0 &&
-        <p className="text-outline col-span-full" data-oid="w00zf-x">
-              {t("page:settings.noPackages")}
-            </p>
-        }
-        </div>
-      </div>
     </div>;
-
 
   const renderRateLimit = () => {
     const limit = account?.rate_limit_rpm || 60;

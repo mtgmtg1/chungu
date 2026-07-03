@@ -72,11 +72,12 @@ def recover_stuck_jobs(sender=None, **kwargs):
                 logger.info(f"[recover] job {job.id} 재시도 ({job.retry_count}/{MAX_RETRY_COUNT})")
             else:
                 job.status = "error"
-                job.error_log = (job.error_log + f"\n재시도 한계 초과 (server restart, {MAX_RETRY_COUNT}회)").strip()
+                job.refundable = True
+                job.error_log = (job.error_log + f"\nRetry limit exceeded (server restart, {MAX_RETRY_COUNT} attempts)").strip()
                 job.finished_at = datetime.now(timezone.utc)
                 db.commit()
                 exhausted += 1
-                logger.warning(f"[recover] job {job.id} 재시도 한계 초과, error로 전환")
+                logger.warning(f"[recover] job {job.id} retry limit exceeded, transitioned to error with refundable=True")
 
         logger.info(f"[recover] 복구 완료: {recovered}개 재시도, {exhausted}개 error 전환")
     except Exception as e:

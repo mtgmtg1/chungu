@@ -101,6 +101,7 @@ def create_paddle_checkout(
                     }
                 ],
                 "customer_id": customer_id,
+                "checkout": {"url": "https://proof.teamcat.app/payment"},
                 "custom_data": {"user_id": user.user_id, "credits": str(credits)},
             },
             timeout=20,

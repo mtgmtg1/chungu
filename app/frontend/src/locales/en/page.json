@@ -336,7 +336,7 @@
     "basicFeature2": "Hybrid model",
     "basicFeature3": "Great for bulk documents",
     "premiumTitle": "Premium Model",
-    "premiumDesc": "Handles scans, handwriting, images, tables, audio, and video",
+    "premiumDesc": "For the highest accuracy requirements",
     "premiumPricePdf": "$0.005 / page",
     "premiumPriceAudio": "$0.001 / audio second",
     "premiumPriceVideo": "$0.005 / video second",

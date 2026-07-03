@@ -1,4 +1,4 @@
-// [Flow: Step 1 (헤더 렌더링) -> Step 2 (요약/모델별 가격 카드 렌더링) -> Step 3 (보내기 형식 가격 렌더링) -> Step 4 (결제 안내 및 충전 버튼 렌더링)]
+// [Flow: Step 1 (헤더 렌더링) -> Step 2 (요약/모델별 가격 카드 렌더링) -> Step 3 (내보내기 형식 가격 렌더링) -> Step 4 (결제 안내 및 충전 버튼 렌더링)]
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, Coins, FileText, Sparkles, FileSpreadsheet, CreditCard, RefreshCcw } from "lucide-react";
@@ -95,7 +95,7 @@ export default function PricePage() {
           </div>
         </div>
 
-        {/*보내기 형식 가격 */}
+        {/*내보내기 형식 가격 */}
         <h2 className="text-xl font-bold text-slate-900 mb-6" data-oid="price-exports-title">
           {t("page:price.exportsTitle")}
         </h2>

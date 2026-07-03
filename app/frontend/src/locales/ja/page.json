@@ -337,7 +337,7 @@
     "basicFeature2": "Hybrid model",
     "basicFeature3": "大量文書に最適",
     "premiumTitle": "高級モデル",
-    "premiumDesc": "スキャン、手書き、画像、表、音声、動画に対応",
+    "premiumDesc": "最高の正確性を要求する場合",
     "premiumPricePdf": "$0.005 / ページ",
     "premiumPriceAudio": "$0.001 / 音声秒",
     "premiumPriceVideo": "$0.005 / 動画秒",

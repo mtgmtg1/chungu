@@ -31,12 +31,14 @@ def _paddle_api_headers(db: Session) -> dict:
 
 @router.get("/packages")
 def list_packages(db: Session = Depends(get_db)):
-    """충전 한도를 반환한다 (자유 금액 방식)."""
+    """충전 한도를 반환한다 (자유 금액 방식, amount는 credit 개수)."""
     limits = points_service.get_charge_limits()
     return {
         "min_amount": limits["min_amount"],
         "max_amount": limits["max_amount"],
         "currency": "USD",
+        "krw_unit_price": 1500,  # 1 credit = 1,500 KRW
+        "supported_currencies": ["USD", "KRW"],
     }
 
 
@@ -70,17 +72,23 @@ def create_paddle_checkout(
     db: Session = Depends(get_db),
 ):
     """Paddle Checkout URL을 생성한다 (자유 금액 방식).
-    요청: { "amount": 15 } — 사용자가 입력한 달러 금액 (정수, $5~$500)"""
-    # [Flow: Step 1 (금액 검증) -> Step 2 (Paddle Customer 조회/생성) -> Step 3 (트랜잭션 생성) -> Step 4 (Checkout URL 반환)]
+    요청: { "amount": 15, "currency": "USD" } — 구매할 credit 개수 (1 credit = $1.00 / 1,500 KRW)"""
+    # [Flow: Step 1 (금액/통화 검증) -> Step 2 (Paddle Customer 조회/생성) -> Step 3 (트랜잭션 생성) -> Step 4 (Checkout URL 반환)]
     amount = int(payload.get("amount") or 0)
     limits = points_service.get_charge_limits()
     if amount < limits["min_amount"] or amount > limits["max_amount"]:
-        raise HTTPException(status_code=400, detail=f"Amount must be an integer between ${limits['min_amount']} and ${limits['max_amount']}")
+        raise HTTPException(status_code=400, detail=f"Amount must be an integer between {limits['min_amount']} and {limits['max_amount']}")
 
     api_headers = _paddle_api_headers(db)
-    price_id = settings_store.get_setting(db, "paddle_price_id")
-    if not price_id:
-        raise HTTPException(status_code=503, detail="paddle_price_id not configured")
+    currency = str(payload.get("currency") or "USD").upper()
+    if currency == "KRW":
+        price_id = settings_store.get_setting(db, "paddle_krw_price_id")
+        if not price_id:
+            raise HTTPException(status_code=503, detail="paddle_krw_price_id not configured")
+    else:
+        price_id = settings_store.get_setting(db, "paddle_price_id")
+        if not price_id:
+            raise HTTPException(status_code=503, detail="paddle_price_id not configured")
 
     db_user = db.get(User, uuid.UUID(user.user_id))
     if db_user is None:

@@ -32,6 +32,7 @@ SETTING_DEFS: dict[str, tuple[str, bool]] = {
     "paddle_webhook_secret": ("", True),
     "paddle_vendor_id": ("", False),
     "paddle_price_id": ("", False),
+    "paddle_krw_price_id": ("", False),
     "auto_recharge_min_threshold": ("500", False),
     # 미디어 전용 LLM (오디오/비디오)
     "media_llm_endpoint": (settings.media_llm_endpoint, False),

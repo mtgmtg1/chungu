@@ -27,13 +27,14 @@ export default function PaymentPage() {
   const { user } = useAuth();
   const { t } = useTranslation();
   const [profile, setProfile] = useState(null);
-  const [limits, setLimits] = useState({ min_amount: 5, max_amount: 500 });
+  const [limits, setLimits] = useState({ min_amount: 5, max_amount: 500, krw_unit_price: 1500 });
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
   const [agreePayment, setAgreePayment] = useState(false);
   const [chargeAmount, setChargeAmount] = useState(10);
+  const [currency, setCurrency] = useState("USD");
 
   // 자동 충전
   const [autoRecharge, setAutoRecharge] = useState({ enabled: false, threshold: 2000, amount: 10, has_payment_method: false, retries: 0 });
@@ -49,7 +50,11 @@ export default function PaymentPage() {
   async function load() {
     try {
       const [pkg, me, ar] = await Promise.all([api.getPackages(), api.me(), api.getAutoRechargeSettings()]);
-      setLimits({ min_amount: pkg.min_amount || 5, max_amount: pkg.max_amount || 500 });
+      setLimits({
+        min_amount: pkg.min_amount || 5,
+        max_amount: pkg.max_amount || 500,
+        krw_unit_price: pkg.krw_unit_price || 1500,
+      });
       setProfile(me);
       setAutoRecharge(ar);
     } catch (e) {
@@ -71,7 +76,7 @@ export default function PaymentPage() {
     setError("");
     setSuccess(false);
     try {
-      const checkout = await api.createPaddleCheckout({ amount: chargeAmount });
+      const checkout = await api.createPaddleCheckout({ amount: chargeAmount, currency });
       if (window.Paddle && checkout.transaction_id) {
         window.Paddle.Checkout.open({ transactionId: checkout.transaction_id });
       } else if (checkout.checkout_url) {
@@ -163,10 +168,18 @@ export default function PaymentPage() {
                       {t("page:payment.chargeAmount")}
                     </label>
                     <p className="text-xs text-slate-500 mb-2" data-oid="credit-unit-notice">
-                      {t("page:price.creditUnitPrice")} · {t("page:price.creditMinimum")}
+                      {t("page:payment.creditUnitNotice")}
                     </p>
-                    <div className="flex items-center gap-2" data-oid="amount-input-row">
-                      <span className="text-2xl font-bold text-slate-700" data-oid="dollar-sign">$</span>
+                    <div className="flex items-center gap-2 flex-wrap" data-oid="amount-input-row">
+                      <select
+                        value={currency}
+                        onChange={(e) => setCurrency(e.target.value)}
+                        className="border rounded-lg px-2 py-2 text-lg font-semibold bg-white"
+                        data-oid="currency-select"
+                      >
+                        <option value="USD">USD ($)</option>
+                        <option value="KRW">KRW (₩)</option>
+                      </select>
                       <input
                         type="number"
                         min={limits.min_amount}
@@ -181,6 +194,11 @@ export default function PaymentPage() {
                         ({t("page:payment.chargeLimits", { min: limits.min_amount, max: limits.max_amount })})
                       </span>
                     </div>
+                    <p className="text-sm text-slate-600 mt-2 font-medium" data-oid="total-preview">
+                      {currency === "KRW"
+                        ? t("page:payment.totalKrw", { amount: (chargeAmount * limits.krw_unit_price).toLocaleString() })
+                        : t("page:payment.totalUsd", { amount: chargeAmount })}
+                    </p>
                   </div>
                   <button
                     onClick={payWithPaddle}

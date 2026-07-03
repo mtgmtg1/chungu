@@ -1,6 +1,6 @@
 // [Flow: Step 1 (인증 확인) -> Step 2 (계정/키/결제 데이터 로드) -> Step 3 (탭별 UI 렌더링) -> Step 4 (API key 관리 및 비밀번호 변경)]
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { api } from "../api.js";
 import { useAuth } from "../AuthContext.jsx";
@@ -14,6 +14,7 @@ export default function SettingsPage() {
   const { user, loading, signOut } = useAuth();
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const tabs = [
   { id: "api", label: t("page:settings.apiKeys"), icon: "key" },
@@ -22,7 +23,7 @@ export default function SettingsPage() {
   { id: "account", label: t("page:settings.account"), icon: "person" }];
 
 
-  const [activeTab, setActiveTab] = useState("api");
+  const [activeTab, setActiveTab] = useState(searchParams.get("tab") || "api");
   const [account, setAccount] = useState(null);
   const [keys, setKeys] = useState([]);
   const [payments, setPayments] = useState([]);

@@ -8,13 +8,11 @@ import {
   Check,
   Download,
   FileSpreadsheet,
-  FileText,
   Loader2,
   PanelLeft,
   PanelLeftClose,
   RefreshCw,
   Save,
-  Table2,
   XCircle } from
 "lucide-react";
 import SourcePanel from "../components/SourcePanel.jsx";
@@ -23,7 +21,6 @@ import PagedResultViewer from "../components/PagedResultViewer.jsx";
 import SimpleEditor from "../components/SimpleEditor.jsx";
 import SpreadsheetEditor from "../components/SpreadsheetEditor.jsx";
 import { api } from "../api.js";
-import i18n from "../i18n.js";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { SkeletonPageResult } from "../components/Skeleton.jsx";
 import { getDisplayProgress } from "../utils/progress.js";
@@ -232,6 +229,20 @@ export default function JobResultPage() {
     }
   }
 
+  // [Flow: Step 1 (변환 API 호출) -> Step 2 (job 상태 갱신) -> Step 3 (다운로드 없이 프리뷰만)]
+  async function convertOnly(format) {
+    setConverting(true);
+    setError("");
+    try {
+      await api.convertJob(jobId, format);
+      await loadJob();
+    } catch (e) {
+      setError(e.message || t("page:errors.unknown"));
+    } finally {
+      setConverting(false);
+    }
+  }
+
   async function startXlsxAdvanced() {
     setConverting(true);
     setError("");
@@ -284,6 +295,23 @@ export default function JobResultPage() {
   const xlsxBasicCost = job ? (job.total_pages || job.total_files || 1) * 1 : 0;
   const xlsxAdvancedCost = job ? (job.total_pages || job.total_files || 1) * 3 : 0;
 
+  // [Flow: Step 1 (마크다운 텍스트 확인) -> Step 2 (테이블 구분선 패턴 검색) -> Step 3 (표 존재 여부 반환)]
+  function hasMarkdownTable(text) {
+    if (!text) return false;
+    const lines = text.split("\n");
+    for (let i = 0; i < lines.length - 1; i++) {
+      const current = lines[i].trim();
+      const next = lines[i + 1].trim();
+      if (current.startsWith("|") && current.endsWith("|") &&
+          next.startsWith("|") && next.endsWith("|") && next.includes("-")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const showXlsxBasicTab = job?.xlsx_basic_converted || hasMarkdownTable(displayMarkdown);
+
   const pct = getDisplayProgress(job, 20, now, startTimeRef.current);
 
   return (
@@ -297,13 +325,13 @@ export default function JobResultPage() {
 
         <div className="flex items-center gap-4" data-oid="jz8kj2e">
           <Link
-            to="/"
+            to="/jobs"
             className="flex items-center gap-2 text-on-surface-variant hover:text-primary transition-colors"
             data-oid="homj3ye">
 
             <ArrowLeft size={18} data-oid="pmqivjc" />
             <span className="font-medium" data-oid="efc.i4.">
-              {t("page:result.newConversion")}
+              {t("common:jobs")}
             </span>
           </Link>
           <div className="h-4 w-px bg-outline-variant" data-oid="-vnoo-."></div>
@@ -356,15 +384,6 @@ export default function JobResultPage() {
           }
           {job?.status === "done" &&
           <>
-              <button
-              onClick={() => download("md")}
-              className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
-              data-oid="yirbet1">
-
-                <FileText size={16} data-oid="go.4duu" />
-                {t("page:result.md")}
-              </button>
-
               <div className="relative group" data-oid="excel-group">
                 <button
                 className="flex items-center gap-1.5 px-3 py-2 bg-primary text-white rounded-lg font-bold hover:opacity-90 transition-colors shadow-sm"
@@ -445,6 +464,13 @@ export default function JobResultPage() {
                   data-oid="docx-btn">
 
                     {t("page:result.word")}
+                  </button>
+                  <button
+                  onClick={() => download("md")}
+                  className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+                  data-oid="md-btn">
+
+                    {t("page:result.md")}
                   </button>
                 </div>
               </div>
@@ -537,7 +563,7 @@ export default function JobResultPage() {
 
       {job?.status === "done" && !loading && !needsPagedMode(job) &&
       <div className="flex-1 flex flex-col overflow-hidden min-h-0" data-oid="ww-27ni">
-          {(job?.xlsx_basic_converted || job?.xlsx_advanced_converted || xlsxAdvancedPolling) &&
+          {(showXlsxBasicTab || job?.xlsx_advanced_converted || xlsxAdvancedPolling) &&
           <div className="flex items-center gap-2 px-4 py-2 border-b border-outline-variant bg-surface flex-shrink-0" data-oid="preview-tabs">
             <button
             onClick={() => setPreviewMode("markdown")}
@@ -546,9 +572,14 @@ export default function JobResultPage() {
 
               Markdown
             </button>
-            {job?.xlsx_basic_converted &&
+            {showXlsxBasicTab &&
             <button
-            onClick={() => setPreviewMode("xlsxBasic")}
+            onClick={() => {
+              setPreviewMode("xlsxBasic");
+              if (!job?.xlsx_basic_converted) {
+                convertOnly("xlsx_basic");
+              }
+            }}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "xlsxBasic" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
             data-oid="tab-xlsx-basic">
 

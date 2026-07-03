@@ -411,6 +411,12 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
 - WebGL 컨텍스트를 생성할 수 없는 환경(일부 headless 브라우저, WebGL 비활성화 등)에서 전체 페이지가 crash되지 않도록, 렌더러 생성 실패 시 `glFailed` 상태를 설정하고 `null`을 반환한다.
 - Key file: `app/frontend/src/components/GridScan.jsx`
 
+## Sidebar Account Navigation
+
+- 사이드바 하단의 "Logged in as" 계정 카드에서 이메일 주소를 클릭하면 `/settings?tab=account`로 이동하여 계정 설정을 열 수 있다.
+- 이메일은 `react-router-dom`의 `Link` 컴포넌트로 렌더링되며, 호버 시 primary 색상과 밑줄이 표시된다.
+- Key file: `app/frontend/src/components/SidebarLayout.jsx`
+
 ## UI/UX Design System
 
 - **Skeleton Loading**: All dynamic data areas use skeleton components (`Skeleton`, `SkeletonCard`, `SkeletonTable`, `SkeletonPageResult`) from `app/frontend/src/components/Skeleton.jsx` instead of spinner loaders. Pages with `dataLoading` state: DashboardPage, JobsPage, JobResultPage, PaymentPage, DeveloperPage, SettingsPage, JobConfirmPage.

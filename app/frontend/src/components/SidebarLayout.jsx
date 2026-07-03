@@ -159,12 +159,13 @@ export default function SidebarLayout({ children, title, subtitle }) {
 
                 {t("nav.loggedInAs")}
               </p>
-              <p
-              className="text-xs text-on-surface truncate"
+              <Link
+              to="/settings?tab=account"
+              className="block text-xs text-on-surface truncate hover:text-primary hover:underline transition-colors"
               data-oid="qqmxnaj">
 
                 {user.email}
-              </p>
+              </Link>
               <button
               onClick={() => signOut()}
               className="mt-2 w-full flex items-center justify-center gap-1 text-xs text-outline hover:text-error transition-colors"
@@ -191,12 +192,12 @@ export default function SidebarLayout({ children, title, subtitle }) {
 
       {/* Top header */}
       <header
-        className={`fixed top-0 right-0 ${headerWidth} z-30 bg-surface/80 backdrop-blur-md border-b border-outline-variant flex justify-end items-center h-16 px-gutter transition-all duration-300 ${marginLeft}`}
+        className={`fixed top-0 right-0 ${headerWidth} z-30 bg-surface/80 backdrop-blur-md border-b border-outline-variant flex justify-between items-center h-16 px-gutter transition-all duration-300 ${marginLeft}`}
         data-oid="1n8suzb">
 
         <button
           onClick={() => setExpanded(!expanded)}
-          className="hidden md:flex left-4 z-50 w-8 h-8 items-center justify-center rounded-full bg-surface border border-outline-variant shadow-sm hover:bg-surface-container-high transition-colors"
+          className="hidden md:flex z-50 w-8 h-8 items-center justify-center rounded-full bg-surface border border-outline-variant shadow-sm hover:bg-surface-container-high transition-colors"
           title={expanded ? t("nav.collapse") : t("nav.expand")}
           data-oid="cp23.9a">
 
@@ -208,20 +209,10 @@ export default function SidebarLayout({ children, title, subtitle }) {
           </span>
         </button>
         <div className="flex items-center gap-6" data-oid="89yal5:">
-          <div
-            className="flex items-center gap-4 text-on-surface-variant"
-            data-oid="ti42x2k">
-
-            <span
-              className="material-symbols-outlined cursor-pointer hover:text-primary transition-colors"
-              data-oid="nm0iqy5">
-
-              account_balance_wallet
-            </span>
-          </div>
           <LanguageSelector data-oid="ezpxm7o" />
-          <div
-            className="w-8 h-8 rounded-full bg-primary-fixed-dim border border-primary/20 flex items-center justify-center overflow-hidden"
+          <Link
+            to="/settings?tab=account"
+            className="w-8 h-8 rounded-full bg-primary-fixed-dim border border-primary/20 flex items-center justify-center overflow-hidden hover:border-primary/50 transition-colors"
             data-oid="8h7cq3v">
 
             <span
@@ -230,7 +221,7 @@ export default function SidebarLayout({ children, title, subtitle }) {
 
               person
             </span>
-          </div>
+          </Link>
         </div>
       </header>
 

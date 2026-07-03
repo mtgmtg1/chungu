@@ -355,7 +355,8 @@
     "paymentTitle": "Payment & Recharge",
     "paymentDesc": "Credits are priced in USD and securely charged through Paddle. Recharge from $5, and enable auto-recharge to avoid interruptions.",
     "rechargeButton": "Buy Credits",
-    "refundNotice": "Unused credits are refundable within 14 days of purchase."
+    "refundNotice": "Unused credits are refundable within 14 days of purchase.",
+    "mostPopular": "Recommended"
   },
   "onPremise": {
     "title": "On-Premise Local Server",

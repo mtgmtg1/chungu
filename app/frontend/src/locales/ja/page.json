@@ -356,7 +356,8 @@
     "paymentTitle": "決済とチャージ",
     "paymentDesc": "USD建てクレジットをPaddleで安全に決済します。最小$5からチャージでき、残高不足時は自動チャージを設定できます。",
     "rechargeButton": "クレジットをチャージ",
-    "refundNotice": "未使用クレジットは購入後14日以内に返金可能です。"
+    "refundNotice": "未使用クレジットは購入後14日以内に返金可能です。",
+    "mostPopular": "おすすめ"
   },
   "onPremise": {
     "title": "オンプレミス ローカルサーバー",

@@ -1,26 +1,196 @@
-// [Flow: Step 1 (헤더 렌더링) -> Step 2 (요약/모델별 가격 카드 렌더링) -> Step 3 (내보내기 형식 가격 렌더링) -> Step 4 (결제 안내 및 충전 버튼 렌더링)]
+// [Flow: Step 1 (헤더 렌더링) -> Step 2 (변환 모델별 가격 카드 렌더링) -> Step 3 (보내기 형식 가격 카드 렌더링) -> Step 4 (결제 안내 및 충전 버튼 렌더링)]
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, Coins, FileText, Sparkles, FileSpreadsheet, CreditCard, RefreshCcw } from "lucide-react";
+import {
+  ArrowLeft,
+  Check,
+  Coins,
+  CreditCard,
+  FileCode,
+  FileSpreadsheet,
+  FileText,
+  FileType,
+  Sparkles,
+  Table2,
+} from "lucide-react";
 
-/** 변환 모델별 가격 카드에서 공통으로 사용하는 아이템 레이아웃 */
-function PriceFeature({ icon: Icon, children }) {
+/**
+ *보내기 형식 하나를 아이콘과 가격이 포함된 카드로 렌더링합니다.
+ * @param {Object} props - React props
+ * @param {React.ComponentType} props.icon - lucide-react 아이콘 컴포넌트
+ * @param {string} props.iconBgClass - 아이콘 배경에 적용할 Tailwind 클래스
+ * @param {string} props.iconColorClass - 아이콘 색상에 적용할 Tailwind 클래스
+ * @param {string} props.label - 파일 형식 이름
+ * @param {string} props.price - 가격 또는 무료 문구
+ * @param {string} props.priceColorClass - 가격 텍스트 색상 클래스
+ * @param {string} props.dataOid - QA 테스트용 data-oid 식별자
+ * @returns {JSX.Element}보내기 형식 카드
+ */
+function ExportFormatCard({
+  icon: Icon,
+  iconBgClass,
+  iconColorClass,
+  label,
+  price,
+  priceColorClass,
+  dataOid,
+}) {
   return (
-    <li className="flex items-start gap-2 text-sm text-slate-600">
-      <Icon size={16} className="text-blue-600 mt-0.5 flex-shrink-0" />
-      <span>{children}</span>
-    </li>
+    <div
+      className="flex flex-col items-center p-5 rounded-2xl bg-white border border-slate-200 shadow-md w-[150px] snap-center"
+      data-oid={dataOid}
+    >
+      <div
+        className={`w-12 h-12 rounded-xl ${iconBgClass} flex items-center justify-center mb-3`}
+      >
+        <Icon className={iconColorClass} size={24} />
+      </div>
+      <p className="text-sm font-semibold text-slate-900 text-center mb-1 break-words min-h-[40px] flex items-center justify-center">
+        {label}
+      </p>
+      <p className={`text-xs font-medium ${priceColorClass}`}>{price}</p>
+    </div>
   );
 }
 
+/**
+ * 변환 모델별 가격 카드를 렌더링합니다.
+ * @param {Object} props - React props
+ * @param {string} [props.badge] - 카드 상단에 표시할 배지 텍스트
+ * @param {React.ComponentType} props.icon - 모델 대표 아이콘
+ * @param {string} props.iconBgClass - 아이콘 배경 클래스
+ * @param {string} props.iconColorClass - 아이콘 색상 클래스
+ * @param {string} props.title - 모델명
+ * @param {string} props.desc - 모델 설명
+ * @param {string} props.price - 주요 가격
+ * @param {string} props.priceColorClass - 가격 색상 클래스
+ * @param {string} [props.subPrice] - 부가 가격 안내
+ * @param {string[]} props.features - 제공 기능 목록
+ * @param {string} props.dataOid - QA 테스트용 data-oid 식별자
+ * @returns {JSX.Element} 변환 모델 가격 카드
+ */
+function ModelPriceCard({
+  badge,
+  icon: Icon,
+  iconBgClass,
+  iconColorClass,
+  title,
+  desc,
+  price,
+  priceColorClass,
+  subPrice,
+  features,
+  dataOid,
+}) {
+  return (
+    <div
+      className="relative bg-white rounded-3xl p-7 shadow-lg border border-slate-200 flex flex-col"
+      data-oid={dataOid}
+    >
+      {badge && (
+        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-gradient-to-r from-rose-400 to-orange-400 text-white text-xs font-bold px-3 py-1 rounded-full shadow-sm">
+          {badge}
+        </div>
+      )}
+      <div className="flex flex-col items-center text-center mb-6">
+        <div
+          className={`w-16 h-16 rounded-2xl ${iconBgClass} flex items-center justify-center mb-4 shadow-sm`}
+        >
+          <Icon className={iconColorClass} size={32} />
+        </div>
+        <h3 className="text-lg font-bold text-slate-900">{title}</h3>
+        <p className="text-sm text-slate-500 mt-1">{desc}</p>
+      </div>
+      <div className="text-center mb-5">
+        <p className={`text-4xl font-extrabold ${priceColorClass} mb-1`}>
+          {price}
+        </p>
+        {subPrice && (
+          <p className="text-sm font-medium text-slate-600">{subPrice}</p>
+        )}
+      </div>
+      <ul className="space-y-3 mt-auto w-fit mx-auto">
+        {features.map((feature, index) => (
+          <li
+            key={index}
+            className="flex items-start gap-2 text-sm text-slate-600"
+          >
+            <Check
+              size={16}
+              className="text-emerald-500 mt-0.5 flex-shrink-0"
+            />
+            <span>{feature}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * 가격 정책 페이지를 렌더링합니다.
+ * @returns {JSX.Element} 가격 페이지 전체 UI
+ */
 export default function PricePage() {
   const { t } = useTranslation();
   const nav = useNavigate();
 
+  const exportFormats = [
+    {
+      key: "md",
+      icon: FileCode,
+      iconBgClass: "bg-slate-100",
+      iconColorClass: "text-slate-600",
+      label: t("page:price.exportMarkdown"),
+      price: t("page:price.exportFree"),
+      priceColorClass: "text-green-600",
+      dataOid: "price-export-md",
+    },
+    {
+      key: "docx",
+      icon: FileType,
+      iconBgClass: "bg-blue-100",
+      iconColorClass: "text-blue-600",
+      label: t("page:price.exportWord"),
+      price: t("page:price.exportFree"),
+      priceColorClass: "text-green-600",
+      dataOid: "price-export-docx",
+    },
+{
+      key: "xlsx-basic",
+      icon: FileSpreadsheet,
+      iconBgClass: "bg-emerald-100",
+      iconColorClass: "text-emerald-600",
+      label: t("page:price.exportExcelBasic"),
+      price: t("page:price.exportExcelBasicPrice"),
+      priceColorClass: "text-blue-600",
+      dataOid: "price-export-xlsx-basic",
+    },
+    {
+      key: "xlsx-advanced",
+      icon: Table2,
+      iconBgClass: "bg-indigo-100",
+      iconColorClass: "text-indigo-600",
+      label: t("page:price.exportExcelAdvanced"),
+      price: t("page:price.exportExcelAdvancedPrice"),
+      priceColorClass: "text-indigo-600",
+      dataOid: "price-export-xlsx-advanced",
+    },
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-50" data-oid="price-page">
-      <header className="border-b bg-white" data-oid="price-header">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center gap-2" data-oid="price-header-inner">
+    <div
+      className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/60 to-rose-50/40"
+      data-oid="price-page"
+    >
+      <header
+        className="border-b bg-white/80 backdrop-blur"
+        data-oid="price-header"
+      >
+        <div
+          className="max-w-5xl mx-auto px-6 py-4 flex items-center gap-2"
+          data-oid="price-header-inner"
+        >
           <button
             onClick={() => nav(-1)}
             className="text-slate-500 hover:text-slate-800"
@@ -28,115 +198,114 @@ export default function PricePage() {
           >
             <ArrowLeft size={20} />
           </button>
-          <h1 className="text-xl font-bold" data-oid="price-title">{t("page:price.title")}</h1>
+          <h1 className="text-xl font-bold" data-oid="price-title">
+            {t("page:price.title")}
+          </h1>
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-6 py-10" data-oid="price-main">
-        {/* 소개 영역 */}
+      <main
+        className="max-w-5xl mx-auto px-6 py-10"
+        data-oid="price-main"
+      >
         <div className="text-center mb-12" data-oid="price-hero">
-          <h2 className="text-3xl font-bold text-slate-900 mb-3" data-oid="price-hero-title">
+          <h2
+            className="text-3xl font-bold text-slate-900 mb-3"
+            data-oid="price-hero-title"
+          >
             {t("page:price.title")}
           </h2>
-          <p className="text-lg text-slate-600 max-w-2xl mx-auto" data-oid="price-hero-desc">
+          <p
+            className="text-lg text-slate-600 max-w-2xl mx-auto"
+            data-oid="price-hero-desc"
+          >
             {t("page:price.subtitle")}
           </p>
         </div>
 
-        {/* 변환 모델별 가격 */}
-        <h2 className="text-xl font-bold text-slate-900 mb-6" data-oid="price-models-title">
+        <h2
+          className="text-xl font-bold text-slate-900 mb-6 text-center"
+          data-oid="price-models-title"
+        >
           {t("page:price.modelsTitle")}
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12" data-oid="price-model-cards">
-          {/* 기본 모델 */}
-          <div className="bg-white border rounded-xl p-6 shadow-sm" data-oid="price-basic-card">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
-                <FileText className="text-blue-600" size={22} />
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-900">{t("page:price.basicTitle")}</h3>
-                <p className="text-sm text-slate-500">{t("page:price.basicDesc")}</p>
-              </div>
-            </div>
-            <p className="text-3xl font-bold text-blue-600 mb-1" data-oid="price-basic-price">
-              {t("page:price.basicPrice")}
-            </p>
-            <p className="text-sm font-medium text-green-600 mb-4">{t("page:price.basicFree")}</p>
-            <ul className="space-y-2">
-              <PriceFeature icon={FileText}>{t("page:price.basicFeature1")}</PriceFeature>
-              <PriceFeature icon={Sparkles}>{t("page:price.basicFeature2")}</PriceFeature>
-              <PriceFeature icon={RefreshCcw}>{t("page:price.basicFeature3")}</PriceFeature>
-            </ul>
-          </div>
-
-          {/* 고급 모델 */}
-          <div className="bg-white border rounded-xl p-6 shadow-sm" data-oid="price-premium-card">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 bg-indigo-50 rounded-lg flex items-center justify-center">
-                <Sparkles className="text-indigo-600" size={22} />
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-900">{t("page:price.premiumTitle")}</h3>
-                <p className="text-sm text-slate-500">{t("page:price.premiumDesc")}</p>
-              </div>
-            </div>
-            <p className="text-3xl font-bold text-indigo-600 mb-1" data-oid="price-premium-pdf">
-              {t("page:price.premiumPricePdf")}
-            </p>
-            <p className="text-sm font-medium text-slate-600 mb-4">
-              {t("page:price.premiumPriceAudio")} · {t("page:price.premiumPriceVideo")}
-            </p>
-            <ul className="space-y-2">
-              <PriceFeature icon={Sparkles}>{t("page:price.premiumFeature1")}</PriceFeature>
-              <PriceFeature icon={FileText}>{t("page:price.premiumFeature2")}</PriceFeature>
-              <PriceFeature icon={RefreshCcw}>{t("page:price.premiumFeature3")}</PriceFeature>
-            </ul>
-          </div>
+        <div
+          className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-14"
+          data-oid="price-model-cards"
+        >
+          <ModelPriceCard
+            icon={FileText}
+            iconBgClass="bg-gradient-to-br from-blue-100 to-cyan-50"
+            iconColorClass="text-blue-600"
+            title={t("page:price.basicTitle")}
+            desc={t("page:price.basicDesc")}
+            price={t("page:price.basicPrice")}
+            priceColorClass="text-blue-600"
+            subPrice={t("page:price.basicFree")}
+            features={[
+              t("page:price.basicFeature1"),
+              t("page:price.basicFeature2"),
+              t("page:price.basicFeature3"),
+            ]}
+            dataOid="price-basic-card"
+          />
+          <ModelPriceCard
+            badge={t("page:price.mostPopular")}
+            icon={Sparkles}
+            iconBgClass="bg-gradient-to-br from-rose-100 to-orange-50"
+            iconColorClass="text-rose-500"
+            title={t("page:price.premiumTitle")}
+            desc={t("page:price.premiumDesc")}
+            price={t("page:price.premiumPricePdf")}
+            priceColorClass="text-rose-500"
+            subPrice={`${t("page:price.premiumPriceAudio")} · ${t(
+              "page:price.premiumPriceVideo"
+            )}`}
+            features={[
+              t("page:price.premiumFeature1"),
+              t("page:price.premiumFeature2"),
+              t("page:price.premiumFeature3"),
+            ]}
+            dataOid="price-premium-card"
+          />
         </div>
 
-        {/*내보내기 형식 가격 */}
-        <h2 className="text-xl font-bold text-slate-900 mb-6" data-oid="price-exports-title">
+        <h2
+          className="text-xl font-bold text-slate-900 mb-6 text-center"
+          data-oid="price-exports-title"
+        >
           {t("page:price.exportsTitle")}
         </h2>
-        <div className="bg-white border rounded-xl p-6 shadow-sm mb-10" data-oid="price-exports-card">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="p-4 bg-slate-50 rounded-lg" data-oid="price-export-md">
-              <p className="font-medium text-slate-900 mb-1">{t("page:price.exportMarkdown")}</p>
-              <p className="text-sm text-green-600 font-medium">{t("page:price.exportFree")}</p>
-            </div>
-            <div className="p-4 bg-slate-50 rounded-lg" data-oid="price-export-docx">
-              <p className="font-medium text-slate-900 mb-1">{t("page:price.exportWord")}</p>
-              <p className="text-sm text-green-600 font-medium">{t("page:price.exportFree")}</p>
-            </div>
-            <div className="p-4 bg-slate-50 rounded-lg" data-oid="price-export-pptx">
-              <p className="font-medium text-slate-900 mb-1">{t("page:price.exportPpt")}</p>
-              <p className="text-sm text-green-600 font-medium">{t("page:price.exportFree")}</p>
-            </div>
-            <div className="p-4 bg-slate-50 rounded-lg" data-oid="price-export-xlsx-basic">
-              <p className="font-medium text-slate-900 mb-1">{t("page:price.exportExcelBasic")}</p>
-              <p className="text-sm text-blue-600 font-medium">{t("page:price.exportExcelBasicPrice")}</p>
-            </div>
-            <div className="p-4 bg-slate-50 rounded-lg sm:col-span-2 lg:col-span-1" data-oid="price-export-xlsx-advanced">
-              <p className="font-medium text-slate-900 mb-1">{t("page:price.exportExcelAdvanced")}</p>
-              <p className="text-sm text-indigo-600 font-medium">{t("page:price.exportExcelAdvancedPrice")}</p>
-            </div>
-          </div>
+        <div
+          className="flex gap-4 flex-wrap justify-center mb-14"
+          data-oid="price-exports-list"
+        >
+          {exportFormats.map((format) => (
+            <ExportFormatCard key={format.key} {...format} />
+          ))}
         </div>
 
-        {/* 결제 안내 및 충전 */}
-        <div className="bg-white border rounded-xl p-6 md:p-8 shadow-sm" data-oid="price-payment-card">
+        <div
+          className="bg-white border border-slate-200 rounded-3xl p-6 md:p-8 shadow-lg"
+          data-oid="price-payment-card"
+        >
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
-              <CreditCard className="text-blue-600" size={22} />
+            <div className="w-12 h-12 bg-gradient-to-br from-blue-100 to-cyan-50 rounded-xl flex items-center justify-center shadow-sm">
+              <CreditCard className="text-blue-600" size={24} />
             </div>
-            <h2 className="text-xl font-bold text-slate-900">{t("page:price.paymentTitle")}</h2>
+            <h2 className="text-xl font-bold text-slate-900">
+              {t("page:price.paymentTitle")}
+            </h2>
           </div>
-          <p className="text-slate-600 mb-6">{t("page:price.paymentDesc")}</p>
-          <p className="text-sm text-slate-500 mb-6">{t("page:price.refundNotice")}</p>
+          <p className="text-slate-600 mb-2">
+            {t("page:price.paymentDesc")}
+          </p>
+          <p className="text-sm text-slate-500 mb-6">
+            {t("page:price.refundNotice")}
+          </p>
           <Link
             to="/payment"
-            className="inline-flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-blue-700 transition-colors"
+            className="inline-flex items-center justify-center gap-2 w-full sm:w-auto bg-gradient-to-r from-blue-500 to-cyan-500 text-white px-6 py-3 rounded-xl font-semibold hover:from-blue-600 hover:to-cyan-600 transition-all shadow-sm"
             data-oid="price-recharge-link"
           >
             <Coins size={18} />

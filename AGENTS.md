@@ -57,6 +57,7 @@ Copy `app/.env.example` to `app/.env` and fill in:
 - `SUPABASE_URL` (internal), `SUPABASE_PUBLIC_URL` (external proxied URL)
 - `JWT_SECRET_KEY` (for Supabase token verification)
 - `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH`
+- Turnstile: `TURNSTILE_SITE_KEY`, `TURNSTILE_WORKER_URL`, `VITE_TURNSTILE_SITE_KEY`, `VITE_TURNSTILE_WORKER_URL`
 - Toss/Paddle keys for payments
 
 ## Local Development
@@ -165,8 +166,27 @@ npm run start        # dev server at localhost:3000
 
 ## Logout Fix
 
-- `SidebarLayout.jsx`: `signOut()` 후 `navigate("/")`로 랜딩 페이지 이동.
+- `SidebarLayout.jsx`: `signOut()` 후 `navigate("/")`로 랜딩 페이지 이동. (기존 `signOut()`만 호출하면 `onAuthStateChange`로 인한 재렌더링이 `DashboardPage`의 `!user && !error` 로딩 조건을 만족시켜 무한 스피너가 표시됨)
 - `DashboardPage.jsx`: 로딩 조건을 `if (authLoading)`로 단순화 — 로그아웃 후 `user == null`일 때 무한 로딩 스피너 방지.
+
+## Cloudflare Turnstile CAPTCHA
+
+- 백엔드에서 Worker를 통해 Turnstile 토큰을 검증. secret key는 Cloudflare Worker secret(`TURNSTILE_SECRET_KEY`)으로만 보관하고, 애플리케이션 서버에는 저장하지 않음.
+- Worker URL: `https://turnstile-siteverify-proof.mtgmtg.workers.dev`
+- Widget site key: `0x4AAAAAADux9LO13vEhA4F7`
+- 프론트엔드는 Turnstile 위젯으로 토큰만 수집하고, Worker 직접 검증은 하지 않음. **Turnstile 토큰은 1회용**이므로 프론트엔드와 백엔드에서 이중 검증하면 두 번째 검증이 실패함.
+- 로그인/회원가입/관리자 로그인 시 백엔드가 토큰을 검증. 실패 시 `403` 응답과 `"bot 확인에 실패했습니다. 다시 시도하세요."` 메시지 반환.
+- Widget 도메인: `localhost`, `127.0.0.1`, `proof.teamcat.app`
+- Key files:
+  - `app/backend/core/turnstile.py` — Worker 경유 토큰 검증
+  - `app/backend/api/supabase_proxy.py` — `/supabase/auth/v1/token` 요청 시 Turnstile 검증
+  - `app/backend/api/admin.py` — 관리자 로그인 Turnstile 검증
+  - `app/frontend/src/pages/AuthPage.jsx` — Turnstile 위젯, 토큰 수집
+  - `app/frontend/src/pages/AdminLogin.jsx` — Turnstile 위젯, 토큰 수집
+  - `app/backend/config.py` — `turnstile_site_key`, `turnstile_worker_url` 설정
+  - `app/.env.example` — 환경변수 예시
+  - `app/Dockerfile.backend` — `VITE_TURNSTILE_SITE_KEY`, `VITE_TURNSTILE_WORKER_URL` build args
+  - `app/docker-compose.yml` — build args 전달
 
 ## Deployment
 

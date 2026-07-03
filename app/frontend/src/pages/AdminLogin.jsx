@@ -5,26 +5,6 @@ import { Lock, Loader2 } from "lucide-react";
 import { api } from "../api.js";
 
 const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY || "";
-const TURNSTILE_WORKER_URL = import.meta.env.VITE_TURNSTILE_WORKER_URL || "";
-
-/**
- * Spin Worker 경유 Turnstile 토큰 검증.
- * 반환: true = 검증 통과, false = 검증 실패.
- */
-async function verifyTurnstileWithWorker(token) {
-  if (!TURNSTILE_WORKER_URL || !token) return true;
-  try {
-    const resp = await fetch(TURNSTILE_WORKER_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }),
-    });
-    const data = await resp.json();
-    return data.success === true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Cloudflare Turnstile 위젯 컴포넌트.
@@ -88,11 +68,6 @@ export default function AdminLogin() {
     setError("");
     setLoading(true);
     try {
-      const verified = await verifyTurnstileWithWorker(turnstileToken);
-      if (!verified) {
-        setError("CAPTCHA 확인에 실패했습니다. 다시 시도하세요.");
-        return;
-      }
       await api.adminLogin(email, password, turnstileToken);
       nav("/admin");
     } catch (e) {

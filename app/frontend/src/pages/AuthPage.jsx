@@ -6,26 +6,6 @@ import { Mail, Lock, Loader2, UserPlus, LogIn } from "lucide-react";
 import { useAuth } from "../AuthContext.jsx";
 
 const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY || "";
-const TURNSTILE_WORKER_URL = import.meta.env.VITE_TURNSTILE_WORKER_URL || "";
-
-/**
- * Spin Worker 경유 Turnstile 토큰 검증.
- * 반환: true = 검증 통과, false = 검증 실패.
- */
-async function verifyTurnstileWithWorker(token) {
-  if (!TURNSTILE_WORKER_URL || !token) return true;
-  try {
-    const resp = await fetch(TURNSTILE_WORKER_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }),
-    });
-    const data = await resp.json();
-    return data.success === true;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * 비밀번호 강도 계산 함수.
@@ -118,11 +98,6 @@ export default function AuthPage() {
     setError("");
     setLoading(true);
     try {
-      const verified = await verifyTurnstileWithWorker(turnstileToken);
-      if (!verified) {
-        setError(t("page:auth.captchaFailed"));
-        return;
-      }
       if (isSignUp) {
         const { error } = await signUp(email, password, turnstileToken);
         if (error) throw error;

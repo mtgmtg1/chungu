@@ -15,7 +15,6 @@ import {
   Save,
   XCircle } from
 "lucide-react";
-import Tooltip from "../components/Tooltip.jsx";
 import SourcePanel from "../components/SourcePanel.jsx";
 import PoetryProgress from "../components/PoetryProgress.jsx";
 import PagedResultViewer from "../components/PagedResultViewer.jsx";
@@ -362,37 +361,25 @@ export default function JobResultPage() {
         </div>
         <div className="flex items-center gap-2" data-oid=":tdat.:">
           {job?.status === "done" && (sourceUrl || sourceFiles.length > 0) &&
-          <Tooltip content={t("page:result.tooltip.toggleSidebar")}>
-            <button
-              onClick={() => setSidebarOpen((v) => !v)}
-              title={
-              sidebarOpen ?
-              t("page:result.hideSidebar") :
-              t("page:result.showSidebar")
-              }
-              className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
-              data-oid="g85z5vd">
-
-                {sidebarOpen ?
-              <PanelLeftClose size={16} data-oid="tn5ebf8" /> :
-
-              <PanelLeft size={16} data-oid="iknpeoy" />
-              }
-              </button>
-          </Tooltip>
+          <button
+            onClick={() => setSidebarOpen((v) => !v)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
+            data-oid="g85z5vd">
+              {sidebarOpen ?
+            <PanelLeftClose size={16} data-oid="tn5ebf8" /> :
+            <PanelLeft size={16} data-oid="iknpeoy" />
+            }
+            </button>
           }
           {job?.status === "done" &&
           <>
               <div className="relative group" data-oid="excel-group">
-                <Tooltip content={t("page:result.tooltip.excel")}>
-                  <button
+                <button
                   className="flex items-center gap-1.5 px-3 py-2 bg-primary text-white rounded-lg font-bold hover:opacity-90 transition-colors shadow-sm"
                   data-oid="excel-group-btn">
-
-                    <FileSpreadsheet size={16} data-oid="excel-icon" />
-                    {t("page:result.excel")}
-                  </button>
-                </Tooltip>
+                  <FileSpreadsheet size={16} data-oid="excel-icon" />
+                  {t("page:result.excel")}
+                </button>
                 <div
                 className="absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-lg border border-outline-variant hidden group-hover:flex flex-col z-50 py-1"
                 data-oid="excel-dropdown">
@@ -426,40 +413,31 @@ export default function JobResultPage() {
               <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-700 rounded-lg text-sm border border-red-200" data-oid="xlsx-advanced-error">
                 <AlertTriangle size={14} data-oid="alert-icon" />
                 <span>{t("page:result.xlsxAdvancedFailed")}</span>
-                <Tooltip content={t("page:result.tooltip.retry")}>
-                  <button
+                <button
                   onClick={() => handleXlsxAdvancedAction("retry")}
                   disabled={converting}
                   className="flex items-center gap-1 px-2 py-1 bg-white rounded border border-red-200 hover:bg-red-100 transition-colors"
                   data-oid="retry-btn">
-
-                    <RefreshCw size={14} data-oid="retry-icon" />
-                    {t("page:result.retry")}
-                  </button>
-                </Tooltip>
-                <Tooltip content={t("page:result.tooltip.refund")}>
-                  <button
+                  <RefreshCw size={14} data-oid="retry-icon" />
+                  {t("page:result.retry")}
+                </button>
+                <button
                   onClick={() => handleXlsxAdvancedAction("refund")}
                   disabled={converting}
                   className="px-2 py-1 bg-white rounded border border-red-200 hover:bg-red-100 transition-colors"
                   data-oid="refund-btn">
-
-                    {t("page:result.refund")}
-                  </button>
-                </Tooltip>
+                  {t("page:result.refund")}
+                </button>
               </div>
               }
 
               <div className="relative group" data-oid="office-group">
-                <Tooltip content={t("page:result.tooltip.office")}>
-                  <button
+                <button
                   className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
                   data-oid="office-group-btn">
-
-                    <Download size={16} data-oid="office-icon" />
-                    {t("page:result.office")}
-                  </button>
-                </Tooltip>
+                  <Download size={16} data-oid="office-icon" />
+                  {t("page:result.office")}
+                </button>
                 <div
                 className="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg border border-outline-variant hidden group-hover:flex flex-col z-50 py-1"
                 data-oid="office-dropdown">
@@ -481,25 +459,20 @@ export default function JobResultPage() {
                   </button>
                 </div>
               </div>
-              <Tooltip content={t("page:result.tooltip.save")}>
-                <button
+              <button
                 onClick={saveMarkdown}
                 disabled={saving}
                 className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg font-bold hover:opacity-90 transition-colors shadow-sm disabled:opacity-50"
                 data-oid="0y62kdm">
-
-                  {saving ?
-                <Loader2
-                  size={16}
-                  className="animate-spin"
-                  data-oid="zubuhoj" /> :
-
-
-                <Save size={16} data-oid="9q9sxwr" />
-                }
-                  {t("page:result.save")}
-                </button>
-              </Tooltip>
+                {saving ?
+              <Loader2
+                size={16}
+                className="animate-spin"
+                data-oid="zubuhoj" /> :
+              <Save size={16} data-oid="9q9sxwr" />
+              }
+                {t("page:result.save")}
+              </button>
             </>
           }
         </div>
@@ -574,18 +547,14 @@ export default function JobResultPage() {
       <div className="flex-1 flex flex-col overflow-hidden min-h-0" data-oid="ww-27ni">
           {(showXlsxBasicTab || job?.xlsx_advanced_converted || xlsxAdvancedPolling) &&
           <div className="flex items-center gap-2 px-4 py-2 border-b border-outline-variant bg-surface flex-shrink-0" data-oid="preview-tabs">
-            <Tooltip content={t("page:result.tooltip.markdownTab")}>
-              <button
+            <button
               onClick={() => setPreviewMode("markdown")}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "markdown" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
               data-oid="tab-markdown">
-
-                Markdown
-              </button>
-            </Tooltip>
+              Markdown
+            </button>
             {showXlsxBasicTab &&
-            <Tooltip content={t("page:result.tooltip.xlsxBasicTab")}>
-              <button
+            <button
               onClick={() => {
                 setPreviewMode("xlsxBasic");
                 if (!job?.xlsx_basic_converted) {
@@ -594,21 +563,16 @@ export default function JobResultPage() {
               }}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "xlsxBasic" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
               data-oid="tab-xlsx-basic">
-
-                Excel Basic
-              </button>
-            </Tooltip>
+              Excel Basic
+            </button>
             }
             {(job?.xlsx_advanced_converted || xlsxAdvancedPolling) &&
-            <Tooltip content={t("page:result.tooltip.xlsxAdvancedTab")}>
-              <button
+            <button
               onClick={() => setPreviewMode("xlsxAdvanced")}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "xlsxAdvanced" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
               data-oid="tab-xlsx-advanced">
-
-                Excel Advanced
-              </button>
-            </Tooltip>
+              Excel Advanced
+            </button>
             }
           </div>
           }

@@ -4,7 +4,7 @@ sidebar_position: 6
 
 # 오류 처리
 
-Chungu API는 표준 HTTP 상태 코드를 사용합니다. 오류 응답에는 사람이 읽을 수 있는 메시지가 포함된 `detail` 필드가 있습니다.
+PROOF API는 표준 HTTP 상태 코드를 사용합니다. 오류 응답에는 사람이 읽을 수 있는 메시지가 포함된 `detail` 필드가 있습니다.
 
 ## 오류 코드
 

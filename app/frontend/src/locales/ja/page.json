@@ -22,13 +22,7 @@
     "badgeLanguages": "100+ 言語",
     "copyright": "© 2026 TeamCat",
     "api": "API",
-    "admin": "管理者",
-    "tooltip": {
-      "selectFiles": "アップロードするファイルを選択します",
-      "selectFolder": "アップロードするフォルダを選択します",
-      "removeFile": "リストから削除します",
-      "startConversion": "ファイルをアップロードして変換を開始します"
-    }
+    "admin": "管理者"
   },
   "dashboard": {
     "title": "ダッシュボード",
@@ -115,17 +109,7 @@
     "progressPercent": "{{pct}}%",
     "pageCount": "ページ",
     "fileCount": "ファイル",
-    "unparsablePages": "{{count}}ページを解析できません（用紙サイズ350mm超過）",
-    "tooltip": {
-      "uploadFiles": "新しいファイルをアップロードします",
-      "filters": "ステータスとファイル形式で絞り込みます",
-      "dateRange": "日付範囲で絞り込みます",
-      "delete": "このジョブを削除します",
-      "download": "結果ファイル形式を選択します",
-      "prevPage": "前のページ",
-      "nextPage": "次のページ",
-      "goToPage": "{{page}}ページへ移動"
-    }
+    "unparsablePages": "{{count}}ページを解析できません（用紙サイズ350mm超過）"
   },
   "confirm": {
     "title": "変換費用の確認",
@@ -165,14 +149,7 @@
     "startWithCost": "{{cost}}Pを差し引いて開始",
     "processing": "処理中…",
     "notFound": "ジョブが見つかりません",
-    "loadError": "ジョブ情報を読み込めませんでした",
-    "tooltip": {
-      "back": "ホームに戻ります",
-      "basicModel": "OCRベースの高速変換を選択します",
-      "premiumModel": "AIビジョンによる高精度変換を選択します",
-      "advancedOptions": "抽出カラムや追加指示を入力します",
-      "start": "ポイントを差し引いて変換を開始します"
-    }
+    "loadError": "ジョブ情報を読み込めませんでした"
   },
   "result": {
     "newConversion": "新しい変換",
@@ -220,18 +197,7 @@
     "pageProgress": "{{done}} / {{total}} ページ ({{pct}}%)",
     "fileProgress": "{{done}} / {{total}} ファイル ({{pct}}%)",
     "originalImage": "元の画像 {{number}}",
-    "leaveNotice": "このページから離れても構いません。完了時に完了メールをお送りします。",
-    "tooltip": {
-      "toggleSidebar": "元ファイルパネルを表示/非表示します",
-      "excel": "Excel形式でダウンロードします",
-      "office": "WordまたはMarkdownでダウンロードします",
-      "save": "編集した結果を保存します",
-      "retry": "失敗した変換を再試行します",
-      "refund": "ポイントを返金します",
-      "markdownTab": "マークダウン結果を表示します",
-      "xlsxBasicTab": "基本Excel変換結果を表示します",
-      "xlsxAdvancedTab": "高度Excel変換結果を表示します"
-    }
+    "leaveNotice": "このページから離れても構いません。完了時に完了メールをお送りします。"
   },
   "poems": [
     {

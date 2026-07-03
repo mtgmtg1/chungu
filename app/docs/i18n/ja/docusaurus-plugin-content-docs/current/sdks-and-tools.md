@@ -14,7 +14,7 @@ sidebar_position: 7
 
 ## コミュニティツール
 
-- **n8nノード** — 予定。Chunguをn8nワークフローに統合できます。
+- **n8nノード** — 予定。PROOFをn8nワークフローに統合できます。
 - **Zapierアプリ** — 予定。
 
 ## OpenAPI / Swagger
@@ -31,7 +31,7 @@ sidebar_position: 7
 openapi-generator-cli generate \
   -i https://your-domain.com/api/v1/openapi.json \
   -g python \
-  -o chungu-python-client
+  -o proof-python-client
 ```
 
 ## APIキー管理

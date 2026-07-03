@@ -4,7 +4,7 @@ sidebar_position: 5
 
 # Extraction Options
 
-Customize how Chungu extracts tables from your files.
+Customize how PROOF extracts tables from your files.
 
 ## Columns
 

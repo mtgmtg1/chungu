@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # Pricing
 
-Chungu uses a prepaid point system. Points are deducted based on the input type and volume.
+PROOF uses a prepaid point system. Points are deducted based on the input type and volume.
 
 ## Point costs
 
@@ -44,7 +44,7 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
 
 ## Purchasing points
 
-Visit the [Payment page](../../payment) in the Chungu web app to purchase point packages via Toss (Korea) or Paddle (international).
+Visit the [Payment page](../../payment) in the PROOF web app to purchase point packages via Toss (Korea) or Paddle (international).
 
 ## Usage tracking
 

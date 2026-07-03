@@ -2,7 +2,7 @@
 
 ## Overview
 
-Chungu supports Hangul Word Processor (`.hwp`) and its XML-based variant (`.hwpx`) files through a dedicated pyhwp-based converter on the a1 backend. This is part of the Docling preprocessing pipeline Phase 2.
+PROOF supports Hangul Word Processor (`.hwp`) and its XML-based variant (`.hwpx`) files through a dedicated pyhwp-based converter on the a1 backend. This is part of the Docling preprocessing pipeline Phase 2.
 
 - **Markdown extraction**: `pyhwp2md` converts text, paragraphs, headings, lists, and tables into Markdown.
 - **Image extraction**: `pyhwp` reads the `BinData` OLE storage to extract embedded images.

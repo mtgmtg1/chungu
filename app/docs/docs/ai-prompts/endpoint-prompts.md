@@ -4,12 +4,12 @@ sidebar_position: 2
 
 # Endpoint-Specific AI Prompts
 
-Copy-paste these prompts to have an AI agent call individual Chungu API endpoints.
+Copy-paste these prompts to have an AI agent call individual PROOF API endpoints.
 
 ## Upload a file
 
 ```
-Call the Chungu API to upload a file for table extraction.
+Call the PROOF API to upload a file for table extraction.
 
 POST https://your-domain.com/api/v1/jobs/upload
 Headers: X-API-Key: <API_KEY>
@@ -25,7 +25,7 @@ Return the job_id from the response.
 ## Confirm a job
 
 ```
-Call the Chungu API to confirm a job and start processing.
+Call the PROOF API to confirm a job and start processing.
 
 POST https://your-domain.com/api/v1/jobs/<JOB_ID>/confirm
 Headers: X-API-Key: <API_KEY>
@@ -36,7 +36,7 @@ Return the status and remaining_points.
 ## Check job status
 
 ```
-Call the Chungu API to check the status of a job.
+Call the PROOF API to check the status of a job.
 
 GET https://your-domain.com/api/v1/jobs/<JOB_ID>
 Headers: X-API-Key: <API_KEY>
@@ -49,7 +49,7 @@ If status is "error", report the error_log.
 ## Download results
 
 ```
-Call the Chungu API to get the download URL for a completed job.
+Call the PROOF API to get the download URL for a completed job.
 
 GET https://your-domain.com/api/v1/jobs/<JOB_ID>/download?type=xlsx
 Headers: X-API-Key: <API_KEY>
@@ -60,7 +60,7 @@ Return the download_url from the response.
 ## Convert to Office format
 
 ```
-Call the Chungu API to convert a completed job to DOCX.
+Call the PROOF API to convert a completed job to DOCX.
 
 POST https://your-domain.com/api/v1/jobs/<JOB_ID>/convert
 Headers:
@@ -74,7 +74,7 @@ Return the download_url from the response.
 ## Check account balance
 
 ```
-Call the Chungu API to check the account info and point balance.
+Call the PROOF API to check the account info and point balance.
 
 GET https://your-domain.com/api/v1/account
 Headers: X-API-Key: <API_KEY>

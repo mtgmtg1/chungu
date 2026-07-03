@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Job Lifecycle
 
-Every Chungu job follows a clear lifecycle from upload to download.
+Every PROOF job follows a clear lifecycle from upload to download.
 
 ## States
 

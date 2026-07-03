@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "Chungu File",
+    "name": "PROOF",
     "tagline": "Convert large files with AI",
     "copyright": "© 2026 TeamCat. Convert large files with AI."
   },
@@ -14,16 +14,6 @@
     "loggedInAs": "로그인 사용자",
     "collapse": "사이드바 접기",
     "expand": "사이드바 펼치기"
-  },
-  "tooltip": {
-    "newConversion": "새 파일 변환을 시작합니다",
-    "dashboard": "계정 개요를 확인합니다",
-    "jobs": "모든 변환 작업을 봅니다",
-    "developer": "API 키와 문서를 관리합니다",
-    "settings": "계정 설정을 관리합니다",
-    "logout": "로그아웃합니다",
-    "collapse": "사이드바를 접습니다",
-    "expand": "사이드바를 펼칩니다"
   },
   "footer": {
     "privacy": "개인정보 처리방침",

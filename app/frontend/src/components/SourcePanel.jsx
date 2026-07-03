@@ -115,7 +115,7 @@ export default function SourcePanel({
                     }`}
                   >
                     <SourceIcon type={f.type} />
-                    <span className="truncate" title={f.name}>{f.name}</span>
+                    <span className="truncate">{f.name}</span>
                   </button>
                 ))}
               </div>

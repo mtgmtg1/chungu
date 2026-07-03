@@ -1,6 +1,6 @@
-# Chungu API v1 문서
+# PROOF API v1 문서
 
-Chungu API v1은 외부 개발자가 PDF/이미지/오디오/비디오를 업로드하고 선불 포인트 시스템을 사용해 구조화된 표(CSV/MD/XLSX)를 추출할 수 있게 합니다.
+PROOF API v1은 외부 개발자가 PDF/이미지/오디오/비디오를 업로드하고 선불 포인트 시스템을 사용해 구조화된 표(CSV/MD/XLSX)를 추출할 수 있게 합니다.
 
 ## 기본 URL
 
@@ -224,7 +224,7 @@ API 키를 비활성화합니다.
 curl -X POST /api/v1/webhooks \
   -H "X-API-Key: <key>" \
   -H "Content-Type: application/json" \
-  -d '{"url":"https://your-app.com/webhooks/chungu","events":["job.done","job.error"]}'
+  -d '{"url":"https://your-app.com/webhooks/proof","events":["job.done","job.error"]}'
 ```
 
 ## OpenAPI / Swagger

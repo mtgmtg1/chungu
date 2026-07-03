@@ -11,7 +11,7 @@ from ..config import settings
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 ALGO = "HS256"
 SESSION_HOURS = 12
-COOKIE_NAME = "chungu_admin"
+COOKIE_NAME = "proof_admin"
 
 
 def hash_password(plain: str) -> str:
@@ -38,11 +38,11 @@ def decode_token(token: str) -> str | None:
         return None
 
 
-def require_admin(chungu_admin: str | None = Cookie(default=None)) -> str:
+def require_admin(proof_admin: str | None = Cookie(default=None)) -> str:
     """관리자 전용 라우트 가드: 유효 세션 쿠키가 없으면 401."""
-    if not chungu_admin:
+    if not proof_admin:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="로그인이 필요합니다")
-    email = decode_token(chungu_admin)
+    email = decode_token(proof_admin)
     if not email:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="세션이 만료되었습니다")
     return email

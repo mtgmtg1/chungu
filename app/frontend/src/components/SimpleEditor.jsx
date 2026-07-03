@@ -67,13 +67,12 @@ turndown.addRule("table", {
   }
 });
 
-function ToolbarButton({ onClick, active, disabled, children, title }) {
+function ToolbarButton({ onClick, active, disabled, children }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      title={title}
       className={`p-1.5 rounded-md transition-colors ${
       active ?
       "bg-primary text-white" :
@@ -178,17 +177,13 @@ ref)
         <ToolbarButton
           onClick={() => editor.chain().focus().undo().run()}
           disabled={!editor.can().undo()}
-          title={t("page:components.undo")}
           data-oid="3cjvnmo">
-
           <Undo size={18} data-oid="x2kv.xh" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().redo().run()}
           disabled={!editor.can().redo()}
-          title={t("page:components.redo")}
           data-oid=":h.0vku">
-
           <Redo size={18} data-oid=".7dxqt_" />
         </ToolbarButton>
         <ToolbarDivider data-oid="hw-mdtw" />
@@ -197,9 +192,7 @@ ref)
           <ToolbarButton
             onClick={() => setHeadingOpen((v) => !v)}
             active={editor.isActive("heading")}
-            title={t("page:components.heading")}
             data-oid="7d992de">
-
             <HeadingIcon size={18} data-oid="xuvv95x" />
           </ToolbarButton>
           {headingOpen &&
@@ -244,41 +237,31 @@ ref)
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleBold().run()}
           active={editor.isActive("bold")}
-          title={t("page:components.bold")}
           data-oid=":a6xd9h">
-
           <Bold size={18} data-oid="wvk9x-o" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleItalic().run()}
           active={editor.isActive("italic")}
-          title={t("page:components.italic")}
           data-oid="s2zecw5">
-
           <Italic size={18} data-oid="5rt7qq:" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleUnderline().run()}
           active={editor.isActive("underline")}
-          title={t("page:components.underline")}
           data-oid="td5et.g">
-
           <UnderlineIcon size={18} data-oid="li:m9iu" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleStrike().run()}
           active={editor.isActive("strike")}
-          title={t("page:components.strikethrough")}
           data-oid="zml36x:">
-
           <Strikethrough size={18} data-oid="m:wguu2" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleHighlight().run()}
           active={editor.isActive("highlight")}
-          title={t("page:components.highlight")}
           data-oid="jeojw-m">
-
           <Highlighter size={18} data-oid="4up0fme" />
         </ToolbarButton>
         <ToolbarDivider data-oid="dk-tgwp" />
@@ -286,33 +269,25 @@ ref)
         <ToolbarButton
           onClick={() => editor.chain().focus().setTextAlign("left").run()}
           active={editor.isActive({ textAlign: "left" })}
-          title={t("page:components.alignLeft")}
           data-oid="toi.nlh">
-
           <AlignLeft size={18} data-oid="a57ewqz" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().setTextAlign("center").run()}
           active={editor.isActive({ textAlign: "center" })}
-          title={t("page:components.alignCenter")}
           data-oid="u3:3bw3">
-
           <AlignCenter size={18} data-oid="4oqegh5" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().setTextAlign("right").run()}
           active={editor.isActive({ textAlign: "right" })}
-          title={t("page:components.alignRight")}
           data-oid="toiant1">
-
           <AlignRight size={18} data-oid="b13nn9a" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().setTextAlign("justify").run()}
           active={editor.isActive({ textAlign: "justify" })}
-          title={t("page:components.alignJustify")}
           data-oid="xzayz42">
-
           <AlignJustify size={18} data-oid="k-6k0sh" />
         </ToolbarButton>
         <ToolbarDivider data-oid="0g.d7w_" />
@@ -320,25 +295,19 @@ ref)
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleBulletList().run()}
           active={editor.isActive("bulletList")}
-          title={t("page:components.bulletList")}
           data-oid="v0d3mu8">
-
           <List size={18} data-oid="6xwxur4" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleOrderedList().run()}
           active={editor.isActive("orderedList")}
-          title={t("page:components.orderedList")}
           data-oid="h76nzt:">
-
           <ListOrdered size={18} data-oid="y0pjv15" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleTaskList().run()}
           active={editor.isActive("taskList")}
-          title={t("page:components.taskList")}
           data-oid="_dh0ip4">
-
           <ListTodo size={18} data-oid="ut6hju7" />
         </ToolbarButton>
         <ToolbarDivider data-oid="k3gd.63" />
@@ -346,24 +315,18 @@ ref)
         <ToolbarButton
           onClick={toggleLink}
           active={editor.isActive("link")}
-          title={t("page:components.link")}
           data-oid="ls_yew0">
-
           <LinkIcon size={18} data-oid="3oixvfi" />
         </ToolbarButton>
         <ToolbarButton
           onClick={addImage}
-          title={t("page:components.image")}
           data-oid="8z-1uw0">
-
           <ImageIcon size={18} data-oid="dgmdr-8" />
         </ToolbarButton>
         <ToolbarButton
           onClick={addTable}
           active={editor.isActive("table")}
-          title={t("page:components.table")}
           data-oid="5ow0_b6">
-
           <TableIcon size={18} data-oid="k-unaiu" />
         </ToolbarButton>
       </div>

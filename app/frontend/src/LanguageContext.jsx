@@ -5,7 +5,7 @@ import { api } from "./api.js";
 
 const LanguageContext = createContext(null);
 
-const STORAGE_KEY = "chungu-language";
+const STORAGE_KEY = "proof-language";
 const SUPPORTED_LANGUAGES = ["en", "ko", "ja"];
 
 function normalizeLanguage(raw) {

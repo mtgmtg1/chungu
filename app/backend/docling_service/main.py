@@ -31,7 +31,7 @@ from docling_core.types.doc import ImageRefMode
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="Chungu Docling Preprocessing Service")
+app = FastAPI(title="PROOF Docling Preprocessing Service")
 
 DOCLING_NUM_THREADS = int(os.environ.get("DOCLING_NUM_THREADS", "2"))
 DOCLING_DEVICE = os.environ.get("DOCLING_DEVICE", "cpu").lower()

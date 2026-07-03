@@ -336,13 +336,10 @@ export default function DeveloperPage() {
                           copyToClipboard(k.prefix + "••••••••••••••••")
                           }
                           className="text-outline hover:text-primary transition-colors"
-                          title={t("page:developer.copy")}
                           data-oid="7hkfp1m">
-
                             <span
                             className="material-symbols-outlined text-lg"
                             data-oid="q0ifnej">
-
                               content_copy
                             </span>
                           </button>
@@ -368,13 +365,10 @@ export default function DeveloperPage() {
                         <button
                         onClick={() => deleteKey(k.id)}
                         className="text-outline hover:text-error transition-colors"
-                        title={t("page:developer.delete")}
                         data-oid="pxqfm3u">
-
                           <span
                           className="material-symbols-outlined text-lg"
                           data-oid="fxrsx1s">
-
                             delete
                           </span>
                         </button>

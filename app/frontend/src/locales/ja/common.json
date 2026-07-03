@@ -1,8 +1,8 @@
 {
   "app": {
-    "name": "Chungu",
+    "name": "PROOF",
     "tagline": "Precision Data",
-    "copyright": "© 2026 Chungu AI. Effortless Precision."
+    "copyright": "© 2026 PROOF AI. Effortless Precision."
   },
   "nav": {
     "dashboard": "ダッシュボード",
@@ -14,16 +14,6 @@
     "loggedInAs": "ログイン中",
     "collapse": "サイドバーを折りたたむ",
     "expand": "サイドバーを広げる"
-  },
-  "tooltip": {
-    "newConversion": "新しいファイル変換を開始します",
-    "dashboard": "アカウントの概要を表示します",
-    "jobs": "すべての変換ジョブを表示します",
-    "developer": "APIキーとドキュメントを管理します",
-    "settings": "アカウント設定を管理します",
-    "logout": "ログアウトします",
-    "collapse": "サイドバーを折りたたみます",
-    "expand": "サイドバーを広げます"
   },
   "footer": {
     "privacy": "プライバシーポリシー",

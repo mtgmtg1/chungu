@@ -4,7 +4,7 @@ sidebar_position: 2
 
 # Supported File Formats
 
-Chungu accepts a wide variety of input formats for table extraction.
+PROOF accepts a wide variety of input formats for table extraction.
 
 ## PDF
 

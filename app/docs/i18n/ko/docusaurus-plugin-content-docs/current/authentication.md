@@ -22,7 +22,7 @@ curl -H "Authorization: Bearer chu_live_xxxxxxxx" \
 
 ## API 키 생성
 
-1. Chungu 웹 앱에 로그인합니다
+1. PROOF 웹 앱에 로그인합니다
 2. **개발자 포털**(`/developer`)로 이동합니다
 3. **키 생성**을 클릭합니다
 4. 이름을 입력합니다 (예: "production", "staging")

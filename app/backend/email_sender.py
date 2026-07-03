@@ -42,7 +42,7 @@ def send_email(db: Session, to: str, subject: str, body_html: str) -> None:
 
 
 def send_test_email(db: Session, to: str) -> None:
-    send_email(db, to, "[Chungu] SMTP 테스트 메일", "<p>SMTP 설정이 정상 작동합니다.</p>")
+    send_email(db, to, "[PROOF] SMTP 테스트 메일", "<p>SMTP 설정이 정상 작동합니다.</p>")
 
 
 def build_done_email(job_id: str, filename: str, expires_days: int) -> tuple[str, str]:
@@ -50,7 +50,7 @@ def build_done_email(job_id: str, filename: str, expires_days: int) -> tuple[str
     base = settings.public_base_url.rstrip("/")
     csv_url = f"{base}/api/download/{job_id}?type=csv"
     md_url = f"{base}/api/download/{job_id}?type=md"
-    subject = f"[Chungu] 변환 완료: {filename}"
+    subject = f"[PROOF] 변환 완료: {filename}"
     html = f"""
     <div style="font-family:sans-serif;max-width:520px;margin:auto">
       <h2>PDF 변환이 완료되었습니다</h2>
@@ -67,7 +67,7 @@ def build_done_email(job_id: str, filename: str, expires_days: int) -> tuple[str
 
 
 def build_error_email(job_id: str, filename: str, error: str) -> tuple[str, str]:
-    subject = f"[Chungu] 변환 실패: {filename}"
+    subject = f"[PROOF] 변환 실패: {filename}"
     html = f"""
     <div style="font-family:sans-serif;max-width:520px;margin:auto">
       <h2 style="color:#dc2626">PDF 변환에 실패했습니다</h2>

@@ -1,6 +1,6 @@
-# Chungu API v1 ドキュメント
+# PROOF API v1 ドキュメント
 
-Chungu API v1 は、外部開発者が PDF/画像/音声/動画をアップロードし、前払いポイント制で構造化テーブル（CSV/MD/XLSX）を抽出できるようにします。
+PROOF API v1 は、外部開発者が PDF/画像/音声/動画をアップロードし、前払いポイント制で構造化テーブル（CSV/MD/XLSX）を抽出できるようにします。
 
 ## ベース URL
 
@@ -224,7 +224,7 @@ API キーを無効化します。
 curl -X POST /api/v1/webhooks \
   -H "X-API-Key: <key>" \
   -H "Content-Type: application/json" \
-  -d '{"url":"https://your-app.com/webhooks/chungu","events":["job.done","job.error"]}'
+  -d '{"url":"https://your-app.com/webhooks/proof","events":["job.done","job.error"]}'
 ```
 
 ## OpenAPI / Swagger

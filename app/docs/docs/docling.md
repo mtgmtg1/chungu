@@ -1,6 +1,6 @@
 # Docling Preprocessing Pipeline
 
-Chungu uses IBM Docling as the first-stage preprocessor for structured documents (PDF, DOCX, PPTX, XLSX, HTML). Docling extracts native text, tables, and images into a structured markdown representation, reducing the load on the downstream vision LLM.
+PROOF uses IBM Docling as the first-stage preprocessor for structured documents (PDF, DOCX, PPTX, XLSX, HTML). Docling extracts native text, tables, and images into a structured markdown representation, reducing the load on the downstream vision LLM.
 
 ## Supported Input Types
 

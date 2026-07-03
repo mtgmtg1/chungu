@@ -8,13 +8,13 @@ Make your first API call in 5 minutes.
 
 ## Prerequisites
 
-- A Chungu account (sign up at the web app)
+- A PROOF account (sign up at the web app)
 - An API key (create one at [Developer Portal](../../developer))
 - `curl` or any HTTP client
 
 ## Step 1: Get your API key
 
-1. Log in to the Chungu web app
+1. Log in to the PROOF web app
 2. Navigate to **Developer Portal** (`/developer`)
 3. Click **Create Key**
 4. Copy the full key — it's only shown once

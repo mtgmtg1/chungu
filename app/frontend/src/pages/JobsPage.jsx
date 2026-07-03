@@ -10,7 +10,6 @@ import {
   ChevronLeft,
   ChevronRight } from
 "lucide-react";
-import Tooltip from "../components/Tooltip.jsx";
 import { useAuth } from "../AuthContext.jsx";
 import { api } from "../api.js";
 import i18n from "../i18n.js";
@@ -99,16 +98,14 @@ function DownloadMenu({ job, fileTypeLabel, download, convertAndDownload, conver
 
   return (
     <>
-      <Tooltip content={t("page:jobs.tooltip.download")}>
-        <button
-          ref={btnRef}
-          onMouseEnter={handleEnter}
-          onMouseLeave={handleLeave}
-          className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-primary transition-colors"
-        >
-          {children}
-        </button>
-      </Tooltip>
+      <button
+        ref={btnRef}
+        onMouseEnter={handleEnter}
+        onMouseLeave={handleLeave}
+        className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-primary transition-colors"
+      >
+        {children}
+      </button>
       {open && createPortal(menu, document.body)}
     </>
   );
@@ -455,31 +452,25 @@ export default function JobsPage() {
           </div>
         </div>
         <div className="flex items-center gap-3 relative" data-oid="5h44.7o">
-          <Tooltip content={t("page:jobs.tooltip.uploadFiles")}>
-            <Link
-              to="/"
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-on-primary font-body-md text-body-md font-medium hover:opacity-90 transition-all shadow-sm"
-              data-oid="mv6xpjv">
-
-              <span className="material-symbols-outlined" data-oid="6-myl-e">
-                upload
-              </span>
-              {t("page:jobs.uploadFiles")}
-            </Link>
-          </Tooltip>
+          <Link
+            to="/"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-on-primary font-body-md text-body-md font-medium hover:opacity-90 transition-all shadow-sm"
+            data-oid="mv6xpjv">
+            <span className="material-symbols-outlined" data-oid="6-myl-e">
+              upload
+            </span>
+            {t("page:jobs.uploadFiles")}
+          </Link>
           <div className="relative" data-oid="-1o8i-:">
-            <Tooltip content={t("page:jobs.tooltip.filters")}>
-              <button
-                onClick={() => setFilterOpen((v) => !v)}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border border-outline-variant font-body-md text-body-md transition-all ${filterOpen ? "bg-surface-container text-primary" : "text-on-surface-variant hover:bg-surface-container-low"}`}
-                data-oid="y5qdhnz">
-
-                <span className="material-symbols-outlined" data-oid="jy5vm6w">
-                  filter_list
-                </span>
-                {t("page:jobs.filters")}
-              </button>
-            </Tooltip>
+            <button
+              onClick={() => setFilterOpen((v) => !v)}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border border-outline-variant font-body-md text-body-md transition-all ${filterOpen ? "bg-surface-container text-primary" : "text-on-surface-variant hover:bg-surface-container-low"}`}
+              data-oid="y5qdhnz">
+              <span className="material-symbols-outlined" data-oid="jy5vm6w">
+                filter_list
+              </span>
+              {t("page:jobs.filters")}
+            </button>
             {filterOpen &&
             <div
               className="absolute right-0 top-full mt-2 w-56 bg-surface rounded-xl shadow-lg border border-outline-variant z-50 p-4"
@@ -554,18 +545,15 @@ export default function JobsPage() {
             }
           </div>
           <div className="relative" data-oid="3ma2oqk">
-            <Tooltip content={t("page:jobs.tooltip.dateRange")}>
-              <button
-                onClick={() => setDateOpen((v) => !v)}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border border-outline-variant font-body-md text-body-md transition-all ${dateOpen ? "bg-surface-container text-primary" : "text-on-surface-variant hover:bg-surface-container-low"}`}
-                data-oid="cwu7skk">
-
-                <span className="material-symbols-outlined" data-oid="iv9hri8">
-                  calendar_today
-                </span>
-                {t("page:jobs.dateRange")}
-              </button>
-            </Tooltip>
+            <button
+              onClick={() => setDateOpen((v) => !v)}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border border-outline-variant font-body-md text-body-md transition-all ${dateOpen ? "bg-surface-container text-primary" : "text-on-surface-variant hover:bg-surface-container-low"}`}
+              data-oid="cwu7skk">
+              <span className="material-symbols-outlined" data-oid="iv9hri8">
+                calendar_today
+              </span>
+              {t("page:jobs.dateRange")}
+            </button>
             {dateOpen &&
             <div
               className="absolute right-0 top-full mt-2 w-64 bg-surface rounded-xl shadow-lg border border-outline-variant z-50 p-4"
@@ -678,9 +666,7 @@ export default function JobsPage() {
                     {t("page:jobs.expiresIn")}
                     <span
                       className="material-symbols-outlined text-[14px] cursor-help"
-                      title={t("page:jobs.expiresInfo")}
                       data-oid="eeloa-0">
-
                       info
                     </span>
                   </div>
@@ -738,11 +724,9 @@ export default function JobsPage() {
                             <Link
                             to={`/jobs/${j.job_id}`}
                             className="font-body-md text-body-md font-medium text-on-surface truncate hover:text-primary hover:underline block"
-                            data-oid="7sy3qzp"
-                            title={j.filename}>
-
-                              {j.filename}
-                            </Link>
+                            data-oid="7sy3qzp">
+                            {j.filename}
+                          </Link>
                             <p
                             className="font-label-sm text-label-sm text-outline"
                             data-oid="i0y1sq2">
@@ -811,15 +795,12 @@ export default function JobsPage() {
 
                           {isDone ?
                         <>
-                              <Tooltip content={t("page:jobs.tooltip.delete")}>
-                                <button
+                              <button
                               onClick={() => openDeleteModal(j)}
                               className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
                               data-oid="3nnh9iw">
-
-                                  <Trash2 size={18} data-oid="fp7w_cf" />
-                                </button>
-                              </Tooltip>
+                                <Trash2 size={18} data-oid="fp7w_cf" />
+                              </button>
                               <DownloadMenu
                                 job={j}
                                 fileTypeLabel={fileTypeLabel}
@@ -834,15 +815,12 @@ export default function JobsPage() {
                               </DownloadMenu>
                             </> :
 
-                        <Tooltip content={t("page:jobs.tooltip.delete")}>
-                          <button
-                            onClick={() => openDeleteModal(j)}
-                            className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
-                            data-oid="ida:p:-">
-
-                            <Trash2 size={18} data-oid="t.hqgua" />
-                          </button>
-                        </Tooltip>
+                        <button
+                          onClick={() => openDeleteModal(j)}
+                          className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
+                          data-oid="ida:p:-">
+                          <Trash2 size={18} data-oid="t.hqgua" />
+                        </button>
                         }
                         </div>
                       </td>
@@ -899,7 +877,7 @@ export default function JobsPage() {
                       <span className="material-symbols-outlined">{isDone ? "table_chart" : "description"}</span>
                     </div>
                     <div className="min-w-0 flex-1">
-                      <Link to={`/jobs/${j.job_id}`} className="font-body-md text-body-md font-medium text-on-surface hover:text-primary hover:underline block break-all" title={j.filename}>
+                      <Link to={`/jobs/${j.job_id}`} className="font-body-md text-body-md font-medium text-on-surface hover:text-primary hover:underline block break-all">
                         {j.filename}
                       </Link>
                       <p className="font-label-sm text-label-sm text-outline mt-0.5">
@@ -909,15 +887,13 @@ export default function JobsPage() {
                     <div className="flex shrink-0 gap-1" data-oid="m-actions">
                       {isDone ? (
                         <>
-                          <Tooltip content={t("page:jobs.tooltip.delete")}>
-                            <button
-                              onClick={() => openDeleteModal(j)}
-                              className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
-                              data-oid="m-delete"
-                            >
-                              <Trash2 size={18} />
-                            </button>
-                          </Tooltip>
+                          <button
+                            onClick={() => openDeleteModal(j)}
+                            className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
+                            data-oid="m-delete"
+                          >
+                            <Trash2 size={18} />
+                          </button>
                           <DownloadMenu
                             job={j}
                             fileTypeLabel={fileTypeLabel}
@@ -932,15 +908,13 @@ export default function JobsPage() {
                           </DownloadMenu>
                         </>
                       ) : (
-                        <Tooltip content={t("page:jobs.tooltip.delete")}>
-                          <button
-                            onClick={() => openDeleteModal(j)}
-                            className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
-                            data-oid="m-delete"
-                          >
-                            <Trash2 size={18} />
-                          </button>
-                        </Tooltip>
+                        <button
+                          onClick={() => openDeleteModal(j)}
+                          className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
+                          data-oid="m-delete"
+                        >
+                          <Trash2 size={18} />
+                        </button>
                       )}
                     </div>
                   </div>
@@ -999,38 +973,29 @@ export default function JobsPage() {
             })}
           </p>
           <div className="flex items-center gap-1" data-oid="f45bbfe">
-            <Tooltip content={t("page:jobs.tooltip.prevPage")}>
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page <= 1}
-                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container transition-colors disabled:opacity-30"
-                data-oid="_.es66e">
-
-                <ChevronLeft size={18} data-oid="_mm52sr" />
-              </button>
-            </Tooltip>
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container transition-colors disabled:opacity-30"
+              data-oid="_.es66e">
+              <ChevronLeft size={18} data-oid="_mm52sr" />
+            </button>
             {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) =>
-            <Tooltip key={p} content={t("page:jobs.tooltip.goToPage", { page: p })}>
-              <button
-                key={p}
-                onClick={() => setPage(p)}
-                className={`w-8 h-8 flex items-center justify-center rounded-lg font-label-sm text-label-sm ${page === p ? "bg-primary text-on-primary" : "hover:bg-surface-container"}`}
-                data-oid="7n:1hmb">
-
-                  {p}
-                </button>
-            </Tooltip>
-            )}
-            <Tooltip content={t("page:jobs.tooltip.nextPage")}>
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page >= totalPages}
-                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container transition-colors disabled:opacity-30"
-                data-oid="i3yu82j">
-
-                <ChevronRight size={18} data-oid="6mnqyin" />
+            <button
+              key={p}
+              onClick={() => setPage(p)}
+              className={`w-8 h-8 flex items-center justify-center rounded-lg font-label-sm text-label-sm ${page === p ? "bg-primary text-on-primary" : "hover:bg-surface-container"}`}
+              data-oid="7n:1hmb">
+                {p}
               </button>
-            </Tooltip>
+            )}
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages}
+              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-surface-container transition-colors disabled:opacity-30"
+              data-oid="i3yu82j">
+              <ChevronRight size={18} data-oid="6mnqyin" />
+            </button>
           </div>
         </div>
       </div>

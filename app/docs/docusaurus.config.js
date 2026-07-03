@@ -3,7 +3,7 @@ import {themes as prismThemes} from 'prism-react-renderer';
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'Chungu API',
+  title: 'PROOF API',
   tagline: 'PDF, images, audio, video → structured tables',
   favicon: 'img/favicon.svg',
 
@@ -65,9 +65,9 @@ const config = {
         respectPrefersColorScheme: true,
       },
       navbar: {
-        title: 'Chungu API',
+        title: 'PROOF API',
         logo: {
-          alt: 'Chungu',
+          alt: 'PROOF',
           src: 'img/logo.svg',
         },
         items: [
@@ -127,7 +127,7 @@ const config = {
             ],
           },
         ],
-        copyright: `Copyright © ${new Date().getFullYear()} Chungu. Built with Docusaurus.`,
+        copyright: `Copyright © ${new Date().getFullYear()} PROOF. Built with Docusaurus.`,
       },
       prism: {
         theme: prismThemes.github,

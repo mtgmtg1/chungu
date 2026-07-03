@@ -5,7 +5,7 @@ from celery import Celery
 from .config import settings
 
 celery = Celery(
-    "chungu",
+    "proof",
     broker=settings.redis_url,
     backend=settings.redis_url,
     include=["backend.workers.tasks"],

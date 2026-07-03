@@ -61,7 +61,7 @@ def create_toss_order(
         points = selected["points"]
         krw = selected["krw"]
 
-    order_id = f"chungu-{user.user_id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{hashlib.sha256((str(user.user_id) + str(krw)).encode()).hexdigest()[:8]}"
+    order_id = f"proof-{user.user_id}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{hashlib.sha256((str(user.user_id) + str(krw)).encode()).hexdigest()[:8]}"
     payment = Payment(
         user_id=uuid.UUID(user.user_id),
         provider="toss",

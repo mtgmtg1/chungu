@@ -4,7 +4,7 @@ sidebar_position: 6
 
 # Error Handling
 
-Chungu API uses standard HTTP status codes. Error responses include a `detail` field with a human-readable message.
+PROOF API uses standard HTTP status codes. Error responses include a `detail` field with a human-readable message.
 
 ## Error codes
 

@@ -3,15 +3,14 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Menu, X, LogOut } from "lucide-react";
-import Tooltip from "./Tooltip.jsx";
 import { useAuth } from "../AuthContext.jsx";
 import LanguageSelector from "./LanguageSelector.jsx";
 
 const getNavItems = (t) => [
-{ icon: "dashboard", label: t("nav.dashboard"), href: "/dashboard", tooltip: t("common:tooltip.dashboard") },
-{ icon: "list_alt", label: t("nav.jobs"), href: "/jobs", tooltip: t("common:tooltip.jobs") },
-{ icon: "code", label: t("nav.developer"), href: "/developer", tooltip: t("common:tooltip.developer") },
-{ icon: "settings", label: t("nav.settings"), href: "/settings", tooltip: t("common:tooltip.settings") }];
+{ icon: "dashboard", label: t("nav.dashboard"), href: "/dashboard" },
+{ icon: "list_alt", label: t("nav.jobs"), href: "/jobs" },
+{ icon: "code", label: t("nav.developer"), href: "/developer" },
+{ icon: "settings", label: t("nav.settings"), href: "/settings" }];
 
 
 export default function SidebarLayout({ children, title, subtitle }) {
@@ -92,7 +91,7 @@ export default function SidebarLayout({ children, title, subtitle }) {
               className="font-headline-md text-headline-md font-bold text-primary leading-tight"
               data-oid="ejen81n">
 
-                Chungu
+                PROOF
               </h1>
               <p
               className="text-[10px] uppercase tracking-widest text-outline"
@@ -106,52 +105,46 @@ export default function SidebarLayout({ children, title, subtitle }) {
 
         <nav className="flex-1 space-y-1" data-oid="92bcezw">
           {navItems.map((item) =>
-          <Tooltip key={item.label} content={!expanded ? item.tooltip : undefined} className="block">
-            <Link
-              to={item.href}
-              onClick={(e) => {
-                if (item.href === "#") {
-                  e.preventDefault();
-                  return;
-                }
-                setMobileOpen(false);
-              }}
-              className={`flex items-center ${expanded ? "gap-3 px-3" : "justify-center px-2"} py-2 rounded-lg transition-colors ${
-              isActive(item.href) ?
-              "text-primary font-bold border-r-2 border-primary bg-primary-container/5" :
-              "text-on-surface-variant hover:bg-primary-container/10"}`
+          <Link
+            key={item.label}
+            to={item.href}
+            onClick={(e) => {
+              if (item.href === "#") {
+                e.preventDefault();
+                return;
               }
-              data-oid="9p1orsj">
-
-                <span
-                className="material-symbols-outlined text-xl"
-                data-oid=".z19ygx">
-
-                  {item.icon}
+              setMobileOpen(false);
+            }}
+            className={`flex items-center ${expanded ? "gap-3 px-3" : "justify-center px-2"} py-2 rounded-lg transition-colors ${
+            isActive(item.href) ?
+            "text-primary font-bold border-r-2 border-primary bg-primary-container/5" :
+            "text-on-surface-variant hover:bg-primary-container/10"}`
+            }
+            data-oid="9p1orsj">
+              <span
+              className="material-symbols-outlined text-xl"
+              data-oid=".z19ygx">
+                {item.icon}
+              </span>
+              {expanded &&
+            <span className="font-body-md text-body-md" data-oid="xgrjj5v">
+                  {item.label}
                 </span>
-                {expanded &&
-              <span className="font-body-md text-body-md" data-oid="xgrjj5v">
-                    {item.label}
-                  </span>
-              }
-              </Link>
-          </Tooltip>
+            }
+            </Link>
           )}
         </nav>
 
         <div className="mt-auto space-y-3" data-oid="3jg724x">
-          <Tooltip content={t("common:tooltip.newConversion")} className="block">
-            <Link
-              to="/"
-              className={`w-full bg-primary text-on-primary py-2.5 px-3 rounded-xl font-body-md text-body-md font-medium shadow-md hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 ${expanded ? "" : "px-0"}`}
-              data-oid="uu7qmwt">
-
-              <span className="material-symbols-outlined" data-oid="jfz2785">
-                add
-              </span>
-              {expanded && t("nav.newConversion")}
-            </Link>
-          </Tooltip>
+          <Link
+            to="/"
+            className={`w-full bg-primary text-on-primary py-2.5 px-3 rounded-xl font-body-md text-body-md font-medium shadow-md hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 ${expanded ? "" : "px-0"}`}
+            data-oid="uu7qmwt">
+            <span className="material-symbols-outlined" data-oid="jfz2785">
+              add
+            </span>
+            {expanded && t("nav.newConversion")}
+          </Link>
 
           {expanded && user &&
           <div
@@ -171,16 +164,13 @@ export default function SidebarLayout({ children, title, subtitle }) {
 
                 {user.email}
               </Link>
-              <Tooltip content={t("common:tooltip.logout")} className="block">
-                <button
+              <button
                 onClick={() => signOut()}
                 className="mt-2 w-full flex items-center justify-center gap-1 text-xs text-outline hover:text-error transition-colors"
                 data-oid="fy:21t1">
-
-                  <LogOut size={14} data-oid=":nvrtmw" />
-                  {t("nav.logout")}
-                </button>
-              </Tooltip>
+                <LogOut size={14} data-oid=":nvrtmw" />
+                {t("nav.logout")}
+              </button>
             </div>
           }
         </div>
@@ -202,21 +192,16 @@ export default function SidebarLayout({ children, title, subtitle }) {
         className={`fixed top-0 right-0 ${headerWidth} z-30 bg-surface/80 backdrop-blur-md border-b border-outline-variant flex justify-between items-center h-16 px-gutter transition-all duration-300 ${marginLeft}`}
         data-oid="1n8suzb">
 
-        <Tooltip content={expanded ? t("common:tooltip.collapse") : t("common:tooltip.expand")}>
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="hidden md:flex z-50 w-8 h-8 items-center justify-center rounded-full bg-surface border border-outline-variant shadow-sm hover:bg-surface-container-high transition-colors"
-            title={expanded ? t("nav.collapse") : t("nav.expand")}
-            data-oid="cp23.9a">
-
-            <span
-              className="material-symbols-outlined text-sm text-outline"
-              data-oid="6uvj_92">
-
-              {expanded ? "chevron_left" : "chevron_right"}
-            </span>
-          </button>
-        </Tooltip>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="hidden md:flex z-50 w-8 h-8 items-center justify-center rounded-full bg-surface border border-outline-variant shadow-sm hover:bg-surface-container-high transition-colors"
+          data-oid="cp23.9a">
+          <span
+            className="material-symbols-outlined text-sm text-outline"
+            data-oid="6uvj_92">
+            {expanded ? "chevron_left" : "chevron_right"}
+          </span>
+        </button>
         <div className="flex items-center gap-6" data-oid="89yal5:">
           <LanguageSelector data-oid="ezpxm7o" />
           <Link

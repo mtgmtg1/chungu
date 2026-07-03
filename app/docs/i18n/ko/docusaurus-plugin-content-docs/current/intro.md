@@ -5,9 +5,9 @@ slug: /
 
 # 소개
 
-Chungu는 PDF 및 미디어 파일을 구조화된 표로 변환하는 서비스입니다. PDF, 이미지, 오디오, 비디오를 업로드하면 CSV, Markdown, XLSX 형식의 구조화된 표를 반환합니다.
+PROOF는 PDF 및 미디어 파일을 구조화된 표로 변환하는 서비스입니다. PDF, 이미지, 오디오, 비디오를 업로드하면 CSV, Markdown, XLSX 형식의 구조화된 표를 반환합니다.
 
-## Chungu API로 무엇을 할 수 있나요?
+## PROOF API로 무엇을 할 수 있나요?
 
 - PDF 문서, 스캔 이미지, 스크린샷에서 **표 추출**
 - 오디오 녹음 및 비디오 파일을 **전사 및 구조화**
@@ -32,6 +32,6 @@ flowchart LR
 
 ## 시작하기
 
-- Chungu가 처음이신가요? [퀵 스타트](./quickstart) 가이드를 읽어보세요
+- PROOF가 처음이신가요? [퀵 스타트](./quickstart) 가이드를 읽어보세요
 - API 키가 필요하신가요? [개발자 포털](../../developer)을 방문하세요
 - AI가 자동으로 API를 호출하게 하고 싶으신가요? [AI 프롬프트](./ai-prompts/full-pipeline-prompt)를 확인하세요

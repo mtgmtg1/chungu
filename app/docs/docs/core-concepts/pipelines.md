@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # Pipelines
 
-Chungu offers two processing pipelines for different input types and accuracy requirements.
+PROOF offers two processing pipelines for different input types and accuracy requirements.
 
 ## Vision pipeline (default)
 

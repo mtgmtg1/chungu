@@ -5,9 +5,9 @@ slug: /
 
 # Introduction
 
-Chungu is a PDF/media → structured table conversion service. Upload PDFs, images, audio, or video, and get back structured tables in CSV, Markdown, or XLSX format.
+PROOF is a PDF/media → structured table conversion service. Upload PDFs, images, audio, or video, and get back structured tables in CSV, Markdown, or XLSX format.
 
-## What can you do with Chungu API?
+## What can you do with PROOF API?
 
 - **Extract tables** from PDF documents, scanned images, and screenshots
 - **Transcribe and structure** audio recordings and video files
@@ -32,6 +32,6 @@ flowchart LR
 
 ## Get started
 
-- New to Chungu? Read the [Quick Start](./quickstart) guide
+- New to PROOF? Read the [Quick Start](./quickstart) guide
 - Need an API key? Visit the [Developer Portal](../../developer)
 - Want AI to call the API for you? Check [AI Prompts](./ai-prompts/full-pipeline-prompt)

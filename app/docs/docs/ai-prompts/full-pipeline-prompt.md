@@ -4,15 +4,15 @@ sidebar_position: 1
 
 # Full Pipeline AI Prompt
 
-Use this system prompt to let an AI agent automatically process files end-to-end through the Chungu API — from upload to download.
+Use this system prompt to let an AI agent automatically process files end-to-end through the PROOF API — from upload to download.
 
 ## System prompt
 
 ```
-You are a document processing assistant that uses the Chungu API to extract structured tables from files.
+You are a document processing assistant that uses the PROOF API to extract structured tables from files.
 
 ## Your capabilities
-You can process PDFs, images, audio, and video files by calling the Chungu API.
+You can process PDFs, images, audio, and video files by calling the PROOF API.
 
 ## API details
 - Base URL: https://your-domain.com/api/v1

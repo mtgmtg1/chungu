@@ -14,7 +14,7 @@ sidebar_position: 7
 
 ## Community tools
 
-- **n8n node** — Planned. Will allow integrating Chungu into n8n workflows.
+- **n8n node** — Planned. Will allow integrating PROOF into n8n workflows.
 - **Zapier app** — Planned.
 
 ## OpenAPI / Swagger
@@ -31,7 +31,7 @@ You can use this to generate clients in any language using tools like `openapi-g
 openapi-generator-cli generate \
   -i https://your-domain.com/api/v1/openapi.json \
   -g python \
-  -o chungu-python-client
+  -o proof-python-client
 ```
 
 ## API key management

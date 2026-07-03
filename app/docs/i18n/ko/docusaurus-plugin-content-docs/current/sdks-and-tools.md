@@ -14,7 +14,7 @@ sidebar_position: 7
 
 ## 커뮤니티 도구
 
-- **n8n 노드** — 예정. Chungu를 n8n 워크플로우에 통합할 수 있습니다.
+- **n8n 노드** — 예정. PROOF를 n8n 워크플로우에 통합할 수 있습니다.
 - **Zapier 앱** — 예정.
 
 ## OpenAPI / Swagger
@@ -31,7 +31,7 @@ sidebar_position: 7
 openapi-generator-cli generate \
   -i https://your-domain.com/api/v1/openapi.json \
   -g python \
-  -o chungu-python-client
+  -o proof-python-client
 ```
 
 ## API 키 관리

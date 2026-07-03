@@ -4,12 +4,12 @@ sidebar_position: 2
 
 # 엔드포인트별 AI 프롬프트
 
-이 프롬프트들을 복사하여 AI 에이전트가 개별 Chungu API 엔드포인트를 호출하게 하세요.
+이 프롬프트들을 복사하여 AI 에이전트가 개별 PROOF API 엔드포인트를 호출하게 하세요.
 
 ## 파일 업로드
 
 ```
-Call the Chungu API to upload a file for table extraction.
+Call the PROOF API to upload a file for table extraction.
 
 POST https://your-domain.com/api/v1/jobs/upload
 Headers: X-API-Key: <API_KEY>
@@ -25,7 +25,7 @@ Return the job_id from the response.
 ## 작업 확인
 
 ```
-Call the Chungu API to confirm a job and start processing.
+Call the PROOF API to confirm a job and start processing.
 
 POST https://your-domain.com/api/v1/jobs/<JOB_ID>/confirm
 Headers: X-API-Key: <API_KEY>
@@ -36,7 +36,7 @@ Return the status and remaining_points.
 ## 작업 상태 확인
 
 ```
-Call the Chungu API to check the status of a job.
+Call the PROOF API to check the status of a job.
 
 GET https://your-domain.com/api/v1/jobs/<JOB_ID>
 Headers: X-API-Key: <API_KEY>
@@ -49,7 +49,7 @@ If status is "error", report the error_log.
 ## 결과 다운로드
 
 ```
-Call the Chungu API to get the download URL for a completed job.
+Call the PROOF API to get the download URL for a completed job.
 
 GET https://your-domain.com/api/v1/jobs/<JOB_ID>/download?type=xlsx
 Headers: X-API-Key: <API_KEY>
@@ -60,7 +60,7 @@ Return the download_url from the response.
 ## Office 형식으로 변환
 
 ```
-Call the Chungu API to convert a completed job to DOCX.
+Call the PROOF API to convert a completed job to DOCX.
 
 POST https://your-domain.com/api/v1/jobs/<JOB_ID>/convert
 Headers:
@@ -74,7 +74,7 @@ Return the download_url from the response.
 ## 계정 잔액 확인
 
 ```
-Call the Chungu API to check the account info and point balance.
+Call the PROOF API to check the account info and point balance.
 
 GET https://your-domain.com/api/v1/account
 Headers: X-API-Key: <API_KEY>

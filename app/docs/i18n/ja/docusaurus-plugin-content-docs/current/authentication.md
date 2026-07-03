@@ -22,7 +22,7 @@ curl -H "Authorization: Bearer chu_live_xxxxxxxx" \
 
 ## APIキーの作成
 
-1. Chunguウェブアプリにログインします
+1. PROOFウェブアプリにログインします
 2. **開発者ポータル**（`/developer`）に移動します
 3. **キー作成**をクリックします
 4. 名前を入力します（例: "production"、"staging"）

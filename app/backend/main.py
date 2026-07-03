@@ -65,7 +65,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Chungu API", lifespan=lifespan, docs_url="/api/v1/docs", openapi_url="/api/v1/openapi.json")
+app = FastAPI(title="PROOF API", lifespan=lifespan, docs_url="/api/v1/docs", openapi_url="/api/v1/openapi.json")
 app.include_router(jobs.router)
 app.include_router(admin.router)
 app.include_router(payments.router)

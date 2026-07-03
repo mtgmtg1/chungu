@@ -4,7 +4,7 @@ sidebar_position: 3
 
 # Output Formats
 
-Chungu can deliver results in multiple formats. The primary output is always Markdown, which is then converted to other formats on demand.
+PROOF can deliver results in multiple formats. The primary output is always Markdown, which is then converted to other formats on demand.
 
 ## Available formats
 

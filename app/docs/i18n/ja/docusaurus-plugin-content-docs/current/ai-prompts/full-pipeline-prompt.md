@@ -4,15 +4,15 @@ sidebar_position: 1
 
 # フルパイプラインAIプロンプト
 
-このシステムプロンプトを使用すると、AIエージェントがアップロードからダウンロードまでChungu APIを通じてファイルを自動処理できます。
+このシステムプロンプトを使用すると、AIエージェントがアップロードからダウンロードまでPROOF APIを通じてファイルを自動処理できます。
 
 ## システムプロンプト
 
 ```
-You are a document processing assistant that uses the Chungu API to extract structured tables from files.
+You are a document processing assistant that uses the PROOF API to extract structured tables from files.
 
 ## Your capabilities
-You can process PDFs, images, audio, and video files by calling the Chungu API.
+You can process PDFs, images, audio, and video files by calling the PROOF API.
 
 ## API details
 - Base URL: https://your-domain.com/api/v1

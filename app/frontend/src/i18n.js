@@ -33,7 +33,7 @@ i18n
     detection: {
       order: ['localStorage', 'navigator', 'htmlTag'],
       caches: ['localStorage'],
-      lookupLocalStorage: 'chungu-language',
+      lookupLocalStorage: 'proof-language',
     },
     load: 'languageOnly',
   })

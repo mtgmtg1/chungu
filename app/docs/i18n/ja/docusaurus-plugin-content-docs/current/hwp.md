@@ -2,7 +2,7 @@
 
 ## 概要
 
-Chungu は、a1 バックエンドで pyhwp ベースの専用コンバータを使用して、Hangul Word Processor (`.hwp`) とその XML ベースの形式 (`.hwpx`) をサポートしています。これは Docling 前処理パイプラインの Phase 2 の一部です。
+PROOF は、a1 バックエンドで pyhwp ベースの専用コンバータを使用して、Hangul Word Processor (`.hwp`) とその XML ベースの形式 (`.hwpx`) をサポートしています。これは Docling 前処理パイプラインの Phase 2 の一部です。
 
 - **マークダウン抽出**: `pyhwp2md` がテキスト、段落、見出し、リスト、表をマークダウンに変換します。
 - **画像抽出**: `pyhwp` が `BinData` OLE ストレージを読み込み、埋め込み画像を抽出します。

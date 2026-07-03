@@ -22,7 +22,7 @@ curl -H "Authorization: Bearer chu_live_xxxxxxxx" \
 
 ## Creating an API key
 
-1. Log in to the Chungu web app
+1. Log in to the PROOF web app
 2. Go to **Developer Portal** (`/developer`)
 3. Click **Create Key**
 4. Enter a name (e.g., "production", "staging")

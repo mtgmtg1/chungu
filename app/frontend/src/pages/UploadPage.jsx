@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { FileUp, Loader2, LogIn, Coins, X } from "lucide-react";
-import Tooltip from "../components/Tooltip.jsx";
 import GridScan from "../components/GridScan.jsx";
 import { AnimatedRow } from "../components/AnimatedList.jsx";
 import { useAuth } from "../AuthContext.jsx";
@@ -178,7 +177,7 @@ export default function UploadPage() {
               to="/"
               className="font-headline-md text-headline-md font-bold text-primary tracking-tight"
               data-oid="9p74bh1">
-              Chungu File
+              PROOF
             </Link>
           </div>
           <div className="flex items-center gap-6" data-oid="azbdxm0">
@@ -259,30 +258,24 @@ export default function UploadPage() {
                   {t("page:upload.fileTypes")}
                 </p>
                 <div className="mt-8 flex items-center gap-3" data-oid="9pgvpvb">
-                  <Tooltip content={t("page:upload.tooltip.selectFiles")}>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        document.getElementById("file-input").click();
-                      }}
-                      className="px-5 py-2.5 bg-primary text-on-primary font-headline-md hover:bg-primary-container transition-all shadow-md" data-oid="y:11dj9">
-
-                      {t("page:upload.selectFiles")}
-                    </button>
-                  </Tooltip>
-                  <Tooltip content={t("page:upload.tooltip.selectFolder")}>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        document.getElementById("folder-input").click();
-                      }}
-                      className="px-5 py-2.5 border border-outline-variant text-on-surface font-headline-md hover:bg-surface-container transition-all" data-oid="4ck0s7w">
-
-                      {t("page:upload.selectFolder")}
-                    </button>
-                  </Tooltip>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      document.getElementById("file-input").click();
+                    }}
+                    className="px-5 py-2.5 bg-primary text-on-primary font-headline-md hover:bg-primary-container transition-all shadow-md" data-oid="y:11dj9">
+                    {t("page:upload.selectFiles")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      document.getElementById("folder-input").click();
+                    }}
+                    className="px-5 py-2.5 border border-outline-variant text-on-surface font-headline-md hover:bg-surface-container transition-all" data-oid="4ck0s7w">
+                    {t("page:upload.selectFolder")}
+                  </button>
                 </div>
                 <input
                   id="file-input"
@@ -321,21 +314,18 @@ export default function UploadPage() {
                       {f.webkitRelativePath &&
                   <span
                     className="text-outline text-xs truncate max-w-xs"
-                    title={f.webkitRelativePath} data-oid="aayyxtt">
-
-                          {f.webkitRelativePath}
-                        </span>
+                    data-oid="aayyxtt">
+                    {f.webkitRelativePath}
+                  </span>
                   }
                       <span data-oid="d52i72h">({(f.size / 1024 / 1024).toFixed(2)} MB)</span>
-                      <Tooltip content={t("page:upload.tooltip.removeFile")}>
-                        <button
-                          type="button"
-                          onClick={() => removeFile(i)}
-                          className="ml-auto text-outline hover:text-red-500 transition-colors flex-shrink-0"
-                          data-oid={`rm-${i}`}>
-                          <X size={16} />
-                        </button>
-                      </Tooltip>
+                      <button
+                        type="button"
+                        onClick={() => removeFile(i)}
+                        className="ml-auto text-outline hover:text-red-500 transition-colors flex-shrink-0"
+                        data-oid={`rm-${i}`}>
+                        <X size={16} />
+                      </button>
                     </li>
                 </AnimatedRow>
                 )}
@@ -368,22 +358,18 @@ export default function UploadPage() {
 
                     {t("page:upload.cancel")}
                   </button>
-                  <Tooltip content={t("page:upload.tooltip.startConversion")} className="flex-1">
-                    <button
+                  <button
                     type="submit"
                     disabled={submitting}
-                    className="w-full bg-primary text-on-primary rounded-lg py-2.5 font-medium hover:bg-primary-container transition-colors disabled:opacity-50 flex items-center justify-center gap-2" data-oid="0rnk870">
-
-                      {submitting ?
+                    className="flex-1 bg-primary text-on-primary rounded-lg py-2.5 font-medium hover:bg-primary-container transition-colors disabled:opacity-50 flex items-center justify-center gap-2" data-oid="0rnk870">
+                    {submitting ?
                     <>
-                          <Loader2 className="animate-spin" size={18} data-oid="trpaow-" />{" "}
-                          {t("page:upload.uploading")}
-                        </> :
-
+                      <Loader2 className="animate-spin" size={18} data-oid="trpaow-" />{" "}
+                      {t("page:upload.uploading")}
+                    </> :
                     t("page:upload.start")
                     }
-                    </button>
-                  </Tooltip>
+                  </button>
                 </div>
               </div>
             }

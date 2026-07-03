@@ -13,11 +13,11 @@ from pathlib import Path
 import requests
 from docx import Document
 
-BASE_URL = os.environ.get("CHUNGU_BASE_URL", "192.168.1.50:28181")
-SUPABASE_URL = os.environ.get("CHUNGU_SUPABASE_URL", "192.168.1.50:28000")
-ANON_KEY = os.environ.get("CHUNGU_SUPABASE_ANON_KEY", "")
-EMAIL = os.environ.get("CHUNGU_TEST_EMAIL", "test@chungu.local")
-PASSWORD = os.environ.get("CHUNGU_TEST_PASSWORD", "Test1234!")
+BASE_URL = os.environ.get("PROOF_BASE_URL", "192.168.1.50:28181")
+SUPABASE_URL = os.environ.get("PROOF_SUPABASE_URL", "192.168.1.50:28000")
+ANON_KEY = os.environ.get("PROOF_SUPABASE_ANON_KEY", "")
+EMAIL = os.environ.get("PROOF_TEST_EMAIL", "test@proof.local")
+PASSWORD = os.environ.get("PROOF_TEST_PASSWORD", "Test1234!")
 
 
 def _request(method: str, host: str, path: str, headers: dict = None, body: bytes = None, json_data=None):

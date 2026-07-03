@@ -2,9 +2,13 @@
 # [Flow: Step 1 (Turnstile 토큰 + IP 수신) -> Step 2 (Spin Worker 경유 siteverify) -> Step 3 (검증 결과 반환)]
 """Cloudflare Turnstile CAPTCHA 토큰 검증 (Spin Worker 경유)."""
 
+import logging
+
 import httpx
 
 from ..config import settings
+
+logger = logging.getLogger(__name__)
 
 
 async def verify_turnstile_token(token: str, remote_ip: str = "") -> bool:
@@ -20,6 +24,7 @@ async def verify_turnstile_token(token: str, remote_ip: str = "") -> bool:
         return True
 
     if not token:
+        logger.warning("[turnstile] token empty")
         return False
 
     try:
@@ -32,6 +37,14 @@ async def verify_turnstile_token(token: str, remote_ip: str = "") -> bool:
                 },
             )
         result = resp.json()
+        logger.info(
+            "[turnstile] token=%s... ip=%s status=%s result=%s",
+            token[:20],
+            remote_ip,
+            resp.status_code,
+            result,
+        )
         return result.get("success", False)
-    except Exception:
+    except Exception as exc:
+        logger.exception("[turnstile] verification failed: token=%s... ip=%s", token[:20], remote_ip)
         return False

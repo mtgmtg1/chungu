@@ -55,9 +55,17 @@ export function AuthProvider({ children }) {
   }, [session, setLanguage]);
 
   const signIn = (email, password, turnstileToken = "") =>
-    supabase.auth.signInWithPassword({ email, password, turnstile_token: turnstileToken });
+    supabase.auth.signInWithPassword({
+      email,
+      password,
+      options: { captchaToken: turnstileToken },
+    });
   const signUp = (email, password, turnstileToken = "") =>
-    supabase.auth.signUp({ email, password, turnstile_token: turnstileToken });
+    supabase.auth.signUp({
+      email,
+      password,
+      options: { captchaToken: turnstileToken },
+    });
   const signOut = () => supabase.auth.signOut();
 
   return (

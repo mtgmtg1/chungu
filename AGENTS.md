@@ -175,6 +175,7 @@ npm run start        # dev server at localhost:3000
 - Worker URL: `https://turnstile-siteverify-proof.mtgmtg.workers.dev`
 - Widget site key: `0x4AAAAAADux9LO13vEhA4F7`
 - 프론트엔드는 Turnstile 위젯으로 토큰만 수집하고, Worker 직접 검증은 하지 않음. **Turnstile 토큰은 1회용**이므로 프론트엔드와 백엔드에서 이중 검증하면 두 번째 검증이 실패함.
+- Supabase JS 클라이언트는 `turnstile_token` 대신 `options.captchaToken`을 받아 요청 본문의 `gotrue_meta_security.captcha_token`으로 전송. 백엔드 `supabase_proxy.py`는 이 필드를 추출하여 Worker로 검증.
 - 로그인/회원가입/관리자 로그인 시 백엔드가 토큰을 검증. 실패 시 `403` 응답과 `"bot 확인에 실패했습니다. 다시 시도하세요."` 메시지 반환.
 - Widget 도메인: `localhost`, `127.0.0.1`, `proof.teamcat.app`
 - Key files:

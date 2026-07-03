@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 # [Flow: Step 1 (외부 요청 수신) -> Step 2 (auth 경로 보안 검증) -> Step 3 (내부 Supabase로 전달) -> Step 4 (응답 헤더 재작성 + 중계)]
 import json
+import logging
 
 import httpx
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
+
+logger = logging.getLogger(__name__)
 
 from ..config import settings
 from ..core.rate_limit import (
@@ -62,17 +65,24 @@ async def _check_auth_security(path: str, request: Request, body: bytes) -> JSON
     ip = _client_ip(request)
 
     # 요청 바디에서 email / turnstile_token 추출
+    # Supabase JS 클라이언트는 gotrue_meta_security.captcha_token으로 전송
     email = ""
     turnstile_token = ""
     try:
         payload = json.loads(body) if body else {}
         email = (payload.get("email") or "").strip()
         turnstile_token = payload.get("turnstile_token") or ""
+        if not turnstile_token:
+            security = payload.get("gotrue_meta_security") or {}
+            turnstile_token = security.get("captcha_token") or ""
     except Exception:
         pass
 
+    logger.info("[supabase_proxy] path=%s email=%s token=%s...", path, email, turnstile_token[:20])
+
     # Turnstile CAPTCHA 검증 (설정 시에만 활성화)
     if not await verify_turnstile_token(turnstile_token, ip):
+        logger.warning("[supabase_proxy] captcha failed for %s", email)
         return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
             content={"error": "bot 확인에 실패했습니다. 다시 시도하세요.", "code": "captcha_failed"},

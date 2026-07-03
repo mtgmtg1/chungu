@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 # [Flow: Step 1 (로그인 -> 세션 쿠키) -> Step 2 (설정 조회/수정) -> Step 3 (LLM/SMTP 연결 테스트) -> Step 4 (job 모니터)]
+import logging
+
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from .. import email_sender, settings_store
 from ..auth.security import (
@@ -40,7 +44,9 @@ async def login(request: Request, response: Response, payload: dict = Body(...),
 
     # Turnstile CAPTCHA 검증 (설정 시에만 활성화)
     turnstile_token = payload.get("turnstile_token") or ""
+    logger.info("[admin_login] email=%s token=%s... ip=%s", email, turnstile_token[:20], ip)
     if not await verify_turnstile_token(turnstile_token, ip):
+        logger.warning("[admin_login] captcha failed for %s", email)
         raise HTTPException(status_code=403, detail="bot 확인에 실패했습니다. 다시 시도하세요.")
 
     # 로그인 시도 제한 확인

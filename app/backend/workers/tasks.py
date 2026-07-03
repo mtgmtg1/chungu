@@ -21,7 +21,7 @@ from ..core.pipeline_docling import run_docling, run_hwp
 from ..core.pipeline_hybrid import run_hybrid
 from ..core.pipeline_media import run_media
 from ..core.pipeline_vision import run_vision
-from ..db.models import Job
+from ..db.models import Job, User
 from ..db.session import SessionLocal
 from .. import email_sender, settings_store
 
@@ -90,6 +90,38 @@ def _set_status(db, job: Job, status: str) -> None:
     db.commit()
 
 
+# [Flow: Step 1 (retry_count 증가) -> Step 2 (3회 미만이면 retrying 상태로 재시도) -> Step 3 (3회 이상이면 error + refundable + 이메일)]
+def _handle_job_failure(db, job: Job, error_detail: str) -> dict:
+    """run_job 실행 실패 시 retry_count를 증가시키고 재시도 또는 최종 에러 상태로 전환한다."""
+    job.retry_count += 1
+    job.error_log = error_detail
+    db.commit()
+
+    if job.retry_count < MAX_RETRY_COUNT:
+        job.status = "retrying"
+        db.commit()
+        run_job.delay(job.id)
+        logger.info(f"[run_job:{job.id}] 재시도 예약 ({job.retry_count}/{MAX_RETRY_COUNT})")
+        return {"job_id": job.id, "status": "retrying", "retry_count": job.retry_count}
+
+    job.status = "error"
+    job.refundable = True
+    job.finished_at = datetime.now(timezone.utc)
+    db.commit()
+    logger.warning(f"[run_job:{job.id}] 재시도 한계 초과, error + refundable 전환")
+    try:
+        user_lang = "en"
+        if job.user_id:
+            user = db.get(User, job.user_id)
+            if user and user.language:
+                user_lang = user.language
+        subject, html = email_sender.build_error_email(job.id, job.original_filename, error_detail, lang=user_lang)
+        email_sender.send_email(db, job.email, subject, html)
+    except Exception:  # noqa: BLE001
+        pass
+    return {"job_id": job.id, "error": error_detail, "retry_count": job.retry_count}
+
+
 def count_oversized_pages(file_path: Path) -> tuple[int, int]:
     """PDF에서 350mm를 초과하는 페이지 수를 반환한다. (oversized_count, total_pages)"""
     try:
@@ -115,10 +147,14 @@ def run_job(job_id: str) -> dict:
         db.close()
         return {"error": "job not found"}
 
-    # 중복 실행 방지: status가 queued가 아니면 스킵
-    if job.status != "queued":
+    # 중복 실행 방지: queued 또는 retrying이 아니면 스킵
+    if job.status not in ("queued", "retrying"):
         db.close()
         return {"job_id": job_id, "skipped": True, "reason": f"status={job.status}"}
+
+    # 재시도로 들어온 작업은 queued로 전환하여 정상 실행
+    if job.status == "retrying":
+        _set_status(db, job, "queued")
 
     try:
         # Step 1: 런타임 설정 주입
@@ -529,12 +565,8 @@ def run_job(job_id: str) -> dict:
         has_csv = csv_path.exists() and csv_path.stat().st_size > 0
         if not has_md and not has_csv:
             error_detail = "\n".join(errors) or "모든 페이지 처리 실패"
-            logger.error(f"[run_job:{job_id}] 결과 파일 없음, error로 전환: {error_detail}")
-            job.status = "error"
-            job.error_log = error_detail
-            job.finished_at = datetime.now(timezone.utc)
-            db.commit()
-            return {"job_id": job_id, "error": "no result", "errors": len(errors)}
+            logger.error(f"[run_job:{job_id}] 결과 파일 없음: {error_detail}")
+            return _handle_job_failure(db, job, error_detail)
 
         # Step 6: Storage에 결과 업로드
         logger.info(f"[run_job:{job_id}] Step 6 시작: csv_path={csv_path}, md_path={md_path}, exists={csv_path.exists()}, {md_path.exists()}")
@@ -563,7 +595,12 @@ def run_job(job_id: str) -> dict:
 
         # Step 7: 완료 이메일
         try:
-            subject, html = email_sender.build_done_email(job_id, job.original_filename, expire_days)
+            user_lang = "en"
+            if job.user_id:
+                user = db.get(User, job.user_id)
+                if user and user.language:
+                    user_lang = user.language
+            subject, html = email_sender.build_done_email(job_id, job.original_filename, expire_days, lang=user_lang)
             email_sender.send_email(db, job.email, subject, html)
         except Exception as e:  # noqa: BLE001
             job.error_log = (job.error_log + f"\n[email] {e}").strip()
@@ -573,16 +610,8 @@ def run_job(job_id: str) -> dict:
 
     except Exception as e:  # noqa: BLE001
         tb = traceback.format_exc()
-        job.status = "error"
-        job.error_log = (job.error_log + f"\n{tb}").strip()
-        job.finished_at = datetime.now(timezone.utc)
-        db.commit()
-        try:
-            subject, html = email_sender.build_error_email(job_id, job.original_filename, str(e))
-            email_sender.send_email(db, job.email, subject, html)
-        except Exception:  # noqa: BLE001
-            pass
-        return {"job_id": job_id, "error": str(e)}
+        error_detail = (job.error_log + f"\n{tb}").strip()
+        return _handle_job_failure(db, job, error_detail)
     finally:
         db.close()
 

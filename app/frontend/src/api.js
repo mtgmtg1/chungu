@@ -63,6 +63,8 @@ export const api = {
   downloadJob: (id, type) => request(`/api/jobs/${id}/download?type=${type}`),
   xlsxAdvancedAction: (id, action) =>
     request(`/api/jobs/${id}/xlsx-advanced-action`, { method: 'POST', body: JSON.stringify({ action }) }),
+  jobAction: (id, action) =>
+    request(`/api/jobs/${id}/action`, { method: 'POST', body: JSON.stringify({ action }) }),
   saveEditedXlsx: (id, blob, filename = 'result_edited.xlsx') => {
     const formData = new FormData()
     formData.append('file', blob, filename)
@@ -80,11 +82,11 @@ export const api = {
   paymentHistory: () => request('/api/payments/history'),
 
   // 관리자
-  adminLogin: (email, password) =>
+  adminLogin: (email, password, turnstileToken = "") =>
     request('/api/admin/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, turnstile_token: turnstileToken }),
     }),
   adminLogout: () => request('/api/admin/logout', { method: 'POST' }),
   adminMe: () => request('/api/admin/me'),

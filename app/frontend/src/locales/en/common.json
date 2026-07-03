@@ -52,6 +52,7 @@
     "queued": "Queued",
     "ocr": "OCR in Progress",
     "merging": "Merging",
+    "retrying": "Retrying",
     "done": "Done",
     "error": "Error",
     "active": "Active",

@@ -52,6 +52,7 @@
     "queued": "待機中",
     "ocr": "OCR処理中",
     "merging": "マージ中",
+    "retrying": "再試行中",
     "done": "完了",
     "error": "エラー",
     "active": "進行中",

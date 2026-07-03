@@ -64,6 +64,7 @@ export default function JobResultPage() {
   const [basicUrl, setBasicUrl] = useState(null);
   const [advancedUrl, setAdvancedUrl] = useState(null);
   const [xlsxAdvancedPolling, setXlsxAdvancedPolling] = useState(false);
+  const [jobActionModal, setJobActionModal] = useState(false);
 
   const PAGE_THRESHOLD = 100;
   const needsPagedMode = (j) =>
@@ -272,6 +273,24 @@ export default function JobResultPage() {
     }
   }
 
+  // [Flow: Step 1 (팝업에서 선택한 action 설정) -> Step 2 (jobAction API 호출) -> Step 3 (상태 갱신 및 폴링 재개)]
+  async function handleJobAction(action) {
+    setConverting(true);
+    setError("");
+    try {
+      await api.jobAction(jobId, action);
+      setJobActionModal(false);
+      await loadJob();
+      if (action === "retry") {
+        startPolling();
+      }
+    } catch (e) {
+      setError(e.message || t("page:errors.unknown"));
+    } finally {
+      setConverting(false);
+    }
+  }
+
   useEffect(() => {
     if (previewMode === "xlsxBasic" && job?.xlsx_basic_converted && !basicUrl) {
       api.downloadJob(jobId, "xlsx_basic")
@@ -356,6 +375,15 @@ export default function JobResultPage() {
 
               <XCircle size={12} data-oid="vcowgtj" />
               {t("page:result.error")}
+            </span>
+          }
+          {job?.status === "retrying" &&
+          <span
+            className="px-3 py-1 bg-amber-100 text-amber-700 text-xs font-bold rounded-full flex items-center gap-1.5 border border-amber-200"
+            data-oid="retrying-badge">
+
+              <RefreshCw size={12} className="animate-spin" data-oid="retrying-icon" />
+              {t("page:result.retrying")}
             </span>
           }
         </div>
@@ -512,9 +540,23 @@ export default function JobResultPage() {
 
       {job?.status === "error" &&
       <div
-        className="flex-1 flex items-center justify-center p-6"
+        className="flex-1 flex flex-col items-center justify-center p-6 gap-4"
         data-oid=".1e5ij:">
 
+          {job?.refundable &&
+          <div className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-700 rounded-lg text-sm border border-red-200" data-oid="job-action-error">
+            <AlertTriangle size={14} data-oid="job-alert-icon" />
+            <span>{t("page:result.parseFailed")}</span>
+            <button
+              onClick={() => setJobActionModal(true)}
+              disabled={converting}
+              className="flex items-center gap-1 px-2 py-1 bg-white rounded border border-red-200 hover:bg-red-100 transition-colors"
+              data-oid="job-action-btn">
+              <RefreshCw size={14} data-oid="job-action-icon" />
+              {t("page:result.retryOrRefund")}
+            </button>
+          </div>
+          }
           <pre
           className="bg-red-50 text-red-700 text-xs p-4 rounded-lg whitespace-pre-wrap max-w-3xl"
           data-oid="vgn48fw">
@@ -667,6 +709,45 @@ export default function JobResultPage() {
           </div>
           }
         </div>
+      }
+
+      {jobActionModal &&
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-oid="job-modal-overlay">
+        <div className="bg-white rounded-lg shadow-lg border border-outline-variant p-6 w-full max-w-sm" data-oid="job-modal">
+          <h3 className="font-headline-md text-headline-md font-bold text-on-surface mb-2" data-oid="job-modal-title">
+            {t("page:result.retryOrRefund")}
+          </h3>
+          <p className="text-sm text-on-surface-variant mb-6" data-oid="job-modal-desc">
+            {t("page:result.parseFailed")}
+          </p>
+          <div className="flex justify-end gap-2" data-oid="job-modal-actions">
+            <button
+              onClick={() => setJobActionModal(false)}
+              disabled={converting}
+              className="px-4 py-2 rounded-lg border border-outline-variant text-on-surface hover:bg-surface-container-high transition-colors"
+              data-oid="job-modal-cancel">
+              {t("common:actions.cancel")}
+            </button>
+            <button
+              onClick={() => handleJobAction("refund")}
+              disabled={converting}
+              className="px-4 py-2 rounded-lg border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 transition-colors"
+              data-oid="job-modal-refund">
+              {t("page:result.refund")}
+            </button>
+            <button
+              onClick={() => handleJobAction("retry")}
+              disabled={converting}
+              className="flex items-center gap-1 px-4 py-2 rounded-lg bg-primary text-white hover:opacity-90 transition-colors"
+              data-oid="job-modal-retry">
+              {converting ?
+              <Loader2 size={16} className="animate-spin" data-oid="job-modal-spinner" /> :
+              <RefreshCw size={16} data-oid="job-modal-retry-icon" />}
+              {t("page:result.retry")}
+            </button>
+          </div>
+        </div>
+      </div>
       }
     </div>);
 

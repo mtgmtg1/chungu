@@ -121,6 +121,16 @@ export default function SettingsPage() {
       setError(t("page:settings.passwordLength"));
       return;
     }
+    // 복잡도 검증: 대소문자, 숫자, 특수문자 중 3종 이상
+    const hasLower = /[a-z]/.test(pwForm.new);
+    const hasUpper = /[A-Z]/.test(pwForm.new);
+    const hasDigit = /\d/.test(pwForm.new);
+    const hasSpecial = /[^a-zA-Z0-9]/.test(pwForm.new);
+    const charTypes = [hasLower, hasUpper, hasDigit, hasSpecial].filter(Boolean).length;
+    if (charTypes < 3) {
+      setError(t("page:settings.passwordComplexity"));
+      return;
+    }
     setPwLoading(true);
     setError("");
     try {

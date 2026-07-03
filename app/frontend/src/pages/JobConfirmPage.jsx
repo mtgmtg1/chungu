@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, Loader2, CreditCard, Settings2, Zap, Sparkles, ScanLine } from "lucide-react";
+import { ArrowLeft, Loader2, CreditCard, Zap, Sparkles, FileText, Brain, CheckCircle2, Clock, Coins } from "lucide-react";
 import { api } from "../api.js";
 import { SkeletonCard } from "../components/Skeleton.jsx";
 
@@ -16,9 +16,6 @@ export default function JobConfirmPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [ocrModel, setOcrModel] = useState("premium");
-  const [ocrEngine, setOcrEngine] = useState("easyocr");
-  const [columns, setColumns] = useState("");
-  const [prompt, setPrompt] = useState("");
 
   useEffect(() => {
     if (!jobId) return;
@@ -31,7 +28,6 @@ export default function JobConfirmPage() {
       setJob(jobData);
       setProfile(me);
       setOcrModel(jobData.ocr_model || "premium");
-      setOcrEngine(jobData.ocr_engine || "easyocr");
     } catch (e) {
       setError(e.message || t("page:confirm.loadError"));
     } finally {
@@ -43,7 +39,7 @@ export default function JobConfirmPage() {
     setSubmitting(true);
     setError("");
     try {
-      await api.updateJob(jobId, { ocr_model: ocrModel, ocr_engine: ocrEngine, columns, prompt });
+      await api.updateJob(jobId, { ocr_model: ocrModel });
       await api.confirmJob(jobId);
       nav(`/jobs/${jobId}`);
     } catch (e) {
@@ -240,7 +236,7 @@ export default function JobConfirmPage() {
             </div>
           </div>
 
-          <div className="mb-5" data-oid="model-select">
+          <div className="mb-6" data-oid="model-select">
             <label
               className="block text-sm font-medium text-on-surface mb-3"
               data-oid="model-label">
@@ -252,83 +248,77 @@ export default function JobConfirmPage() {
                 type="button"
                 onClick={() => !hasMedia && setOcrModel("basic")}
                 disabled={hasMedia}
-                className={`w-full border p-3 text-left transition-all ${
+                className={`w-full border p-4 text-left transition-all ${
                   effectiveModel === "basic"
                     ? "border-primary bg-primary/5 ring-2 ring-primary/20"
                     : "border-outline-variant hover:border-primary/50"
                 } ${hasMedia ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
                 data-oid="btn-basic">
 
-                  <div className="flex items-center gap-2 mb-2" data-oid="basic-icon">
-                  <Zap size={18} className={effectiveModel === "basic" ? "text-primary" : "text-on-surface-variant"} data-oid="zap-icon" />
-                  <span className="font-medium text-on-surface" data-oid="basic-title">
+                  <div className="flex items-center gap-2 mb-3" data-oid="basic-icon">
+                  <Zap size={20} className={effectiveModel === "basic" ? "text-primary" : "text-on-surface-variant"} data-oid="zap-icon" />
+                  <span className="font-semibold text-on-surface" data-oid="basic-title">
                     {t("page:confirm.basicModel")}
                   </span>
                 </div>
-                <p className="text-xs text-on-surface-variant mb-2" data-oid="basic-desc">
-                  {t("page:confirm.basicModelDesc")}
-                </p>
-                <div className="text-xs space-y-1" data-oid="basic-info">
-                  <p className="text-on-surface-variant" data-oid="basic-price">
-                    {t("page:confirm.basicPrice")}
-                  </p>
-                  <p className="text-primary font-medium" data-oid="basic-free">
+                <div className="space-y-2 text-xs text-on-surface-variant" data-oid="basic-detail">
+                  <div className="flex items-start gap-1.5" data-oid="basic-f1">
+                    <FileText size={14} className="shrink-0 mt-0.5 text-primary/70" data-oid="bf-icon1" />
+                    <span data-oid="bf-text1">{t("page:confirm.basicFeature1")}</span>
+                  </div>
+                  <div className="flex items-start gap-1.5" data-oid="basic-f2">
+                    <CheckCircle2 size={14} className="shrink-0 mt-0.5 text-primary/70" data-oid="bf-icon2" />
+                    <span data-oid="bf-text2">{t("page:confirm.basicFeature2")}</span>
+                  </div>
+                  <div className="flex items-start gap-1.5" data-oid="basic-f3">
+                    <Clock size={14} className="shrink-0 mt-0.5 text-primary/70" data-oid="bf-icon3" />
+                    <span data-oid="bf-text3">{t("page:confirm.basicFeature3")}</span>
+                  </div>
+                  <div className="flex items-start gap-1.5" data-oid="basic-f4">
+                    <Coins size={14} className="shrink-0 mt-0.5 text-primary/70" data-oid="bf-icon4" />
+                    <span data-oid="bf-text4">{t("page:confirm.basicPrice")}</span>
+                  </div>
+                </div>
+                {freeRemaining > 0 && !hasMedia && (
+                  <p className="mt-3 text-xs text-primary font-medium" data-oid="basic-free">
                     {t("page:confirm.freeRemaining", { count: freeRemaining })}
                   </p>
-                </div>
-                {effectiveModel === "basic" && !hasMedia && (
-                  <div className="mt-3 pt-3 border-t border-outline-variant/40" data-oid="engine-select">
-                    <label
-                      className="flex items-center gap-1.5 text-xs font-medium text-on-surface mb-2"
-                      data-oid="engine-label">
-                      <ScanLine size={14} data-oid="engine-icon" />
-                      {t("page:confirm.ocrEngine")}
-                    </label>
-                    <div className="grid grid-cols-3 gap-2" data-oid="engine-options">
-                      {["tesseract", "easyocr", "rapidocr"].map((eng) => (
-                        <button
-                          key={eng}
-                          type="button"
-                          onClick={() => setOcrEngine(eng)}
-                          className={`text-xs border rounded-lg py-1.5 px-1 text-center transition-all ${
-                            ocrEngine === eng
-                              ? "border-primary bg-primary/5 text-primary font-medium ring-1 ring-primary/20"
-                              : "border-outline-variant text-on-surface-variant hover:border-primary/50"
-                          }`}
-                          data-oid={`btn-engine-${eng}`}>
-                          {t(`page:confirm.engine_${eng}`)}
-                        </button>
-                      ))}
-                    </div>
-                    <p className="mt-1.5 text-[11px] text-on-surface-variant" data-oid="engine-desc">
-                      {t(`page:confirm.engine_${ocrEngine}_desc`)}
-                    </p>
-                  </div>
                 )}
               </button>
               <button
                 type="button"
                 onClick={() => setOcrModel("premium")}
-                className={`w-full border p-3 text-left transition-all cursor-pointer ${
+                className={`w-full border p-4 text-left transition-all cursor-pointer ${
                   effectiveModel === "premium"
                     ? "border-primary bg-primary/5 ring-2 ring-primary/20"
                     : "border-outline-variant hover:border-primary/50"
                 }`}
                 data-oid="btn-premium">
 
-                  <div className="flex items-center gap-2 mb-2" data-oid="premium-icon">
-                  <Sparkles size={18} className={effectiveModel === "premium" ? "text-primary" : "text-on-surface-variant"} data-oid="sparkles-icon" />
-                  <span className="font-medium text-on-surface" data-oid="premium-title">
+                  <div className="flex items-center gap-2 mb-3" data-oid="premium-icon">
+                  <Sparkles size={20} className={effectiveModel === "premium" ? "text-primary" : "text-on-surface-variant"} data-oid="sparkles-icon" />
+                  <span className="font-semibold text-on-surface" data-oid="premium-title">
                     {t("page:confirm.premiumModel")}
                   </span>
                 </div>
-                <p className="text-xs text-on-surface-variant mb-2" data-oid="premium-desc">
-                  {t("page:confirm.premiumModelDesc")}
-                </p>
-                <div className="text-xs space-y-1" data-oid="premium-info">
-                  <p className="text-on-surface-variant" data-oid="premium-price">
-                    {t("page:confirm.premiumPrice")}
-                  </p>
+                <div className="space-y-2 text-xs text-on-surface-variant" data-oid="premium-detail">
+                  <div className="flex items-start gap-1.5" data-oid="premium-f1">
+                    <Brain size={14} className="shrink-0 mt-0.5 text-primary/70" data-oid="pf-icon1" />
+                    <span data-oid="pf-text1">{t("page:confirm.premiumFeature1")}</span>
+                  </div>
+                  <div className="flex items-start gap-1.5" data-oid="premium-f2">
+                    <CheckCircle2 size={14} className="shrink-0 mt-0.5 text-primary/70" data-oid="pf-icon2" />
+                    <span data-oid="pf-text2">{t("page:confirm.premiumFeature2")}</span>
+                  </div>
+                  <div className="flex items-start gap-1.5" data-oid="premium-f3">
+                    <FileText size={14} className="shrink-0 mt-0.5 text-primary/70" data-oid="pf-icon3" />
+                    <span data-oid="pf-text3">{t("page:confirm.premiumFeature3")}</span>
+                  </div>
+                  <div className="flex items-start gap-1.5" data-oid="premium-f4">
+                    <Coins size={14} className="shrink-0 mt-0.5 text-primary/70" data-oid="pf-icon4" />
+                    <span data-oid="pf-text4">{t("page:confirm.premiumPrice")}
+                  </span>
+                  </div>
                 </div>
               </button>
             </div>
@@ -338,53 +328,6 @@ export default function JobConfirmPage() {
               </p>
             }
           </div>
-
-          <details className="mb-6 group" data-oid="9vqgwag">
-            <summary
-              className="flex items-center gap-2 cursor-pointer text-body-md text-on-surface-variant hover:text-primary transition-colors"
-              data-oid="bbjoa1o">
-              <Settings2 size={18} data-oid="q-lb4dr" />
-              <span data-oid="rr27gbt">
-                {t("page:confirm.advancedOptions")}
-              </span>
-            </summary>
-            <div
-              className="mt-4 space-y-4 bg-surface-container-low rounded-2xl p-5"
-              data-oid="ppq.99c">
-
-              <div data-oid="10iz:xq">
-                <label
-                  className="block text-sm font-medium text-on-surface mb-1"
-                  data-oid="o61:4ls">
-
-                  {t("page:confirm.extractColumns")}
-                </label>
-                <input
-                  value={columns}
-                  onChange={(e) => setColumns(e.target.value)}
-                  placeholder={t("page:confirm.extractColumnsPlaceholder")}
-                  className="w-full border border-outline-variant rounded-lg px-3 py-2 bg-white"
-                  data-oid="vltcbyj" />
-
-              </div>
-              <div data-oid="35qt5w-">
-                <label
-                  className="block text-sm font-medium text-on-surface mb-1"
-                  data-oid="ccv7hmm">
-
-                  {t("page:confirm.additionalPrompt")}
-                </label>
-                <textarea
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  rows={2}
-                  placeholder={t("page:confirm.additionalPromptPlaceholder")}
-                  className="w-full border border-outline-variant rounded-lg px-3 py-2 bg-white"
-                  data-oid="lg7__o4" />
-
-              </div>
-            </div>
-          </details>
 
           {insufficient &&
           <div

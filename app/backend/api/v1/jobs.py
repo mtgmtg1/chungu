@@ -73,6 +73,8 @@ def _job_summary(job: Job) -> dict:
         "xlsx_advanced_job_id": job.result_xlsx_advanced_job_id,
         "xlsx_advanced_refundable": job.xlsx_advanced_refundable,
         "xlsx_advanced_recovery_notes": job.xlsx_advanced_recovery_notes,
+        "refundable": job.refundable,
+        "retry_count": job.retry_count,
     }
 
 
@@ -681,3 +683,58 @@ def xlsx_advanced_action(
         client_ip=request.client.host if request.client else "",
     )
     return {"job_id": task.id, "status": "processing"}
+
+
+@router.post("/{job_id}/action")
+def job_action(
+    request: Request,
+    job_id: str,
+    payload: dict = Body(...),
+    auth: tuple[CurrentUser, ApiKey] = Depends(require_api_key_with_key),
+    db: Session = Depends(get_db),
+):
+    """문서 파싱 최종 실패 시 재시도 또는 포인트 환불을 처리한다."""
+    user, api_key = auth
+    enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
+
+    job = db.get(Job, job_id)
+    if job is None or str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+    if job.status != "error" or not job.refundable:
+        raise HTTPException(status_code=400, detail="환불/재시도할 수 있는 상태가 아닙니다")
+
+    action = str(payload.get("action", "")).lower()
+    if action not in ("retry", "refund"):
+        raise HTTPException(status_code=400, detail="지원하지 않는 action입니다")
+
+    db_user = db.get(User, job.user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+
+    if action == "refund":
+        if job.cost_points > 0:
+            points_service.refund_points(db, db_user, job.cost_points, f"API 문서 파싱 환불: {job.original_filename}")
+        job.refundable = False
+        db.commit()
+        add_daily_spent_points(api_key.id, -job.cost_points)
+        _log_api_usage(
+            db, api_key, uuid.UUID(user.user_id), "/api/v1/jobs/action", 200,
+            points_spent=-job.cost_points, job_id=job.id,
+            client_ip=request.client.host if request.client else "",
+        )
+        return {"refunded": True, "points": job.cost_points}
+
+    # retry: 상태 초기화 후 비용 없이 task 재실행
+    job.status = "queued"
+    job.retry_count = 0
+    job.refundable = False
+    job.result_csv_storage_path = ""
+    job.result_md_storage_path = ""
+    db.commit()
+    run_job.delay(job_id)
+    _log_api_usage(
+        db, api_key, uuid.UUID(user.user_id), "/api/v1/jobs/action", 200,
+        points_spent=0, job_id=job.id,
+        client_ip=request.client.host if request.client else "",
+    )
+    return {"job_id": job_id, "status": "queued"}

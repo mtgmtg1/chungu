@@ -8,8 +8,9 @@ import {
   Trash2,
   Loader2,
   ChevronLeft,
-  ChevronRight } from
-"lucide-react";
+  ChevronRight,
+  RefreshCw
+} from "lucide-react";
 import { useAuth } from "../AuthContext.jsx";
 import { api } from "../api.js";
 import i18n from "../i18n.js";
@@ -128,6 +129,11 @@ const STATUS_CHIP = {
     text: "text-primary",
     icon: "refresh"
   },
+  retrying: {
+    bg: "bg-amber-50",
+    text: "text-amber-700",
+    icon: "refresh"
+  },
   done: { bg: "bg-green-50", text: "text-green-700", icon: "check_circle" },
   error: { bg: "bg-red-50", text: "text-red-700", icon: "cancel" }
 };
@@ -161,6 +167,8 @@ export default function JobsPage() {
   const [dateTo, setDateTo] = useState("");
   const [deleteModal, setDeleteModal] = useState({ open: false, job: null });
   const [deleting, setDeleting] = useState({});
+  const [jobActionModal, setJobActionModal] = useState({ open: false, job: null });
+  const [jobActionLoading, setJobActionLoading] = useState({});
   const [now, setNow] = useState(Date.now());
   const pollRef = useRef(null);
 
@@ -324,6 +332,22 @@ export default function JobsPage() {
       setError(e.message || t("page:errors.unknown"));
     } finally {
       setDeleting((prev) => ({ ...prev, [job.job_id]: false }));
+    }
+  }
+
+  // [Flow: Step 1 (선택한 작업과 action) -> Step 2 (jobAction API 호출) -> Step 3 (목록 새로고침)]
+  async function handleJobAction(action) {
+    const job = jobActionModal.job;
+    if (!job) return;
+    setJobActionLoading((prev) => ({ ...prev, [job.job_id]: true }));
+    try {
+      await api.jobAction(job.job_id, action);
+      setJobActionModal({ open: false, job: null });
+      await load();
+    } catch (e) {
+      setError(e.message || t("page:errors.unknown"));
+    } finally {
+      setJobActionLoading((prev) => ({ ...prev, [job.job_id]: false }));
     }
   }
 
@@ -497,6 +521,7 @@ export default function JobsPage() {
                   "queued",
                   "ocr",
                   "merging",
+                  "retrying",
                   "done",
                   "error"].
                   map((k) =>
@@ -742,7 +767,7 @@ export default function JobsPage() {
                         data-oid="1uiycel">
 
                           <span
-                          className={`material-symbols-outlined text-[16px] ${j.status === "ocr" || j.status === "merging" || j.status === "queued" ? "animate-spin" : ""}`}
+                          className={`material-symbols-outlined text-[16px] ${j.status === "ocr" || j.status === "merging" || j.status === "queued" || j.status === "retrying" ? "animate-spin" : ""}`}
                           data-oid="_iw_vfh">
 
                             {chip.icon}
@@ -814,6 +839,15 @@ export default function JobsPage() {
                                 <Download size={18} data-oid="x4fihqx" />
                               </DownloadMenu>
                             </> :
+
+                        j.status === "error" && j.refundable ?
+                        <button
+                          onClick={() => setJobActionModal({ open: true, job: j })}
+                          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors text-sm"
+                          data-oid="job-list-action-btn">
+                          <RefreshCw size={14} data-oid="job-list-action-icon" />
+                          {t("page:jobs.retryOrRefund")}
+                        </button> :
 
                         <button
                           onClick={() => openDeleteModal(j)}
@@ -907,6 +941,15 @@ export default function JobsPage() {
                             <Download size={18} />
                           </DownloadMenu>
                         </>
+                      ) : j.status === "error" && j.refundable ? (
+                        <button
+                          onClick={() => setJobActionModal({ open: true, job: j })}
+                          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition-colors text-sm"
+                          data-oid="m-job-action-btn"
+                        >
+                          <RefreshCw size={14} data-oid="m-job-action-icon" />
+                          {t("page:jobs.retryOrRefund")}
+                        </button>
                       ) : (
                         <button
                           onClick={() => openDeleteModal(j)}
@@ -920,7 +963,7 @@ export default function JobsPage() {
                   </div>
                   <div className="mt-3 flex flex-col gap-2">
                     <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border border-inherit ${chip.bg} ${chip.text} w-fit`} data-oid="m-chip">
-                      <span className={`material-symbols-outlined text-[16px] ${j.status === "ocr" || j.status === "merging" || j.status === "queued" ? "animate-spin" : ""}`}>{chip.icon}</span>
+                      <span className={`material-symbols-outlined text-[16px] ${j.status === "ocr" || j.status === "merging" || j.status === "queued" || j.status === "retrying" ? "animate-spin" : ""}`}>{chip.icon}</span>
                       <span className="font-label-sm text-label-sm font-semibold">{statusLabel(j.status)}</span>
                     </div>
                     {j.status !== "done" && j.status !== "error" && (j.total_pages > 0 || j.total_files > 0) && (
@@ -1086,6 +1129,44 @@ export default function JobsPage() {
             </div>
           </div>
         </div>
+      }
+
+      {jobActionModal.open &&
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" data-oid="job-action-modal">
+        <div className="w-full max-w-sm bg-surface-container rounded-2xl shadow-xl border border-outline-variant p-6" data-oid="job-action-modal-content">
+          <h3 className="font-headline-sm text-headline-sm text-on-surface mb-2" data-oid="job-action-modal-title">
+            {t("page:jobs.retryOrRefund")}
+          </h3>
+          <p className="font-body-md text-body-md text-on-surface-variant mb-6" data-oid="job-action-modal-desc">
+            {t("page:result.parseFailed")}
+          </p>
+          <div className="flex justify-end gap-3" data-oid="job-action-modal-actions">
+            <button
+              onClick={() => setJobActionModal({ open: false, job: null })}
+              className="px-4 py-2 rounded-xl border border-outline-variant font-body-md text-body-md text-on-surface-variant hover:bg-surface-container-high transition-colors"
+              data-oid="job-action-modal-cancel">
+              {t("page:jobs.cancel")}
+            </button>
+            <button
+              onClick={() => handleJobAction("refund")}
+              disabled={jobActionLoading[jobActionModal.job?.job_id]}
+              className="px-4 py-2 rounded-xl border border-red-200 text-red-700 bg-red-50 font-body-md text-body-md hover:bg-red-100 transition-colors disabled:opacity-50"
+              data-oid="job-action-modal-refund">
+              {t("page:result.refund")}
+            </button>
+            <button
+              onClick={() => handleJobAction("retry")}
+              disabled={jobActionLoading[jobActionModal.job?.job_id]}
+              className="flex items-center gap-1 px-4 py-2 rounded-xl bg-primary text-white font-body-md text-body-md font-medium hover:opacity-90 transition-colors disabled:opacity-50"
+              data-oid="job-action-modal-retry">
+              {jobActionLoading[jobActionModal.job?.job_id] ?
+              <Loader2 size={16} className="animate-spin" data-oid="job-action-modal-spinner" /> :
+              <RefreshCw size={16} data-oid="job-action-modal-retry-icon" />}
+              {t("page:result.retry")}
+            </button>
+          </div>
+        </div>
+      </div>
       }
     </SidebarLayout>);
 

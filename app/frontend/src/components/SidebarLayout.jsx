@@ -165,7 +165,7 @@ export default function SidebarLayout({ children, title, subtitle }) {
                 {user.email}
               </Link>
               <button
-                onClick={() => signOut()}
+                onClick={async () => { await signOut(); navigate("/"); }}
                 className="mt-2 w-full flex items-center justify-center gap-1 text-xs text-outline hover:text-error transition-colors"
                 data-oid="fy:21t1">
                 <LogOut size={14} data-oid=":nvrtmw" />

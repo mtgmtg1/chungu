@@ -137,6 +137,37 @@ npm run start        # dev server at localhost:3000
 - With this setup, Supabase Auth emails generate links like `https://proof.teamcat.app/supabase/auth/v1/verify?token=...&type=signup`, which are proxied by FastAPI's `/supabase/*` route to the internal Supabase Auth service (`192.168.1.50:28000`).
 - Internal IPs (`192.168.1.x`, `localhost`, `127.0.0.1`) are reserved for backend-only services: LLM endpoints, Docling service, and the internal `SUPABASE_URL`.
 
+## Email System
+
+### Supabase Auth Emails (English Fixed)
+- GoTrue는 단일 템플릿만 지원하므로 인증 메일은 **영어 고정**.
+- 템플릿 파일: `/opt/supabase-chungu/volumes/templates/confirmation.html` (서버)
+- docker-compose.yml에 `GOTRUE_MAILER_TEMPLATES_CONFIRMATION`, `GOTRUE_MAILER_SUBJECTS_CONFIRMATION` 환경변수 및 volume 마운트 추가.
+- 회원가입 시 프론트엔드(`AuthPage.jsx`)에서 스팸 폴더 확인 안내 표시 (`signupSuccessTitle`, `signupSuccessBody`, `signupSpamNotice` i18n 키).
+
+### App Emails (Multi-language: ko/en/ja)
+- **완료 메일** (`build_done_email`): 사용자 프로필 언어에 따라 XLSX/DOCX 다운로드 버튼 + 결과 페이지 링크(`/jobs/{jobId}`) 포함.
+- **실패 메일** (`build_error_email`): 사용자 프로필 언어에 따라 에러 내용 통지.
+- 언어 조회: `tasks.py`에서 `job.user_id` → `User.language` 조회 후 `lang` 파라미터로 전달. 비회원(`user_id == None`)은 기본값 `"en"`.
+- 다운로드 링크: `/api/dl/{token}?type=xlsx_basic|docx` — auth 없이 `download_token`으로 302 redirect (이메일 버튼용).
+- Key files:
+  - `app/backend/email_sender.py` — `_DONE_T`, `_ERROR_T` 다국어 딕셔너리, `build_done_email`, `build_error_email`
+  - `app/backend/workers/tasks.py` — `_handle_job_failure`, `run_job` Step 7에서 언어 조회 후 이메일 발송
+  - `app/backend/api/jobs.py` — `/api/dl/{token}` redirect 엔드포인트
+
+## Model Selection UI
+
+- `JobConfirmPage.jsx`에서 OCR 엔진 선택 및 고급 옵션 UI 제거 — "기본 모델"과 "고급 모델" 두 가지 선택지만 제공.
+- 기본 모델: Docling + Tesseract OCR (텍스트 레이어 PDF에 최적, 1P/페이지, 매일 5페이지 무료).
+- 고급 모델: Gemma 4 AI (26B) 비전 모델 (스캔/손글씨/표/이미지/회전 문서 완벽 처리, 오디오/비디오 지원, 5P/페이지).
+- 오디오/비디오 파일이 포함된 경우 기본 모델 비활성화, 고급 모델 강제.
+- i18n 키: `basicFeature1-3`, `premiumFeature1-3` (ko/en/ja).
+
+## Logout Fix
+
+- `SidebarLayout.jsx`: `signOut()` 후 `navigate("/")`로 랜딩 페이지 이동.
+- `DashboardPage.jsx`: 로딩 조건을 `if (authLoading)`로 단순화 — 로그아웃 후 `user == null`일 때 무한 로딩 스피너 방지.
+
 ## Deployment
 
 Docker 이미지 빌드는 **a1 서버에서 수행**한다. 로컬에서 Docker 빌드를 하지 않는다.

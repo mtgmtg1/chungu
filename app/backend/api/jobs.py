@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import List
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pypdf import PdfReader
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -1304,6 +1304,49 @@ def xlsx_advanced_action(
     return {"job_id": task.id, "status": "processing"}
 
 
+@router.post("/jobs/{job_id}/action")
+def job_action(
+    job_id: str,
+    payload: dict = Body(...),
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """문서 파싱 최종 실패 시 재시도 또는 포인트 환불을 처리한다."""
+    job = db.get(Job, job_id)
+    if job is None or str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+    if job.status != "error" or not job.refundable:
+        raise HTTPException(status_code=400, detail="환불/재시도할 수 있는 상태가 아닙니다")
+
+    action = str(payload.get("action", "")).lower()
+    if action not in ("retry", "refund"):
+        raise HTTPException(status_code=400, detail="지원하지 않는 action입니다")
+
+    from ..db.models import User
+    db_user = db.get(User, job.user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+
+    if action == "refund":
+        if job.cost_points > 0:
+            points_service.refund_points(db, db_user, job.cost_points, f"문서 파싱 환불: {job.original_filename}")
+        job.refundable = False
+        db.commit()
+        return {"refunded": True, "points": job.cost_points}
+
+    # retry: 상태 초기화 후 비용 없이 task 재실행
+    job.status = "queued"
+    job.retry_count = 0
+    job.refundable = False
+    job.result_csv_storage_path = ""
+    job.result_md_storage_path = ""
+    job.result_csv_path = ""
+    job.result_md_path = ""
+    db.commit()
+    run_job.delay(job_id)
+    return {"job_id": job_id, "status": "queued"}
+
+
 @router.get("/admin/jobs")
 def admin_list_jobs(
     admin: CurrentUser = Depends(get_current_admin),
@@ -1345,6 +1388,8 @@ def _job_summary(job: Job) -> dict:
         "xlsx_advanced_job_id": job.result_xlsx_advanced_job_id,
         "xlsx_advanced_refundable": job.xlsx_advanced_refundable,
         "xlsx_advanced_recovery_notes": job.xlsx_advanced_recovery_notes,
+        "refundable": job.refundable,
+        "retry_count": job.retry_count,
     }
 
 
@@ -1375,5 +1420,35 @@ def legacy_download(token: str, type: str = "csv", db: Session = Depends(get_db)
     try:
         url = supabase_client.get_signed_download_url(path, bucket="results", expires_in=3600)
         return {"download_url": url}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+
+
+# [Flow: Step 1 (token으로 job 조회) -> Step 2 (포맷별 Storage 경로 매핑) -> Step 3 (signed URL 생성 후 302 redirect)]
+@router.get("/dl/{token}")
+def email_download_redirect(token: str, type: str = "xlsx_basic", db: Session = Depends(get_db)):
+    """이메일 다운로드 버튼용 redirect 엔드포인트 (auth 없이 download_token으로 직접 다운로드)."""
+    job = db.get(Job, token)
+    if job is None or job.download_token != token:
+        raise HTTPException(status_code=404, detail="유효하지 않은 다운로드 링크입니다")
+    if job.status != "done":
+        raise HTTPException(status_code=400, detail="완료된 작업만 다운로드할 수 있습니다")
+
+    fmt = _convert_format_alias(type)
+    path_map = {
+        "csv_basic": job.result_csv_storage_path,
+        "md": job.result_edited_md_storage_path or job.result_md_storage_path,
+        "xlsx_basic": job.result_xlsx_basic_storage_path,
+        "xlsx_advanced": job.result_xlsx_advanced_storage_path,
+        "docx": job.result_docx_storage_path,
+        "pptx": job.result_pptx_storage_path,
+    }
+    path = path_map.get(fmt)
+    if not path:
+        raise HTTPException(status_code=404, detail="결과 파일이 없습니다")
+
+    try:
+        url = supabase_client.get_signed_download_url(path, bucket="results", expires_in=3600)
+        return RedirectResponse(url, status_code=302)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")

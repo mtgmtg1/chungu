@@ -86,6 +86,9 @@ class Job(Base):
     xlsx_advanced_recovery_notes: Mapped[list] = mapped_column(JSON, default=list)
     xlsx_advanced_refundable: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # 문서 파싱 최종 실패 시 사용자 재시도/환불 가능 여부
+    refundable: Mapped[bool] = mapped_column(Boolean, default=False)
+
     # 하위 호환: 로컬 파일 경로
     result_csv_path: Mapped[str] = mapped_column(String(1024), default="")
     result_md_path: Mapped[str] = mapped_column(String(1024), default="")

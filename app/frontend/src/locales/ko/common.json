@@ -52,6 +52,7 @@
     "queued": "대기 중",
     "ocr": "OCR 중",
     "merging": "병합 중",
+    "retrying": "재시도 중",
     "done": "완료",
     "error": "실패",
     "active": "진행 중",

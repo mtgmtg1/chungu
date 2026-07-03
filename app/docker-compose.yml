@@ -16,6 +16,8 @@ services:
       dockerfile: Dockerfile.backend
       args:
         VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+        VITE_TURNSTILE_SITE_KEY: ${VITE_TURNSTILE_SITE_KEY:-}
+        VITE_TURNSTILE_WORKER_URL: ${VITE_TURNSTILE_WORKER_URL:-}
     command: uvicorn backend.main:app --host 0.0.0.0 --port 28181
     env_file: .env
     ports:
@@ -36,6 +38,8 @@ services:
       dockerfile: Dockerfile.backend
       args:
         VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+        VITE_TURNSTILE_SITE_KEY: ${VITE_TURNSTILE_SITE_KEY:-}
+        VITE_TURNSTILE_WORKER_URL: ${VITE_TURNSTILE_WORKER_URL:-}
     command: celery -A backend.celery_app.celery worker --loglevel=info --concurrency=16
     env_file: .env
     environment:
@@ -61,6 +65,8 @@ services:
       dockerfile: Dockerfile.backend
       args:
         VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+        VITE_TURNSTILE_SITE_KEY: ${VITE_TURNSTILE_SITE_KEY:-}
+        VITE_TURNSTILE_WORKER_URL: ${VITE_TURNSTILE_WORKER_URL:-}
     command: celery -A backend.celery_app.celery beat --loglevel=info
     env_file: .env
     environment:

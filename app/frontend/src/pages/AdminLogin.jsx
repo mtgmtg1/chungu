@@ -1,14 +1,86 @@
-// [Flow: Step 1 (이메일/비번 입력) -> Step 2 (로그인 요청) -> Step 3 (성공 시 대시보드 이동)]
-import { useState } from "react";
+// [Flow: Step 1 (이메일/비번 입력) -> Step 2 (Turnstile 검증) -> Step 3 (로그인 요청) -> Step 4 (성공 시 대시보드 이동)]
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Lock, Loader2 } from "lucide-react";
 import { api } from "../api.js";
+
+const TURNSTILE_SITE_KEY = import.meta.env.VITE_TURNSTILE_SITE_KEY || "";
+const TURNSTILE_WORKER_URL = import.meta.env.VITE_TURNSTILE_WORKER_URL || "";
+
+/**
+ * Spin Worker 경유 Turnstile 토큰 검증.
+ * 반환: true = 검증 통과, false = 검증 실패.
+ */
+async function verifyTurnstileWithWorker(token) {
+  if (!TURNSTILE_WORKER_URL || !token) return true;
+  try {
+    const resp = await fetch(TURNSTILE_WORKER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    const data = await resp.json();
+    return data.success === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Cloudflare Turnstile 위젯 컴포넌트.
+ * onVerify 콜백으로 토큰을 전달, 만료 시 자동 갱신.
+ */
+function TurnstileWidget({ onVerify }) {
+  const containerRef = useRef(null);
+  const widgetIdRef = useRef(null);
+  const callbackRef = useRef(onVerify);
+  callbackRef.current = onVerify;
+
+  const renderWidget = useCallback(() => {
+    if (!containerRef.current || !window.turnstile) return;
+    containerRef.current.innerHTML = "";
+    widgetIdRef.current = window.turnstile.render(containerRef.current, {
+      sitekey: TURNSTILE_SITE_KEY,
+      action: "turnstile-spin-v1",
+      callback: (token) => callbackRef.current(token),
+      "expired-callback": () => callbackRef.current(""),
+      "error-callback": () => callbackRef.current(""),
+      theme: "light",
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!TURNSTILE_SITE_KEY) {
+      onVerify("");
+      return;
+    }
+    if (window.turnstile) {
+      renderWidget();
+    } else {
+      const script = document.createElement("script");
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.async = true;
+      script.defer = true;
+      script.onload = () => renderWidget();
+      document.head.appendChild(script);
+    }
+    return () => {
+      if (widgetIdRef.current && window.turnstile) {
+        window.turnstile.remove(widgetIdRef.current);
+      }
+    };
+  }, [renderWidget, onVerify]);
+
+  if (!TURNSTILE_SITE_KEY) return null;
+  return <div ref={containerRef} className="flex justify-center" data-oid="ts-adm" />;
+}
 
 export default function AdminLogin() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState("");
   const nav = useNavigate();
 
   async function handleSubmit(e) {
@@ -16,10 +88,24 @@ export default function AdminLogin() {
     setError("");
     setLoading(true);
     try {
-      await api.adminLogin(email, password);
+      const verified = await verifyTurnstileWithWorker(turnstileToken);
+      if (!verified) {
+        setError("CAPTCHA 확인에 실패했습니다. 다시 시도하세요.");
+        return;
+      }
+      await api.adminLogin(email, password, turnstileToken);
       nav("/admin");
     } catch (e) {
-      setError(e.message);
+      const msg = e?.message || "";
+      if (msg.includes("429") || msg.includes("너무 많습니다")) {
+        setError(msg);
+      } else if (msg.includes("403") || msg.includes("bot")) {
+        setError("bot 확인에 실패했습니다. 다시 시도하세요.");
+      } else if (msg.includes("남은 시도 횟수")) {
+        setError(msg);
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -58,6 +144,8 @@ export default function AdminLogin() {
           className="w-full border rounded-lg px-3 py-1.5"
           data-oid=":kgaarx" />
 
+
+        <TurnstileWidget onVerify={setTurnstileToken} />
 
         {error &&
         <p className="text-red-600 text-sm" data-oid="nfc1c58">

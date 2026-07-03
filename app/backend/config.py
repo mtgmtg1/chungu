@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     paddleocr_fallback_failure_window_seconds: int = 60
     paddleocr_fallback_open_seconds: int = 600
 
+    # Cloudflare Turnstile (CAPTCHA)
+    turnstile_site_key: str = ""
+    turnstile_worker_url: str = ""
+
     # 경로
     data_dir: str = "/data"
 

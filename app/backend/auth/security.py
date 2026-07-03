@@ -41,8 +41,8 @@ def decode_token(token: str) -> str | None:
 def require_admin(proof_admin: str | None = Cookie(default=None)) -> str:
     """관리자 전용 라우트 가드: 유효 세션 쿠키가 없으면 401."""
     if not proof_admin:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="로그인이 필요합니다")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login required")
     email = decode_token(proof_admin)
     if not email:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="세션이 만료되었습니다")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
     return email

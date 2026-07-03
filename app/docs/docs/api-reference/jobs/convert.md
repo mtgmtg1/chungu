@@ -19,7 +19,7 @@ curl -X POST https://your-domain.com/api/v1/jobs/job-abc123/convert \
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `format` | string | `xlsx`, `docx`, or `pptx` |
+| `format` | string | `xlsx_basic`, `xlsx_advanced`, `docx`, or `pptx` |
 
 ## Response
 
@@ -35,16 +35,17 @@ curl -X POST https://your-domain.com/api/v1/jobs/job-abc123/convert \
 
 | Format | Cost |
 |--------|------|
-| `xlsx` | 3 points per unit (first conversion only) |
+| `xlsx_basic` | $0.001 per unit (1 milli-USD), first conversion only |
+| `xlsx_advanced` | $0.003 per unit (3 milli-USD), first conversion only |
 | `docx` | Free |
 | `pptx` | Free |
 
-If the file was already converted (e.g., you request `xlsx` again), the existing file is returned at no cost.
+If the file was already converted (e.g., you request `xlsx_basic` again), the existing file is returned at no cost.
 
 ## Errors
 
 | Status | Meaning |
 |--------|---------|
 | 400 | Job is not `done`, or unsupported format |
-| 402 | Insufficient points for XLSX conversion |
+| 402 | Insufficient credits for XLSX conversion |
 | 502 | Conversion or upload failed |

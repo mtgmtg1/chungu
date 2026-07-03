@@ -4,7 +4,7 @@ sidebar_position: 5
 
 # GET /keys/`{key_id}`/usage
 
-Returns usage history for a specific API key.
+Returns usage history for a specific API key. Values are in milli-USD.
 
 ## Request
 

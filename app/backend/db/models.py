@@ -38,6 +38,7 @@ class User(Base):
     point_transactions: Mapped[list["PointTransaction"]] = relationship("PointTransaction", back_populates="user", lazy="selectin")
     api_keys: Mapped[list["ApiKey"]] = relationship("ApiKey", back_populates="user", lazy="selectin")
     api_usage: Mapped[list["ApiUsage"]] = relationship("ApiUsage", back_populates="user", lazy="selectin")
+    on_premise_inquiries: Mapped[list["OnPremiseInquiry"]] = relationship("OnPremiseInquiry", back_populates="user", lazy="selectin")
 
 
 class Job(Base):
@@ -217,3 +218,24 @@ class DailyUsage(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), index=True)
     date: Mapped[datetime] = mapped_column(Date, index=True)
     pages_used: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class OnPremiseInquiry(Base):
+    """온프레미스 로컬 서버 견적 문의."""
+
+    __tablename__ = "on_premise_inquiries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    company: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    contact_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    country: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    pages_per_hour: Mapped[int] = mapped_column(Integer, nullable=False)
+    estimated_price: Mapped[int] = mapped_column(Integer, nullable=False)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    agreed_terms: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    user: Mapped["User | None"] = relationship("User", back_populates="on_premise_inquiries")

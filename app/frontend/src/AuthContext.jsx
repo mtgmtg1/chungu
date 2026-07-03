@@ -15,16 +15,30 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session && import.meta.env.DEV) {
-        // 개발 모드 자동 로그인
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: "mtgmtg@naver.com",
-          password: "admin1234!",
-        });
-        if (error) {
-          console.warn("[DEV auto-login] 실패:", error.message);
-        } else {
-          session = data.session;
-          console.log("[DEV auto-login] 성공:", session?.user?.email);
+        // 개발 모드 자동 로그인: 로컬 백엔드 bypass 사용
+        try {
+          const resp = await fetch(`${window.location.origin}/api/dev/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          });
+          if (resp.ok) {
+            const devData = await resp.json();
+            const { data: sessionData, error } = await supabase.auth.setSession({
+              access_token: devData.access_token,
+              refresh_token: devData.access_token,
+            });
+            if (error) {
+              console.warn("[DEV auto-login] 세션 설정 실패:", error.message);
+            } else {
+              session = sessionData.session;
+              console.log("[DEV auto-login] 성공:", session?.user?.email);
+            }
+          } else {
+            const errText = await resp.text();
+            console.warn("[DEV auto-login] 실패:", errText);
+          }
+        } catch (e) {
+          console.warn("[DEV auto-login] 실패:", e.message);
         }
       }
       setSession(session);

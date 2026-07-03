@@ -36,4 +36,4 @@ openapi-generator-cli generate \
 
 ## API key management
 
-Use the [Developer Portal](../../developer) in the web app for a graphical interface, or the [API Keys endpoints](../api-reference/api-keys/create-key) for programmatic access.
+Use the [Developer Portal](pathname:///developer) in the web app for a graphical interface, or the [API Keys endpoints](api-reference/api-keys/create-key) for programmatic access.

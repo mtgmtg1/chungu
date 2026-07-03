@@ -46,22 +46,22 @@ def get_current_user(
 ) -> CurrentUser:
     """Supabase access_token을 검증하고 public.users 레코드를 반환합니다."""
     if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="로그인이 필요합니다")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Login required")
 
     token = authorization[7:].strip()
     payload = _decode_token(token)
     if not payload:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="세션이 만료되었거나 유효하지 않습니다")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired or invalid")
 
     user_id = payload.get("sub") or payload.get("user_id")
     email = payload.get("email") or ""
     if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="토큰에 사용자 정보가 없습니다")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token missing user information")
 
     try:
         uid = uuid.UUID(str(user_id))
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="잘못된 사용자 ID입니다") from exc
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user ID") from exc
 
     user = db.execute(select(User).where(User.id == uid)).scalar_one_or_none()
     if user is None:
@@ -81,7 +81,7 @@ def get_current_user(
 
 def get_current_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
     if not user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="관리자 권한이 필요합니다")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return user
 
 

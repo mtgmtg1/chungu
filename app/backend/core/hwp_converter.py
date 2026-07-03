@@ -108,7 +108,7 @@ def _odt_to_docx_with_libreoffice(odt_path: Path, output_dir: Path) -> Path:
 
     expected = output_dir / f"{odt_path.stem}.docx"
     if not expected.exists():
-        raise FileNotFoundError(f"LibreOffice DOCX 변환 산출물을 찾을 수 없습니다: {expected}")
+        raise FileNotFoundError(f"LibreOffice DOCX output not found: {expected}")
     return expected
 
 
@@ -140,7 +140,7 @@ def _hwp_to_docx_with_libreoffice(input_path: Path, output_dir: Path) -> Path:
 
     expected = output_dir / f"{input_path.stem}.docx"
     if not expected.exists():
-        raise FileNotFoundError(f"LibreOffice DOCX 변환 산출물을 찾을 수 없습니다: {expected}")
+        raise FileNotFoundError(f"LibreOffice DOCX output not found: {expected}")
     return expected
 
 

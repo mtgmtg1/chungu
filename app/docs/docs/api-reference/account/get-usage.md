@@ -6,6 +6,10 @@ sidebar_position: 3
 
 Returns daily aggregated API usage for the last N days.
 
+:::note
+This endpoint accepts both API key (`X-API-Key` header) and JWT session token (`Authorization: Bearer` header).
+:::
+
 ## Query parameters
 
 | Parameter | Type | Default | Range |
@@ -23,8 +27,12 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
 
 ```json
 [
-  { "day": "2026-06-20", "requests": 15, "points_spent": 450 },
-  { "day": "2026-06-21", "requests": 8, "points_spent": 240 },
-  { "day": "2026-06-22", "requests": 0, "points_spent": 0 }
+  { "day": "2026-07-10", "requests": 15, "points_spent": 450 },
+  { "day": "2026-07-11", "requests": 8, "points_spent": 240 },
+  { "day": "2026-07-12", "requests": 0, "points_spent": 0 }
 ]
 ```
+
+:::info
+`points_spent` is in milli-USD. A value of `450` means $0.45 USD spent that day.
+:::

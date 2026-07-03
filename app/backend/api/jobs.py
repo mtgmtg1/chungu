@@ -102,7 +102,7 @@ async def upload_job(
     db: Session = Depends(get_db),
 ):
     if not files:
-        raise HTTPException(status_code=400, detail="파일을 선택하세요")
+        raise HTTPException(status_code=400, detail="No files selected")
     if pipeline not in ("vision", "hybrid"):
         pipeline = settings_store.get_setting(db, "default_pipeline") or "vision"
     if ocr_model not in ("basic", "premium"):
@@ -115,16 +115,16 @@ async def upload_job(
     file_data: List[bytes] = []
     for file in files:
         if not file.filename:
-            raise HTTPException(status_code=400, detail="파일 이름이 없습니다")
+            raise HTTPException(status_code=400, detail="Missing filename")
         ext = Path(file.filename).suffix.lower()
         if ext not in MEDIA_EXTENSIONS:
-            raise HTTPException(status_code=400, detail=f"지원하지 않는 파일 형식입니다: {file.filename}")
+            raise HTTPException(status_code=400, detail=f"Unsupported file format: {file.filename}")
         data = await file.read()
         total_size += len(data)
         file_data.append(data)
 
     if total_size > max_mb * 1024 * 1024:
-        raise HTTPException(status_code=413, detail=f"전체 파일이 너무 큽니다 (최대 {max_mb}MB)")
+        raise HTTPException(status_code=413, detail=f"Total file size exceeds limit (max {max_mb}MB)")
 
     rel_paths = []
     if relative_paths:
@@ -272,7 +272,7 @@ async def upload_job(
         if pages > max_pages:
             db.delete(job)
             db.commit()
-            raise HTTPException(status_code=413, detail=f"페이지가 너무 많습니다 (최대 {max_pages})")
+            raise HTTPException(status_code=413, detail=f"Too many pages (max {max_pages})")
 
         job.total_pages = pages
         db.commit()
@@ -281,7 +281,7 @@ async def upload_job(
     except Exception as e:
         db.delete(job)
         db.commit()
-        raise HTTPException(status_code=502, detail=f"파일 처리 실패: {e}")
+        raise HTTPException(status_code=502, detail=f"File processing failed: {e}")
 
     has_media = audio_seconds > 0 or video_seconds > 0
     if has_media and ocr_model == "basic":
@@ -367,7 +367,7 @@ async def init_job(
     """TUS 업로드용 임시 Job을 생성하고 Storage 업로드 경로를 반환한다."""
     files = payload.get("files", [])
     if not files:
-        raise HTTPException(status_code=400, detail="파일을 선택하세요")
+        raise HTTPException(status_code=400, detail="No files selected")
 
     pipeline = payload.get("pipeline", "vision")
     if pipeline not in ("vision", "hybrid"):
@@ -382,12 +382,12 @@ async def init_job(
     for f in files:
         ext = Path(f["name"]).suffix.lower()
         if ext not in MEDIA_EXTENSIONS:
-            raise HTTPException(status_code=400, detail=f"지원하지 않는 파일 형식입니다: {f['name']}")
+            raise HTTPException(status_code=400, detail=f"Unsupported file format: {f['name']}")
 
     max_mb = int(settings_store.get_setting(db, "max_file_mb") or "200")
     total_size = sum(f.get("size", 0) for f in files)
     if total_size > max_mb * 1024 * 1024:
-        raise HTTPException(status_code=413, detail=f"전체 파일이 너무 큽니다 (최대 {max_mb}MB)")
+        raise HTTPException(status_code=413, detail=f"Total file size exceeds limit (max {max_mb}MB)")
 
     is_single_file = len(files) == 1
     original_filename = files[0]["name"] if is_single_file else f"{len(files)}_files.zip"
@@ -434,13 +434,13 @@ async def create_job(
     """TUS 업로드 완료 후 Storage의 파일을 분석하여 비용을 계산한다."""
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Job not found")
     if job.status != "uploading":
-        raise HTTPException(status_code=400, detail="업로드 중인 작업만 처리할 수 있습니다")
+        raise HTTPException(status_code=400, detail="Only uploading jobs can be processed")
 
     files_info = payload.get("files", [])
     if not files_info:
-        raise HTTPException(status_code=400, detail="파일 정보가 없습니다")
+        raise HTTPException(status_code=400, detail="No file information provided")
 
     is_single_file = len(files_info) == 1
     total_size = sum(f.get("size", 0) for f in files_info)
@@ -548,7 +548,7 @@ async def create_job(
         if pages > max_pages:
             db.delete(job)
             db.commit()
-            raise HTTPException(status_code=413, detail=f"페이지가 너무 많습니다 (최대 {max_pages})")
+            raise HTTPException(status_code=413, detail=f"Too many pages (max {max_pages})")
 
         job.total_pages = pages
         job.status = "pending"
@@ -559,7 +559,7 @@ async def create_job(
         job.status = "error"
         job.error_log = str(e)
         db.commit()
-        raise HTTPException(status_code=502, detail=f"파일 처리 실패: {e}")
+        raise HTTPException(status_code=502, detail=f"File processing failed: {e}")
 
     has_media = audio_seconds > 0 or video_seconds > 0
     if has_media and job.ocr_model == "basic":
@@ -603,9 +603,9 @@ def update_job(
 ):
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Job not found")
     if job.status != "pending":
-        raise HTTPException(status_code=400, detail="대기 중인 작업만 수정할 수 있습니다")
+        raise HTTPException(status_code=400, detail="Only pending jobs can be modified")
 
     if "pipeline" in payload and payload["pipeline"] in ("vision", "hybrid"):
         job.pipeline = payload["pipeline"]
@@ -629,15 +629,15 @@ def confirm_job(
 ):
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Job not found")
     if job.status != "pending":
-        raise HTTPException(status_code=400, detail="이미 처리되었거나 취소된 작업입니다")
+        raise HTTPException(status_code=400, detail="Job already processed or cancelled")
 
     from ..db.models import User
 
     db_user = db.get(User, job.user_id)
     if db_user is None:
-        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="User not found")
 
     # 작업 정보에서 비용 재계산
     pages = job.total_pages
@@ -691,7 +691,7 @@ def list_jobs(
 def get_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Job not found")
     summary = _job_summary(job)
     if job.status == "pending":
         user_id = uuid.UUID(user.user_id)
@@ -724,7 +724,7 @@ def get_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: Sess
 def delete_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Job not found")
     try:
         supabase_client.delete_source_files(job)
     except Exception as e:
@@ -748,9 +748,9 @@ def download_job(
 ):
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Job not found")
     if job.status != "done":
-        raise HTTPException(status_code=400, detail="완료된 작업만 다운로드할 수 있습니다")
+        raise HTTPException(status_code=400, detail="Only completed jobs can be downloaded")
 
     type = _convert_format_alias(type)
 
@@ -768,13 +768,13 @@ def download_job(
     }
     path = path_map.get(type)
     if not path:
-        raise HTTPException(status_code=404, detail="결과 파일이 없습니다")
+        raise HTTPException(status_code=404, detail="Result file not found")
 
     try:
         url = supabase_client.get_signed_download_url(path, bucket="results", expires_in=3600)
         return {"download_url": url}
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {e}")
 
 
 def _get_markdown_content(job: Job) -> str:
@@ -879,7 +879,7 @@ def _ensure_xlsx_basic_bundle(job: Job, db: Session) -> None:
     from ..db.models import User
     db_user = db.get(User, job.user_id)
     if db_user is None:
-        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="User not found")
     units = job.total_pages if job.total_pages else (job.total_files or 1)
     cost = units * 1
     try:
@@ -888,7 +888,7 @@ def _ensure_xlsx_basic_bundle(job: Job, db: Session) -> None:
         raise HTTPException(status_code=402, detail=str(e))
     markdown = _get_markdown_content(job)
     if not markdown.strip():
-        raise HTTPException(status_code=400, detail="변환할 마크다운 결과가 없습니다")
+        raise HTTPException(status_code=400, detail="No markdown result to convert")
     with tempfile.TemporaryDirectory() as tmpdir:
         xlsx_path = Path(tmpdir) / "result.xlsx"
         csv_path = Path(tmpdir) / "result.csv"
@@ -914,15 +914,15 @@ def preview_job(
     """완료된 작업의 마크다운 결과를 페이지 단위로 조회한다."""
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Job not found")
     if not job.result_md_storage_path and not job.result_edited_md_storage_path:
-        detail = f"결과 파일이 준비되지 않았습니다 (status={job.status}, md_path={job.result_md_storage_path or '-'}, edited_path={job.result_edited_md_storage_path or '-'}, error_log={job.error_log or '-'}"
+        detail = f"Result file not ready (status={job.status}, md_path={job.result_md_storage_path or '-'}, edited_path={job.result_edited_md_storage_path or '-'}, error_log={job.error_log or '-'}"
         raise HTTPException(status_code=400, detail=detail)
 
     try:
         markdown = _get_markdown_content(job)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"결과 미리보기 생성 실패: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to generate preview: {e}")
 
     pages = _split_markdown_by_pages(markdown)
     page_nums = [num for num, _ in pages]
@@ -981,15 +981,15 @@ def preview_job_pages(
     """완료된 작업의 페이지 목록 메타데이터를 반환한다."""
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Job not found")
     if not job.result_md_storage_path and not job.result_edited_md_storage_path:
-        detail = f"결과 파일이 준비되지 않았습니다 (status={job.status}, md_path={job.result_md_storage_path or '-'}, edited_path={job.result_edited_md_storage_path or '-'}, error_log={job.error_log or '-'}"
+        detail = f"Result file not ready (status={job.status}, md_path={job.result_md_storage_path or '-'}, edited_path={job.result_edited_md_storage_path or '-'}, error_log={job.error_log or '-'}"
         raise HTTPException(status_code=400, detail=detail)
 
     try:
         markdown = _get_markdown_content(job)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"결과 미리보기 생성 실패: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to generate preview: {e}")
 
     pages = _split_markdown_by_pages(markdown)
     images = _image_files(job)
@@ -1021,9 +1021,9 @@ def save_result_markdown(
 ):
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Job not found")
     if job.status != "done":
-        raise HTTPException(status_code=400, detail="완료된 작업만 수정할 수 있습니다")
+        raise HTTPException(status_code=400, detail="Only completed jobs can be edited")
 
     file_markdowns = payload.get("file_markdowns")
     if isinstance(file_markdowns, list):
@@ -1046,7 +1046,7 @@ def save_result_markdown(
                 job_id, edited_md_path=edited_path
             ).get("edited_md", "")
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"편집 마크다운 저장 실패: {e}")
+            raise HTTPException(status_code=502, detail=f"Failed to save edited markdown: {e}")
     job.result_edited_md_storage_path = storage_path
     job.result_edited_md_path = ""
     db.commit()
@@ -1064,22 +1064,22 @@ def save_result_page(
     """특정 페이지의 마크다운만 갱신하고 전체 편집 마크다운을 다시 저장한다."""
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Job not found")
     if job.status != "done":
-        raise HTTPException(status_code=400, detail="완료된 작업만 수정할 수 있습니다")
+        raise HTTPException(status_code=400, detail="Only completed jobs can be edited")
 
     new_content = str(payload.get("markdown", "")).strip()
     try:
         markdown = _get_markdown_content(job)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"마크다운 로드 실패: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to load markdown: {e}")
 
     pages = _split_markdown_by_pages(markdown)
     if not pages:
-        raise HTTPException(status_code=400, detail="페이지가 없습니다")
+        raise HTTPException(status_code=400, detail="No pages found")
     target_idx = next((idx for idx, (num, _) in enumerate(pages) if num == page_num), None)
     if target_idx is None:
-        raise HTTPException(status_code=404, detail="해당 페이지를 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Page not found")
 
     pages[target_idx] = (page_num, new_content)
     updated = "\n\n---\n\n".join([f"<!-- 페이지 {num} -->\n\n{content}" for num, content in pages])
@@ -1092,7 +1092,7 @@ def save_result_page(
                 job_id, edited_md_path=edited_path
             ).get("edited_md", "")
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"편집 마크다운 저장 실패: {e}")
+            raise HTTPException(status_code=502, detail=f"Failed to save edited markdown: {e}")
     job.result_edited_md_storage_path = storage_path
     job.result_edited_md_path = ""
     db.commit()
@@ -1108,19 +1108,19 @@ def convert_job(
 ):
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Job not found")
     if job.status != "done":
-        raise HTTPException(status_code=400, detail="완료된 작업만 변환할 수 있습니다")
+        raise HTTPException(status_code=400, detail="Only completed jobs can be converted")
 
     fmt = _convert_format_alias(str(payload.get("format", "")).lower())
     if fmt not in ("xlsx_basic", "csv_basic", "xlsx_advanced", "docx", "pptx"):
-        raise HTTPException(status_code=400, detail="지원하지 않는 변환 형식입니다")
+        raise HTTPException(status_code=400, detail="Unsupported conversion format")
 
     from ..db.models import User
 
     db_user = db.get(User, job.user_id)
     if db_user is None:
-        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="User not found")
 
     # Excel 기본/고급 변환: 이미 변환된 파일이 있으면 비용 없이 재사용
     if fmt in ("xlsx_basic", "csv_basic"):
@@ -1133,7 +1133,7 @@ def convert_job(
                 url = supabase_client.get_signed_download_url(existing_path, bucket="results", expires_in=3600)
                 return {"download_url": url, "format": fmt, "storage_path": existing_path}
             except Exception as e:
-                raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+                raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {e}")
         # 번들 생성 (csv + xlsx 동시에 생성되며 1P/페이지 차감)
         _ensure_xlsx_basic_bundle(job, db)
         storage_path = {
@@ -1141,12 +1141,12 @@ def convert_job(
             "csv_basic": job.result_csv_storage_path,
         }.get(fmt)
         if not storage_path:
-            raise HTTPException(status_code=502, detail="변환 결과 경로가 없습니다")
+            raise HTTPException(status_code=502, detail="Conversion result path not found")
         try:
             url = supabase_client.get_signed_download_url(storage_path, bucket="results", expires_in=3600)
             return {"download_url": url, "format": fmt, "storage_path": storage_path}
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+            raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {e}")
 
     # Excel 고급 변환: 비용 차감 후 비동기 Celery task로 큐잉
     if fmt == "xlsx_advanced":
@@ -1155,9 +1155,9 @@ def convert_job(
                 url = supabase_client.get_signed_download_url(job.result_xlsx_advanced_storage_path, bucket="results", expires_in=3600)
                 return {"download_url": url, "format": fmt, "storage_path": job.result_xlsx_advanced_storage_path}
             except Exception as e:
-                raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+                raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {e}")
         if job.xlsx_advanced_status == "processing":
-            raise HTTPException(status_code=409, detail="이미 고급 변환이 진행 중입니다")
+            raise HTTPException(status_code=409, detail="Advanced conversion already in progress")
         units = job.total_pages if job.total_pages else (job.total_files or 1)
         cost = units * 3
         try:
@@ -1183,7 +1183,7 @@ def convert_job(
             url = supabase_client.get_signed_download_url(existing_path, bucket="results", expires_in=3600)
             return {"download_url": url, "format": fmt, "storage_path": existing_path}
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+            raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {e}")
 
     try:
         markdown = _get_markdown_content(job)
@@ -1195,7 +1195,7 @@ def convert_job(
                 office_converter.markdown_to_pptx(markdown, out_path)
             storage_path = supabase_client.upload_office_result(job_id, out_path, fmt)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"변환 실패: {e}")
+        raise HTTPException(status_code=502, detail=f"Conversion failed: {e}")
 
     if fmt == "docx":
         job.result_docx_storage_path = storage_path
@@ -1206,7 +1206,7 @@ def convert_job(
     try:
         url = supabase_client.get_signed_download_url(storage_path, bucket="results", expires_in=3600)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {e}")
 
     return {"download_url": url, "format": fmt, "storage_path": storage_path}
 
@@ -1221,14 +1221,14 @@ async def save_edited_xlsx(
     """사용자가 편집한 xlsx 파일을 업로드하고 Storage 경로를 저장한다."""
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Job not found")
     if job.status != "done":
-        raise HTTPException(status_code=400, detail="완료된 작업만 편집할 수 있습니다")
+        raise HTTPException(status_code=400, detail="Only completed jobs can be edited")
 
     try:
         data = await file.read()
         if not data:
-            raise HTTPException(status_code=400, detail="빈 파일입니다")
+            raise HTTPException(status_code=400, detail="Empty file")
         storage_path = supabase_client.upload_edited_xlsx(job_id, data, file.filename or "result_edited.xlsx")
         job.result_edited_xlsx_storage_path = storage_path
         db.commit()
@@ -1238,7 +1238,7 @@ async def save_edited_xlsx(
         raise
     except Exception as e:
         logger.exception("[save_edited_xlsx] 저장 실패: %s", e)
-        raise HTTPException(status_code=502, detail=f"편집본 저장 실패: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to save edited file: {e}")
 
 
 @router.get("/jobs/{job_id}/edited-xlsx-url")
@@ -1250,14 +1250,14 @@ def get_edited_xlsx_url(
     """저장된 편집 xlsx의 signed download URL을 반환한다."""
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Job not found")
     if not job.result_edited_xlsx_storage_path:
-        raise HTTPException(status_code=404, detail="저장된 편집본이 없습니다")
+        raise HTTPException(status_code=404, detail="No saved edited file")
     try:
         url = supabase_client.get_signed_download_url(job.result_edited_xlsx_storage_path, bucket="results", expires_in=3600)
         return {"download_url": url, "storage_path": job.result_edited_xlsx_storage_path}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {e}")
 
 
 @router.post("/jobs/{job_id}/xlsx-advanced-action")
@@ -1270,18 +1270,18 @@ def xlsx_advanced_action(
     """Excel 고급 변환 완전 실패 시 재시도 또는 포인트 환불을 처리한다."""
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Job not found")
     if job.xlsx_advanced_status != "error" or not job.xlsx_advanced_refundable:
-        raise HTTPException(status_code=400, detail="환불/재시도할 수 있는 상태가 아닙니다")
+        raise HTTPException(status_code=400, detail="Not in a refundable or retryable state")
 
     action = str(payload.get("action", "")).lower()
     if action not in ("retry", "refund"):
-        raise HTTPException(status_code=400, detail="지원하지 않는 action입니다")
+        raise HTTPException(status_code=400, detail="Unsupported action")
 
     from ..db.models import User
     db_user = db.get(User, job.user_id)
     if db_user is None:
-        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="User not found")
 
     units = job.total_pages if job.total_pages else (job.total_files or 1)
     cost = units * 3
@@ -1314,18 +1314,18 @@ def job_action(
     """문서 파싱 최종 실패 시 재시도 또는 포인트 환불을 처리한다."""
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Job not found")
     if job.status != "error" or not job.refundable:
-        raise HTTPException(status_code=400, detail="환불/재시도할 수 있는 상태가 아닙니다")
+        raise HTTPException(status_code=400, detail="Not in a refundable or retryable state")
 
     action = str(payload.get("action", "")).lower()
     if action not in ("retry", "refund"):
-        raise HTTPException(status_code=400, detail="지원하지 않는 action입니다")
+        raise HTTPException(status_code=400, detail="Unsupported action")
 
     from ..db.models import User
     db_user = db.get(User, job.user_id)
     if db_user is None:
-        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="User not found")
 
     if action == "refund":
         if job.cost_points > 0:
@@ -1398,13 +1398,13 @@ def _job_summary(job: Job) -> dict:
 def legacy_download(token: str, type: str = "csv", db: Session = Depends(get_db)):
     job = db.get(Job, token)
     if job is None or job.download_token != token:
-        raise HTTPException(status_code=404, detail="유효하지 않은 다운로드 링크입니다")
+        raise HTTPException(status_code=404, detail="Invalid download link")
     if job.expires_at and job.expires_at < datetime.utcnow():
-        raise HTTPException(status_code=410, detail="다운로드 링크가 만료되었습니다")
+        raise HTTPException(status_code=410, detail="Download link expired")
 
     if type == "csv":
         if not job.result_xlsx_storage_path:
-            raise HTTPException(status_code=402, detail="CSV는 xlsx 변환 후에 다운로드할 수 있습니다")
+            raise HTTPException(status_code=402, detail="CSV download requires XLSX conversion first")
         path = job.result_csv_storage_path
     else:
         path = job.result_md_storage_path
@@ -1412,7 +1412,7 @@ def legacy_download(token: str, type: str = "csv", db: Session = Depends(get_db)
         # Storage로 이전되지 않은 예전 파일은 로컬 경로 사용
         local = job.result_csv_path if type == "csv" else job.result_md_path
         if not local or not Path(local).exists():
-            raise HTTPException(status_code=404, detail="결과 파일이 없습니다")
+            raise HTTPException(status_code=404, detail="Result file not found")
         base = Path(job.original_filename).stem or "result"
         ext = "md" if type == "md" else "csv"
         return FileResponse(local, media_type="text/csv" if type == "csv" else "text/markdown", filename=f"{base}.{ext}")
@@ -1421,7 +1421,7 @@ def legacy_download(token: str, type: str = "csv", db: Session = Depends(get_db)
         url = supabase_client.get_signed_download_url(path, bucket="results", expires_in=3600)
         return {"download_url": url}
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {e}")
 
 
 # [Flow: Step 1 (token으로 job 조회) -> Step 2 (포맷별 Storage 경로 매핑) -> Step 3 (signed URL 생성 후 302 redirect)]
@@ -1430,9 +1430,9 @@ def email_download_redirect(token: str, type: str = "xlsx_basic", db: Session = 
     """이메일 다운로드 버튼용 redirect 엔드포인트 (auth 없이 download_token으로 직접 다운로드)."""
     job = db.get(Job, token)
     if job is None or job.download_token != token:
-        raise HTTPException(status_code=404, detail="유효하지 않은 다운로드 링크입니다")
+        raise HTTPException(status_code=404, detail="Invalid download link")
     if job.status != "done":
-        raise HTTPException(status_code=400, detail="완료된 작업만 다운로드할 수 있습니다")
+        raise HTTPException(status_code=400, detail="Only completed jobs can be downloaded")
 
     fmt = _convert_format_alias(type)
     path_map = {
@@ -1445,10 +1445,10 @@ def email_download_redirect(token: str, type: str = "xlsx_basic", db: Session = 
     }
     path = path_map.get(fmt)
     if not path:
-        raise HTTPException(status_code=404, detail="결과 파일이 없습니다")
+        raise HTTPException(status_code=404, detail="Result file not found")
 
     try:
         url = supabase_client.get_signed_download_url(path, bucket="results", expires_in=3600)
         return RedirectResponse(url, status_code=302)
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"다운로드 링크 생성 실패: {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {e}")

@@ -54,11 +54,11 @@ def convert_file(
         (markdown_text, image_paths) 튜플
     """
     if not _is_enabled():
-        raise RuntimeError("PaddleOCR 폴백 서비스가 비활성화되어 있습니다")
+        raise RuntimeError("PaddleOCR fallback service is disabled")
 
     ext = path.suffix.lower()
     if ext not in IMAGE_EXTENSIONS:
-        raise ValueError(f"PaddleOCR 폴백은 이미지만 지원합니다 (png/jpg/bmp/tiff/webp): {path.name}")
+        raise ValueError(f"PaddleOCR fallback supports images only (png/jpg/bmp/tiff/webp): {path.name}")
 
     base_url = _get_service_url()
     logger.info(f"[paddleocr-client] {path.name} 변환 시작 (size={path.stat().st_size / 1024 / 1024:.1f}MB)")
@@ -75,7 +75,7 @@ def convert_file(
 
     task_id = resp.json().get("task_id")
     if not task_id:
-        raise RuntimeError(f"PaddleOCR 변환 시작 실패: task_id 없음 (resp={resp.text[:200]})")
+        raise RuntimeError(f"Failed to start PaddleOCR conversion: no task_id (resp={resp.text[:200]})")
 
     logger.info(f"[paddleocr-client] {path.name} task_id={task_id} 폴링 시작")
 
@@ -87,7 +87,7 @@ def convert_file(
         elapsed = time.monotonic() - start_time
 
         if elapsed > timeout:
-            raise TimeoutError(f"PaddleOCR 변환 타임아웃: {path.name} ({elapsed:.0f}s > {timeout}s)")
+            raise TimeoutError(f"PaddleOCR conversion timeout: {path.name} ({elapsed:.0f}s > {timeout}s)")
 
         try:
             status_resp = requests.get(status_url, timeout=POLL_TIMEOUT)
@@ -97,7 +97,7 @@ def convert_file(
             continue
 
         if status_resp.status_code == 404:
-            raise RuntimeError(f"PaddleOCR task를 찾을 수 없음: {task_id}")
+            raise RuntimeError(f"PaddleOCR task not found: {task_id}")
 
         if status_resp.status_code >= 400:
             logger.warning(f"[paddleocr-client] {path.name} 폴링 에러: {status_resp.status_code}")
@@ -110,7 +110,7 @@ def convert_file(
         if status == "done":
             result = data.get("result")
             if result is None:
-                raise RuntimeError(f"PaddleOCR 변환 완료지만 결과 없음: {path.name}")
+                raise RuntimeError(f"PaddleOCR conversion completed but no result: {path.name}")
             markdown = result.get("markdown", "")
             relative_images = result.get("images", [])
             image_paths = [Path(img) for img in relative_images]
@@ -120,8 +120,8 @@ def convert_file(
             return markdown, image_paths
 
         if status == "error":
-            error_msg = data.get("error", "알 수 없는 오류")
-            raise RuntimeError(f"PaddleOCR 변환 실패: {path.name} - {error_msg}")
+            error_msg = data.get("error", "Unknown error")
+            raise RuntimeError(f"PaddleOCR conversion failed: {path.name} - {error_msg}")
 
         # status == "processing": 경과 시간 기반 추정 진행률
         if status == "processing":

@@ -15,7 +15,7 @@ POST https://your-domain.com/api/v1/jobs/upload
 Headers: X-API-Key: <API_KEY>
 Body (multipart/form-data):
   - files: <the file to upload>
-  - pipeline: vision
+  - ocr_model: premium
   - columns: <comma-separated column names, or omit for defaults>
   - prompt: <extra instructions, or omit>
 
@@ -30,7 +30,7 @@ Call the PROOF API to confirm a job and start processing.
 POST https://your-domain.com/api/v1/jobs/<JOB_ID>/confirm
 Headers: X-API-Key: <API_KEY>
 
-Return the status and remaining_points.
+Return the status and remaining credits.
 ```
 
 ## 작업 상태 확인
@@ -51,7 +51,7 @@ If status is "error", report the error_log.
 ```
 Call the PROOF API to get the download URL for a completed job.
 
-GET https://your-domain.com/api/v1/jobs/<JOB_ID>/download?type=xlsx
+GET https://your-domain.com/api/v1/jobs/<JOB_ID>/download?type=xlsx_basic
 Headers: X-API-Key: <API_KEY>
 
 Return the download_url from the response.
@@ -79,7 +79,7 @@ Call the PROOF API to check the account info and point balance.
 GET https://your-domain.com/api/v1/account
 Headers: X-API-Key: <API_KEY>
 
-Report the points_balance and today's usage.
+Report the credit balance and today's usage.
 ```
 
 ## Python 자동화 스니펫
@@ -92,11 +92,11 @@ API_KEY = "chu_live_xxxxxxxx"
 BASE = "https://your-domain.com/api/v1"
 HEADERS = {"X-API-Key": API_KEY}
 
-def process_file(filepath, columns=None, pipeline="vision", output_type="xlsx"):
+def process_file(filepath, columns=None, ocr_model="premium", output_type="xlsx_basic"):
     """전체 파이프라인: 업로드 → 확인 → 폴링 → 다운로드."""
     # 1단계: 업로드
     with open(filepath, "rb") as f:
-        data = {"pipeline": pipeline}
+        data = {"ocr_model": ocr_model}
         if columns:
             data["columns"] = columns
         resp = requests.post(f"{BASE}/jobs/upload", headers=HEADERS,

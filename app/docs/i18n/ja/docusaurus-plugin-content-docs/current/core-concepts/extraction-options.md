@@ -6,6 +6,40 @@ sidebar_position: 5
 
 PROOFがファイルから表を抽出する方法をカスタマイズしてください。
 
+## モデル選択
+
+基本モデルとプレミアムモデルから選択してください:
+
+| モデル | フラグ | デフォルト | 備考 |
+|-------|------|---------|-------|
+| 基本 | `ocr_model=basic` | — | $0.001/ページ、1日100ページまで無料、音声/動画非対応 |
+| プレミアム | `ocr_model=premium` | ✓ | $0.005/ページ、すべてのファイルタイプに対応 |
+
+```bash
+curl -X POST https://your-domain.com/api/v1/jobs/upload \
+  -H "X-API-Key: chu_live_xxxxxxxx" \
+  -F "files=@document.pdf" \
+  -F "ocr_model=basic"
+```
+
+## OCRエンジン
+
+プレミアムモデルの場合、テキスト抽出に使用するOCRエンジンを選択してください:
+
+| エンジン | フラグ | デフォルト | 備考 |
+|--------|------|---------|-------|
+| EasyOCR | `ocr_engine=easyocr` | ✓ | 速度と精度のバランス |
+| Tesseract | `ocr_engine=tesseract` | — | 高速で広くサポート |
+| RapidOCR | `ocr_engine=rapidocr` | — | CJKテキストに最適化 |
+
+```bash
+curl -X POST https://your-domain.com/api/v1/jobs/upload \
+  -H "X-API-Key: chu_live_xxxxxxxx" \
+  -F "files=@document.pdf" \
+  -F "ocr_model=premium" \
+  -F "ocr_engine=rapidocr"
+```
+
 ## カラム
 
 モデルの抽出をガイドするためにカラム名を指定します。省略するとデフォルトカラムが使用されます。

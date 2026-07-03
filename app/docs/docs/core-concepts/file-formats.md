@@ -35,7 +35,7 @@ PROOF accepts a wide variety of input formats for table extraction.
 | `.m4a` | |
 | `.wma` | |
 
-Cost: **1 point per second** of audio.
+Cost: **$0.001 per second** (1 milli-USD/sec) of audio. Premium model only.
 
 ## Video
 
@@ -50,7 +50,7 @@ Cost: **1 point per second** of audio.
 | `.webm` | |
 | `.m4v` | |
 
-Cost: **3 points per second** of video. Audio is extracted and transcribed.
+Cost: **$0.005 per second** (5 milli-USD/sec) of video. Audio is extracted and transcribed. Premium model only.
 
 ## Archives
 
@@ -68,5 +68,5 @@ All supported file types inside the archive are extracted and processed.
 ## Limitations
 
 - Maximum file size: **200 MB** total per upload (admin-configurable)
-- Maximum pages: **2,000** per job (admin-configurable)
+- Maximum pages: **10,000** per job (admin-configurable)
 - Unsupported formats will return `400 Bad Request`

@@ -25,7 +25,7 @@ sidebar_position: 1
 ```
 
 1. **업로드** (`POST /jobs/upload`) — `pending` 상태로 작업 생성, 비용 미리보기 반환
-2. **확인** (`POST /jobs/{id}/confirm`) — 포인트 차감, `queued`로 전환, Celery 워커에 전달
+2. **확인** (`POST /jobs/{id}/confirm`) — 크레딧 차감, `queued`로 전환, Celery 워커에 전달
 3. **처리** — 워커가 페이지/파일 처리, 실시간으로 `done_pages` / `done_files` 업데이트
 4. **완료** — 결과가 Supabase Storage에 저장, 다운로드 준비 완료
 5. **다운로드** (`GET /jobs/{id}/download`) — 1시간 유효한 서명된 URL 반환
@@ -52,4 +52,4 @@ while True:
 - 지원되지 않는 파일 형식
 - 손상된 PDF 또는 미디어 파일
 - LLM 추론 시간 초과
-- 포인트 부족 (확인 단계에서 감지)
+- 크레딧 부족 (확인 단계에서 감지)

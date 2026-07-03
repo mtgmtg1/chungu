@@ -48,10 +48,10 @@ def update_language(
     db: Session = Depends(get_db),
 ):
     if payload.language not in SUPPORTED_LANGUAGES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="지원하지 않는 언어입니다")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported language")
     db_user = db.get(User, uuid.UUID(user.user_id))
     if db_user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="사용자를 찾을 수 없습니다")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     db_user.language = payload.language
     db.commit()
     return {"language": db_user.language}

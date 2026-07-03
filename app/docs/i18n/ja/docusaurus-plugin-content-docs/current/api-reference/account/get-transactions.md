@@ -4,7 +4,11 @@ sidebar_position: 4
 
 # GET /account/transactions
 
-ポイントチャージおよび消費履歴を返します。
+クレジットチャージおよび消費履歴を返します。
+
+:::note
+このエンドポイントはAPIキー以外にウェブアプリログインのJWTセッショントークンもサポートしています。
+:::
 
 ## クエリパラメータ
 
@@ -36,8 +40,8 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
     "type": "charge",
     "amount": 10000,
     "balance_after": 10000,
-    "description": "Toss決済: Starterパッケージ",
-    "created_at": "2026-06-26T15:00:00"
+    "description": "Paddle決済: $10.00 USD",
+    "created_at": "2026-07-15T15:00:00"
   }
 ]
 ```

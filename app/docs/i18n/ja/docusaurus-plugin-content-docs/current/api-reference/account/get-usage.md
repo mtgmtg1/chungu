@@ -6,6 +6,10 @@ sidebar_position: 3
 
 過去N日間の日次集計API使用量を返します。
 
+:::note
+このエンドポイントはAPIキー以外にウェブアプリログインのJWTセッショントークンもサポートしています。
+:::
+
 ## クエリパラメータ
 
 | パラメータ | タイプ | デフォルト | 範囲 |
@@ -23,8 +27,8 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
 
 ```json
 [
-  { "day": "2026-06-20", "requests": 15, "points_spent": 450 },
-  { "day": "2026-06-21", "requests": 8, "points_spent": 240 },
-  { "day": "2026-06-22", "requests": 0, "points_spent": 0 }
+  { "day": "2026-07-13", "requests": 15, "points_spent": 750 },
+  { "day": "2026-07-14", "requests": 8, "points_spent": 400 },
+  { "day": "2026-07-15", "requests": 0, "points_spent": 0 }
 ]
 ```

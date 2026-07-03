@@ -4,20 +4,33 @@ sidebar_position: 4
 
 # Pricing
 
-PROOF uses a prepaid point system. Points are deducted based on the input type and volume.
+PROOF uses a prepaid credit system. Credits are measured in **milli-USD** (1,000 milli-USD = $1.00 USD). Credits are deducted based on the input type, volume, and model selected.
 
-## Point costs
+## Credit costs
 
-| Input type | Cost |
-|------------|------|
-| PDF page | 3 points |
-| Image | 3 points |
-| Audio (per second) | 1 point |
-| Video (per second) | 3 points |
+| Input type | Basic model | Premium model |
+|------------|-------------|---------------|
+| PDF page | $0.001 (1 md) | $0.005 (5 md) |
+| Image | $0.001 (1 md) | $0.005 (5 md) |
+| Audio (per second) | — | $0.001 (1 md) |
+| Video (per second) | — | $0.005 (5 md) |
+| Docling refinement (per page) | — | $0.003 (3 md) |
+
+:::info
+**Basic model**: 100 free pages per day. After the free quota, $0.001/page is charged.
+**Premium model**: No free quota. All pages are charged at $0.005/page.
+:::
 
 ## XLSX conversion
 
-Converting a completed job to XLSX costs an additional **3 points per unit** (page or file), but only on the first conversion. Subsequent downloads of the same format are free.
+| Format | Cost |
+|--------|------|
+| XLSX Basic | $0.001 per unit (page or file), first conversion only |
+| XLSX Advanced | $0.003 per unit (page or file), first conversion only |
+| DOCX | Free |
+| PPTX | Free |
+
+Subsequent downloads of the same format are free.
 
 ## Checking current rates
 
@@ -29,26 +42,28 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
 **Response:**
 ```json
 {
-  "packages": [
-    { "name": "Starter", "points": 10000, "price_krw": 33000, "price_usd": 25 }
-  ],
+  "currency": "USD",
+  "charge_limits": {
+    "min_amount": 5,
+    "max_amount": 500
+  },
   "rates": {
-    "krw_per_page": 3,
-    "krw_per_image": 3,
-    "krw_per_audio_second": 1,
-    "krw_per_video_second": 3,
-    "usd_per_point": "0.002"
+    "basic_page_milli_usd": 1,
+    "premium_page_milli_usd": 5,
+    "premium_audio_sec_milli_usd": 1,
+    "premium_video_sec_milli_usd": 5,
+    "docling_refinement_page_milli_usd": 3
   }
 }
 ```
 
-## Purchasing points
+## Purchasing credits
 
-Visit the [Payment page](../../payment) in the PROOF web app to purchase point packages via Toss (Korea) or Paddle (international).
+Visit the [Payment page](pathname:///payment) in the PROOF web app to purchase credits via **Paddle**. You can choose any amount between $5 and $500 USD. Auto-recharge is also available after your first payment.
 
 ## Usage tracking
 
 - [Today's usage](./api-reference/account/get-account) — see `today_usage` in the account response
 - [Daily usage history](./api-reference/account/get-usage) — aggregated by day
-- [Transaction history](./api-reference/account/get-transactions) — point charge/spend log
+- [Transaction history](./api-reference/account/get-transactions) — credit charge/spend log
 - [Payment history](./api-reference/account/get-payments) — payment records

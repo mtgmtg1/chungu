@@ -115,13 +115,13 @@ def _convert_office_to_pdf(input_path: Path, output_dir: Path) -> Path:
             env=_libreoffice_env(),
         )
     except FileNotFoundError as e:
-        raise RuntimeError(f"LibreOffice가 설치되지 않았습니다: {e}")
+        raise RuntimeError(f"LibreOffice is not installed: {e}")
     if result.returncode != 0:
         stderr_text = result.stderr.decode("utf-8", errors="ignore")
-        raise RuntimeError(f"LibreOffice PDF 변환 실패: {stderr_text[:500]}")
+        raise RuntimeError(f"LibreOffice PDF conversion failed: {stderr_text[:500]}")
     pdf_path = output_dir / f"{input_path.stem}.pdf"
     if not pdf_path.exists():
-        raise RuntimeError(f"LibreOffice PDF 산출물을 찾을 수 없습니다: {pdf_path}")
+        raise RuntimeError(f"LibreOffice PDF output not found: {pdf_path}")
     logger.info(f"[paddleocr] {input_path.name} -> PDF 변환 완료")
     return pdf_path
 
@@ -256,19 +256,19 @@ def _do_convert(task_id: str, input_path: Path, filename: str) -> None:
             pdf_path = _convert_office_to_pdf(input_path, input_path.parent)
             image_paths = _pdf_to_images(pdf_path)
             if not image_paths:
-                raise RuntimeError("PDF에서 페이지 이미지를 추출할 수 없습니다")
+                raise RuntimeError("Failed to extract page images from PDF")
             embedded_images = _extract_embedded_images(pdf_path, request_id)
             file_type = "pdf"
         elif file_type == "pdf":
             image_paths = _pdf_to_images(input_path)
             if not image_paths:
-                raise RuntimeError("PDF에서 페이지 이미지를 추출할 수 없습니다")
+                raise RuntimeError("Failed to extract page images from PDF")
             embedded_images = _extract_embedded_images(input_path, request_id)
         elif file_type == "image":
             image_paths = [input_path]
             embedded_images = []
         else:
-            raise RuntimeError(f"지원하지 않는 파일 형식: {filename}")
+            raise RuntimeError(f"Unsupported file type: {filename}")
 
         ocr_result = _run_paddleocr(image_paths)
 
@@ -297,11 +297,11 @@ def _do_convert(task_id: str, input_path: Path, filename: str) -> None:
 @app.post("/convert/async", response_model=AsyncConvertResponse)
 async def convert_async(file: UploadFile = File(...)) -> AsyncConvertResponse:
     if not file.filename:
-        raise HTTPException(status_code=400, detail="파일 이름이 없습니다")
+        raise HTTPException(status_code=400, detail="Missing filename")
 
     ext = Path(file.filename).suffix.lower()
     if ext not in SUPPORTED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail=f"지원하지 않는 파일 형식입니다: {file.filename}")
+        raise HTTPException(status_code=400, detail=f"Unsupported file format: {file.filename}")
 
     task_id = uuid.uuid4().hex
     tmpdir = tempfile.mkdtemp()
@@ -330,7 +330,7 @@ async def get_convert_status(task_id: str) -> TaskStatusResponse:
     with _tasks_lock:
         task = _tasks.get(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="task를 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Task not found")
     return TaskStatusResponse(
         task_id=task_id,
         status=task["status"],
@@ -344,11 +344,11 @@ async def get_convert_status(task_id: str) -> TaskStatusResponse:
 @app.post("/convert/file", response_model=ConvertResponse)
 async def convert_file(file: UploadFile = File(...)) -> ConvertResponse:
     if not file.filename:
-        raise HTTPException(status_code=400, detail="파일 이름이 없습니다")
+        raise HTTPException(status_code=400, detail="Missing filename")
 
     ext = Path(file.filename).suffix.lower()
     if ext not in SUPPORTED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail=f"지원하지 않는 파일 형식입니다: {file.filename}")
+        raise HTTPException(status_code=400, detail=f"Unsupported file format: {file.filename}")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
@@ -362,25 +362,25 @@ async def convert_file(file: UploadFile = File(...)) -> ConvertResponse:
             pdf_path = _convert_office_to_pdf(input_path, tmp_path)
             image_paths = _pdf_to_images(pdf_path)
             if not image_paths:
-                raise HTTPException(status_code=500, detail="PDF에서 페이지 이미지를 추출할 수 없습니다")
+                raise HTTPException(status_code=500, detail="Failed to extract page images from PDF")
             embedded_images = _extract_embedded_images(pdf_path, request_id)
             file_type = "pdf"
         elif file_type == "pdf":
             image_paths = _pdf_to_images(input_path)
             if not image_paths:
-                raise HTTPException(status_code=500, detail="PDF에서 페이지 이미지를 추출할 수 없습니다")
+                raise HTTPException(status_code=500, detail="Failed to extract page images from PDF")
             embedded_images = _extract_embedded_images(input_path, request_id)
         elif file_type == "image":
             image_paths = [input_path]
             embedded_images = []
         else:
-            raise HTTPException(status_code=400, detail=f"지원하지 않는 파일 형식: {file.filename}")
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.filename}")
 
         try:
             ocr_result = _run_paddleocr(image_paths)
         except Exception as e:
             logger.exception(f"[paddleocr-convert] {file.filename} 추론 실패: {e}")
-            raise HTTPException(status_code=500, detail=f"PaddleOCR 추론 실패: {e}")
+            raise HTTPException(status_code=500, detail=f"PaddleOCR inference failed: {e}")
 
         return ConvertResponse(
             markdown=ocr_result["markdown"],
@@ -395,9 +395,9 @@ async def get_image(image_path: str) -> FileResponse:
     base = DATA_DIR.resolve()
     target = (base / image_path).resolve()
     if not str(target).startswith(str(base)):
-        raise HTTPException(status_code=400, detail="잘못된 이미지 경로")
+        raise HTTPException(status_code=400, detail="Invalid image path")
     if not target.exists():
-        raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(str(target))
 
 
@@ -409,7 +409,7 @@ def _aistudio_submit_job(file_path: Path) -> str:
     [Flow: Step 1 (파일 업로드 + 모델 선택) -> Step 2 (API POST) -> Step 3 (jobId 추출)]
     """
     if not AISTUDIO_API_TOKEN:
-        raise RuntimeError("PADDLEOCR_API_TOKEN이 설정되지 않았습니다")
+        raise RuntimeError("PADDLEOCR_API_TOKEN is not configured")
 
     headers = {"Authorization": f"bearer {AISTUDIO_API_TOKEN}"}
     optional_payload = {
@@ -427,12 +427,12 @@ def _aistudio_submit_job(file_path: Path) -> str:
         )
 
     if resp.status_code != 200:
-        raise RuntimeError(f"AI Studio API job 제출 실패: HTTP {resp.status_code} {resp.text[:300]}")
+        raise RuntimeError(f"AI Studio API job submission failed: HTTP {resp.status_code} {resp.text[:300]}")
 
     job_data = resp.json().get("data", {})
     job_id = job_data.get("jobId")
     if not job_id:
-        raise RuntimeError(f"AI Studio API jobId 없음: {resp.text[:300]}")
+        raise RuntimeError(f"AI Studio API missing jobId: {resp.text[:300]}")
 
     logger.info(f"[aistudio] job 제출 완료: jobId={job_id}, file={file_path.name}")
     return job_id
@@ -451,7 +451,7 @@ def _aistudio_poll_job(job_id: str) -> str:
     while True:
         elapsed = time.monotonic() - start_time
         if elapsed > AISTUDIO_MAX_POLL_DURATION:
-            raise TimeoutError(f"AI Studio API 폴링 타임아웃: {elapsed:.0f}s > {AISTUDIO_MAX_POLL_DURATION}s")
+            raise TimeoutError(f"AI Studio API polling timeout: {elapsed:.0f}s > {AISTUDIO_MAX_POLL_DURATION}s")
 
         poll_count += 1
         try:
@@ -472,13 +472,13 @@ def _aistudio_poll_job(job_id: str) -> str:
         if state == "done":
             json_url = data.get("resultUrl", {}).get("jsonUrl", "")
             if not json_url:
-                raise RuntimeError(f"AI Studio API 결과 URL 없음: {json.dumps(data)[:300]}")
+                raise RuntimeError(f"AI Studio API missing result URL: {json.dumps(data)[:300]}")
             logger.info(f"[aistudio] job 완료: jobId={job_id}, elapsed={elapsed:.0f}s, polls={poll_count}")
             return json_url
 
         if state == "failed":
-            error_msg = data.get("errorMsg", "알 수 없는 오류")
-            raise RuntimeError(f"AI Studio API job 실패: {error_msg}")
+            error_msg = data.get("errorMsg", "Unknown error")
+            raise RuntimeError(f"AI Studio API job failed: {error_msg}")
 
         logger.debug(f"[aistudio] 폴링 중 (poll {poll_count}): state={state}, elapsed={elapsed:.0f}s")
         time.sleep(AISTUDIO_POLL_INTERVAL)
@@ -494,7 +494,7 @@ def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, A
 
     lines = [line.strip() for line in resp.text.strip().split("\n") if line.strip()]
     if not lines:
-        raise RuntimeError("AI Studio API JSONL 결과가 비어있음")
+        raise RuntimeError("AI Studio API JSONL result is empty")
 
     image_dir = IMAGE_BASE_DIR / request_id
     image_dir.mkdir(parents=True, exist_ok=True)
@@ -586,17 +586,17 @@ async def api_convert(file: UploadFile = File(...)) -> AsyncConvertResponse:
     토큰은 서비스 환경 변수에서만 사용되어 클라이언트에 노출되지 않는다.
     """
     if not AISTUDIO_API_TOKEN:
-        raise HTTPException(status_code=503, detail="PADDLEOCR_API_TOKEN이 설정되지 않았습니다")
+        raise HTTPException(status_code=503, detail="PADDLEOCR_API_TOKEN is not configured")
 
     if not file.filename:
-        raise HTTPException(status_code=400, detail="파일 이름이 없습니다")
+        raise HTTPException(status_code=400, detail="Missing filename")
 
     ext = Path(file.filename).suffix.lower()
     image_extensions = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp"}
     if ext not in image_extensions:
         raise HTTPException(
             status_code=400,
-            detail=f"AI Studio API는 이미지만 지원합니다 (png/jpg/bmp/tiff/webp): {file.filename}",
+            detail=f"AI Studio API supports images only (png/jpg/bmp/tiff/webp): {file.filename}",
         )
 
     task_id = uuid.uuid4().hex
@@ -627,7 +627,7 @@ async def api_convert_status(task_id: str) -> TaskStatusResponse:
     with _tasks_lock:
         task = _tasks.get(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="task를 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Task not found")
     return TaskStatusResponse(
         task_id=task_id,
         status=task["status"],
@@ -641,4 +641,4 @@ async def api_convert_status(task_id: str) -> TaskStatusResponse:
 @app.exception_handler(Exception)
 async def generic_exception_handler(_: Any, exc: Exception) -> JSONResponse:
     logger.exception("Unhandled exception")
-    return JSONResponse(status_code=500, content={"detail": f"내부 오류: {exc}"})
+    return JSONResponse(status_code=500, content={"detail": f"Internal error: {exc}"})

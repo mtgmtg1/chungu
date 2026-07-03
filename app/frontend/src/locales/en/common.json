@@ -18,6 +18,7 @@
   "footer": {
     "privacy": "Privacy Policy",
     "terms": "Terms of Service",
+    "refundPolicy": "Refund Policy",
     "apiDocs": "API Docs",
     "contact": "Contact Support"
   },
@@ -129,6 +130,8 @@
       "s11Body": "To report copyright infringement, please email admin@proof.teamcat.app with details of the infringed work, its location, and rights holder information. We will take appropriate action upon receipt, and repeat infringers will have their accounts permanently suspended. Counter-notice procedures are handled via the same email.",
       "s12Title": "12. Account Suspension and Termination",
       "s12Body": "The Company may suspend or terminate user accounts for violations of these Terms, unacceptable use, or legal obligations. Prior notice is generally given before suspension, but immediate action may be taken in cases of urgent legal violation.",
+      "s13Title": "13. On-Premise Local Server License",
+      "s13Body": "The on-premise local server is provided for internal enterprise use only. It includes unlimited usage, five years of free updates, two years of technical support, and international mail delivery of the server and manuals. Engineer onsite visits are quoted and billed separately. Users may not reverse engineer, decompile, redistribute, rent, lease, or convert the software into an external service (including API services). It may not be used to provide any commercial service that competes with or is similar to PROOF. Transfer of hardware to a third party requires the Company's prior written consent. Violation will result in immediate license termination and possible claims for damages.",
       "contactTitle": "Contact",
       "contactBody": "For questions regarding these Terms, please contact us at:"
     },

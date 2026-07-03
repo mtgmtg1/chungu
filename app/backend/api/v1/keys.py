@@ -27,9 +27,9 @@ def create_key(
     """새 API key를 생성합니다. 평문 key는 이 응답에서만 노출됩니다."""
     db_user = db.get(User, uuid.UUID(user.user_id))
     if db_user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="사용자를 찾을 수 없습니다")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     if not db_user.is_developer:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="API key를 발급할 권한이 없습니다")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to create API keys")
 
     api_key, plain = create_api_key_record(db_user, name, scopes or ["jobs:read", "jobs:write"], rate_limit_rpm)
     return {
@@ -80,7 +80,7 @@ def delete_key(
     """API key를 삭제합니다."""
     key = db.get(ApiKey, key_id)
     if key is None or str(key.user_id) != user.user_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="key를 찾을 수 없습니다")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
     db.delete(key)
     db.commit()
     return {"ok": True}
@@ -95,7 +95,7 @@ def rotate_key(
     """기존 key를 비활성화하고 새 평문 key를 발급합니다."""
     old_key = db.get(ApiKey, key_id)
     if old_key is None or str(old_key.user_id) != user.user_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="key를 찾을 수 없습니다")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
 
     db_user = db.get(User, uuid.UUID(user.user_id))
     new_key, plain = create_api_key_record(
@@ -125,7 +125,7 @@ def key_usage(
 
     key = db.get(ApiKey, key_id)
     if key is None or str(key.user_id) != user.user_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="key를 찾을 수 없습니다")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
 
     rows = db.execute(
         select(ApiUsage).where(ApiUsage.api_key_id == key_id).order_by(ApiUsage.created_at.desc()).limit(limit)

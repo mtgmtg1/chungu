@@ -6,6 +6,10 @@ sidebar_position: 5
 
 결제 내역을 반환합니다.
 
+:::note
+이 엔드포인트는 API 키 외에도 웹 앱 로그인의 JWT 세션 토큰을 지원합니다.
+:::
+
 ## 쿼리 매개변수
 
 | 매개변수 | 타입 | 기본값 | 범위 |
@@ -25,14 +29,14 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
 [
   {
     "id": "pay-001",
-    "provider": "toss",
-    "currency": "KRW",
-    "amount": "33000",
+    "provider": "paddle",
+    "currency": "USD",
+    "amount": "10.00",
     "points_added": 10000,
     "status": "done",
-    "external_id": "toss_payment_abc123",
-    "paid_at": "2026-06-26T15:00:00",
-    "created_at": "2026-06-26T14:59:00"
+    "external_id": "paddle_pay_abc123",
+    "paid_at": "2026-07-15T15:00:00",
+    "created_at": "2026-07-15T14:59:00"
   }
 ]
 ```

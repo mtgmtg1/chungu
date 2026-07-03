@@ -20,6 +20,8 @@ const sidebars = {
       ],
     },
     'sdks-and-tools',
+    'docling',
+    'hwp',
     'changelog',
   ],
 
@@ -56,6 +58,8 @@ const sidebars = {
         'api-reference/jobs/list-jobs',
         'api-reference/jobs/download',
         'api-reference/jobs/convert',
+        'api-reference/jobs/job-action',
+        'api-reference/jobs/xlsx-advanced-action',
       ],
     },
   ],

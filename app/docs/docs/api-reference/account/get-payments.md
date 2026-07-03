@@ -6,6 +6,10 @@ sidebar_position: 5
 
 Returns payment history.
 
+:::note
+This endpoint accepts both API key (`X-API-Key` header) and JWT session token (`Authorization: Bearer` header).
+:::
+
 ## Query parameters
 
 | Parameter | Type | Default | Range |
@@ -25,14 +29,14 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
 [
   {
     "id": "pay-001",
-    "provider": "toss",
-    "currency": "KRW",
-    "amount": "33000",
+    "provider": "paddle",
+    "currency": "USD",
+    "amount": "10.00",
     "points_added": 10000,
     "status": "done",
-    "external_id": "toss_payment_abc123",
-    "paid_at": "2026-06-26T15:00:00",
-    "created_at": "2026-06-26T14:59:00"
+    "external_id": "txn_abc123",
+    "paid_at": "2026-07-14T15:00:00",
+    "created_at": "2026-07-14T14:59:00"
   }
 ]
 ```

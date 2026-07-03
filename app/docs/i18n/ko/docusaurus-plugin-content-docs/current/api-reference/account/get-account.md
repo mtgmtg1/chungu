@@ -4,7 +4,11 @@ sidebar_position: 1
 
 # GET /account
 
-계정 정보, 포인트 잔액, 오늘 사용량, 현재 API 키 메타데이터를 반환합니다.
+계정 정보, 크레딧 잔액, 오늘 사용량, 현재 API 키 메타데이터를 반환합니다.
+
+:::note
+이 엔드포인트는 API 키 외에도 웹 앱 로그인의 JWT 세션 토큰을 지원합니다.
+:::
 
 ## 요청
 
@@ -42,11 +46,11 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
 |-------|------|-------------|
 | `user_id` | string (uuid) | 사용자 식별자 |
 | `email` | string | 사용자 이메일 |
-| `points_balance` | int | 현재 포인트 잔액 |
+| `points_balance` | int | 현재 크레딧 잔액 (milli-USD) |
 | `api_key` | object | 현재 API 키 메타데이터 |
 | `api_key.scopes` | string[] | 키 권한 |
 | `api_key.rate_limit_rpm` | int | 분당 요청 제한 |
-| `api_key.daily_quota` | int\|null | 일일 포인트 한도 (null = 무제한) |
-| `api_key.daily_spent_points` | int | 오늘 사용한 포인트 |
-| `today_usage.points_spent` | int | 오늘 사용한 포인트 |
+| `api_key.daily_quota` | int\|null | 일일 크레딧 한도 (null = 무제한) |
+| `api_key.daily_spent_points` | int | 오늘 사용한 크레딧 (milli-USD) |
+| `today_usage.points_spent` | int | 오늘 사용한 크레딧 (milli-USD) |
 | `today_usage.requests` | int | 오늘 API 호출 수 |

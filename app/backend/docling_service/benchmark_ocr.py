@@ -56,7 +56,7 @@ def _convert_file(converter: Any, file_path: Path) -> tuple[str, int, float]:
     elapsed = time.perf_counter() - start
 
     if result.document is None:
-        raise RuntimeError(f"변환 실패: {file_path}")
+        raise RuntimeError(f"Conversion failed: {file_path}")
 
     from docling_core.types.doc import ImageRefMode
     markdown = result.document.export_to_markdown(image_mode=ImageRefMode.PLACEHOLDER)

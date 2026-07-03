@@ -65,7 +65,7 @@ def convert_file(
     done은 elapsed/max_wait * 99 (최대 99%)로 추정한다.
     """
     if not is_enabled():
-        raise RuntimeError("Docling 전처리 서비스가 설정되지 않았습니다")
+        raise RuntimeError("Docling preprocessing service is not configured")
 
     base_url = get_service_url()
     max_wait = _compute_max_timeout(path)
@@ -84,7 +84,7 @@ def convert_file(
 
     task_id = resp.json().get("task_id")
     if not task_id:
-        raise RuntimeError(f"Docling async 변환 시작 실패: task_id 없음 (resp={resp.text[:200]})")
+        raise RuntimeError(f"Failed to start Docling async conversion: no task_id (resp={resp.text[:200]})")
 
     logger.info(f"[docling-client] {path.name} task_id={task_id} 폴링 시작")
 
@@ -110,7 +110,7 @@ def convert_file(
             continue
 
         if status_resp.status_code == 404:
-            raise RuntimeError(f"Docling task를 찾을 수 없음: {task_id}")
+            raise RuntimeError(f"Docling task not found: {task_id}")
 
         if status_resp.status_code >= 400:
             logger.warning(f"[docling-client] {path.name} 폴링 에러: {status_resp.status_code}")
@@ -123,7 +123,7 @@ def convert_file(
         if status == "done":
             result = data.get("result")
             if result is None:
-                raise RuntimeError(f"Docling 변환 완료지만 결과 없음: {path.name}")
+                raise RuntimeError(f"Docling conversion completed but no result: {path.name}")
             markdown = result.get("markdown", "")
             relative_images = result.get("images", [])
             image_paths = [Path(img) for img in relative_images]
@@ -133,8 +133,8 @@ def convert_file(
             return markdown, image_paths
 
         if status == "error":
-            error_msg = data.get("error", "알 수 없는 오류")
-            raise RuntimeError(f"Docling 변환 실패: {path.name} - {error_msg}")
+            error_msg = data.get("error", "Unknown error")
+            raise RuntimeError(f"Docling conversion failed: {path.name} - {error_msg}")
 
         # status == "processing": 경과 시간 기반 추정 진행률 전달
         if status == "processing":
@@ -152,7 +152,7 @@ def convert_file(
 def download_image(relative_path: str, timeout: int = 60) -> bytes:
     """b2 Docling 서비스에서 추출된 이미지 데이터를 다운로드한다."""
     if not is_enabled():
-        raise RuntimeError("Docling 전처리 서비스가 설정되지 않았습니다")
+        raise RuntimeError("Docling preprocessing service is not configured")
     url = f"{get_service_url()}/images/{relative_path.lstrip('/')}"
     resp = requests.get(url, timeout=timeout)
     if resp.status_code >= 400:

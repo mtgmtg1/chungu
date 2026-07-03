@@ -402,9 +402,23 @@ export default function UploadPage() {
           </div>
           <div className="flex items-center gap-6" data-oid="2.0d1h3">
             <Link
+              to="/terms"
+              className="hover:text-primary transition-colors" data-oid="upload-footer-terms">
+              {t("common:footer.terms")}
+            </Link>
+            <Link
+              to="/privacy"
+              className="hover:text-primary transition-colors" data-oid="upload-footer-privacy">
+              {t("common:footer.privacy")}
+            </Link>
+            <Link
+              to="/terms#refund-policy"
+              className="hover:text-primary transition-colors" data-oid="upload-footer-refund">
+              {t("common:footer.refundPolicy")}
+            </Link>
+            <Link
               to="/developer"
               className="hover:text-primary transition-colors" data-oid="6zrgl05">
-
               {t("page:upload.api")}
             </Link>
             <a href="/admin" className="hover:text-primary transition-colors" data-oid="i457pgw">

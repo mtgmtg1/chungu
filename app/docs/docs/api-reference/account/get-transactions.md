@@ -4,7 +4,11 @@ sidebar_position: 4
 
 # GET /account/transactions
 
-Returns point charge and spend history.
+Returns credit charge and spend history.
+
+:::note
+This endpoint accepts both API key (`X-API-Key` header) and JWT session token (`Authorization: Bearer` header).
+:::
 
 ## Query parameters
 
@@ -26,18 +30,18 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
   {
     "id": "tx-001",
     "type": "spend",
-    "amount": -30,
-    "balance_after": 9970,
-    "description": "API 작업: document.pdf",
-    "created_at": "2026-06-27T10:30:00"
+    "amount": -50,
+    "balance_after": 9950,
+    "description": "API job: document.pdf",
+    "created_at": "2026-07-15T10:30:00"
   },
   {
     "id": "tx-002",
     "type": "charge",
     "amount": 10000,
     "balance_after": 10000,
-    "description": "Toss 결제: Starter 패키지",
-    "created_at": "2026-06-26T15:00:00"
+    "description": "Paddle payment: $10.00 USD",
+    "created_at": "2026-07-14T15:00:00"
   }
 ]
 ```

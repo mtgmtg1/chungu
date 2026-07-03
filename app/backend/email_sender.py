@@ -24,7 +24,7 @@ def send_email(db: Session, to: str, subject: str, body_html: str) -> None:
     """DB의 SMTP 설정으로 HTML 메일을 보낸다. 미설정 시 예외."""
     cfg = _smtp_config(db)
     if not cfg["host"]:
-        raise RuntimeError("SMTP 설정이 비어 있습니다 (관리자 페이지에서 입력하세요)")
+        raise RuntimeError("SMTP settings are empty (configure via admin page)")
 
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -43,6 +43,34 @@ def send_email(db: Session, to: str, subject: str, body_html: str) -> None:
 
 def send_test_email(db: Session, to: str) -> None:
     send_email(db, to, "[PROOF] SMTP 테스트 메일", "<p>SMTP 설정이 정상 작동합니다.</p>")
+
+
+def send_on_premise_inquiry_email(db: Session, inquiry) -> None:
+    """온프레미스 로컬 서버 문의 접수 메일을 admin에게 발송한다."""
+    subject = f"[PROOF 온프레미스 문의] {inquiry.company or '개인/미기업'} - {inquiry.pages_per_hour:,}장/시간"
+    html = f"""
+    <div style="font-family:sans-serif;max-width:600px;margin:auto;padding:24px">
+      <h2 style="color:#1f2937;margin-bottom:16px">PROOF 온프레미스 로컬 서버 문의</h2>
+      <table style="width:100%;border-collapse:collapse;font-size:14px;color:#374151">
+        <tr><td style="border:1px solid #e5e7eb;padding:10px;width:140px"><b>문의 ID</b></td><td style="border:1px solid #e5e7eb;padding:10px">{inquiry.id}</td></tr>
+        <tr><td style="border:1px solid #e5e7eb;padding:10px"><b>담당자 이메일</b></td><td style="border:1px solid #e5e7eb;padding:10px">{inquiry.email}</td></tr>
+        <tr><td style="border:1px solid #e5e7eb;padding:10px"><b>회사명</b></td><td style="border:1px solid #e5e7eb;padding:10px">{inquiry.company or '-'}</td></tr>
+        <tr><td style="border:1px solid #e5e7eb;padding:10px"><b>담당자명</b></td><td style="border:1px solid #e5e7eb;padding:10px">{inquiry.contact_name or '-'}</td></tr>
+        <tr><td style="border:1px solid #e5e7eb;padding:10px"><b>국가/지역</b></td><td style="border:1px solid #e5e7eb;padding:10px">{inquiry.country or '-'}</td></tr>
+        <tr><td style="border:1px solid #e5e7eb;padding:10px"><b>희망 처리량</b></td><td style="border:1px solid #e5e7eb;padding:10px">{inquiry.pages_per_hour:,}장/시간</td></tr>
+        <tr><td style="border:1px solid #e5e7eb;padding:10px"><b>예상 가격</b></td><td style="border:1px solid #e5e7eb;padding:10px">${inquiry.estimated_price:,}</td></tr>
+        <tr><td style="border:1px solid #e5e7eb;padding:10px"><b>약관 동의</b></td><td style="border:1px solid #e5e7eb;padding:10px">{'동의' if inquiry.agreed_terms else '미동의'}</td></tr>
+      </table>
+      <h3 style="margin-top:24px;margin-bottom:8px;font-size:16px;color:#1f2937">추가 문의사항</h3>
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:16px;white-space:pre-wrap">
+        {inquiry.message or '없음'}
+      </div>
+      <p style="margin-top:24px;color:#6b7280;font-size:13px">
+        PROOF Admin Dashboard에서 상태를 변경할 수 있습니다.
+      </p>
+    </div>
+    """
+    send_email(db, "admin@proof.teamcat.app", subject, html)
 
 
 # [Flow: Step 1 (언어별 문자열 선택) -> Step 2 (다운로드/결과 URL 생성) -> Step 3 (HTML 본문 조립)]

@@ -46,7 +46,7 @@ export default function LegalTermsPage() {
             <p>{t("legal.terms.s4Body")}</p>
           </section>
 
-          <section>
+          <section id="refund-policy">
             <h2 className="text-lg font-semibold text-gray-900 mb-2">{t("legal.terms.s5Title")}</h2>
             <p>{t("legal.terms.s5Body")}</p>
           </section>
@@ -84,6 +84,11 @@ export default function LegalTermsPage() {
           <section>
             <h2 className="text-lg font-semibold text-gray-900 mb-2">{t("legal.terms.s12Title")}</h2>
             <p>{t("legal.terms.s12Body")}</p>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-gray-900 mb-2">{t("legal.terms.s13Title")}</h2>
+            <p>{t("legal.terms.s13Body")}</p>
           </section>
 
           <section className="border-t pt-6">

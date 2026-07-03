@@ -202,7 +202,7 @@ def run_job(job_id: str) -> dict:
             else:
                 local_candidates = [p for p in work_dir.glob("*") if p.is_file()]
                 if not local_candidates:
-                    raise FileNotFoundError("입력 파일을 찾을 수 없습니다")
+                    raise FileNotFoundError("Input file not found")
                 input_path = local_candidates[0]
 
             def on_progress(done: int, total: int) -> None:
@@ -301,7 +301,7 @@ def run_job(job_id: str) -> dict:
             else:
                 local_candidates = [p for p in work_dir.glob("*") if p.is_file()]
                 if not local_candidates:
-                    raise FileNotFoundError("입력 파일을 찾을 수 없습니다")
+                    raise FileNotFoundError("Input file not found")
                 input_path = local_candidates[0]
 
             def on_progress(done: int, total: int) -> None:
@@ -349,7 +349,7 @@ def run_job(job_id: str) -> dict:
             else:
                 local_candidates = list(work_dir.glob("*"))
                 if not local_candidates:
-                    raise FileNotFoundError("입력 파일을 찾을 수 없습니다")
+                    raise FileNotFoundError("Input file not found")
                 input_data = local_candidates[0].read_bytes()
 
             with tempfile.TemporaryDirectory() as tmpdir:

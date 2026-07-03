@@ -17,7 +17,7 @@ def compare_ocr(pdf_path: str, work_dir: str, columns: list[str] | None = None) 
     img_dir.mkdir(parents=True, exist_ok=True)
     images = ocr_client.render_pdf(pdf_path, str(img_dir), dpi=300)
     if not images:
-        raise FileNotFoundError(f"PDF에서 이미지를 렌더링할 수 없습니다: {pdf_path}")
+        raise FileNotFoundError(f"Failed to render images from PDF: {pdf_path}")
     img = images[0]
     prompt = build_vision_prompt(columns)
 

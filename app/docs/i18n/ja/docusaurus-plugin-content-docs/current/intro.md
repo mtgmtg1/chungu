@@ -25,13 +25,13 @@ flowchart LR
     E --> F[結果ダウンロード]
 ```
 
-1. **アップロード** — `POST /api/v1/jobs/upload`でファイルをアップロードし、コストプレビューを取得します（ポイント消費なし）
-2. **確認** — `POST /api/v1/jobs/{job_id}/confirm`でジョブを確認します。ポイントが差し引かれ、処理が開始されます
+1. **アップロード** — `POST /api/v1/jobs/upload`でファイルをアップロードし、コストプレビューを取得します（クレジット消費なし）
+2. **確認** — `POST /api/v1/jobs/{job_id}/confirm`でジョブを確認します。クレジットが差し引かれ、処理が開始されます
 3. **ポーリング** — `GET /api/v1/jobs/{job_id}`で`status`が`done`または`error`になるまで確認します
-4. **ダウンロード** — `GET /api/v1/jobs/{job_id}/download?type=csv|md|xlsx`で結果をダウンロードします
+4. **ダウンロード** — `GET /api/v1/jobs/{job_id}/download?type=csv_basic|md|xlsx_basic`で結果をダウンロードします
 
 ## 開始方法
 
 - PROOF初めてですか？[クイックスタート](./quickstart)ガイドをお読みください
-- APIキーが必要ですか？[開発者ポータル](../../developer)にアクセスしてください
+- APIキーが必要ですか？[開発者ポータル](pathname:///developer)にアクセスしてください
 - AIにAPIを自動呼び出させたいですか？[AIプロンプト](./ai-prompts/full-pipeline-prompt)を確認してください

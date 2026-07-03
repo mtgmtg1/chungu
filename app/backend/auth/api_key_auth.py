@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from ..db.models import AdminUser, ApiKey, User
 from ..db.session import get_db
-from .supabase_auth import CurrentUser
+from .supabase_auth import CurrentUser, get_current_user
 
 
 def _constant_time_compare(a: str, b: str) -> bool:
@@ -42,7 +42,7 @@ def get_current_api_key(
         raw_key = authorization[7:].strip()
 
     if not raw_key:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API key가 필요합니다")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API key required")
 
     key_hash = _hash_key(raw_key)
     prefix = _get_key_prefix(raw_key)
@@ -53,14 +53,14 @@ def get_current_api_key(
         .first()
     )
     if api_key is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않은 API key입니다")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
     if api_key.expires_at and api_key.expires_at < datetime.now(timezone.utc):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="만료된 API key입니다")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Expired API key")
 
     user = db.get(User, api_key.user_id)
     if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API key에 연결된 사용자가 없습니다")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No user associated with this API key")
 
     # admin_users 테이블에 등록된 계정은 관리자로 간주
     is_admin = user.is_admin or (
@@ -85,6 +85,29 @@ def require_api_key_with_key(
     return auth
 
 
+async def require_api_key_or_session(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    x_api_key: Annotated[str | None, Header()] = None,
+    db: Session = Depends(get_db),
+) -> tuple[CurrentUser, ApiKey | None]:
+    """API key 우선; 없으면 Bearer 세션 토큰으로 사용자 인증. 웹 포털 전용 fallback."""
+    if x_api_key and x_api_key.strip():
+        return get_current_api_key(request, x_api_key, None, db)
+
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+        if not token.startswith("eyJ"):
+            try:
+                return get_current_api_key(request, None, authorization, db)
+            except HTTPException:
+                pass
+        user = get_current_user(authorization, db)
+        return user, None
+
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API key or login session required")
+
+
 def require_scope(scope: str):
     def _check(
         auth: tuple[CurrentUser, ApiKey] = Depends(get_current_api_key),
@@ -92,7 +115,7 @@ def require_scope(scope: str):
         _, api_key = auth
         scopes = api_key.scopes or []
         if scope not in scopes and "admin" not in scopes:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"필요한 scope: {scope}")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Required scope: {scope}")
         return auth[0]
 
     return _check

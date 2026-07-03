@@ -94,7 +94,7 @@ const config = {
             position: 'right',
           },
           {
-            href: '../../developer',
+            href: 'pathname:///developer',
             label: 'Developer Portal',
             position: 'right',
           },
@@ -122,8 +122,8 @@ const config = {
           {
             title: 'Links',
             items: [
-              { label: 'Developer Portal', href: '../../developer' },
-              { label: 'Swagger / OpenAPI', href: '../../api/v1/docs' },
+              { label: 'Developer Portal', href: 'pathname:///developer' },
+              { label: 'Swagger / OpenAPI', href: 'pathname:///api/v1/docs' },
             ],
           },
         ],

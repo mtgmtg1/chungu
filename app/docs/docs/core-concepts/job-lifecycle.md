@@ -25,7 +25,7 @@ upload → pending → confirm → queued → processing → done
 ```
 
 1. **Upload** (`POST /jobs/upload`) — creates a job in `pending` state, returns cost preview
-2. **Confirm** (`POST /jobs/{id}/confirm`) — deducts points, transitions to `queued`, dispatches to Celery worker
+2. **Confirm** (`POST /jobs/{id}/confirm`) — deducts credits, transitions to `queued`, dispatches to Celery worker
 3. **Processing** — worker processes pages/files, updates `done_pages` / `done_files` in real time
 4. **Done** — results are stored in Supabase Storage, ready for download
 5. **Download** (`GET /jobs/{id}/download`) — returns a signed URL valid for 1 hour
@@ -52,4 +52,4 @@ If `status` is `error`, the `error_log` field contains details. Common causes:
 - Unsupported file format
 - Corrupted PDF or media file
 - LLM inference timeout
-- Insufficient points (caught at confirm step)
+- Insufficient credits (caught at confirm step)

@@ -482,6 +482,53 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
   - `app/frontend/src/index.css` — `@keyframes stagger-enter`, scrollbar/mark border-radius overrides
   - `app/frontend/tailwind.config.js` — Reduced fontSize, spacing, borderRadius: 0
 
+## API Error Messages (English)
+
+- All backend `HTTPException`, `JSONResponse`, `RuntimeError`, `ValueError`, `FileNotFoundError`, and `TimeoutError` messages are in **English**.
+- Korean error messages were fully translated across all backend files: `api/`, `auth/`, `core/`, `workers/`, `docling_service/`, `paddleocr_service/`, `email_sender.py`, `compare_ocr.py`.
+- Frontend UI strings remain i18n (ko/en/ja) via `react-i18next`.
+- Turnstile verification failure returns `"Bot verification failed. Please try again."` (was Korean).
+
+## On-Premise Inquiry
+
+- On-premise local server quote page at `/on-premise` (`OnPremisePage.jsx`).
+- Backend: `app/backend/api/on_premise.py` — `POST /api/on-premise/inquiry` creates an inquiry, sends admin email.
+- Pricing: linear from $20,000 (3,000 pages/hr) to $80,000 (12,000 pages/hr), in 1,000-page/hr increments.
+- DB: `on_premise_inquiries` table (`016_add_on_premise_inquiry.sql`).
+- Key files: `app/backend/api/on_premise.py`, `app/frontend/src/pages/OnPremisePage.jsx`, `app/backend/db/models.py` (`OnPremiseInquiry`).
+
+## Dev Auth (Local Development Only)
+
+- `app/backend/api/dev_auth.py` — bypasses Supabase Auth for local development.
+- Only active when `DEV_BYPASS_AUTH=true` in `.env`.
+- `POST /api/dev/login` issues a Supabase-compatible JWT for a fixed dev user (`dev@proof.local`).
+- **Never enable in production.**
+
+## GDPR / Account Data
+
+- `app/backend/api/gdpr.py` — GDPR compliance endpoints.
+- `GET /api/account/export` — exports all user data as JSON (jobs, payments, API keys, usage).
+- `DELETE /api/account/delete` — deletes user account and all associated data.
+- Key file: `app/backend/api/gdpr.py`.
+
+## Legal Pages & Cookie Consent
+
+- `/terms` — Terms of Service (`LegalTermsPage.jsx`, i18n).
+- `/privacy` — Privacy Policy (`LegalPrivacyPage.jsx`, i18n).
+- `CookieConsent` component shown on all pages (bottom banner).
+- Legal contact email: `admin@proof.teamcat.app`.
+- Key files: `app/frontend/src/pages/LegalTermsPage.jsx`, `app/frontend/src/pages/LegalPrivacyPage.jsx`, `app/frontend/src/components/CookieConsent.jsx`.
+
+## Docusaurus Docs Site
+
+- Served at `/docs/` by FastAPI (`main.py` mounts `docs/build/` as static files).
+- Source: `app/docs/docs/` (English), translations under `app/docs/i18n/{ko,ja}/docusaurus-plugin-content-docs/current/`.
+- **External links**: use `pathname:///path` protocol (e.g., `pathname:///developer`, `pathname:///api/v1/docs`) in both `docusaurus.config.js` and markdown files. Relative paths like `../../developer` cause broken links on i18n pages.
+- **Doc-internal links**: use doc IDs without `.md` extension (e.g., `[HWP Support](hwp)`, `[file formats](file-formats)`), not file paths like `./hwp.md` or `../file-formats`.
+- Sidebars: `app/docs/sidebars.js` — three sidebars: `docsSidebar`, `apiReferenceSidebar`, `aiPromptsSidebar`.
+- Build: `cd app/docs && npm run build` (outputs to `docs/build/`).
+- When adding new docs pages, create EN source + KO/JA translations and register in `sidebars.js`.
+
 ## Agent Guidelines
 
 - Prefer minimal, focused edits. Follow existing code style.

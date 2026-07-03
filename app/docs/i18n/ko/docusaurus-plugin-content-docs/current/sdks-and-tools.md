@@ -36,4 +36,4 @@ openapi-generator-cli generate \
 
 ## API 키 관리
 
-그래픽 인터페이스는 웹 앱의 [개발자 포털](../../developer)을 사용하거나, 프로그래밍 방식으로 [API 키 엔드포인트](../api-reference/api-keys/create-key)를 사용하세요.
+그래픽 인터페이스는 웹 앱의 [개발자 포털](pathname:///developer)을 사용하거나, 프로그래밍 방식으로 [API 키 엔드포인트](api-reference/api-keys/create-key)를 사용하세요.

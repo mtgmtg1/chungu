@@ -36,4 +36,4 @@ openapi-generator-cli generate \
 
 ## APIキー管理
 
-グラフィカルインターフェースはウェブアプリの[開発者ポータル](../../developer)を使用するか、プログラムで[APIキーエンドポイント](../api-reference/api-keys/create-key)を使用してください。
+グラフィカルインターフェースはウェブアプリの[開発者ポータル](pathname:///developer)を使用するか、プログラムで[APIキーエンドポイント](api-reference/api-keys/create-key)を使用してください。

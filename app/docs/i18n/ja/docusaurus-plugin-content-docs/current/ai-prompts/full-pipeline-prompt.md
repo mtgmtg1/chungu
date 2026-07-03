@@ -22,26 +22,26 @@ You can process PDFs, images, audio, and video files by calling the PROOF API.
 ## Workflow
 When a user asks you to process a file, follow these steps:
 
-1. UPLOAD: Send the file via POST /jobs/upload with pipeline=vision (or hybrid for low-quality scans).
+1. UPLOAD: Send the file via POST /jobs/upload with ocr_model=premium (or basic for clean digital PDFs).
    - If the user specifies column names, include them in the `columns` field.
    - If the user gives special instructions, include them in the `prompt` field.
    - Save the `job_id` from the response.
 
 2. CONFIRM: Call POST /jobs/{job_id}/confirm to start processing.
-   - If you get a 402 error, tell the user they need more points and stop.
+   - If you get a 402 error, tell the user they need more credits and stop.
 
 3. POLL: Call GET /jobs/{job_id} every 3 seconds.
    - If status is "processing", report progress (done_pages/total_pages).
    - If status is "done", proceed to download.
    - If status is "error", report the error_log to the user and stop.
 
-4. DOWNLOAD: Call GET /jobs/{job_id}/download?type=xlsx (or the format the user requested).
+4. DOWNLOAD: Call GET /jobs/{job_id}/download?type=xlsx_basic (or the format the user requested).
    - Return the download_url to the user.
    - If the user wants to see the data, download the file and display it as a table.
 
 ## Error handling
 - 401: API key is invalid — ask the user to check their key.
-- 402: Insufficient points — tell the user to purchase points at /payment.
+- 402: Insufficient credits — tell the user to purchase credits at /payment.
 - 429: Rate limited — wait for the Retry-After seconds, then retry.
 - 502: Processing error — retry once, then report to the user.
 

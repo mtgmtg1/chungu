@@ -25,7 +25,7 @@ sidebar_position: 1
 ```
 
 1. **アップロード** (`POST /jobs/upload`) — `pending`状態でジョブ作成、コストプレビュー返却
-2. **確認** (`POST /jobs/{id}/confirm`) — ポイント差し引き、`queued`に移行、Celeryワーカーにディスパッチ
+2. **確認** (`POST /jobs/{id}/confirm`) — クレジット差し引き、`queued`に移行、Celeryワーカーにディスパッチ
 3. **処理** — ワーカーがページ/ファイルを処理、リアルタイムで`done_pages` / `done_files`を更新
 4. **完了** — 結果がSupabase Storageに保存、ダウンロード準備完了
 5. **ダウンロード** (`GET /jobs/{id}/download`) — 1時間有効な署名付きURL返却
@@ -52,4 +52,4 @@ while True:
 - サポートされていないファイル形式
 - 破損したPDFまたはメディアファイル
 - LLM推論タイムアウト
-- ポイント不足（確認ステップで検出）
+- クレジット不足（確認ステップで検出）

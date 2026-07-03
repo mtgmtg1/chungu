@@ -6,6 +6,8 @@ sidebar_position: 3
 
 All API requests require an API key. You can pass it via the `X-API-Key` header or the `Authorization: Bearer` header.
 
+Some account endpoints (account info, transactions, usage, payments) also accept a JWT session token from the web app login, useful for Developer Portal access.
+
 ## Using the X-API-Key header
 
 ```bash
@@ -52,7 +54,7 @@ Store your API key securely. Never commit it to source control or expose it in c
 
 - **Default**: 60 requests per minute per API key
 - **Concurrent jobs**: up to 5 per account (admin-configurable)
-- **Daily point quota**: optional per key
+- **Daily credit quota**: optional per key
 
 When exceeded, the API returns `429 Too Many Requests` with a `Retry-After` header.
 

@@ -314,7 +314,7 @@ def run(parent_job_id: str) -> dict:
         markdown = _get_markdown_content(job)
         pages = split_markdown_by_pages(markdown)
         if not pages:
-            raise ValueError("변환할 마크다운 페이지가 없습니다")
+            raise ValueError("No markdown pages to convert")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             temp_dir = Path(tmpdir)
@@ -331,7 +331,7 @@ def run(parent_job_id: str) -> dict:
                         break
             columns = column_structure.get("columns", [])
             if not columns:
-                raise ValueError("문서에서 표 컬럼 구조를 추출할 수 없습니다")
+                raise ValueError("Could not extract table column structure from document")
 
             all_tables: list[dict] = []
             recovery_notes: list[dict] = []
@@ -394,7 +394,7 @@ def run(parent_job_id: str) -> dict:
                     all_tables.append({"headers": columns, "rows": normalized_rows})
 
             if not any_valid:
-                raise ValueError("모든 페이지에서 표를 추출할 수 없어 엑셀을 생성할 수 없습니다")
+                raise ValueError("Could not extract tables from any page; cannot generate Excel")
 
             merged_tables = _merge_page_tables(all_tables, recovery_notes)
             out_path = temp_dir / "result_advanced.xlsx"

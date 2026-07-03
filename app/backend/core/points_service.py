@@ -148,7 +148,7 @@ def spend_points(db: Session, user: User, points: int, description: str) -> Poin
         return tx
 
     if user.points_balance < points:
-        raise ValueError(f"크레딧이 부족합니다 (잔액: {user.points_balance}md, 필요: {points}md)")
+        raise ValueError(f"Insufficient credits (balance: {user.points_balance}md, required: {points}md)")
     user.points_balance -= points
     tx = PointTransaction(
         user_id=user.id,

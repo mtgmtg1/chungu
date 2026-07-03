@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ...auth.api_key_auth import require_api_key_with_key
+from ...auth.api_key_auth import require_api_key_or_session
 from ...auth.supabase_auth import CurrentUser
 from ...core import points_service
 from ...core.rate_limit import enforce_rate_limit, get_daily_spent_points
@@ -22,12 +22,13 @@ router = APIRouter(prefix="/account", tags=["account"])
 @router.get("")
 def get_account(
     request: Request,
-    auth: tuple[CurrentUser, ApiKey] = Depends(require_api_key_with_key),
+    auth: tuple[CurrentUser, ApiKey | None] = Depends(require_api_key_or_session),
     db: Session = Depends(get_db),
 ):
     """개발자 계정 정보, 잔액, 오늘 사용량을 반환합니다."""
     user, api_key = auth
-    enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
+    if api_key:
+        enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
     db_user_id = uuid.UUID(user.user_id)
 
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -50,7 +51,7 @@ def get_account(
             "rate_limit_rpm": api_key.rate_limit_rpm,
             "daily_quota": api_key.daily_quota,
             "daily_spent_points": get_daily_spent_points(api_key.id),
-        },
+        } if api_key else {},
         "today_usage": {
             "points_spent": int(today_spent),
             "requests": db.query(ApiUsage).filter(ApiUsage.user_id == db_user_id, ApiUsage.created_at >= today_start).count(),
@@ -61,11 +62,12 @@ def get_account(
 @router.get("/pricing")
 def get_pricing(
     request: Request,
-    auth: tuple[CurrentUser, ApiKey] = Depends(require_api_key_with_key),
+    auth: tuple[CurrentUser, ApiKey | None] = Depends(require_api_key_or_session),
     db: Session = Depends(get_db),
 ):
     user, api_key = auth
-    enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
+    if api_key:
+        enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
     """현재 크레딧 단가를 반환한다 (milli-USD)."""
     limits = points_service.get_charge_limits()
     return {
@@ -87,13 +89,14 @@ def get_pricing(
 @router.get("/transactions")
 def list_transactions(
     request: Request,
-    auth: tuple[CurrentUser, ApiKey] = Depends(require_api_key_with_key),
+    auth: tuple[CurrentUser, ApiKey | None] = Depends(require_api_key_or_session),
     db: Session = Depends(get_db),
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ):
     """포인트 충전/차감 내역을 반환합니다."""
     user, api_key = auth
-    enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
+    if api_key:
+        enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
     rows = (
         db.query(PointTransaction)
         .filter(PointTransaction.user_id == uuid.UUID(user.user_id))
@@ -117,13 +120,14 @@ def list_transactions(
 @router.get("/usage")
 def usage_summary(
     request: Request,
-    auth: tuple[CurrentUser, ApiKey] = Depends(require_api_key_with_key),
+    auth: tuple[CurrentUser, ApiKey | None] = Depends(require_api_key_or_session),
     db: Session = Depends(get_db),
     days: Annotated[int, Query(ge=1, le=90)] = 30,
 ):
     """최근 N일간 일별 API 사용량을 집계합니다."""
     user, api_key = auth
-    enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
+    if api_key:
+        enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
     since = datetime.now(timezone.utc) - timedelta(days=days)
     rows = (
         db.query(
@@ -149,13 +153,14 @@ def usage_summary(
 @router.get("/payments")
 def list_payments(
     request: Request,
-    auth: tuple[CurrentUser, ApiKey] = Depends(require_api_key_with_key),
+    auth: tuple[CurrentUser, ApiKey | None] = Depends(require_api_key_or_session),
     db: Session = Depends(get_db),
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ):
     """결제 내역을 반환합니다."""
     user, api_key = auth
-    enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
+    if api_key:
+        enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
     rows = (
         db.query(Payment)
         .filter(Payment.user_id == uuid.UUID(user.user_id))

@@ -9,7 +9,7 @@ sidebar_position: 2
 ## 前提条件
 
 - PROOFアカウント（ウェブアプリで登録）
-- APIキー（[開発者ポータル](../../developer)で作成）
+- APIキー（[開発者ポータル](pathname:///developer)で作成）
 - `curl`またはHTTPクライアント
 
 ## ステップ1：APIキーを取得
@@ -21,7 +21,7 @@ sidebar_position: 2
 
 ## ステップ2：アカウントを確認
 
-キーが機能することを確認し、ポイント残高を確認します:
+キーが機能することを確認し、クレジット残高を確認します:
 
 ```bash
 curl -H "X-API-Key: chu_live_xxxxxxxx" \
@@ -40,13 +40,13 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
 
 ## ステップ3：ファイルをアップロード
 
-PDFをアップロードし、コストプレビューを取得します（まだポイントは消費されません）:
+PDFをアップロードし、コストプレビューを取得します（まだクレジットは消費されません）:
 
 ```bash
 curl -X POST https://your-domain.com/api/v1/jobs/upload \
   -H "X-API-Key: chu_live_xxxxxxxx" \
   -F "files=@document.pdf" \
-  -F "pipeline=vision"
+  -F "ocr_model=premium"
 ```
 
 **レスポンス:**
@@ -56,14 +56,14 @@ curl -X POST https://your-domain.com/api/v1/jobs/upload \
   "status": "pending",
   "file_type": "pdf",
   "total_pages": 10,
-  "cost": { "pages": 10, "points": 30, "krw": 30, "usd": "0.02" },
+  "cost": { "pages": 10, "points": 50, "usd": "$0.05" },
   "balance": 10000
 }
 ```
 
 ## ステップ4：ジョブを確認
 
-確認するとポイントが差し引かれ、処理が開始されます:
+確認するとクレジットが差し引かれ、処理が開始されます:
 
 ```bash
 curl -X POST https://your-domain.com/api/v1/jobs/job-abc123/confirm \
@@ -75,7 +75,7 @@ curl -X POST https://your-domain.com/api/v1/jobs/job-abc123/confirm \
 {
   "job_id": "job-abc123",
   "status": "queued",
-  "remaining_points": 9970
+  "remaining_points": 9950
 }
 ```
 
@@ -95,7 +95,7 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
   "status": "done",
   "total_pages": 10,
   "done_pages": 10,
-  "cost_points": 30,
+  "cost_points": 50,
   "downloadable": true
 }
 ```
@@ -106,7 +106,7 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
 
 ```bash
 curl -H "X-API-Key: chu_live_xxxxxxxx" \
-  "https://your-domain.com/api/v1/jobs/job-abc123/download?type=xlsx"
+  "https://your-domain.com/api/v1/jobs/job-abc123/download?type=xlsx_basic"
 ```
 
 **レスポンス:**
@@ -128,7 +128,7 @@ HEADERS = {"X-API-Key": API_KEY}
 # アップロード
 with open("document.pdf", "rb") as f:
     resp = requests.post(f"{BASE}/jobs/upload", headers=HEADERS,
-                         files={"files": f}, data={"pipeline": "vision"})
+                         files={"files": f}, data={"ocr_model": "premium"})
 job_id = resp.json()["job_id"]
 
 # 確認
@@ -143,7 +143,7 @@ while True:
     time.sleep(5)
 
 # ダウンロード
-url = requests.get(f"{BASE}/jobs/{job_id}/download?type=csv",
+url = requests.get(f"{BASE}/jobs/{job_id}/download?type=csv_basic",
                    headers=HEADERS).json()["download_url"]
 print(f"ダウンロード: {url}")
 ```

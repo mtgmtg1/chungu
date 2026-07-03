@@ -85,7 +85,7 @@ async def _check_auth_security(path: str, request: Request, body: bytes) -> JSON
         logger.warning("[supabase_proxy] captcha failed for %s", email)
         return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
-            content={"error": "bot 확인에 실패했습니다. 다시 시도하세요.", "code": "captcha_failed"},
+            content={"error": "Bot verification failed. Please try again.", "code": "captcha_failed"},
         )
 
     if is_login:
@@ -94,7 +94,7 @@ async def _check_auth_security(path: str, request: Request, body: bytes) -> JSON
             retry_minutes = max(1, attempt_state["retry_after"] // 60)
             return JSONResponse(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                content={"error": f"로그인 시도가 너무 많습니다. {retry_minutes}분 후 다시 시도하세요.", "code": "too_many_attempts"},
+                content={"error": f"Too many login attempts. Please try again in {retry_minutes} minutes.", "code": "too_many_attempts"},
                 headers={"Retry-After": str(attempt_state["retry_after"])},
             )
 
@@ -103,7 +103,7 @@ async def _check_auth_security(path: str, request: Request, body: bytes) -> JSON
         if not signup_state["allowed"]:
             return JSONResponse(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                content={"error": "회원가입 시도가 너무 많습니다. 잠시 후 다시 시도하세요.", "code": "too_many_signups"},
+                content={"error": "Too many signup attempts. Please try again later.", "code": "too_many_signups"},
                 headers={"Retry-After": str(signup_state["retry_after"])},
             )
 
@@ -161,7 +161,7 @@ async def proxy_supabase(path: str, request: Request):
                 return JSONResponse(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     content={
-                        "error": f"로그인 시도가 너무 많습니다. {retry_minutes}분 후 다시 시도하세요.",
+                        "error": f"Too many login attempts. Please try again in {retry_minutes} minutes.",
                         "code": "too_many_attempts",
                     },
                     headers={"Retry-After": str(remaining["retry_after"])},

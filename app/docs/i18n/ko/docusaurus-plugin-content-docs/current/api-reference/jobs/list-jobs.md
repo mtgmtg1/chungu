@@ -26,15 +26,15 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
   {
     "job_id": "job-abc123",
     "status": "done",
-    "pipeline": "vision",
+    "ocr_model": "premium",
     "file_type": "pdf",
     "filename": "document.pdf",
     "total_pages": 10,
     "done_pages": 10,
-    "cost_points": 30,
+    "cost_points": 50,
     "downloadable": true,
-    "created_at": "2026-06-27T12:00:00",
-    "finished_at": "2026-06-27T12:01:30"
+    "created_at": "2026-07-15T12:00:00",
+    "finished_at": "2026-07-15T12:01:30"
   }
 ]
 ```

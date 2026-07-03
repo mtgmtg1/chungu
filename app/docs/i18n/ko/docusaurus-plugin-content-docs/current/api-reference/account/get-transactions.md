@@ -4,7 +4,11 @@ sidebar_position: 4
 
 # GET /account/transactions
 
-포인트 충전 및 사용 내역을 반환합니다.
+크레딧 충전 및 사용 내역을 반환합니다.
+
+:::note
+이 엔드포인트는 API 키 외에도 웹 앱 로그인의 JWT 세션 토큰을 지원합니다.
+:::
 
 ## 쿼리 매개변수
 
@@ -36,8 +40,8 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
     "type": "charge",
     "amount": 10000,
     "balance_after": 10000,
-    "description": "Toss 결제: Starter 패키지",
-    "created_at": "2026-06-26T15:00:00"
+    "description": "Paddle 결제: $10.00 USD",
+    "created_at": "2026-07-15T15:00:00"
   }
 ]
 ```

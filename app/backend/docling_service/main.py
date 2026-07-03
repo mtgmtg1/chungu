@@ -255,7 +255,7 @@ def _do_convert(task_id: str, input_path: Path, filename: str, ocr_engine: str) 
         if result.status in (ConversionStatus.FAILURE, ConversionStatus.PARTIAL_SUCCESS) and not result.document:
             with _tasks_lock:
                 _tasks[task_id]["status"] = "error"
-                _tasks[task_id]["error"] = "Docling 변환 결과가 없습니다"
+                _tasks[task_id]["error"] = "Docling conversion returned no result"
                 _tasks[task_id]["finished_at"] = time.time()
             return
 
@@ -295,7 +295,7 @@ async def convert_async(
     import time
 
     if not file.filename:
-        raise HTTPException(status_code=400, detail="파일 이름이 없습니다")
+        raise HTTPException(status_code=400, detail="Missing filename")
 
     if ocr_engine not in VALID_OCR_ENGINES:
         ocr_engine = DEFAULT_OCR_ENGINE
@@ -308,7 +308,7 @@ async def convert_async(
 
     input_format = _detect_format(input_path)
     if input_format is None:
-        raise HTTPException(status_code=400, detail=f"지원하지 않는 파일 형식입니다: {file.filename}")
+        raise HTTPException(status_code=400, detail=f"Unsupported file format: {file.filename}")
 
     with _tasks_lock:
         _tasks[task_id] = {
@@ -336,7 +336,7 @@ async def get_convert_status(task_id: str) -> TaskStatusResponse:
     with _tasks_lock:
         task = _tasks.get(task_id)
     if task is None:
-        raise HTTPException(status_code=404, detail="task를 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Task not found")
     return TaskStatusResponse(
         task_id=task_id,
         status=task["status"],
@@ -354,7 +354,7 @@ async def convert_file(
 ) -> ConvertResponse:
     """파일을 동기로 변환한다."""
     if not file.filename:
-        raise HTTPException(status_code=400, detail="파일 이름이 없습니다")
+        raise HTTPException(status_code=400, detail="Missing filename")
 
     if ocr_engine not in VALID_OCR_ENGINES:
         ocr_engine = DEFAULT_OCR_ENGINE
@@ -366,17 +366,17 @@ async def convert_file(
 
         input_format = _detect_format(input_path)
         if input_format is None:
-            raise HTTPException(status_code=400, detail=f"지원하지 않는 파일 형식입니다: {file.filename}")
+            raise HTTPException(status_code=400, detail=f"Unsupported file format: {file.filename}")
 
         converter = get_converter(ocr_engine)
         try:
             result = converter.convert(input_path)
         except Exception as e:
             logger.exception(f"[docling-convert] {file.filename} 변환 실패: {e}")
-            raise HTTPException(status_code=500, detail=f"Docling 변환 실패: {e}")
+            raise HTTPException(status_code=500, detail=f"Docling conversion failed: {e}")
 
         if result.status in (ConversionStatus.FAILURE, ConversionStatus.PARTIAL_SUCCESS) and not result.document:
-            raise HTTPException(status_code=500, detail="Docling 변환 결과가 없습니다")
+            raise HTTPException(status_code=500, detail="Docling conversion returned no result")
 
         request_id = uuid.uuid4().hex
         image_dir = IMAGE_BASE_DIR / request_id
@@ -387,7 +387,7 @@ async def convert_file(
             markdown = result.document.export_to_markdown(image_mode=ImageRefMode.PLACEHOLDER)
         except Exception as e:
             logger.exception(f"[docling-markdown] {file.filename} 마크다운 추출 실패: {e}")
-            raise HTTPException(status_code=500, detail=f"마크다운 추출 실패: {e}")
+            raise HTTPException(status_code=500, detail=f"Markdown extraction failed: {e}")
 
         return ConvertResponse(
             markdown=markdown,
@@ -403,13 +403,13 @@ async def get_image(image_path: str) -> FileResponse:
     base = DATA_DIR.resolve()
     target = (base / image_path).resolve()
     if not str(target).startswith(str(base)):
-        raise HTTPException(status_code=400, detail="잘못된 이미지 경로")
+        raise HTTPException(status_code=400, detail="Invalid image path")
     if not target.exists():
-        raise HTTPException(status_code=404, detail="이미지를 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(str(target))
 
 
 @app.exception_handler(Exception)
 async def generic_exception_handler(_: Any, exc: Exception) -> JSONResponse:
     logger.exception("Unhandled exception")
-    return JSONResponse(status_code=500, content={"detail": f"내부 오류: {exc}"})
+    return JSONResponse(status_code=500, content={"detail": f"Internal error: {exc}"})

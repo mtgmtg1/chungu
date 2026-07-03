@@ -10,7 +10,7 @@ PROOF uses IBM Docling as the first-stage preprocessor for structured documents 
 - `xlsx`, `xls`, `xlsm` — Excel spreadsheets.
 - `html`, `htm`, `xhtml` — HTML documents.
 
-HWP/HWPX files are handled by a separate converter (see [HWP Support](./hwp.md)).
+HWP/HWPX files are handled by a separate converter (see [HWP Support](hwp)).
 
 ## Architecture
 

@@ -6,6 +6,40 @@ sidebar_position: 5
 
 Customize how PROOF extracts tables from your files.
 
+## Model selection
+
+Choose between basic and premium processing models:
+
+| Model | Flag | Default | Notes |
+|-------|------|---------|-------|
+| Basic | `ocr_model=basic` | — | $0.001/page, 100 free pages/day, no audio/video |
+| Premium | `ocr_model=premium` | ✓ | $0.005/page, supports all file types |
+
+```bash
+curl -X POST https://your-domain.com/api/v1/jobs/upload \
+  -H "X-API-Key: chu_live_xxxxxxxx" \
+  -F "files=@document.pdf" \
+  -F "ocr_model=basic"
+```
+
+## OCR engine
+
+For the premium model, select the OCR engine for text extraction:
+
+| Engine | Flag | Default | Notes |
+|--------|------|---------|-------|
+| EasyOCR | `ocr_engine=easyocr` | ✓ | Balanced speed and accuracy |
+| Tesseract | `ocr_engine=tesseract` | — | Fast, widely supported |
+| RapidOCR | `ocr_engine=rapidocr` | — | Optimized for CJK text |
+
+```bash
+curl -X POST https://your-domain.com/api/v1/jobs/upload \
+  -H "X-API-Key: chu_live_xxxxxxxx" \
+  -F "files=@document.pdf" \
+  -F "ocr_model=premium" \
+  -F "ocr_engine=rapidocr"
+```
+
 ## Columns
 
 Specify column names to guide the model's extraction. If omitted, default columns are used.
@@ -36,7 +70,7 @@ Add extra instructions for the model to customize extraction behavior.
 curl -X POST https://your-domain.com/api/v1/jobs/upload \
   -H "X-API-Key: chu_live_xxxxxxxx" \
   -F "files=@document.pdf" \
-  -F "prompt=Extract only rows where the amount is greater than 1,000,000 KRW"
+  -F "prompt=Extract only rows where the amount is greater than 1,000,000"
 ```
 
 Common prompt examples:

@@ -6,6 +6,40 @@ sidebar_position: 5
 
 PROOF가 파일에서 표를 추출하는 방법을 사용자 정의하세요.
 
+## 모델 선택
+
+기본 모델과 고급 모델 중 선택하세요:
+
+| 모델 | 플래그 | 기본값 | 비고 |
+|-------|------|---------|-------|
+| 기본 | `ocr_model=basic` | — | $0.001/페이지, 하루 100페이지 무료, 오디오/비디오 미지원 |
+| 고급 | `ocr_model=premium` | ✓ | $0.005/페이지, 모든 파일 유형 지원 |
+
+```bash
+curl -X POST https://your-domain.com/api/v1/jobs/upload \
+  -H "X-API-Key: chu_live_xxxxxxxx" \
+  -F "files=@document.pdf" \
+  -F "ocr_model=basic"
+```
+
+## OCR 엔진
+
+고급 모델의 경우 텍스트 추출에 사용할 OCR 엔진을 선택하세요:
+
+| 엔진 | 플래그 | 기본값 | 비고 |
+|--------|------|---------|-------|
+| EasyOCR | `ocr_engine=easyocr` | ✓ | 속도와 정확도의 균형 |
+| Tesseract | `ocr_engine=tesseract` | — | 빠르고 광범위하게 지원됨 |
+| RapidOCR | `ocr_engine=rapidocr` | — | CJK 텍스트에 최적화 |
+
+```bash
+curl -X POST https://your-domain.com/api/v1/jobs/upload \
+  -H "X-API-Key: chu_live_xxxxxxxx" \
+  -F "files=@document.pdf" \
+  -F "ocr_model=premium" \
+  -F "ocr_engine=rapidocr"
+```
+
 ## 컬럼
 
 모델의 추출을 안내하기 위해 컬럼 이름을 지정합니다. 생략하면 기본 컬럼이 사용됩니다.

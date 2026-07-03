@@ -120,7 +120,7 @@ def extract_archive(filename: str, file_bytes: bytes, dest: Path) -> list[Path]:
     if ext == ".gz" and filename.lower().endswith(".tar.gz"):
         ext = ".tar"
     if ext not in EXTRACTORS:
-        raise ValueError(f"지원하지 않는 압축 형식입니다: {ext}")
+        raise ValueError(f"Unsupported archive format: {ext}")
     return EXTRACTORS[ext](file_bytes, dest)
 
 

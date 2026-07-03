@@ -4,7 +4,11 @@ sidebar_position: 1
 
 # GET /account
 
-アカウント情報、ポイント残高、本日の使用量、現在のAPIキーメタデータを返します。
+アカウント情報、クレジット残高、本日の使用量、現在のAPIキーメタデータを返します。
+
+:::note
+このエンドポイントはAPIキー以外にウェブアプリログインのJWTセッショントークンもサポートしています。
+:::
 
 ## リクエスト
 
@@ -42,11 +46,11 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
 |-------|------|-------------|
 | `user_id` | string (uuid) | ユーザー識別子 |
 | `email` | string | ユーザーメール |
-| `points_balance` | int | 現在のポイント残高 |
+| `points_balance` | int | 現在のクレジット残高（milli-USD） |
 | `api_key` | object | 現在のAPIキーメタデータ |
 | `api_key.scopes` | string[] | キー権限 |
 | `api_key.rate_limit_rpm` | int | 分あたりリクエスト制限 |
-| `api_key.daily_quota` | int\|null | 日次ポイント制限（null = 無制限） |
-| `api_key.daily_spent_points` | int | 本日消費したポイント |
-| `today_usage.points_spent` | int | 本日消費したポイント |
+| `api_key.daily_quota` | int\|null | 日次クレジット制限（null = 無制限） |
+| `api_key.daily_spent_points` | int | 本日消費したクレジット（milli-USD） |
+| `today_usage.points_spent` | int | 本日消費したクレジット（milli-USD） |
 | `today_usage.requests` | int | 本日のAPI呼び出し数 |

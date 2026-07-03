@@ -11,8 +11,9 @@ PROOF는 여러 형식으로 결과를 제공할 수 있습니다. 기본 출력
 | 형식 | 엔드포인트 매개변수 | 비고 |
 |--------|-------------------|-------|
 | Markdown | `type=md` | 기본 출력, 원본 구조화된 표 |
-| CSV | `type=csv` | 쉼표로 구분된 값 |
-| XLSX | `type=xlsx` | Excel 스프레드시트 (첫 변환 시 추가 포인트 소요) |
+| CSV Basic | `type=csv_basic` | 쉼표로 구분된 값 |
+| XLSX Basic | `type=xlsx_basic` | Excel 스프레드시트 (첫 변환 시 추가 크레딧 소요) |
+| XLSX Advanced | `type=xlsx_advanced` | 서식이 적용된 향상된 Excel (첫 변환 시 추가 크레딧 소요) |
 | DOCX | `type=docx` | Word 문서 (`/convert` 엔드포인트 사용) |
 | PPTX | `type=pptx` | PowerPoint (`/convert` 엔드포인트 사용) |
 
@@ -23,15 +24,16 @@ PROOF는 여러 형식으로 결과를 제공할 수 있습니다. 기본 출력
 
 ### 각각을 언제 사용하나요?
 
-- `md`와 `csv`에는 **다운로드** 사용 (작업 완료 후 항상 사용 가능)
-- `xlsx`에는 **다운로드** 사용 (첫 요청 시 자동 변환, 이후 캐시됨)
+- `md`와 `csv_basic`에는 **다운로드** 사용 (작업 완료 후 항상 사용 가능)
+- `xlsx_basic`에는 **다운로드** 사용 (첫 요청 시 자동 변환, 이후 캐시됨)
+- `xlsx_advanced`에는 **다운로드** 사용 (첫 요청 시 자동 변환, 이후 캐시됨)
 - `docx`와 `pptx`에는 **변환** 사용 (다운로드 엔드포인트에서 사용 불가)
 
-## 예: XLSX 다운로드
+## 예: XLSX Basic 다운로드
 
 ```bash
 curl -H "X-API-Key: chu_live_xxxxxxxx" \
-  "https://your-domain.com/api/v1/jobs/job-abc123/download?type=xlsx"
+  "https://your-domain.com/api/v1/jobs/job-abc123/download?type=xlsx_basic"
 ```
 
 ## 예: DOCX로 변환

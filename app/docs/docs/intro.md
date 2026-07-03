@@ -25,13 +25,13 @@ flowchart LR
     E --> F[Download results]
 ```
 
-1. **Upload** your files via `POST /api/v1/jobs/upload` — get a cost preview without spending points
-2. **Confirm** the job via `POST /api/v1/jobs/{job_id}/confirm` — points are deducted, processing begins
+1. **Upload** your files via `POST /api/v1/jobs/upload` — get a cost preview without spending credits
+2. **Confirm** the job via `POST /api/v1/jobs/{job_id}/confirm` — credits are deducted, processing begins
 3. **Poll** the job status via `GET /api/v1/jobs/{job_id}` until `status` is `done` or `error`
-4. **Download** the result via `GET /api/v1/jobs/{job_id}/download?type=csv|md|xlsx`
+4. **Download** the result via `GET /api/v1/jobs/{job_id}/download?type=csv_basic|md|xlsx_basic`
 
 ## Get started
 
 - New to PROOF? Read the [Quick Start](./quickstart) guide
-- Need an API key? Visit the [Developer Portal](../../developer)
+- Need an API key? Visit the [Developer Portal](pathname:///developer)
 - Want AI to call the API for you? Check [AI Prompts](./ai-prompts/full-pipeline-prompt)

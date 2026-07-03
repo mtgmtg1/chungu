@@ -4,7 +4,7 @@ sidebar_position: 2
 
 # POST /jobs/`{job_id}`/confirm
 
-Confirm a pending job, deduct points, and queue it for processing.
+Confirm a pending job, deduct credits, and queue it for processing.
 
 ## Request
 
@@ -19,7 +19,7 @@ curl -X POST https://your-domain.com/api/v1/jobs/job-abc123/confirm \
 {
   "job_id": "job-abc123",
   "status": "queued",
-  "remaining_points": 9970
+  "remaining_points": 9950
 }
 ```
 
@@ -27,6 +27,6 @@ curl -X POST https://your-domain.com/api/v1/jobs/job-abc123/confirm \
 
 | Status | Meaning |
 |--------|---------|
-| 402 | Insufficient points — purchase more at `/payment` |
+| 402 | Insufficient credits — purchase more at `/payment` |
 | 404 | Job not found or doesn't belong to you |
 | 400 | Job is not in `pending` state (already confirmed or cancelled) |

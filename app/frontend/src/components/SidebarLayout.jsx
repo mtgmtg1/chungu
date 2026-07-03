@@ -287,6 +287,13 @@ export default function SidebarLayout({ children, title, subtitle }) {
 
               {t("footer.terms")}
             </Link>
+            <Link
+              to="/terms#refund-policy"
+              className="font-label-sm text-label-sm text-on-surface-variant hover:underline decoration-primary"
+              data-oid="refund-link">
+
+              {t("footer.refundPolicy")}
+            </Link>
             <a
               href="https://proof.teamcat.app/docs"
               className="font-label-sm text-label-sm text-on-surface-variant hover:underline decoration-primary"

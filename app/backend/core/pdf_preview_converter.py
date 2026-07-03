@@ -49,7 +49,7 @@ def _run_libreoffice(input_path: Path, output_dir: Path) -> Path:
         logger.debug(f"[libreoffice] stderr: {stderr_text[:500]}")
     expected = output_dir / f"{input_path.stem}.pdf"
     if not expected.exists():
-        raise FileNotFoundError(f"LibreOffice PDF 변환 산출물을 찾을 수 없습니다: {expected}")
+        raise FileNotFoundError(f"LibreOffice PDF output not found: {expected}")
     return expected
 
 

@@ -12,7 +12,7 @@ PROOF API uses standard HTTP status codes. Error responses include a `detail` fi
 |--------|---------|--------|
 | 400 | Bad request — invalid file type, missing fields | Check request format |
 | 401 | Invalid or missing API key | Verify your API key |
-| 402 | Insufficient points | Purchase more points at `/payment` |
+| 402 | Insufficient credits | Purchase more credits at `/payment` |
 | 403 | Forbidden — missing scope or not a developer | Check key scopes |
 | 404 | Job or resource not found | Verify the job ID |
 | 413 | File too large or too many pages | Reduce file size or split PDF |
@@ -23,13 +23,9 @@ PROOF API uses standard HTTP status codes. Error responses include a `detail` fi
 
 ```json
 {
-  "detail": "포인트가 부족합니다"
+  "detail": "Insufficient credits"
 }
 ```
-
-:::note
-Error messages may be in Korean. Use the HTTP status code for programmatic handling.
-:::
 
 ## Retry strategy
 
@@ -67,5 +63,6 @@ When a job fails, `GET /jobs/{id}` returns:
 
 Common job errors:
 - **LLM inference timeout** — model took too long, try again or reduce page count
-- **Unsupported file format** — check [supported formats](../file-formats)
+- **Unsupported file format** — check [supported formats](file-formats)
 - **Storage upload failed** — transient infrastructure error, retry
+- **Insufficient credits** — caught at confirm step, purchase more at `/payment`

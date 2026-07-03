@@ -11,8 +11,9 @@ PROOF can deliver results in multiple formats. The primary output is always Mark
 | Format | Endpoint parameter | Notes |
 |--------|-------------------|-------|
 | Markdown | `type=md` | Default output, raw structured table |
-| CSV | `type=csv` | Comma-separated values |
-| XLSX | `type=xlsx` | Excel spreadsheet (first conversion costs extra points) |
+| CSV Basic | `type=csv_basic` | Comma-separated values |
+| XLSX Basic | `type=xlsx_basic` | Excel spreadsheet (first conversion costs extra credits) |
+| XLSX Advanced | `type=xlsx_advanced` | Enhanced Excel with formatting (first conversion costs extra credits) |
 | DOCX | `type=docx` | Word document (via `/convert` endpoint) |
 | PPTX | `type=pptx` | PowerPoint (via `/convert` endpoint) |
 
@@ -23,15 +24,16 @@ PROOF can deliver results in multiple formats. The primary output is always Mark
 
 ### When to use which
 
-- Use **download** for `md` and `csv` (always available after job completion)
-- Use **download** for `xlsx` (auto-converts on first request, then caches)
+- Use **download** for `md` and `csv_basic` (always available after job completion)
+- Use **download** for `xlsx_basic` (auto-converts on first request, then caches)
+- Use **download** for `xlsx_advanced` (auto-converts on first request, then caches)
 - Use **convert** for `docx` and `pptx` (not available via download endpoint)
 
-## Example: Download XLSX
+## Example: Download XLSX Basic
 
 ```bash
 curl -H "X-API-Key: chu_live_xxxxxxxx" \
-  "https://your-domain.com/api/v1/jobs/job-abc123/download?type=xlsx"
+  "https://your-domain.com/api/v1/jobs/job-abc123/download?type=xlsx_basic"
 ```
 
 ## Example: Convert to DOCX

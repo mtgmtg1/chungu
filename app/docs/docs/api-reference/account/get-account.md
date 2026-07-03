@@ -4,7 +4,11 @@ sidebar_position: 1
 
 # GET /account
 
-Returns account info, point balance, today's usage, and current API key metadata.
+Returns account info, credit balance, today's usage, and current API key metadata.
+
+:::note
+This endpoint accepts both API key (`X-API-Key` header) and JWT session token (`Authorization: Bearer` header).
+:::
 
 ## Request
 
@@ -42,11 +46,11 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
 |-------|------|-------------|
 | `user_id` | string (uuid) | User identifier |
 | `email` | string | User email |
-| `points_balance` | int | Current point balance |
+| `points_balance` | int | Current credit balance in milli-USD (10000 = $10.00) |
 | `api_key` | object | Current API key metadata |
 | `api_key.scopes` | string[] | Key permissions |
 | `api_key.rate_limit_rpm` | int | Requests per minute limit |
-| `api_key.daily_quota` | int\|null | Daily point cap (null = unlimited) |
-| `api_key.daily_spent_points` | int | Points spent today |
-| `today_usage.points_spent` | int | Points spent today |
+| `api_key.daily_quota` | int\|null | Daily credit cap in milli-USD (null = unlimited) |
+| `api_key.daily_spent_points` | int | Credits spent today (milli-USD) |
+| `today_usage.points_spent` | int | Credits spent today (milli-USD) |
 | `today_usage.requests` | int | Number of API calls today |

@@ -83,6 +83,10 @@ export const api = {
   updateAutoRechargeSettings: (payload) => request('/api/payments/auto-recharge/settings', { method: 'POST', body: JSON.stringify(payload) }),
   getPaymentMethods: () => request('/api/payments/paddle/payment-methods'),
 
+  // 온프레미스 로컬 서버
+  submitOnPremiseInquiry: (payload) =>
+    request('/api/on-premise/inquiry', { method: 'POST', body: JSON.stringify(payload) }),
+
   // 관리자
   adminLogin: (email, password, turnstileToken = "") =>
     request('/api/admin/login', {

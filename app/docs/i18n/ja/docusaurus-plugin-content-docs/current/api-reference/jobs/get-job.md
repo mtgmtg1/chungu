@@ -19,7 +19,8 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
 {
   "job_id": "job-abc123",
   "status": "done",
-  "pipeline": "vision",
+  "ocr_model": "premium",
+  "ocr_engine": "easyocr",
   "file_type": "pdf",
   "filename": "document.pdf",
   "total_pages": 10,
@@ -27,12 +28,19 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
   "total_files": 1,
   "done_files": 1,
   "media_duration_seconds": 0,
-  "cost_points": 30,
+  "cost_points": 50,
   "error_log": null,
-  "created_at": "2026-06-27T12:00:00",
-  "finished_at": "2026-06-27T12:01:30",
+  "created_at": "2026-07-15T12:00:00",
+  "finished_at": "2026-07-15T12:01:30",
   "downloadable": true,
-  "xlsx_converted": false
+  "xlsx_basic_converted": false,
+  "xlsx_advanced_converted": false,
+  "xlsx_advanced_status": null,
+  "xlsx_advanced_job_id": null,
+  "xlsx_advanced_refundable": false,
+  "xlsx_advanced_recovery_notes": null,
+  "refundable": false,
+  "retry_count": 0
 }
 ```
 
@@ -42,7 +50,12 @@ curl -H "X-API-Key: chu_live_xxxxxxxx" \
 |-------|------|-------------|
 | `status` | string | `pending`, `queued`, `processing`, `done`, `error`, `cancelled` |
 | `done_pages` | int | Pages processed so far (for progress tracking) |
-| `cost_points` | int | Points actually deducted |
+| `cost_points` | int | Credits actually deducted (milli-USD) |
 | `downloadable` | bool | `true` when status is `done` |
-| `xlsx_converted` | bool | Whether XLSX has been generated yet |
+| `xlsx_basic_converted` | bool | Whether XLSX Basic has been generated |
+| `xlsx_advanced_converted` | bool | Whether XLSX Advanced has been generated |
+| `xlsx_advanced_status` | string\|null | Status of XLSX Advanced conversion |
+| `xlsx_advanced_refundable` | bool | Whether XLSX Advanced conversion can be refunded |
+| `refundable` | bool | Whether the job can be refunded (via `/action`) |
+| `retry_count` | int | Number of times this job has been retried |
 | `error_log` | string\|null | Error details if status is `error` |

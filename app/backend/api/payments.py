@@ -25,7 +25,7 @@ def _paddle_api_headers(db: Session) -> dict:
     """Paddle API 인증 헤더를 반환한다."""
     api_key = settings_store.get_setting(db, "paddle_api_key")
     if not api_key:
-        raise HTTPException(status_code=503, detail="Paddle API 키가 설정되지 않았습니다")
+        raise HTTPException(status_code=503, detail="Paddle API key not configured")
     return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
 
@@ -60,7 +60,7 @@ def _get_or_create_paddle_customer(db: Session, db_user: User, api_headers: dict
         db.commit()
         return customer_id
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"Paddle customer 생성 실패: {e}") from e
+        raise HTTPException(status_code=502, detail=f"Failed to create Paddle customer: {e}") from e
 
 
 @router.post("/paddle/checkout")
@@ -75,16 +75,16 @@ def create_paddle_checkout(
     amount = int(payload.get("amount") or 0)
     limits = points_service.get_charge_limits()
     if amount < limits["min_amount"] or amount > limits["max_amount"]:
-        raise HTTPException(status_code=400, detail=f"금액은 ${limits['min_amount']}~${limits['max_amount']} 사이의 정수여야 합니다")
+        raise HTTPException(status_code=400, detail=f"Amount must be an integer between ${limits['min_amount']} and ${limits['max_amount']}")
 
     api_headers = _paddle_api_headers(db)
     price_id = settings_store.get_setting(db, "paddle_price_id")
     if not price_id:
-        raise HTTPException(status_code=503, detail="paddle_price_id가 설정되지 않았습니다")
+        raise HTTPException(status_code=503, detail="paddle_price_id not configured")
 
     db_user = db.get(User, uuid.UUID(user.user_id))
     if db_user is None:
-        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="User not found")
 
     customer_id = _get_or_create_paddle_customer(db, db_user, api_headers)
     credits = amount * 1000  # milli-USD
@@ -109,7 +109,7 @@ def create_paddle_checkout(
         data = resp.json()
         return {"checkout_url": data["data"]["checkout"]["url"], "transaction_id": data["data"]["id"]}
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"Paddle checkout 생성 실패: {e}") from e
+        raise HTTPException(status_code=502, detail=f"Failed to create Paddle checkout: {e}") from e
 
 
 @router.post("/paddle/webhook")
@@ -123,10 +123,10 @@ def paddle_webhook(
     signature = request.headers.get("paddle-signature") or ""
     secret = settings_store.get_setting(db, "paddle_webhook_secret")
     if not secret:
-        raise HTTPException(status_code=503, detail="Paddle webhook secret이 설정되지 않았습니다")
+        raise HTTPException(status_code=503, detail="Paddle webhook secret not configured")
 
     if not _verify_paddle_signature(body, signature, secret):
-        raise HTTPException(status_code=401, detail="서명이 유효하지 않습니다")
+        raise HTTPException(status_code=401, detail="Invalid signature")
 
     data = json.loads(body)
     event_type = data.get("event_type")
@@ -137,11 +137,11 @@ def paddle_webhook(
     user_id = custom.get("user_id")
     credits = int(custom.get("credits") or 0)
     if not user_id or credits <= 0:
-        return {"ok": False, "detail": "custom_data에 user_id/credits가 없습니다"}
+        return {"ok": False, "detail": "Missing user_id/credits in custom_data"}
 
     db_user = db.get(User, uuid.UUID(user_id))
     if db_user is None:
-        return {"ok": False, "detail": "사용자를 찾을 수 없습니다"}
+        return {"ok": False, "detail": "User not found"}
 
     # 중복 처리 방지
     external_id = data.get("data", {}).get("id", "")
@@ -357,7 +357,7 @@ def get_auto_recharge_settings(
     """현재 자동 충전 설정과 저장된 결제 수단 여부를 반환한다."""
     db_user = db.get(User, uuid.UUID(user.user_id))
     if db_user is None:
-        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="User not found")
 
     has_payment_method = False
     if db_user.paddle_customer_id:
@@ -392,7 +392,7 @@ def update_auto_recharge_settings(
     """자동 충전 설정을 업데이트한다."""
     db_user = db.get(User, uuid.UUID(user.user_id))
     if db_user is None:
-        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="User not found")
 
     enabled = bool(payload.get("enabled", False))
     threshold = int(payload.get("threshold", 2000))
@@ -400,9 +400,9 @@ def update_auto_recharge_settings(
 
     min_threshold = int(settings_store.get_setting(db, "auto_recharge_min_threshold") or "500")
     if threshold < min_threshold:
-        raise HTTPException(status_code=400, detail=f"임계값은 최소 {min_threshold}md 이상이어야 합니다")
+        raise HTTPException(status_code=400, detail=f"Threshold must be at least {min_threshold} milli-USD")
     if amount < 5 or amount > 500:
-        raise HTTPException(status_code=400, detail="충전 금액은 $5~$500 사이여야 합니다")
+        raise HTTPException(status_code=400, detail="Charge amount must be between $5 and $500")
 
     db_user.auto_recharge_enabled = enabled
     db_user.auto_recharge_threshold = threshold
@@ -426,7 +426,7 @@ def list_paddle_payment_methods(
     """저장된 결제 수단 목록을 반환한다."""
     db_user = db.get(User, uuid.UUID(user.user_id))
     if db_user is None:
-        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다")
+        raise HTTPException(status_code=404, detail="User not found")
     if not db_user.paddle_customer_id:
         return {"payment_methods": []}
 
@@ -455,4 +455,4 @@ def list_paddle_payment_methods(
             ]
         }
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"결제 수단 조회 실패: {e}") from e
+        raise HTTPException(status_code=502, detail=f"Failed to retrieve payment methods: {e}") from e

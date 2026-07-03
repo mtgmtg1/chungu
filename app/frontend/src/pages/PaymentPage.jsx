@@ -9,7 +9,8 @@ import {
   Loader2,
   CheckCircle2,
   Zap,
-  Settings2 } from
+  Settings2,
+  Server } from
 "lucide-react";
 import { api } from "../api.js";
 import { useAuth } from "../AuthContext.jsx";
@@ -272,6 +273,29 @@ export default function PaymentPage() {
                   )}
                 </button>
               </div>
+            </div>
+
+            {/* 온프레미스 로컬 서버 프로모션 카드 */}
+            <div className="bg-white border rounded-xl p-6 mb-6" data-oid="onprem-card">
+              <h2 className="text-lg font-bold mb-2 flex items-center gap-2" data-oid="onprem-card-title">
+                <Server size={20} className="text-blue-600" data-oid="onprem-card-icon" /> {t("page:onPremise.title")}
+              </h2>
+              <p className="text-sm text-slate-600 mb-4" data-oid="onprem-card-desc">
+                {t("page:onPremise.subtitle")}
+              </p>
+              <ul className="text-sm text-slate-600 mb-4 space-y-1" data-oid="onprem-card-features">
+                <li className="flex items-center gap-2"><span className="text-blue-600">✓</span> {t("page:onPremise.featureUnlimited")}</li>
+                <li className="flex items-center gap-2"><span className="text-blue-600">✓</span> {t("page:onPremise.featureSecure")}</li>
+                <li className="flex items-center gap-2"><span className="text-blue-600">✓</span> {t("page:onPremise.featureUpdates")}</li>
+                <li className="flex items-center gap-2"><span className="text-blue-600">✓</span> {t("page:onPremise.featureSupport")}</li>
+              </ul>
+              <Link
+                to="/on-premise"
+                className="inline-block text-sm font-medium text-blue-600 hover:underline"
+                data-oid="onprem-card-link"
+              >
+                {t("page:onPremise.formTitle")} →
+              </Link>
             </div>
           </>
         )}

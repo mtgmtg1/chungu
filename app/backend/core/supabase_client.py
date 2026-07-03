@@ -16,7 +16,7 @@ from ..config import settings
 def get_service_client() -> Client:
     """서비스 롤 키로 Supabase에 접근 (백엔드 전용)."""
     if not settings.supabase_url or not settings.supabase_service_key:
-        raise RuntimeError("Supabase URL/Service Key가 설정되지 않았습니다")
+        raise RuntimeError("Supabase URL/Service Key is not configured")
     return create_client(settings.supabase_url, settings.supabase_service_key)
 
 
@@ -24,7 +24,7 @@ def get_service_client() -> Client:
 def get_anon_client() -> Client:
     """anon 키로 Supabase에 접근 (프론트 검증용)."""
     if not settings.supabase_url or not settings.supabase_anon_key:
-        raise RuntimeError("Supabase URL/Anon Key가 설정되지 않았습니다")
+        raise RuntimeError("Supabase URL/Anon Key is not configured")
     return create_client(settings.supabase_url, settings.supabase_anon_key)
 
 

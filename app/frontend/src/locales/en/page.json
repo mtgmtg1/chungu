@@ -22,7 +22,13 @@
     "badgeLanguages": "100+ Languages",
     "copyright": "© 2026 TeamCat",
     "api": "API",
-    "admin": "Admin"
+    "admin": "Admin",
+    "tooltip": {
+      "selectFiles": "Select files to upload",
+      "selectFolder": "Select a folder to upload",
+      "removeFile": "Remove from list",
+      "startConversion": "Upload files and start conversion"
+    }
   },
   "dashboard": {
     "title": "Dashboard",
@@ -109,7 +115,17 @@
     "progressPercent": "{{pct}}%",
     "pageCount": "pages",
     "fileCount": "files",
-    "unparsablePages": "{{count}} page(s) could not be parsed (page size exceeds 350mm)"
+    "unparsablePages": "{{count}} page(s) could not be parsed (page size exceeds 350mm)",
+    "tooltip": {
+      "uploadFiles": "Upload new files",
+      "filters": "Filter by status and file type",
+      "dateRange": "Filter by date range",
+      "delete": "Delete this job",
+      "download": "Choose result format",
+      "prevPage": "Previous page",
+      "nextPage": "Next page",
+      "goToPage": "Go to page {{page}}"
+    }
   },
   "confirm": {
     "title": "Confirm Conversion Cost",
@@ -149,7 +165,14 @@
     "startWithCost": "Deduct {{cost}}P and start",
     "processing": "Processing…",
     "notFound": "Job not found",
-    "loadError": "Failed to load job information"
+    "loadError": "Failed to load job information",
+    "tooltip": {
+      "back": "Return to home",
+      "basicModel": "Fast OCR-based conversion",
+      "premiumModel": "High-accuracy AI vision conversion",
+      "advancedOptions": "Add custom columns or instructions",
+      "start": "Deduct points and start conversion"
+    }
   },
   "result": {
     "newConversion": "New Conversion",
@@ -197,7 +220,18 @@
     "pageProgress": "{{done}} / {{total}} pages ({{pct}}%)",
     "fileProgress": "{{done}} / {{total}} files ({{pct}}%)",
     "originalImage": "Original Image {{number}}",
-    "leaveNotice": "You can leave this page. We'll send you an email when complete."
+    "leaveNotice": "You can leave this page. We'll send you an email when complete.",
+    "tooltip": {
+      "toggleSidebar": "Show or hide source panel",
+      "excel": "Download as Excel",
+      "office": "Download as Word or Markdown",
+      "save": "Save edited result",
+      "retry": "Retry failed conversion",
+      "refund": "Refund points",
+      "markdownTab": "View markdown result",
+      "xlsxBasicTab": "View basic Excel conversion",
+      "xlsxAdvancedTab": "View advanced Excel conversion"
+    }
   },
   "poems": [
     {

@@ -1,8 +1,10 @@
-// [Flow: Step 1 (실제 진행률 계산) -> Step 2 (UI가 처음 본 시점 또는 created_at) -> Step 3 (시간 기반 추정 진행률 계산, 2배 느림) -> Step 4 (20% cap 및 실제값 우선으로 합산)]
+// [Flow: Step 1 (실제 진행률 계산) -> Step 2 (job.created_at 기준 경과 시간 계산) -> Step 3 (시간 기반 추정 진행률 계산, 10배 느림) -> Step 4 (80% cap 및 실제값 우선으로 합산)]
 // PDF OCR 작업의 시간진행바(estimated progress) 계산 유틸리티.
+// 시작 시점은 job.created_at을 사용하므로 페이지 새로고침 후에도 진행률이 0%로 되돌아가지 않는다.
+// 시간추정 진행률은 80%까지 표시되며, 그 이후는 실제 진행률이 자연스럽게 표시된다.
 
-const DEFAULT_TIME_CAP = 20;
-const TIME_PROGRESS_SLOWDOWN = 2; // 전체 페이지 수 * 2 초에 100%에 도달하도록 속도 절반
+const DEFAULT_TIME_CAP = 80;
+const TIME_PROGRESS_SLOWDOWN = 10; // 전체 페이지 수 * 10 초에 100%에 도달하도록 5배 느리게
 
 /**
  * ISO 문자열을 UTC 기준 Date로 파싱한다.
@@ -35,18 +37,17 @@ export function getActualProgress(job) {
 
 /**
  * 시간 경과 기반 추정 진행률을 계산한다.
- * UI가 처음 본 시점(startTime)을 기준으로 경과 시간을 계산한다. startTime이 없으면 created_at을 폴백으로 사용한다.
- * 전체 페이지 수의 2배 시간(초)에 100%에 도달하며, maxTimePct(기본 20%)까지만 올라간다.
+ * 시작 시점은 job.created_at을 사용하며, created_at이 없을 때만 now를 폴백으로 사용한다.
+ * 전체 페이지 수의 10배 시간(초)에 100%에 도달하며, maxTimePct(기본 80%)까지만 올라간다.
  * @param {object} job - API에서 받은 job 객체
- * @param {number} maxTimePct - 시간진행바 최대치 (기본 20)
+ * @param {number} maxTimePct - 시간진행바 최대치 (기본 80)
  * @param {number} now - 기준 시간戳 (ms), 기본값 Date.now()
- * @param {number | null} startTime - UI가 처음 본 시점 (ms), 기본값 null
  * @returns {number} 0~maxTimePct 사이 정수
  */
-export function getTimeProgress(job, maxTimePct = DEFAULT_TIME_CAP, now = Date.now(), startTime = null) {
+export function getTimeProgress(job, maxTimePct = DEFAULT_TIME_CAP, now = Date.now()) {
   if (!job) return 0;
   const total = job.total_pages || job.total_files || 1;
-  const start = startTime || (job.created_at ? parseUtcDate(job.created_at).getTime() : now);
+  const start = job.created_at ? parseUtcDate(job.created_at).getTime() : now;
   const elapsedSeconds = (now - start) / 1000;
   const pct = Math.round((elapsedSeconds / (total * TIME_PROGRESS_SLOWDOWN)) * 100);
   return Math.min(maxTimePct, Math.min(100, pct));
@@ -54,15 +55,14 @@ export function getTimeProgress(job, maxTimePct = DEFAULT_TIME_CAP, now = Date.n
 
 /**
  * 화면에 표시할 진행률을 계산한다.
- * 실제 진행률과 시간추정 진행률 중 더 높은 값을 사용한다. 시간추정값은 20%로 cap되므로, 20%를 넘어가는 구간은 자연스럽게 실제 진행률만 표시된다.
+ * 실제 진행률과 시간추정 진행률 중 더 높은 값을 사용한다. 시간추정값은 80%로 cap되므로, 80%를 넘어가는 구간은 자연스럽게 실제 진행률만 표시된다.
  * @param {object} job - API에서 받은 job 객체
- * @param {number} maxTimePct - 시간진행바 최대치 (기본 20)
+ * @param {number} maxTimePct - 시간진행바 최대치 (기본 80)
  * @param {number} now - 기준 시간戳 (ms), 기본값 Date.now()
- * @param {number | null} startTime - UI가 처음 본 시점 (ms), 기본값 null
  * @returns {number} 0~100 사이 정수
  */
-export function getDisplayProgress(job, maxTimePct = DEFAULT_TIME_CAP, now = Date.now(), startTime = null) {
+export function getDisplayProgress(job, maxTimePct = DEFAULT_TIME_CAP, now = Date.now()) {
   const actual = getActualProgress(job);
-  const time = getTimeProgress(job, maxTimePct, now, startTime);
+  const time = getTimeProgress(job, maxTimePct, now);
   return Math.max(actual, time);
 }

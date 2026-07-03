@@ -430,6 +430,17 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
   - `app/frontend/src/index.css` — `@keyframes stagger-enter`, scrollbar/mark border-radius overrides
   - `app/frontend/tailwind.config.js` — Reduced fontSize, spacing, borderRadius: 0
 
+## Custom Tooltips
+
+- **커스텀 Tooltip 컴포넌트** (`app/frontend/src/components/Tooltip.jsx`): hover/focus 시 말풍선을 표시하는 재사용 가능한 컴포넌트. `position` prop(top/bottom/left/right), `content` prop, `className` prop 지원. `role="tooltip"`으로 접근성 보장. `content`가 없으면 children을 그대로 반환.
+- **적용 화면**: UploadPage(파일 선택, 폴더 선택, 파일 삭제, 변환 시작), JobConfirmPage(뒤로가기, 기본/고급 모델 카드, 고급 옵션, 시작 버튼), JobsPage(업로드, 필터, 날짜 필터, 삭제, 다운로드, 페이지네이션), JobResultPage(사이드바 토글, Excel/Office 드롭다운, 저장, 재시도/환불, 미리보기 탭), SidebarLayout(접기/펼치기, 네비게이션 메뉴, 새 변환, 로그아웃).
+- **번역**: 툴팁 텍스트는 `common.json`의 `tooltip` 섹션(사이드바/공통)과 `page.json`의 각 페이지 섹션 내 `tooltip` 객체(upload, confirm, jobs, result)에 정의. en/ko/ja 3개 언어 모두 지원.
+- 기존 `title` 속성은 사이드바 토글 버튼 등 일부 요소에 보조적으로 유지되나, 주요 인터랙티브 요소는 커스텀 Tooltip으로 교체됨.
+- Key files:
+  - `app/frontend/src/components/Tooltip.jsx` — 커스텀 툴팁 컴포넌트
+  - `app/frontend/src/locales/{en,ko,ja}/common.json` — 공통 툴팁 번역 (tooltip 섹션)
+  - `app/frontend/src/locales/{en,ko,ja}/page.json` — 페이지별 툴팁 번역 (각 페이지 섹션 내 tooltip 객체)
+
 ## Agent Guidelines
 
 - Prefer minimal, focused edits. Follow existing code style.

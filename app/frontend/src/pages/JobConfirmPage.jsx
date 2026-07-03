@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, Loader2, CreditCard, Settings2, Zap, Sparkles, ScanLine } from "lucide-react";
+import Tooltip from "../components/Tooltip.jsx";
 import { api } from "../api.js";
 import { SkeletonCard } from "../components/Skeleton.jsx";
 
@@ -127,13 +128,15 @@ export default function JobConfirmPage() {
           data-oid="gslt5ko">
 
           <div className="flex items-center gap-2 mb-5" data-oid="rte0f89">
-            <Link
-              to="/"
-              className="text-on-surface-variant hover:text-primary transition-colors"
-              data-oid="tgp-uvn">
+            <Tooltip content={t("page:confirm.tooltip.back")}>
+              <Link
+                to="/"
+                className="text-on-surface-variant hover:text-primary transition-colors"
+                data-oid="tgp-uvn">
 
-              <ArrowLeft size={20} data-oid=".car4ii" />
-            </Link>
+                <ArrowLeft size={20} data-oid=".car4ii" />
+              </Link>
+            </Tooltip>
             <h1
               className="text-headline-md font-bold text-on-surface"
               data-oid="ujs4:cv">
@@ -249,18 +252,19 @@ export default function JobConfirmPage() {
               {t("page:confirm.ocrModel")}
             </label>
             <div className="grid grid-cols-2 gap-3" data-oid="model-cards">
-              <button
-                type="button"
-                onClick={() => !hasMedia && setOcrModel("basic")}
-                disabled={hasMedia}
-                className={`border p-3 text-left transition-all ${
-                  effectiveModel === "basic"
-                    ? "border-primary bg-primary/5 ring-2 ring-primary/20"
-                    : "border-outline-variant hover:border-primary/50"
-                } ${hasMedia ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
-                data-oid="btn-basic">
+              <Tooltip content={t("page:confirm.tooltip.basicModel")} className="block">
+                <button
+                  type="button"
+                  onClick={() => !hasMedia && setOcrModel("basic")}
+                  disabled={hasMedia}
+                  className={`w-full border p-3 text-left transition-all ${
+                    effectiveModel === "basic"
+                      ? "border-primary bg-primary/5 ring-2 ring-primary/20"
+                      : "border-outline-variant hover:border-primary/50"
+                  } ${hasMedia ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                  data-oid="btn-basic">
 
-                <div className="flex items-center gap-2 mb-2" data-oid="basic-icon">
+                  <div className="flex items-center gap-2 mb-2" data-oid="basic-icon">
                   <Zap size={18} className={effectiveModel === "basic" ? "text-primary" : "text-on-surface-variant"} data-oid="zap-icon" />
                   <span className="font-medium text-on-surface" data-oid="basic-title">
                     {t("page:confirm.basicModel")}
@@ -306,18 +310,20 @@ export default function JobConfirmPage() {
                     </p>
                   </div>
                 )}
-              </button>
-              <button
-                type="button"
-                onClick={() => setOcrModel("premium")}
-                className={`border p-3 text-left transition-all cursor-pointer ${
-                  effectiveModel === "premium"
-                    ? "border-primary bg-primary/5 ring-2 ring-primary/20"
-                    : "border-outline-variant hover:border-primary/50"
-                }`}
-                data-oid="btn-premium">
+                </button>
+              </Tooltip>
+              <Tooltip content={t("page:confirm.tooltip.premiumModel")} className="block">
+                <button
+                  type="button"
+                  onClick={() => setOcrModel("premium")}
+                  className={`w-full border p-3 text-left transition-all cursor-pointer ${
+                    effectiveModel === "premium"
+                      ? "border-primary bg-primary/5 ring-2 ring-primary/20"
+                      : "border-outline-variant hover:border-primary/50"
+                  }`}
+                  data-oid="btn-premium">
 
-                <div className="flex items-center gap-2 mb-2" data-oid="premium-icon">
+                  <div className="flex items-center gap-2 mb-2" data-oid="premium-icon">
                   <Sparkles size={18} className={effectiveModel === "premium" ? "text-primary" : "text-on-surface-variant"} data-oid="sparkles-icon" />
                   <span className="font-medium text-on-surface" data-oid="premium-title">
                     {t("page:confirm.premiumModel")}
@@ -331,7 +337,8 @@ export default function JobConfirmPage() {
                     {t("page:confirm.premiumPrice")}
                   </p>
                 </div>
-              </button>
+                </button>
+              </Tooltip>
             </div>
             {hasMedia &&
               <p className="mt-2 text-xs text-amber-600" data-oid="media-notice">
@@ -341,15 +348,17 @@ export default function JobConfirmPage() {
           </div>
 
           <details className="mb-6 group" data-oid="9vqgwag">
-            <summary
-              className="flex items-center gap-2 cursor-pointer text-body-md text-on-surface-variant hover:text-primary transition-colors"
-              data-oid="bbjoa1o">
+            <Tooltip content={t("page:confirm.tooltip.advancedOptions")} className="block">
+              <summary
+                className="flex items-center gap-2 cursor-pointer text-body-md text-on-surface-variant hover:text-primary transition-colors"
+                data-oid="bbjoa1o">
 
-              <Settings2 size={18} data-oid="q-lb4dr" />
-              <span data-oid="rr27gbt">
-                {t("page:confirm.advancedOptions")}
-              </span>
-            </summary>
+                <Settings2 size={18} data-oid="q-lb4dr" />
+                <span data-oid="rr27gbt">
+                  {t("page:confirm.advancedOptions")}
+                </span>
+              </summary>
+            </Tooltip>
             <div
               className="mt-4 space-y-4 bg-surface-container-low rounded-2xl p-5"
               data-oid="ppq.99c">
@@ -421,25 +430,27 @@ export default function JobConfirmPage() {
 
               {t("page:confirm.cancel")}
             </Link>
-            <button
-              onClick={confirm}
-              disabled={submitting || insufficient}
-              className="flex-1 bg-primary text-on-primary rounded-lg py-2.5 font-medium hover:bg-primary-container transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-              data-oid="e1yh424">
+            <Tooltip content={t("page:confirm.tooltip.start")} className="flex-1">
+              <button
+                onClick={confirm}
+                disabled={submitting || insufficient}
+                className="w-full bg-primary text-on-primary rounded-lg py-2.5 font-medium hover:bg-primary-container transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                data-oid="e1yh424">
 
-              {submitting ?
-              <>
-                  <Loader2
-                  className="animate-spin"
-                  size={18}
-                  data-oid="ybu18mh" />
-                {" "}
-                  {t("page:confirm.processing")}
-                </> :
+                {submitting ?
+                <>
+                    <Loader2
+                    className="animate-spin"
+                    size={18}
+                    data-oid="ybu18mh" />
+                  {" "}
+                    {t("page:confirm.processing")}
+                  </> :
 
-              t("page:confirm.startWithCost", { cost })
-              }
-            </button>
+                t("page:confirm.startWithCost", { cost })
+                }
+              </button>
+            </Tooltip>
           </div>
         </div>
       </main>

@@ -3,14 +3,15 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Menu, X, LogOut } from "lucide-react";
+import Tooltip from "./Tooltip.jsx";
 import { useAuth } from "../AuthContext.jsx";
 import LanguageSelector from "./LanguageSelector.jsx";
 
 const getNavItems = (t) => [
-{ icon: "dashboard", label: t("nav.dashboard"), href: "/dashboard" },
-{ icon: "list_alt", label: t("nav.jobs"), href: "/jobs" },
-{ icon: "code", label: t("nav.developer"), href: "/developer" },
-{ icon: "settings", label: t("nav.settings"), href: "/settings" }];
+{ icon: "dashboard", label: t("nav.dashboard"), href: "/dashboard", tooltip: t("common:tooltip.dashboard") },
+{ icon: "list_alt", label: t("nav.jobs"), href: "/jobs", tooltip: t("common:tooltip.jobs") },
+{ icon: "code", label: t("nav.developer"), href: "/developer", tooltip: t("common:tooltip.developer") },
+{ icon: "settings", label: t("nav.settings"), href: "/settings", tooltip: t("common:tooltip.settings") }];
 
 
 export default function SidebarLayout({ children, title, subtitle }) {
@@ -68,7 +69,9 @@ export default function SidebarLayout({ children, title, subtitle }) {
         className={`h-screen fixed left-0 top-0 bg-surface/90 backdrop-blur-xl border-r border-outline-variant z-40 flex flex-col py-5 px-3 transition-all duration-300 ${sidebarWidth} ${mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
         data-oid=".ej7-3u">
 
-        <div
+        <Link
+          to="/"
+          onClick={() => setMobileOpen(false)}
           className={`flex items-center gap-3 mb-8 px-2 ${expanded ? "" : "justify-center"}`}
           data-oid="c3oet69">
 
@@ -99,54 +102,56 @@ export default function SidebarLayout({ children, title, subtitle }) {
               </p>
             </div>
           }
-        </div>
+        </Link>
 
         <nav className="flex-1 space-y-1" data-oid="92bcezw">
           {navItems.map((item) =>
-          <Link
-            key={item.label}
-            to={item.href}
-            onClick={(e) => {
-              if (item.href === "#") {
-                e.preventDefault();
-                return;
+          <Tooltip key={item.label} content={!expanded ? item.tooltip : undefined} className="block">
+            <Link
+              to={item.href}
+              onClick={(e) => {
+                if (item.href === "#") {
+                  e.preventDefault();
+                  return;
+                }
+                setMobileOpen(false);
+              }}
+              className={`flex items-center ${expanded ? "gap-3 px-3" : "justify-center px-2"} py-2 rounded-lg transition-colors ${
+              isActive(item.href) ?
+              "text-primary font-bold border-r-2 border-primary bg-primary-container/5" :
+              "text-on-surface-variant hover:bg-primary-container/10"}`
               }
-              setMobileOpen(false);
-            }}
-            className={`flex items-center ${expanded ? "gap-3 px-3" : "justify-center px-2"} py-2 rounded-lg transition-colors ${
-            isActive(item.href) ?
-            "text-primary font-bold border-r-2 border-primary bg-primary-container/5" :
-            "text-on-surface-variant hover:bg-primary-container/10"}`
-            }
-            title={!expanded ? item.label : ""}
-            data-oid="9p1orsj">
+              data-oid="9p1orsj">
 
-              <span
-              className="material-symbols-outlined text-xl"
-              data-oid=".z19ygx">
+                <span
+                className="material-symbols-outlined text-xl"
+                data-oid=".z19ygx">
 
-                {item.icon}
-              </span>
-              {expanded &&
-            <span className="font-body-md text-body-md" data-oid="xgrjj5v">
-                  {item.label}
+                  {item.icon}
                 </span>
-            }
-            </Link>
+                {expanded &&
+              <span className="font-body-md text-body-md" data-oid="xgrjj5v">
+                    {item.label}
+                  </span>
+              }
+              </Link>
+          </Tooltip>
           )}
         </nav>
 
         <div className="mt-auto space-y-3" data-oid="3jg724x">
-          <Link
-            to="/"
-            className={`w-full bg-primary text-on-primary py-2.5 px-3 rounded-xl font-body-md text-body-md font-medium shadow-md hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 ${expanded ? "" : "px-0"}`}
-            data-oid="uu7qmwt">
+          <Tooltip content={t("common:tooltip.newConversion")} className="block">
+            <Link
+              to="/"
+              className={`w-full bg-primary text-on-primary py-2.5 px-3 rounded-xl font-body-md text-body-md font-medium shadow-md hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2 ${expanded ? "" : "px-0"}`}
+              data-oid="uu7qmwt">
 
-            <span className="material-symbols-outlined" data-oid="jfz2785">
-              add
-            </span>
-            {expanded && t("nav.newConversion")}
-          </Link>
+              <span className="material-symbols-outlined" data-oid="jfz2785">
+                add
+              </span>
+              {expanded && t("nav.newConversion")}
+            </Link>
+          </Tooltip>
 
           {expanded && user &&
           <div
@@ -166,14 +171,16 @@ export default function SidebarLayout({ children, title, subtitle }) {
 
                 {user.email}
               </Link>
-              <button
-              onClick={() => signOut()}
-              className="mt-2 w-full flex items-center justify-center gap-1 text-xs text-outline hover:text-error transition-colors"
-              data-oid="fy:21t1">
+              <Tooltip content={t("common:tooltip.logout")} className="block">
+                <button
+                onClick={() => signOut()}
+                className="mt-2 w-full flex items-center justify-center gap-1 text-xs text-outline hover:text-error transition-colors"
+                data-oid="fy:21t1">
 
-                <LogOut size={14} data-oid=":nvrtmw" />
-                {t("nav.logout")}
-              </button>
+                  <LogOut size={14} data-oid=":nvrtmw" />
+                  {t("nav.logout")}
+                </button>
+              </Tooltip>
             </div>
           }
         </div>
@@ -195,19 +202,21 @@ export default function SidebarLayout({ children, title, subtitle }) {
         className={`fixed top-0 right-0 ${headerWidth} z-30 bg-surface/80 backdrop-blur-md border-b border-outline-variant flex justify-between items-center h-16 px-gutter transition-all duration-300 ${marginLeft}`}
         data-oid="1n8suzb">
 
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="hidden md:flex z-50 w-8 h-8 items-center justify-center rounded-full bg-surface border border-outline-variant shadow-sm hover:bg-surface-container-high transition-colors"
-          title={expanded ? t("nav.collapse") : t("nav.expand")}
-          data-oid="cp23.9a">
+        <Tooltip content={expanded ? t("common:tooltip.collapse") : t("common:tooltip.expand")}>
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="hidden md:flex z-50 w-8 h-8 items-center justify-center rounded-full bg-surface border border-outline-variant shadow-sm hover:bg-surface-container-high transition-colors"
+            title={expanded ? t("nav.collapse") : t("nav.expand")}
+            data-oid="cp23.9a">
 
-          <span
-            className="material-symbols-outlined text-sm text-outline"
-            data-oid="6uvj_92">
+            <span
+              className="material-symbols-outlined text-sm text-outline"
+              data-oid="6uvj_92">
 
-            {expanded ? "chevron_left" : "chevron_right"}
-          </span>
-        </button>
+              {expanded ? "chevron_left" : "chevron_right"}
+            </span>
+          </button>
+        </Tooltip>
         <div className="flex items-center gap-6" data-oid="89yal5:">
           <LanguageSelector data-oid="ezpxm7o" />
           <Link

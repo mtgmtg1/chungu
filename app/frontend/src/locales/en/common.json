@@ -15,6 +15,16 @@
     "collapse": "Collapse sidebar",
     "expand": "Expand sidebar"
   },
+  "tooltip": {
+    "newConversion": "Start a new file conversion",
+    "dashboard": "View account overview",
+    "jobs": "View all conversion jobs",
+    "developer": "Manage API keys and docs",
+    "settings": "Manage account settings",
+    "logout": "Log out",
+    "collapse": "Collapse sidebar",
+    "expand": "Expand sidebar"
+  },
   "footer": {
     "privacy": "Privacy Policy",
     "terms": "Terms of Service",

@@ -257,6 +257,9 @@ export default function UploadPage() {
                 <p className="text-body-md text-outline" data-oid="qx:xw_:">
                   {t("page:upload.fileTypes")}
                 </p>
+                <p className="text-label-sm text-outline mt-3 max-w-md mx-auto" data-oid="upload-notice">
+                  ⚠️ {t("legal.consent.uploadNotice")}
+                </p>
                 <div className="mt-8 flex items-center gap-3" data-oid="9pgvpvb">
                   <button
                     type="button"

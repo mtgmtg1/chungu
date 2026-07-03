@@ -18,6 +18,9 @@ import JobsPage from "./pages/JobsPage.jsx";
 import JobConfirmPage from "./pages/JobConfirmPage.jsx";
 import JobResultPage from "./pages/JobResultPage.jsx";
 import SettingsPage from "./pages/SettingsPage.jsx";
+import LegalTermsPage from "./pages/LegalTermsPage.jsx";
+import LegalPrivacyPage from "./pages/LegalPrivacyPage.jsx";
+import CookieConsent from "./components/CookieConsent.jsx";
 
 const rootEl = document.getElementById("root");
 ReactDOM.createRoot(rootEl).render(
@@ -92,7 +95,20 @@ ReactDOM.createRoot(rootEl).render(
                 element={<AdminDashboard data-oid="kl1-:.8" />}
                 data-oid="3mpq7x5" />
 
+              <Route
+                path="/terms"
+                element={<LegalTermsPage data-oid="lglterms" />}
+                data-oid="lglterms_r" />
+
+
+              <Route
+                path="/privacy"
+                element={<LegalPrivacyPage data-oid="lglpriv" />}
+                data-oid="lglpriv_r" />
+
+
             </Routes>
+          <CookieConsent data-oid="cookie_consent" />
           </BrowserRouter>
         </AuthProvider>
       </LanguageProvider>

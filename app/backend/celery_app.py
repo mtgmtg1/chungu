@@ -26,5 +26,9 @@ celery.conf.update(
             "task": "backend.workers.tasks.cleanup_expired_uploads",
             "schedule": 3600.0,
         },
+        "auto-recharge-retry": {
+            "task": "backend.workers.tasks.auto_recharge_retry",
+            "schedule": 86400.0,  # 1일 간격
+        },
     },
 )

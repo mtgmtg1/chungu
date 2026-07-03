@@ -76,10 +76,12 @@ export const api = {
 
   // 결제
   getPackages: () => request('/api/payments/packages'),
-  createTossOrder: (payload) => request('/api/payments/toss/order', { method: 'POST', body: JSON.stringify(payload) }),
-  verifyToss: (payload) => request('/api/payments/toss/success', { method: 'POST', body: JSON.stringify(payload) }),
   createPaddleCheckout: (payload) => request('/api/payments/paddle/checkout', { method: 'POST', body: JSON.stringify(payload) }),
   paymentHistory: () => request('/api/payments/history'),
+  // 자동 충전
+  getAutoRechargeSettings: () => request('/api/payments/auto-recharge/settings'),
+  updateAutoRechargeSettings: (payload) => request('/api/payments/auto-recharge/settings', { method: 'POST', body: JSON.stringify(payload) }),
+  getPaymentMethods: () => request('/api/payments/paddle/payment-methods'),
 
   // 관리자
   adminLogin: (email, password, turnstileToken = "") =>

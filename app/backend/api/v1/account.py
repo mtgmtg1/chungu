@@ -66,15 +66,20 @@ def get_pricing(
 ):
     user, api_key = auth
     enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
-    """현재 판매 중인 포인트 패키지 및 단가를 반환합니다."""
+    """현재 크레딧 단가를 반환한다 (milli-USD)."""
+    limits = points_service.get_charge_limits()
     return {
-        "packages": points_service.get_point_packages(db),
+        "currency": "USD",
+        "charge_limits": {
+            "min_amount": limits["min_amount"],
+            "max_amount": limits["max_amount"],
+        },
         "rates": {
-            "krw_per_page": int(settings_store.get_setting(db, "cost_per_page_krw") or "3"),
-            "krw_per_image": int(settings_store.get_setting(db, "cost_per_image_krw") or "3"),
-            "krw_per_audio_second": int(settings_store.get_setting(db, "cost_per_audio_sec_krw") or "1"),
-            "krw_per_video_second": int(settings_store.get_setting(db, "cost_per_video_sec_krw") or "3"),
-            "usd_per_point": settings_store.get_setting(db, "cost_per_page_usd") or "0.002",
+            "basic_page_milli_usd": int(settings_store.get_setting(db, "cost_basic_page_krw") or "1"),
+            "premium_page_milli_usd": int(settings_store.get_setting(db, "cost_premium_page_krw") or "5"),
+            "premium_audio_sec_milli_usd": int(settings_store.get_setting(db, "cost_premium_audio_sec_krw") or "1"),
+            "premium_video_sec_milli_usd": int(settings_store.get_setting(db, "cost_premium_video_sec_krw") or "5"),
+            "docling_refinement_page_milli_usd": int(settings_store.get_setting(db, "cost_per_docling_refinement_page_krw") or "3"),
         },
     }
 

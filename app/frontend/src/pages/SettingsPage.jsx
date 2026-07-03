@@ -36,6 +36,7 @@ export default function SettingsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [pwForm, setPwForm] = useState({ current: "", new: "", confirm: "" });
   const [pwLoading, setPwLoading] = useState(false);
+  const [dataRightsLoading, setDataRightsLoading] = useState(false);
 
   useEffect(() => {
     if (loading) return;
@@ -156,6 +157,50 @@ export default function SettingsPage() {
   const handleLogout = async () => {
     await signOut();
     navigate("/login");
+  };
+
+  const handleExportData = async () => {
+    setDataRightsLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/account/export", {
+        headers: { Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}` },
+      });
+      if (!res.ok) throw new Error(t("legal.consent.requestFailed"));
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `proof-data-export-${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setMsg(t("legal.consent.exportSuccess"));
+      setTimeout(() => setMsg(""), 3000);
+    } catch (e) {
+      setError(e.message || t("legal.consent.requestFailed"));
+    } finally {
+      setDataRightsLoading(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!confirm(t("legal.consent.deleteConfirm"))) return;
+    setDataRightsLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/account", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}` },
+      });
+      if (!res.ok) throw new Error(t("legal.consent.requestFailed"));
+      setMsg(t("legal.consent.deleteSuccess"));
+      await signOut();
+      navigate("/login");
+    } catch (e) {
+      setError(e.message || t("legal.consent.requestFailed"));
+    } finally {
+      setDataRightsLoading(false);
+    }
   };
 
   const formatDate = (iso) =>
@@ -323,8 +368,7 @@ export default function SettingsPage() {
               {t("page:settings.pointsBalance")}
             </p>
             <p className="font-headline-lg text-headline-lg text-on-surface" data-oid="454aqs4">
-              {(account?.points_balance || 0).toLocaleString()}
-              {t("common:points.point")}
+              ${((account?.points_balance || 0) / 1000).toFixed(2)}
             </p>
           </div>
           <button
@@ -572,6 +616,36 @@ export default function SettingsPage() {
           t("page:settings.change")}
           </button>
         </form>
+      </div>
+
+      <div className="glass-panel p-5 rounded-2xl" data-oid="gdpr-panel">
+        <h3 className="font-headline-md text-headline-md text-on-surface mb-3" data-oid="gdpr-title">
+          {t("legal.consent.dataRights")}
+        </h3>
+        <div className="space-y-4" data-oid="gdpr-body">
+          <div data-oid="gdpr-export">
+            <p className="text-on-surface-variant text-body-md mb-1" data-oid="gdpr-export-desc">
+              {t("legal.consent.exportDataDesc")}
+            </p>
+            <button
+              onClick={handleExportData}
+              disabled={dataRightsLoading}
+              className="bg-primary text-on-primary px-4 py-2 rounded-lg font-body-md hover:bg-primary/90 disabled:opacity-50" data-oid="btn-export">
+              {t("legal.consent.exportData")}
+            </button>
+          </div>
+          <div className="border-t border-outline-variant/40 pt-4" data-oid="gdpr-delete">
+            <p className="text-on-surface-variant text-body-md mb-1" data-oid="gdpr-delete-desc">
+              {t("legal.consent.deleteAccountDesc")}
+            </p>
+            <button
+              onClick={handleDeleteAccount}
+              disabled={dataRightsLoading}
+              className="bg-error text-on-error px-4 py-2 rounded-lg font-body-md hover:bg-error/90 disabled:opacity-50" data-oid="btn-delete">
+              {t("legal.consent.deleteAccount")}
+            </button>
+          </div>
+        </div>
       </div>
     </div>;
 

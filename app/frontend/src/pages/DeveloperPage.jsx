@@ -116,7 +116,7 @@ export default function DeveloperPage() {
   const maxPoints = Math.max(1, ...usage.map((u) => u.points_spent || 0));
   const totalUsage = account?.today_usage?.points_spent || 0;
   const balance = account?.points_balance || 0;
-  const limit = 12500;
+  const limit = 12500;  // milli-USD ($12.50)
   const usagePct = Math.min(100, Math.round(totalUsage / limit * 100));
 
   if (loading || !user) {
@@ -563,8 +563,7 @@ export default function DeveloperPage() {
                   {t("page:developer.pointsBalance")}
                 </span>
                 <span className="font-bold text-on-surface" data-oid="__.s234">
-                  {balance.toLocaleString()}
-                  {t("common:points.point")}
+                  ${(balance / 1000).toFixed(2)}
                 </span>
               </div>
               <div

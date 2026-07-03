@@ -273,29 +273,29 @@ export default function SidebarLayout({ children, title, subtitle }) {
             {t("app.copyright")}
           </p>
           <div className="flex gap-6 mt-4 md:mt-0" data-oid=":a7o.4l">
-            <a
-              href="#"
+            <Link
+              to="/privacy"
               className="font-label-sm text-label-sm text-on-surface-variant hover:underline decoration-primary"
               data-oid="pa-i9:r">
 
               {t("footer.privacy")}
-            </a>
-            <a
-              href="#"
+            </Link>
+            <Link
+              to="/terms"
               className="font-label-sm text-label-sm text-on-surface-variant hover:underline decoration-primary"
               data-oid="jv62hqx">
 
               {t("footer.terms")}
-            </a>
+            </Link>
             <a
-              href="#"
+              href="https://proof.teamcat.app/docs"
               className="font-label-sm text-label-sm text-on-surface-variant hover:underline decoration-primary"
               data-oid="m1qv9fr">
 
               {t("footer.apiDocs")}
             </a>
             <a
-              href="#"
+              href="mailto:admin@proof.teamcat.app"
               className="font-label-sm text-label-sm text-on-surface-variant hover:underline decoration-primary"
               data-oid="x85euse">
 

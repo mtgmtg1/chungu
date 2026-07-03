@@ -21,10 +21,16 @@ class User(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    points_balance: Mapped[int] = mapped_column(Integer, default=0)
+    points_balance: Mapped[int] = mapped_column(Integer, default=0)  # milli-USD (1/1000 달러)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_developer: Mapped[bool] = mapped_column(Boolean, default=True)
     language: Mapped[str] = mapped_column(String(10), default="en")
+    # 자동 충전 설정
+    auto_recharge_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_recharge_threshold: Mapped[int] = mapped_column(Integer, default=2000)  # milli-USD ($2.00)
+    auto_recharge_amount: Mapped[int] = mapped_column(Integer, default=10)  # 달러 ($10)
+    paddle_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
+    auto_recharge_retries: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     jobs: Mapped[list["Job"]] = relationship("Job", back_populates="user", lazy="selectin")
@@ -106,14 +112,14 @@ class Job(Base):
 
 
 class Payment(Base):
-    """Toss / Paddle 결제 내역."""
+    """Paddle 결제 내역."""
 
     __tablename__ = "payments"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), index=True)
-    provider: Mapped[str] = mapped_column(String(20), default="")  # toss, paddle
-    currency: Mapped[str] = mapped_column(String(3), default="KRW")  # KRW, USD
+    provider: Mapped[str] = mapped_column(String(20), default="paddle")
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
     amount: Mapped[float] = mapped_column(Numeric(12, 2), default=0)
     points_added: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, paid, failed, cancelled

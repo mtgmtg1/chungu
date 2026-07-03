@@ -265,34 +265,17 @@ export default function AdminDashboard() {
             className="font-semibold flex items-center gap-2"
             data-oid="ssm9zip">
 
-            <CreditCard size={18} data-oid="jyit-0h" /> 포인트/결제 설정
+            <CreditCard size={18} data-oid="jyit-0h" /> 크레딧/결제 설정
           </h2>
           <div className="grid md:grid-cols-3 gap-4" data-oid=":0k02ba">
-            {field("cost_per_page_krw", "페이지당 비용 (KRW)")}
-            {field("cost_per_image_krw", "이미지당 비용 (KRW)")}
-            {field("cost_per_audio_sec_krw", "오디오 초당 비용 (KRW)")}
-            {field("cost_per_video_sec_krw", "비디오 초당 비용 (KRW)")}
-            {field("cost_per_page_usd", "페이지당 비용 (USD)")}
-            {field("usd_to_krw_rate", "USD→KRW 환율")}
-          </div>
-          <div data-oid="d0f4i_y">
-            <label
-              className="block text-sm font-medium mb-1"
-              data-oid="rnhqk::">
-
-              포인트 패키지 (JSON)
-            </label>
-            <textarea
-              value={settings.point_packages || ""}
-              onChange={(e) => update("point_packages", e.target.value)}
-              rows={4}
-              className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
-              data-oid="lz:zhkj" />
-
+            {field("cost_basic_page_krw", "기본 페이지당 비용 (milli-USD)")}
+            {field("cost_premium_page_krw", "고급 페이지당 비용 (milli-USD)")}
+            {field("cost_premium_audio_sec_krw", "고급 오디오 초당 비용 (milli-USD)")}
+            {field("cost_premium_video_sec_krw", "고급 비디오 초당 비용 (milli-USD)")}
+            {field("cost_per_docling_refinement_page_krw", "Docling 정제 페이지당 비용 (milli-USD)")}
+            {field("free_daily_pages_basic", "기본 모델 무료 일일 페이지")}
           </div>
           <div className="grid md:grid-cols-2 gap-4" data-oid="if2bpe5">
-            {field("toss_secret_key", "Toss Secret Key", "password")}
-            {field("toss_client_key", "Toss Client Key")}
             {field("paddle_api_key", "Paddle API Key", "password")}
             {field(
               "paddle_webhook_secret",
@@ -300,6 +283,8 @@ export default function AdminDashboard() {
               "password"
             )}
             {field("paddle_vendor_id", "Paddle Vendor ID")}
+            {field("paddle_price_id", "Paddle Price ID ($1.00 Product)")}
+            {field("auto_recharge_min_threshold", "자동 충전 최소 임계값 (milli-USD)")}
           </div>
         </section>
 

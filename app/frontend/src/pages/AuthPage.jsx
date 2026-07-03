@@ -84,6 +84,9 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [signupSuccess, setSignupSuccess] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState("");
+  const [agreeTerms, setAgreeTerms] = useState(false);
+  const [agreePrivacy, setAgreePrivacy] = useState(false);
+  const [agreeAge, setAgreeAge] = useState(false);
   const nav = useNavigate();
   const { t } = useTranslation();
   const { signIn, signUp } = useAuth();
@@ -91,7 +94,7 @@ export default function AuthPage() {
   const strength = calcPasswordStrength(password);
   const strengthColors = { weak: "bg-red-500", medium: "bg-yellow-500", strong: "bg-green-500" };
   const strengthLabels = { weak: t("page:auth.passwordWeak"), medium: t("page:auth.passwordMedium"), strong: t("page:auth.passwordStrong") };
-  const canSubmit = !isSignUp || strength.score >= 2;
+  const canSubmit = !isSignUp || (strength.score >= 2 && agreeTerms && agreePrivacy && agreeAge);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -201,6 +204,49 @@ export default function AuthPage() {
             <p className="text-xs text-slate-500" data-oid="pw-label">
               {strengthLabels[strength.label]}
             </p>
+          </div>
+        )}
+
+        {isSignUp && (
+          <div className="space-y-2" data-oid="consent-box">
+            <label className="flex items-start gap-2 text-xs text-slate-600" data-oid="consent-terms">
+              <input
+                type="checkbox"
+                checked={agreeTerms}
+                onChange={(e) => setAgreeTerms(e.target.checked)}
+                className="mt-0.5"
+                data-oid="chk-terms"
+              />
+              <span>
+                <Link to="/terms" target="_blank" className="text-blue-600 hover:underline" data-oid="lnk-terms">
+                  {t("legal.consent.agreeTerms")}
+                </Link>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-xs text-slate-600" data-oid="consent-privacy">
+              <input
+                type="checkbox"
+                checked={agreePrivacy}
+                onChange={(e) => setAgreePrivacy(e.target.checked)}
+                className="mt-0.5"
+                data-oid="chk-privacy"
+              />
+              <span>
+                <Link to="/privacy" target="_blank" className="text-blue-600 hover:underline" data-oid="lnk-privacy">
+                  {t("legal.consent.agreePrivacy")}
+                </Link>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-xs text-slate-600" data-oid="consent-age">
+              <input
+                type="checkbox"
+                checked={agreeAge}
+                onChange={(e) => setAgreeAge(e.target.checked)}
+                className="mt-0.5"
+                data-oid="chk-age"
+              />
+              <span>{t("legal.consent.agreeAge")}</span>
+            </label>
           </div>
         )}
 

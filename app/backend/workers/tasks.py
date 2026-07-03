@@ -667,3 +667,44 @@ def cleanup_expired_uploads() -> dict:
 def convert_xlsx_advanced(parent_job_id: str) -> dict:
     """마크다운 결과를 LLM 기반 고급 변환으로 xlsx로 변환한다."""
     return xlsx_advanced_converter.run(parent_job_id)
+
+
+@celery.task(name="backend.workers.tasks.auto_recharge_retry")
+def auto_recharge_retry() -> dict:
+    """자동 충전 실패 사용자를 찾아 1일 간격으로 재시도한다.
+    auto_recharge_retries > 0 && < 3 && auto_recharge_enabled == True인 사용자 대상."""
+    # [Flow: Step 1 (재시도 대상 조회) -> Step 2 (각 사용자에 대해 trigger_auto_recharge 호출) -> Step 3 (결과 집계)]
+    from sqlalchemy import select as sa_select
+    from ..db.models import User
+    from ..api.payments import trigger_auto_recharge
+
+    db = SessionLocal()
+    try:
+        users = db.execute(
+            sa_select(User).where(
+                User.auto_recharge_enabled == True,  # noqa: E712
+                User.auto_recharge_retries > 0,
+                User.auto_recharge_retries < 3,
+            )
+        ).scalars().all()
+
+        retried = 0
+        succeeded = 0
+        for user in users:
+            try:
+                result = trigger_auto_recharge(db, user)
+                retried += 1
+                if result.get("ok"):
+                    succeeded += 1
+                    logger.info(f"[auto_recharge_retry] {user.id} 재시도 성공")
+                else:
+                    logger.warning(f"[auto_recharge_retry] {user.id} 재시도 실패: {result.get('reason')}")
+            except Exception as e:
+                logger.error(f"[auto_recharge_retry] {user.id} 예외: {e}")
+
+        return {"retried": retried, "succeeded": succeeded}
+    except Exception as e:
+        logger.exception(f"[auto_recharge_retry] 태스크 오류: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()

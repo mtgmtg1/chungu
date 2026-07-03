@@ -21,25 +21,18 @@ SETTING_DEFS: dict[str, tuple[str, bool]] = {
     "max_pages": (str(settings.max_pages), False),
     "max_file_mb": (str(settings.max_file_mb), False),
     "default_pipeline": ("vision", False),
-    # 포인트/결제 (레거시 호환)
-    "cost_per_page_krw": ("3", False),
-    "cost_per_image_krw": ("3", False),
-    "cost_per_audio_sec_krw": ("1", False),
-    "cost_per_video_sec_krw": ("10", False),
-    "cost_per_page_usd": ("0.002", False),
-    "usd_to_krw_rate": ("1500", False),
-    # 모델별 차등 과금
+    # 크레딧/결제 (milli-USD 기반)
+    # 모델별 차등 과금 (milli-USD 단위)
     "cost_basic_page_krw": ("1", False),
     "cost_premium_page_krw": ("5", False),
     "cost_premium_audio_sec_krw": ("1", False),
     "cost_premium_video_sec_krw": ("5", False),
     "free_daily_pages_basic": ("100", False),
-    "point_packages": ('[{"name":"1,000P","points":1000,"krw":1000,"usd":0.67},{"name":"5,000P","points":5000,"krw":5000,"usd":3.34},{"name":"10,000P","points":10000,"krw":10000,"usd":6.67}]', False),
-    "toss_secret_key": ("", True),
-    "toss_client_key": ("", False),
     "paddle_api_key": ("", True),
     "paddle_webhook_secret": ("", True),
     "paddle_vendor_id": ("", False),
+    "paddle_price_id": ("", False),
+    "auto_recharge_min_threshold": ("500", False),
     # 미디어 전용 LLM (오디오/비디오)
     "media_llm_endpoint": (settings.media_llm_endpoint, False),
     "media_llm_model": (settings.media_llm_model, False),
@@ -56,7 +49,6 @@ SETTING_DEFS: dict[str, tuple[str, bool]] = {
     "docling_image_max_size": (str(settings.docling_image_max_size), False),
     # Docling LLM 후처리 비용
     "cost_per_docling_refinement_page_krw": ("3", False),
-    "cost_per_docling_refinement_page_usd": ("0.002", False),
     # API
     "api_key_default_rate_limit_rpm": ("60", False),
     "api_key_default_daily_quota": ("", False),

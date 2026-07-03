@@ -172,7 +172,7 @@ export default function DashboardPage() {
             </div>
           </div>
           <p className="text-3xl font-bold text-on-surface" data-oid="7z.7l1t">
-            {profile?.points_balance?.toLocaleString() ?? "-"} P
+            ${profile?.points_balance ? (profile.points_balance / 1000).toFixed(2) : "0.00"}
           </p>
           <Link
             to="/payment"

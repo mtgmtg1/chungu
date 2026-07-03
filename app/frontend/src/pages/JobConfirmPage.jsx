@@ -220,7 +220,7 @@ export default function JobConfirmPage() {
                 {t("page:confirm.requiredPoints")}
               </span>
               <span className="font-bold text-primary" data-oid="f:gbk8s">
-                {cost} {t("common:points.point")}
+                ${(cost / 1000).toFixed(2)}
               </span>
             </div>
             <div
@@ -231,7 +231,7 @@ export default function JobConfirmPage() {
                 {t("page:confirm.myBalance")}
               </span>
               <span className="font-medium text-on-surface" data-oid="vu2_p3k">
-                {balance} {t("common:points.point")}
+                ${(balance / 1000).toFixed(2)}
               </span>
             </div>
           </div>
@@ -376,7 +376,7 @@ export default function JobConfirmPage() {
                 {" "}
                 {t("page:confirm.processing")}
               </> :
-              t("page:confirm.startWithCost", { cost })
+              t("page:confirm.startWithCost", { cost: `$${(cost / 1000).toFixed(2)}` })
               }
             </button>
           </div>

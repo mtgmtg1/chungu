@@ -21,11 +21,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 # app/ 경로를 import path에 추가 (backend 패키지로 상대 import 가능하도록)
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
-
-from backend import settings_store  # noqa: E402
+script_dir = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_APP_DIR = os.path.join(script_dir, "..", "app")
 
 PADDLE_BASE_URL = "https://api.paddle.com"
+
+# backend.settings_store는 실행 시 --app-dir로 지정된 경로에서 지연 import 한다.
+settings_store = None
 
 PLANS = {
     "free": {
@@ -113,7 +115,15 @@ def main():
     parser.add_argument("--env", default=os.environ.get("PADDLE_ENV", "live"), help="Paddle environment")
     parser.add_argument("--save-db", action="store_true", default=True, help="Save price IDs to DB")
     parser.add_argument("--dry-run", action="store_true", help="Print only, do not call Paddle API")
+    parser.add_argument("--app-dir", default=os.environ.get("APP_DIR", DEFAULT_APP_DIR), help="Path to app directory containing backend package")
     args = parser.parse_args()
+
+    # backend 패키지를 지정된 app 디렉토리에서 import
+    app_dir = os.path.abspath(args.app_dir)
+    sys.path.insert(0, app_dir)
+    global settings_store
+    from backend import settings_store as _settings_store  # noqa: E402
+    settings_store = _settings_store
 
     if args.dry_run:
         args.save_db = False

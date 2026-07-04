@@ -83,6 +83,16 @@ class Job(Base):
     cost_points: Mapped[int] = mapped_column(Integer, default=0)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
 
+    # 구독 사용량 예약 기록 (예약/환불 멱등성 및 정확한 기간 추적용)
+    reserved_basic_pages: Mapped[int] = mapped_column(Integer, default=0)
+    reserved_premium_pages: Mapped[int] = mapped_column(Integer, default=0)
+    reserved_media_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    reserved_period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Excel 고급 변환 구독 사용량 예약 기록 (환불용)
+    xlsx_advanced_reserved_pages: Mapped[int] = mapped_column(Integer, default=0)
+    xlsx_advanced_reserved_period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     # Supabase Storage 경로 (로컬 경로 대체)
     pdf_storage_path: Mapped[str] = mapped_column(String(1024), default="")
     result_csv_storage_path: Mapped[str] = mapped_column(String(1024), default="")
@@ -264,6 +274,6 @@ class SubscriptionUsage(Base):
     premium_pages: Mapped[int] = mapped_column(Integer, default=0)
     media_seconds: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     user: Mapped["User"] = relationship("User", back_populates="subscription_usages")

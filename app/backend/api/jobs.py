@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # [Flow: Step 1 (업로드 -> 파일 유형 감지/압축 해제/Storage 저장) -> Step 2 (비용 계산) -> Step 3 (승인 -> 포인트 차감 + Celery) -> Step 4 (상태 폴링/Storage 다운로드)]
 import asyncio
+import concurrent.futures
 import json
 import logging
 import math
@@ -21,12 +22,12 @@ from sqlalchemy.orm import Session
 
 from .. import settings_store
 from ..auth.supabase_auth import CurrentUser, get_current_admin, get_current_user
-from ..core import archive_handler, converter, docling_client, hwp_converter, media_loader, office_converter, pdf_preview_converter, points_service, subscription_service, supabase_client
+from ..core import archive_handler, cache, converter, docling_client, hwp_converter, media_loader, office_converter, pdf_preview_converter, subscription_service, supabase_client
 
 
 logger = logging.getLogger(__name__)
 from ..core.prompts import DEFAULT_COLUMNS
-from ..db.models import Job
+from ..db.models import Job, User
 from ..db.session import get_db
 from ..workers.tasks import run_job
 
@@ -52,6 +53,96 @@ def _calculate_work_units(pages: int, image_count: int, audio_seconds: int, vide
     audio_units = math.ceil(audio_seconds / 2) if audio_seconds > 0 else 0
     video_units = video_seconds if video_seconds > 0 else 0
     return max(1, pages + image_count + audio_units + video_units)
+
+
+def _calculate_media_info(job: Job) -> dict:
+    """Job의 extracted_files 및 파일 유형을 기준으로 구독 차감에 사용할 단위를 계산한다.
+
+    반환값:
+        {
+            "pages": int,
+            "image_count": int,
+            "audio_seconds": int,
+            "video_seconds": int,
+            "docling_refinement_pages": int,
+        }
+    """
+    pages = job.total_pages or 0
+    image_count = 0
+    audio_seconds = 0
+    video_seconds = 0
+    for info in job.extracted_files or []:
+        ftype = info.get("type", "")
+        if ftype == "image":
+            image_count += 1
+        elif ftype == "audio":
+            audio_seconds += info.get("duration", 0)
+        elif ftype == "video":
+            video_seconds += info.get("duration", 0)
+    if job.file_type in media_loader.DOCLING_TYPES or job.file_type in media_loader.HWP_TYPES:
+        image_count = 0
+        audio_seconds = 0
+        video_seconds = 0
+    docling_refinement_pages = job.total_pages if job.use_docling_refinement else 0
+    return {
+        "pages": pages,
+        "image_count": image_count,
+        "audio_seconds": audio_seconds,
+        "video_seconds": video_seconds,
+        "docling_refinement_pages": docling_refinement_pages,
+    }
+
+
+def _subscription_units_from_job(job: Job) -> dict:
+    """Job 정보를 기반으로 구독 사용량 예약 단위를 계산한다.
+
+    반환값:
+        {"basic_pages": int, "premium_pages": int, "media_seconds": int}
+    """
+    info = _calculate_media_info(job)
+    pages = info["pages"]
+    image_count = info["image_count"]
+    audio_seconds = info["audio_seconds"]
+    video_seconds = info["video_seconds"]
+    docling_refinement_pages = info["docling_refinement_pages"]
+    ocr_model = job.ocr_model or "premium"
+
+    basic_pages = pages + image_count if ocr_model == "basic" else 0
+    premium_pages = pages + image_count if ocr_model != "basic" else 0
+    premium_pages += docling_refinement_pages
+    media_seconds = audio_seconds + video_seconds
+    return {
+        "basic_pages": basic_pages,
+        "premium_pages": premium_pages,
+        "media_seconds": media_seconds,
+    }
+
+
+def _subscription_would_exceed_for_model(db: Session, job: Job, db_user: User, ocr_model: str) -> dict:
+    """지정한 OCR 모델로 작업을 실행할 때 구독 한도 초과 여부를 반환한다.
+
+    반환값: {"ok": bool, "reason": str|None}
+    """
+    info = _calculate_media_info(job)
+    pages = info["pages"]
+    image_count = info["image_count"]
+    audio_seconds = info["audio_seconds"]
+    video_seconds = info["video_seconds"]
+    docling_refinement_pages = info["docling_refinement_pages"]
+
+    basic_pages = pages + image_count if ocr_model == "basic" else 0
+    premium_pages = pages + image_count if ocr_model != "basic" else 0
+    premium_pages += docling_refinement_pages
+    media_seconds = audio_seconds + video_seconds
+
+    check = subscription_service.check_enough(
+        db,
+        db_user,
+        basic_pages=basic_pages,
+        premium_pages=premium_pages,
+        media_seconds=media_seconds,
+    )
+    return {"ok": check["ok"], "reason": check["reason"]}
 
 
 def _job_expires_at(job: Job) -> datetime:
@@ -605,11 +696,16 @@ async def create_job(
 
     docling_refinement_pages = pages if job.use_docling_refinement else 0
     user_id = uuid.UUID(user.user_id)
-    cost_basic = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=0, ocr_model="basic", user_id=user_id)
-    cost_premium = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages, ocr_model="premium", user_id=user_id)
-    ocr_model = job.ocr_model or "premium"
-    cost = cost_premium if ocr_model == "premium" else cost_basic
-    free_remaining = points_service.get_daily_free_remaining(db, user_id)
+
+    # 구독형 요금제: pending 상태에서도 사전 한도 체크
+    db_user = db.get(User, user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    units = _subscription_units_from_job(job)
+    check_basic = _subscription_would_exceed_for_model(db, job, db_user, "basic")
+    check_premium = _subscription_would_exceed_for_model(db, job, db_user, "premium")
+    check_current = check_premium if (job.ocr_model or "premium") != "basic" else check_basic
+    status = subscription_service.get_subscription_status(db, db_user)
 
     return {
         "job_id": job.id,
@@ -620,14 +716,27 @@ async def create_job(
         "media_duration_seconds": audio_seconds + video_seconds,
         "docling_refinement": job.use_docling_refinement,
         "docling_refinement_pages": docling_refinement_pages,
-        "ocr_model": ocr_model,
+        "ocr_model": job.ocr_model or "premium",
         "ocr_engine": job.ocr_engine,
         "has_media": has_media,
-        "cost": cost,
-        "cost_basic": cost_basic,
-        "cost_premium": cost_premium,
-        "free_pages_remaining": free_remaining,
-        "balance": user.points_balance,
+        "subscription": {
+            "plan": status["plan"],
+            "active": status["active"],
+            "limits": status["limits"],
+            "used": status["used"],
+            "remaining": status["remaining"],
+            "would_exceed": not check_current["ok"],
+            "would_exceed_basic": not check_basic["ok"],
+            "would_exceed_premium": not check_premium["ok"],
+            "reason": check_current["reason"],
+            "reason_basic": check_basic["reason"],
+            "reason_premium": check_premium["reason"],
+        },
+        "cost": {"points": 0, "usd": "$0.00"},
+        "cost_basic": {"points": 0, "usd": "$0.00"},
+        "cost_premium": {"points": 0, "usd": "$0.00"},
+        "free_pages_remaining": 0,
+        "balance": 0,
     }
 
 
@@ -654,6 +763,12 @@ def update_job(
         job.columns = _parse_columns(payload["columns"])
     if "prompt" in payload:
         job.prompt = str(payload["prompt"]).strip()
+
+    # 오디오/비디오가 포함된 작업은 고급 모델로 강제
+    has_media = job.media_duration_seconds > 0
+    if has_media and job.ocr_model == "basic":
+        job.ocr_model = "premium"
+
     db.commit()
     return _job_summary(job)
 
@@ -676,53 +791,29 @@ def confirm_job(
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # 작업 정보에서 비용 재계산 (UI 표시용)
-    pages = job.total_pages
-    image_count = 0
-    audio_seconds = 0
-    video_seconds = 0
-    for info in job.extracted_files or []:
-        ftype = info.get("type", "")
-        if ftype == "image":
-            image_count += 1
-        elif ftype == "audio":
-            audio_seconds += info.get("duration", 0)
-        elif ftype == "video":
-            video_seconds += info.get("duration", 0)
-    if job.file_type in media_loader.DOCLING_TYPES or job.file_type in media_loader.HWP_TYPES:
-        image_count = 0
-        audio_seconds = 0
-        video_seconds = 0
-
-    docling_refinement_pages = job.total_pages if job.use_docling_refinement else 0
-    ocr_model = job.ocr_model or "premium"
-    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages, ocr_model=ocr_model, user_id=job.user_id)
-
-    # UI 일반 사용자는 구독 요금제로 사용량 제한 적용
-    basic_pages = pages + image_count if ocr_model == "basic" else 0
-    premium_pages = pages + image_count if ocr_model != "basic" else 0
-    premium_pages += docling_refinement_pages
-    media_seconds = audio_seconds + video_seconds
+    # 구독형 요금제: 사용량 예약 (멱등성 위해 Job에 예약 기록 저장)
+    units = _subscription_units_from_job(job)
     try:
-        subscription_service.reserve_usage(
+        result = subscription_service.reserve_usage(
             db,
             db_user,
-            basic_pages=basic_pages,
-            premium_pages=premium_pages,
-            media_seconds=media_seconds,
+            basic_pages=units["basic_pages"],
+            premium_pages=units["premium_pages"],
+            media_seconds=units["media_seconds"],
         )
     except ValueError as e:
         raise HTTPException(status_code=402, detail=str(e))
 
-    if ocr_model == "basic":
-        points_service.record_daily_usage(db, job.user_id, pages + image_count)
-
-    job.cost_points = cost["points"]
+    job.reserved_basic_pages = units["basic_pages"]
+    job.reserved_premium_pages = units["premium_pages"]
+    job.reserved_media_seconds = units["media_seconds"]
+    job.reserved_period_start = datetime.fromisoformat(result["period_start"])
+    job.cost_points = 0
     job.status = "queued"
     db.commit()
 
     run_job.delay(job.id)
-    return {"job_id": job.id, "status": job.status, "remaining_points": db_user.points_balance}
+    return {"job_id": job.id, "status": job.status, "subscription": result}
 
 
 @router.get("/jobs")
@@ -764,9 +855,31 @@ def get_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: Sess
             video_seconds = 0
         docling_refinement_pages = pages if job.use_docling_refinement else 0
         summary["has_media"] = audio_seconds > 0 or video_seconds > 0
-        summary["cost_basic"] = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=0, ocr_model="basic", user_id=user_id)
-        summary["cost_premium"] = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages, ocr_model="premium", user_id=user_id)
-        summary["free_pages_remaining"] = points_service.get_daily_free_remaining(db, user_id)
+
+        # 구독형 요금제: 잔여 한도 및 초과 여부를 함께 반환
+        db_user = db.get(User, user_id)
+        if db_user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        check_basic = _subscription_would_exceed_for_model(db, job, db_user, "basic")
+        check_premium = _subscription_would_exceed_for_model(db, job, db_user, "premium")
+        check_current = check_premium if (job.ocr_model or "premium") != "basic" else check_basic
+        status = subscription_service.get_subscription_status(db, db_user)
+        summary["subscription"] = {
+            "plan": status["plan"],
+            "active": status["active"],
+            "limits": status["limits"],
+            "used": status["used"],
+            "remaining": status["remaining"],
+            "would_exceed": not check_current["ok"],
+            "would_exceed_basic": not check_basic["ok"],
+            "would_exceed_premium": not check_premium["ok"],
+            "reason": check_current["reason"],
+            "reason_basic": check_basic["reason"],
+            "reason_premium": check_premium["reason"],
+        }
+        summary["cost_basic"] = {"points": 0, "usd": "$0.00"}
+        summary["cost_premium"] = {"points": 0, "usd": "$0.00"}
+        summary["free_pages_remaining"] = 0
         summary["cost"] = summary["cost_basic"] if (job.ocr_model or "premium") == "basic" else summary["cost_premium"]
     return summary
 
@@ -856,32 +969,57 @@ def _image_files(job: Job) -> list[tuple[int, dict]]:
     return images
 
 
-def _source_files(job: Job) -> list[dict]:
-    """extracted_files에서 미리보기 가능한 파일 목록과 파일별 파싱 결과를 반환한다."""
-    files = job.extracted_files or []
-    out: list[dict] = []
-    for idx, info in enumerate(files):
-        if not isinstance(info, dict) or not info.get("storage_path"):
-            continue
-        ftype = info.get("type", "")
-        if ftype not in ("pdf", "image", "audio", "video", "docx", "hwp"):
-            continue
-        try:
-            url = supabase_client.get_signed_download_url(info["storage_path"], bucket="pdfs", expires_in=3600)
+def _build_source_file_item(info: dict, idx: int) -> dict | None:
+    """단일 파일에 대한 source_files 항목을 생성한다."""
+    if not isinstance(info, dict) or not info.get("storage_path"):
+        return None
+    ftype = info.get("type", "")
+    if ftype not in ("pdf", "image", "audio", "video", "docx", "hwp"):
+        return None
+    try:
+        storage_path = info["storage_path"]
+        if ftype in ("pdf", "docx", "hwp"):
+            preview_url = pdf_preview_converter.get_lowres_preview_pdf_url(storage_path, expires_in=3600)
+            if not preview_url:
+                return None
             item = {
                 "name": info.get("path", info.get("storage_path", "")),
                 "type": ftype,
-                "url": url,
-                "storage_path": info.get("storage_path", ""),
+                "url": preview_url,
+                "storage_path": storage_path,
                 "page_num": idx + 1,
                 "result_markdown": info.get("result_markdown", ""),
+                "preview_url": preview_url,
             }
-            if ftype in ("docx", "hwp"):
-                item["preview_url"] = pdf_preview_converter.get_preview_pdf_url(info["storage_path"], expires_in=3600)
-            out.append(item)
-        except Exception:
-            pass
-    return out
+            return item
+        # image/audio/video는 원본 signed URL만 필요
+        client = supabase_client.create_fresh_service_client()
+        url = supabase_client.get_signed_download_url_with_client(client, storage_path, bucket="pdfs", expires_in=3600)
+        return {
+            "name": info.get("path", info.get("storage_path", "")),
+            "type": ftype,
+            "url": url,
+            "storage_path": storage_path,
+            "page_num": idx + 1,
+            "result_markdown": info.get("result_markdown", ""),
+        }
+    except Exception:
+        return None
+
+
+def _source_files(job: Job) -> list[dict]:
+    """extracted_files에서 미리보기 가능한 파일 목록과 파일별 파싱 결과를 반환한다.
+
+    병렬 처리로 signed URL 생성 시간을 줄인다. max_workers=3으로 제한하여
+    Supabase Storage rate limit과 스레드 안전 문제를 완화한다.
+    """
+    files = job.extracted_files or []
+    if not files:
+        return []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        futures = [executor.submit(_build_source_file_item, info, idx) for idx, info in enumerate(files)]
+        results = [f.result() for f in futures]
+    return [item for item in results if item is not None]
 
 
 def _detect_source_type(job: Job) -> str | None:
@@ -926,7 +1064,8 @@ def _split_markdown_by_pages(markdown: str) -> list[tuple[int, str]]:
 
 
 def _ensure_xlsx_basic_bundle(job: Job, db: Session) -> None:
-    """CSV/XLSX 기본 변환 번들을 한 번 수행한다. 이미 변환된 경우 아무것도 하지 않는다."""
+    """CSV/XLSX 기본 변환 번들을 한 번 수행한다. 이미 변환된 경우 아무것도 하지 않는다.
+    구독형 요금제: basic_pages 단위로 사용량을 차감한다."""
     if job.result_xlsx_basic_storage_path and job.result_csv_storage_path:
         return
     from ..db.models import User
@@ -934,9 +1073,14 @@ def _ensure_xlsx_basic_bundle(job: Job, db: Session) -> None:
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")
     units = job.total_pages if job.total_pages else (job.total_files or 1)
-    cost = units * 1
     try:
-        points_service.spend_points(db, db_user, cost, f"Excel 기본변환: {job.original_filename}")
+        subscription_service.reserve_usage(
+            db,
+            db_user,
+            basic_pages=units,
+            premium_pages=0,
+            media_seconds=0,
+        )
     except ValueError as e:
         raise HTTPException(status_code=402, detail=str(e))
     markdown = _get_markdown_content(job)
@@ -956,6 +1100,11 @@ def _ensure_xlsx_basic_bundle(job: Job, db: Session) -> None:
     db.commit()
 
 
+def _preview_cache_key(job_id: str, start_page: int, end_page: int | None) -> str:
+    """preview_job 응답을 캐싱하기 위한 Redis 키를 생성한다."""
+    return f"preview:{job_id}:{start_page}:{end_page or 'last'}"
+
+
 @router.get("/jobs/{job_id}/preview")
 def preview_job(
     job_id: str,
@@ -972,6 +1121,11 @@ def preview_job(
     if not job.result_md_storage_path and not job.result_edited_md_storage_path:
         detail = f"Result file not ready (status={job.status}, md_path={job.result_md_storage_path or '-'}, edited_path={job.result_edited_md_storage_path or '-'}, error_log={job.error_log or '-'}"
         raise HTTPException(status_code=400, detail=detail)
+
+    cache_key = _preview_cache_key(job_id, start_page, end_page)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     try:
         markdown = _get_markdown_content(job)
@@ -994,10 +1148,7 @@ def preview_job(
     if job.pdf_storage_path:
         try:
             source_type = _detect_source_type(job)
-            if source_type in ("docx", "hwp"):
-                source_url = pdf_preview_converter.get_preview_pdf_url(job.pdf_storage_path, expires_in=3600)
-            else:
-                source_url = supabase_client.get_signed_download_url(job.pdf_storage_path, bucket="pdfs", expires_in=3600)
+            source_url = pdf_preview_converter.get_lowres_preview_pdf_url(job.pdf_storage_path, expires_in=3600)
         except Exception:
             pass
 
@@ -1013,7 +1164,7 @@ def preview_job(
                     pass
 
     source_files = _source_files(job)
-    return {
+    result = {
         "job": _job_summary(job),
         "markdown": partial_markdown,
         "source_url": source_url,
@@ -1024,6 +1175,8 @@ def preview_job(
         "end_page": effective_end,
         "last_page": last_page,
     }
+    cache.set(cache_key, result, ttl_seconds=300)
+    return result
 
 
 @router.get("/jobs/{job_id}/preview/pages")
@@ -1106,6 +1259,7 @@ def save_result_markdown(
     job.result_edited_md_storage_path = storage_path
     job.result_edited_md_path = ""
     db.commit()
+    cache.invalidate_pattern(f"preview:{job_id}:*")
     return {"job_id": job.id, "saved": True, "storage_path": storage_path}
 
 
@@ -1153,6 +1307,7 @@ def save_result_page(
     job.result_edited_md_storage_path = storage_path
     job.result_edited_md_path = ""
     db.commit()
+    cache.invalidate_pattern(f"preview:{job_id}:*")
     return {"job_id": job.id, "page_num": page_num, "saved": True, "storage_path": storage_path}
 
 
@@ -1206,7 +1361,7 @@ def convert_job(
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {e}")
 
-    # Excel 고급 변환: 비용 차감 후 비동기 Celery task로 큐잉
+    # Excel 고급 변환: 구독 사용량 차감 후 비동기 Celery task로 큐잉
     if fmt == "xlsx_advanced":
         if job.result_xlsx_advanced_storage_path:
             try:
@@ -1217,13 +1372,20 @@ def convert_job(
         if job.xlsx_advanced_status == "processing":
             raise HTTPException(status_code=409, detail="Advanced conversion already in progress")
         units = job.total_pages if job.total_pages else (job.total_files or 1)
-        cost = units * 3
         try:
-            points_service.spend_points(db, db_user, cost, f"Excel 고급변환: {job.original_filename}")
+            result = subscription_service.reserve_usage(
+                db,
+                db_user,
+                basic_pages=0,
+                premium_pages=units,
+                media_seconds=0,
+            )
         except ValueError as e:
             raise HTTPException(status_code=402, detail=str(e))
         job.xlsx_advanced_status = "processing"
-        job.xlsx_advanced_refundable = False
+        job.xlsx_advanced_refundable = True
+        job.xlsx_advanced_reserved_pages = units
+        job.xlsx_advanced_reserved_period_start = datetime.fromisoformat(result["period_start"])
         db.commit()
         from ..workers import tasks
         task = tasks.convert_xlsx_advanced.delay(job_id)
@@ -1345,13 +1507,23 @@ def xlsx_advanced_action(
         raise HTTPException(status_code=404, detail="User not found")
 
     units = job.total_pages if job.total_pages else (job.total_files or 1)
-    cost = units * 3
 
     if action == "refund":
-        points_service.refund_points(db, db_user, cost, f"Excel 고급변환 환불: {job.original_filename}")
+        # 구독 사용량 환불: 예약 시 기록한 기간을 사용
+        period_start = job.xlsx_advanced_reserved_period_start
+        subscription_service.release_usage(
+            db,
+            db_user,
+            basic_pages=0,
+            premium_pages=job.xlsx_advanced_reserved_pages or units,
+            media_seconds=0,
+            period_start=period_start,
+        )
         job.xlsx_advanced_refundable = False
+        job.xlsx_advanced_reserved_pages = 0
+        job.xlsx_advanced_reserved_period_start = None
         db.commit()
-        return {"refunded": True, "points": cost}
+        return {"refunded": True, "premium_pages": job.xlsx_advanced_reserved_pages or units}
 
     # retry: 상태 초기화 후 비용 없이 task 재실행
     job.xlsx_advanced_status = "processing"
@@ -1390,11 +1562,25 @@ def job_action(
         raise HTTPException(status_code=404, detail="User not found")
 
     if action == "refund":
-        if job.cost_points > 0:
-            points_service.refund_points(db, db_user, job.cost_points, f"문서 파싱 환불: {job.original_filename}")
+        # 구독 사용량 환불: 예약 시 기록한 기간과 단위를 사용
+        refunded_basic = job.reserved_basic_pages
+        refunded_premium = job.reserved_premium_pages
+        refunded_media = job.reserved_media_seconds
+        subscription_service.release_usage(
+            db,
+            db_user,
+            basic_pages=refunded_basic,
+            premium_pages=refunded_premium,
+            media_seconds=refunded_media,
+            period_start=job.reserved_period_start,
+        )
+        job.reserved_basic_pages = 0
+        job.reserved_premium_pages = 0
+        job.reserved_media_seconds = 0
+        job.reserved_period_start = None
         job.refundable = False
         db.commit()
-        return {"refunded": True, "points": job.cost_points}
+        return {"refunded": True, "basic_pages": refunded_basic, "premium_pages": refunded_premium, "media_seconds": refunded_media}
 
     # retry: 상태 초기화 후 비용 없이 task 재실행
     job.status = "queued"
@@ -1438,6 +1624,10 @@ def _job_summary(job: Job) -> dict:
         "ocr_model": job.ocr_model or "premium",
         "ocr_engine": job.ocr_engine or "easyocr",
         "cost_points": job.cost_points,
+        "reserved_basic_pages": job.reserved_basic_pages,
+        "reserved_premium_pages": job.reserved_premium_pages,
+        "reserved_media_seconds": job.reserved_media_seconds,
+        "reserved_period_start": job.reserved_period_start.isoformat() if job.reserved_period_start else None,
         "error_log": job.error_log,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "processing_started_at": job.processing_started_at.isoformat() if job.processing_started_at else None,

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..auth.supabase_auth import CurrentUser, get_current_user, SUPPORTED_LANGUAGES
+from ..core import subscription_service
 from ..core.rate_limit import get_daily_spent_points
 from ..db.models import ApiKey, User
 from ..db.session import get_db
@@ -31,12 +32,19 @@ def me(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_
         "daily_quota": active_key.daily_quota if active_key else None,
         "daily_spent_points": get_daily_spent_points(active_key.id) if active_key else 0,
     }
+    db_user = db.get(User, uuid.UUID(user.user_id))
+    subscription = (
+        subscription_service.get_subscription_status(db, db_user)
+        if db_user else {"plan": "free", "active": False, "remaining": {}, "limits": {}}
+    )
+
     return {
         "user_id": user.user_id,
         "email": user.email,
         "points_balance": user.points_balance,
         "subscription_plan": user.subscription_plan or "free",
         "subscription_status": user.subscription_status or "inactive",
+        "subscription": subscription,
         "is_admin": user.is_admin,
         "language": user.language or "en",
         **rate_limit,

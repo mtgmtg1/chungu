@@ -147,10 +147,11 @@ npm run start        # dev server at localhost:3000
 - 회원가입 시 프론트엔드(`AuthPage.jsx`)에서 스팸 폴더 확인 안내 표시 (`signupSuccessTitle`, `signupSuccessBody`, `signupSpamNotice` i18n 키).
 
 ### App Emails (Multi-language: ko/en/ja)
-- **완료 메일** (`build_done_email`): 사용자 프로필 언어에 따라 XLSX/DOCX 다운로드 버튼 + 결과 페이지 링크(`/jobs/{jobId}`) 포함.
+- **완료 메일** (`build_done_email`): 사용자 프로필 언어에 따라 DOCX 다운로드 버튼 + 결과 페이지 링크(`/jobs/{jobId}`) 포함. 결과 페이지에서 엑셀 다운로드 및 고급변환 가능 안내.
 - **실패 메일** (`build_error_email`): 사용자 프로필 언어에 따라 에러 내용 통지.
 - 언어 조회: `tasks.py`에서 `job.user_id` → `User.language` 조회 후 `lang` 파라미터로 전달. 비회원(`user_id == None`)은 기본값 `"en"`.
-- 다운로드 링크: `/api/dl/{token}?type=xlsx_basic|docx` — auth 없이 `download_token`으로 302 redirect (이메일 버튼용).
+- 다운로드 링크: `/api/dl/{token}?type=docx` — auth 없이 `download_token`으로 302 redirect (이메일 버튼용). DOCX 파일이 아직 생성되지 않은 경우 on-demand 변환(`_generate_office_on_demand`) 후 redirect.
+- XLSX 다운로드는 이메일에서 제외: 결과 페이지(`/jobs/{jobId}`)에서 인증 후 다운로드 가능.
 - Key files:
   - `app/backend/email_sender.py` — `_DONE_T`, `_ERROR_T` 다국어 딕셔너리, `build_done_email`, `build_error_email`
   - `app/backend/workers/tasks.py` — `_handle_job_failure`, `run_job` Step 7에서 언어 조회 후 이메일 발송

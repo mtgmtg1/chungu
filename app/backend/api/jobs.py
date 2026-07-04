@@ -1424,7 +1424,7 @@ def legacy_download(token: str, type: str = "csv", db: Session = Depends(get_db)
         raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {e}")
 
 
-# [Flow: Step 1 (token으로 job 조회) -> Step 2 (포맷별 Storage 경로 매핑) -> Step 3 (signed URL 생성 후 302 redirect)]
+# [Flow: Step 1 (token으로 job 조회) -> Step 2 (포맷별 Storage 경로 매핑) -> Step 2b (경로 없으면 on-demand 변환) -> Step 3 (signed URL 생성 후 302 redirect)]
 @router.get("/dl/{token}")
 def email_download_redirect(token: str, type: str = "xlsx_basic", db: Session = Depends(get_db)):
     """이메일 다운로드 버튼용 redirect 엔드포인트 (auth 없이 download_token으로 직접 다운로드)."""
@@ -1444,6 +1444,11 @@ def email_download_redirect(token: str, type: str = "xlsx_basic", db: Session = 
         "pptx": job.result_pptx_storage_path,
     }
     path = path_map.get(fmt)
+
+    # [Flow: 경로가 비어 있으면 on-demand 변환 (이메일 다운로드 약속 이행)]
+    if not path and fmt == "docx":
+        path = _generate_office_on_demand(job, fmt, db)
+
     if not path:
         raise HTTPException(status_code=404, detail="Result file not found")
 
@@ -1452,3 +1457,30 @@ def email_download_redirect(token: str, type: str = "xlsx_basic", db: Session = 
         return RedirectResponse(url, status_code=302)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {e}")
+
+
+def _generate_office_on_demand(job: Job, fmt: str, db: Session) -> str:
+    """이메일 다운로드용 on-demand 변환: 마크다운을 DOCX로 변환하여 Storage에 업로드하고 경로를 반환한다.
+
+    매개변수:
+        job: 변환할 Job 객체
+        fmt: 변환 포맷 ("docx")
+        db: 데이터베이스 세션
+
+    반환값:
+        Storage 경로 문자열 (변환 실패 시 빈 문자열)
+    """
+    markdown = _get_markdown_content(job)
+    if not markdown.strip():
+        return ""
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_path = Path(tmpdir) / "result.docx"
+            office_converter.markdown_to_docx(markdown, out_path)
+            storage_path = supabase_client.upload_office_result(job.id, out_path, "docx")
+            job.result_docx_storage_path = storage_path
+            db.commit()
+            return storage_path
+    except Exception as e:
+        logger.warning(f"[email_download] on-demand {fmt} 변환 실패 (job={job.id}): {e}")
+        return ""

@@ -207,6 +207,48 @@ npm run start        # dev server at localhost:3000
   - `app/Dockerfile.backend` — `VITE_TURNSTILE_SITE_KEY`, `VITE_TURNSTILE_WORKER_URL` build args
   - `app/docker-compose.yml` — build args 전달
 
+## PDF Viewer & Markdown Editor Optimization
+
+- **PdfViewer** (`app/frontend/src/components/PdfViewer.jsx`):
+  - `disableAutoFetch` + `disableStream`으로 전체 PDF 미리 다운로드 방지 (partial loading).
+  - `pdf.getPage()` 결과를 `Map`에 캐싱하여 동일 페이지 재렌더링 시 재요청 방지.
+  - `ResizeObserver`를 100ms 디바운스하여 컨테이너 크기 변화 시에만 `fitScale` 재계산.
+  - 현재 페이지 ±1 프리페치로 인접 페이지 렌더링 지연 최소화.
+  - 50페이지 이상 시 자동으로 썸네일 패널 활성화, `IntersectionObserver` 기반 가상화 썸네일 렌더링.
+  - 썸네일 클릭 시 해당 페이지로 이동, 현재 페이지 썸네일이 중앙에 보이도록 자동 스크롤.
+  - `React.memo` 적용으로 불필요한 리렌더링 방지.
+- **MarkdownPreview** (`app/frontend/src/components/MarkdownPreview.jsx`):
+  - 읽기 전용 마크다운 뷰어. `marked.parse`로 HTML 렌더링 후 `dangerouslySetInnerHTML` 사용 (백엔드 신뢰 출력, DOMPurify 미사용).
+  - `<!-- 페이지 N -->` 마커 기준으로 마크다운을 페이지 섹션으로 분할.
+  - `content-visibility: auto` + `containIntrinsicHeight`로 화면 외 섹션 렌더링 스킵 (가상화).
+  - `IntersectionObserver`로 가시 페이지 추적.
+  - `scrollToPage(pageNum)` imperative API로 PDF 페이지 이동 시 해당 섹션으로 스무스 스크롤.
+  - `React.memo` 적용.
+- **SimpleEditor** (`app/frontend/src/components/SimpleEditor.jsx`):
+  - Tiptap 기반 편집 가능 마크다운 에디터.
+  - `PageMarkerNode` 커스텀 Tiptap 노드: `<!-- 페이지 N -->` 마커를 `div[data-page-marker]`로 변환하여 ProseMirror 스키마에 등록. 기본 스키마에 없는 div가 `setContent` 시 제거되는 문제 해결.
+  - `turndown` 규칙: 저장 시 `div[data-page-marker]`를 다시 `<!-- 페이지 N -->` 마커로 역변환 (round-trip 보존).
+  - `scrollToPage(pageNum)` imperative API로 PDF 페이지 이동 시 해당 마커로 스크롤.
+  - `React.memo` 적용.
+- **PagedResultViewer** (`app/frontend/src/components/PagedResultViewer.jsx`):
+  - 100페이지 초과 작업용 페이지별 뷰어. `api.previewJob(jobId, pageNum, pageNum)`으로 단일 페이지 로드.
+  - 보기 모드(`MarkdownPreview`)와 편집 모드(`SimpleEditor`) 토글 지원.
+  - `React.memo` 적용.
+- **JobResultPage** (`app/frontend/src/pages/JobResultPage.jsx`):
+  - `editMode` state로 보기/편집 모드 전환. 보기 모드: `MarkdownPreview`, 편집 모드: `SimpleEditor`.
+  - `currentPdfPage` 변경 시 에디터/프리뷰에 `scrollToPage` 호출하여 원본-결과 동기 스크롤.
+  - `loadPreview()`에서 `preview.last_page > PAGE_THRESHOLD` 폴백 체크: DB의 `total_pages`가 잘못되어도 마크다운의 실제 페이지 수로 페이징 모드 전환.
+  - `saveMarkdown()`는 `pages.length > 0`으로 페이징 모드 판단 (DB 값 의존 제거).
+  - `MarkdownViewToolbar`로 보기/편집 토글 UI 제공.
+  - i18n 키: `thumbnails`, `editMode`, `viewMode`, `edit`, `view` (ko/en/ja).
+- **total_pages 보정** (`app/backend/workers/tasks.py`):
+  - 워커 처리 후 `total_pages`를 `len(page_tables)`로 덮어쓰지 않고 `max(job.total_pages, len(page_tables))`로 업로드 시점 페이지 수 보존. 빈 페이지로 인해 `total_pages`가 감소하는 것 방지.
+  - 멀티미디어/이미지 작업 완료 후 `total_pages`/`done_pages` 설정 추가 (기존에는 0으로 유지됨).
+- **CSS** (`app/frontend/src/index.css`):
+  - `.markdown-page-section`: 페이지 섹션 구분선 스타일.
+  - `.page-marker`: Tiptap 페이지 마커 div (`pointer-events: none`).
+- 페이지 마커 형식: `<!-- 페이지 N -->` (백엔드 `converter.build_layout_markdown_string()`에서 생성).
+
 ## Deployment
 
 Docker 이미지 빌드는 **a1 서버에서 수행**한다. 로컬에서 Docker 빌드를 하지 않는다.

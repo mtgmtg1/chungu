@@ -11,7 +11,7 @@ import { Skeleton, SkeletonTable, SkeletonCard } from "../components/Skeleton.js
 import { AnimatedRow } from "../components/AnimatedList.jsx";
 
 export default function SettingsPage() {
-  const { user, loading, signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -38,13 +38,9 @@ export default function SettingsPage() {
   const [dataRightsLoading, setDataRightsLoading] = useState(false);
 
   useEffect(() => {
-    if (loading) return;
-    if (!user) {
-      navigate("/login");
-      return;
-    }
+    if (!user) return;
     loadAll();
-  }, [user, loading, navigate]);
+  }, [user]);
 
   const loadAll = async () => {
     setDataLoading(true);
@@ -207,14 +203,6 @@ export default function SettingsPage() {
     timeStyle: "short"
   }) :
   "-";
-
-  if (loading || !user) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center" data-oid="t8x4dwt">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" data-oid="czfzxpp"></div>
-      </div>);
-
-  }
 
   const renderSkeleton = () =>
   <div className="space-y-gutter" data-oid="sk-settings">

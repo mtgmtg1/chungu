@@ -23,6 +23,7 @@ import LegalPrivacyPage from "./pages/LegalPrivacyPage.jsx";
 import LegalRefundPage from "./pages/LegalRefundPage.jsx";
 import PricePage from "./pages/PricePage.jsx";
 import CookieConsent from "./components/CookieConsent.jsx";
+import ProtectedRoute from "./components/ProtectedRoute.jsx";
 
 const rootEl = document.getElementById("root");
 ReactDOM.createRoot(rootEl).render(
@@ -46,19 +47,31 @@ ReactDOM.createRoot(rootEl).render(
 
               <Route
                 path="/dashboard"
-                element={<DashboardPage data-oid="_9w:9za" />}
+                element={
+                  <ProtectedRoute data-oid="dashboard-protected">
+                    <DashboardPage data-oid="_9w:9za" />
+                  </ProtectedRoute>
+                }
                 data-oid="ff86bvq" />
 
 
               <Route
                 path="/jobs"
-                element={<JobsPage data-oid="fclppvc" />}
+                element={
+                  <ProtectedRoute data-oid="jobs-protected">
+                    <JobsPage data-oid="fclppvc" />
+                  </ProtectedRoute>
+                }
                 data-oid="i8jaj__" />
 
 
               <Route
                 path="/payment"
-                element={<PaymentPage data-oid="45vjc9v" />}
+                element={
+                  <ProtectedRoute data-oid="payment-protected">
+                    <PaymentPage data-oid="45vjc9v" />
+                  </ProtectedRoute>
+                }
                 data-oid="oozoys2" />
 
 
@@ -70,25 +83,41 @@ ReactDOM.createRoot(rootEl).render(
 
               <Route
                 path="/developer"
-                element={<DeveloperPage data-oid="vxyzmzt" />}
+                element={
+                  <ProtectedRoute data-oid="developer-protected">
+                    <DeveloperPage data-oid="vxyzmzt" />
+                  </ProtectedRoute>
+                }
                 data-oid="bomn0fs" />
 
 
               <Route
                 path="/jobs/:jobId/confirm"
-                element={<JobConfirmPage data-oid="tsroq7p" />}
+                element={
+                  <ProtectedRoute data-oid="jobconfirm-protected">
+                    <JobConfirmPage data-oid="tsroq7p" />
+                  </ProtectedRoute>
+                }
                 data-oid="5dy2wet" />
 
 
               <Route
                 path="/jobs/:jobId"
-                element={<JobResultPage data-oid="rc_ef71" />}
+                element={
+                  <ProtectedRoute data-oid="jobresult-protected">
+                    <JobResultPage data-oid="rc_ef71" />
+                  </ProtectedRoute>
+                }
                 data-oid="_m5xc0o" />
 
 
               <Route
                 path="/settings"
-                element={<SettingsPage data-oid="aw8n85r" />}
+                element={
+                  <ProtectedRoute data-oid="settings-protected">
+                    <SettingsPage data-oid="aw8n85r" />
+                  </ProtectedRoute>
+                }
                 data-oid="2uu7w76" />
 
 

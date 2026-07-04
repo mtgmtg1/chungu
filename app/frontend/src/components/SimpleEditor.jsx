@@ -1,7 +1,8 @@
-// [Flow: Step 1 (Tiptap 에디터 초기화) -> Step 2 (마크다운 prop을 HTML로 로드) -> Step 3 (풍부한 툴바 렌더링) -> Step 4 (사용자 편집 -> HTML -> 마크다운 반환)]
-import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
+// [Flow: Step 1 (Tiptap 에디터 초기화) -> Step 2 (마크다운 prop을 HTML로 로드, 페이지 마커 추가) -> Step 3 (풍부한 툴바 렌더링) -> Step 4 (scrollToPage API 제공) -> Step 5 (사용자 편집 -> HTML -> 마크다운 반환)]
+import { forwardRef, memo, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useEditor, EditorContent } from "@tiptap/react";
+import { Node } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { Table } from "@tiptap/extension-table";
 import { TableRow } from "@tiptap/extension-table-row";
@@ -48,6 +49,55 @@ const turndown = new TurndownService({
   strongDelimiter: "**"
 });
 
+const PAGE_MARKER_RE = /<!--\s*페이지\s*(\d+)\s*-->/gi;
+
+/**
+ * [Flow: Step 1 (마크다운 HTML에서 페이지 주석 검색) -> Step 2 (각 주석을 data-page 속성을 가진 div로 교체) -> Step 3 (Tiptap이 스크롤 타겟으로 사용할 수 있는 HTML 반환)]
+ * @param {string} markdownHtml
+ * @returns {string}
+ */
+function injectPageMarkers(markdownHtml) {
+  if (!markdownHtml) return markdownHtml;
+  return markdownHtml.replace(
+    PAGE_MARKER_RE,
+    (_, pageNum) => `<div data-page-marker="${pageNum}" class="page-marker" style="height:1px;"></div>`
+  );
+}
+
+/**
+ * [Flow: Tiptap이 div[data-page-marker] 요소를 보존하도록 하는 커스텀 블록 노드]
+ * ProseMirror 기본 스키마에 없는 div 요소가 setContent 시 제거되는 것을 방지.
+ */
+const PageMarkerNode = Node.create({
+  name: "pageMarker",
+  group: "block",
+  atom: true,
+  selectable: false,
+  addAttributes() {
+    return {
+      pageNum: { default: null },
+    };
+  },
+  parseHTML() {
+    return [
+      {
+        tag: "div[data-page-marker]",
+        getAttrs: (el) => ({ pageNum: el.getAttribute("data-page-marker") }),
+      },
+    ];
+  },
+  renderHTML({ node }) {
+    return ["div", { "data-page-marker": node.attrs.pageNum, class: "page-marker", style: "height:1px;" }];
+  },
+});
+
+turndown.addRule("pageMarker", {
+  filter: (node) =>
+    node.nodeName === "DIV" && node.getAttribute("data-page-marker"),
+  replacement: (_content, node) =>
+    `<!-- 페이지 ${node.getAttribute("data-page-marker")} -->`,
+});
+
 turndown.addRule("table", {
   filter: "table",
   replacement: function (content, node) {
@@ -91,16 +141,18 @@ function ToolbarDivider() {
 
 }
 
-const SimpleEditor = forwardRef(function SimpleEditor(
+const SimpleEditor = memo(forwardRef(function SimpleEditor(
 { markdown, editable = true },
 ref)
 {
   const { t } = useTranslation();
   const [headingOpen, setHeadingOpen] = useState(false);
+  const containerRef = useRef(null);
 
   const editor = useEditor({
     extensions: [
     StarterKit,
+    PageMarkerNode,
     Table.configure({ resizable: true }),
     TableRow,
     TableHeader,
@@ -123,13 +175,26 @@ ref)
 
   useEffect(() => {
     if (!editor || !markdown) return;
-    editor.commands.setContent(marked.parse(markdown), false);
+    const htmlWithMarkers = injectPageMarkers(marked.parse(markdown));
+    editor.commands.setContent(htmlWithMarkers, false);
   }, [editor, markdown]);
 
   useImperativeHandle(
     ref,
     () => ({
-      getMarkdown: () => editor ? turndown.turndown(editor.getHTML()) : ""
+      getMarkdown: () => editor ? turndown.turndown(editor.getHTML()) : "",
+      /**
+       * [Flow: Step 1 (페이지 번호로 data-page-marker 요소 탐색) -> Step 2 (에디터 스크롤 컨테이너 찾기) -> Step 3 (해당 위치로 스무스 스크롤)]
+       * @param {number} pageNum
+       */
+      scrollToPage: (pageNum) => {
+        if (!containerRef.current) return;
+        const marker = containerRef.current.querySelector(`[data-page-marker="${pageNum}"]`);
+        if (!marker) return;
+        const scrollContainer = containerRef.current.querySelector(".overflow-y-auto") || containerRef.current;
+        const top = marker.offsetTop - scrollContainer.offsetTop;
+        scrollContainer.scrollTo({ top, behavior: "smooth" });
+      }
     }),
     [editor]
   );
@@ -169,7 +234,7 @@ ref)
   const HeadingIcon = headingIcon;
 
   return (
-    <div className="flex flex-col h-full bg-white" data-oid="i28xau9">
+    <div ref={containerRef} className="flex flex-col h-full bg-white" data-oid="i28xau9">
       <div
         className="flex items-center gap-1 px-3 py-2 border-b border-outline-variant bg-surface flex-wrap"
         data-oid="44c5xqu">
@@ -342,6 +407,6 @@ ref)
       </div>
     </div>);
 
-});
+}));
 
 export default SimpleEditor;

@@ -68,6 +68,7 @@ class Job(Base):
     done_files: Mapped[int] = mapped_column(Integer, default=0)
     file_size: Mapped[int] = mapped_column(Integer, default=0)
     media_duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    total_work_units: Mapped[int] = mapped_column(Integer, default=0)
     extracted_files: Mapped[list] = mapped_column(JSON, default=list)
     error_log: Mapped[str] = mapped_column(Text, default="")
     cost_points: Mapped[int] = mapped_column(Integer, default=0)
@@ -107,6 +108,7 @@ class Job(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    processing_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="jobs")

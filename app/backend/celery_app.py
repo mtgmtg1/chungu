@@ -22,10 +22,11 @@ celery.conf.update(
     broker_transport_options={"visibility_timeout": 86400},
     visibility_timeout=86400,
     beat_schedule={
-        "cleanup-expired-uploads": {
-            "task": "backend.workers.tasks.cleanup_expired_uploads",
-            "schedule": 3600.0,
-        },
+        # "cleanup-expired-uploads": {
+        #     "task": "backend.workers.tasks.cleanup_expired_uploads",
+        #     "schedule": 3600.0,
+        # },
+        # 실제 Storage 삭제는 별도 아카이빙 스토리지 구성 전까지 수행하지 않는다.
         "auto-recharge-retry": {
             "task": "backend.workers.tasks.auto_recharge_retry",
             "schedule": 86400.0,  # 1일 간격

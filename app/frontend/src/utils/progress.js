@@ -1,6 +1,7 @@
-// [Flow: Step 1 (실제 진행률 계산) -> Step 2 (job.created_at 기준 경과 시간 계산) -> Step 3 (시간 기반 추정 진행률 계산, 10배 느림) -> Step 4 (80% cap 및 실제값 우선으로 합산)]
+// [Flow: Step 1 (실제 진행률 계산) -> Step 2 (백엔드 처리 시작 시점 또는 job.created_at 기준 경과 시간 계산) -> Step 3 (시간 기반 추정 진행률 계산, 10배 느림) -> Step 4 (80% cap 및 실제값 우선으로 합산)]
 // PDF OCR 작업의 시간진행바(estimated progress) 계산 유틸리티.
-// 시작 시점은 job.created_at을 사용하므로 페이지 새로고침 후에도 진행률이 0%로 되돌아가지 않는다.
+// 백엔드에서 기록한 processing_started_at을 우선 사용하여, 새로고침 후에도 진행률이 0%로 되돌아가지 않는다.
+// 작업량은 total_work_units를 사용하여 페이지/이미지/오디오/비디오를 통합적으로 반영한다.
 // 시간추정 진행률은 80%까지 표시되며, 그 이후는 실제 진행률이 자연스럽게 표시된다.
 
 const DEFAULT_TIME_CAP = 80;
@@ -37,8 +38,10 @@ export function getActualProgress(job) {
 
 /**
  * 시간 경과 기반 추정 진행률을 계산한다.
- * 시작 시점은 job.created_at을 사용하며, created_at이 없을 때만 now를 폴백으로 사용한다.
- * 전체 페이지 수의 10배 시간(초)에 100%에 도달하며, maxTimePct(기본 80%)까지만 올라간다.
+ * 시작 시점은 백엔드의 processing_started_at을 우선 사용하며, 없으면 job.created_at을 폴백으로 사용한다.
+ * created_at도 없을 때만 now를 폴백으로 사용한다.
+ * 작업량은 total_work_units를 우선 사용하며, 없으면 total_pages 또는 total_files를 폴백으로 사용한다.
+ * 전체 작업량의 10배 시간(초)에 100%에 도달하며, maxTimePct(기본 80%)까지만 올라간다.
  * @param {object} job - API에서 받은 job 객체
  * @param {number} maxTimePct - 시간진행바 최대치 (기본 80)
  * @param {number} now - 기준 시간戳 (ms), 기본값 Date.now()
@@ -46,8 +49,9 @@ export function getActualProgress(job) {
  */
 export function getTimeProgress(job, maxTimePct = DEFAULT_TIME_CAP, now = Date.now()) {
   if (!job) return 0;
-  const total = job.total_pages || job.total_files || 1;
-  const start = job.created_at ? parseUtcDate(job.created_at).getTime() : now;
+  const total = job.total_work_units || job.total_pages || job.total_files || 1;
+  const startAt = job.processing_started_at || job.created_at;
+  const start = startAt ? parseUtcDate(startAt).getTime() : now;
   const elapsedSeconds = (now - start) / 1000;
   const pct = Math.round((elapsedSeconds / (total * TIME_PROGRESS_SLOWDOWN)) * 100);
   return Math.min(maxTimePct, Math.min(100, pct));

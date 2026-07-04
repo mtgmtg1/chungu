@@ -1,13 +1,12 @@
 // [Flow: Step 1 (잔액/충전 한도 조회) -> Step 2 (자유 금액 입력) -> Step 3 (Paddle 결제) -> Step 4 (자동 충전 설정)]
 import { useEffect, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   Coins,
   CreditCard,
   ArrowLeft,
   Loader2,
-  CheckCircle2,
   Zap,
   Settings2,
 } from
@@ -32,10 +31,11 @@ export default function PaymentPage() {
   const [limits, setLimits] = useState({ min_amount: 5, max_amount: 500, krw_unit_price: 1500 });
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
-  const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
   const [agreePayment, setAgreePayment] = useState(false);
   const [chargeAmount, setChargeAmount] = useState(10);
+  // [Flow: chargeAmount -> numAmount 변환 (빈 문자열 처리) -> 결제 버튼/표시에 사용]
+  const numAmount = typeof chargeAmount === "number" ? chargeAmount : 0;
   const [currency, setCurrency] = useState(language === "ko" ? "KRW" : "USD");
 
   useEffect(() => {
@@ -48,7 +48,6 @@ export default function PaymentPage() {
   const [autoRecharge, setAutoRecharge] = useState({ enabled: false, threshold: 2000, amount: 10, has_payment_method: false, retries: 0 });
   const [autoSaving, setAutoSaving] = useState(false);
   const [autoMsg, setAutoMsg] = useState("");
-  const nav = useNavigate();
 
   useEffect(() => {
     if (!user) return;
@@ -82,9 +81,8 @@ export default function PaymentPage() {
   async function payWithPaddle() {
     setPaying(true);
     setError("");
-    setSuccess(false);
     try {
-      const checkout = await api.createPaddleCheckout({ amount: chargeAmount, currency });
+      const checkout = await api.createPaddleCheckout({ amount: numAmount, currency });
       if (window.Paddle && checkout.transaction_id) {
         window.Paddle.Checkout.open({ transactionId: checkout.transaction_id });
       } else if (checkout.checkout_url) {
@@ -92,7 +90,6 @@ export default function PaymentPage() {
       } else {
         throw new Error("No checkout URL or transaction ID returned");
       }
-      setSuccess(true);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -118,21 +115,6 @@ export default function PaymentPage() {
     }
   }
 
-  if (!user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" data-oid="mjx7mna">
-        <div className="text-center" data-oid="t.p7jw0">
-          <p data-oid="sh:71dz">{t("page:payment.loginRequired")}</p>
-          <button
-            onClick={() => nav("/login")}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg mt-4" data-oid="f7tjrz_">
-            {t("page:payment.login")}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-slate-50" data-oid="ti5b7jd">
       <header className="border-b bg-white" data-oid="u5:vv96">
@@ -153,11 +135,6 @@ export default function PaymentPage() {
       </header>
 
       <main className="max-w-3xl mx-auto px-6 py-8" data-oid="re0ndhu">
-        {success && (
-          <div className="bg-green-50 text-green-700 rounded-lg p-4 mb-6 flex items-center gap-2" data-oid="uky.q5p">
-            <CheckCircle2 size={20} data-oid="9pf.6q0" /> {t("page:payment.rechargeComplete")}
-          </div>
-        )}
         {error && <p className="text-red-600 text-sm mb-6" data-oid="kqiknzg">{error}</p>}
 
         {loading ? (
@@ -194,8 +171,13 @@ export default function PaymentPage() {
                         max={limits.max_amount}
                         step="1"
                         value={chargeAmount}
-                        onChange={(e) => setChargeAmount(Math.max(1, parseInt(e.target.value) || 0))}
-                        className="w-32 border rounded-lg px-3 py-2 text-lg font-semibold"
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (raw === "") { setChargeAmount(""); return; }
+                          const n = parseInt(raw);
+                          if (!isNaN(n)) setChargeAmount(n);
+                        }}
+                        className="w-32 border rounded-lg px-3 py-2 text-lg font-semibold payment-amount-input"
                         data-oid="amount-input"
                       />
                       <span className="text-sm text-slate-400" data-oid="amount-hint">
@@ -204,13 +186,13 @@ export default function PaymentPage() {
                     </div>
                     <p className="text-sm text-slate-600 mt-2 font-medium" data-oid="total-preview">
                       {currency === "KRW"
-                        ? t("page:payment.totalKrw", { amount: (chargeAmount * limits.krw_unit_price).toLocaleString() })
-                        : t("page:payment.totalUsd", { amount: chargeAmount })}
+                        ? t("page:payment.totalKrw", { amount: (numAmount * limits.krw_unit_price).toLocaleString() })
+                        : t("page:payment.totalUsd", { amount: numAmount })}
                     </p>
                   </div>
                   <button
                     onClick={payWithPaddle}
-                    disabled={paying || !agreePayment || chargeAmount < limits.min_amount || chargeAmount > limits.max_amount}
+                    disabled={paying || !agreePayment || numAmount < limits.min_amount || numAmount > limits.max_amount}
                     className="w-full bg-blue-600 text-white py-3 font-medium hover:bg-blue-700 disabled:opacity-50 rounded-lg flex items-center justify-center gap-2"
                     data-oid="pay-btn"
                   >
@@ -219,7 +201,7 @@ export default function PaymentPage() {
                     ) : (
                       <>
                         <CreditCard size={18} data-oid="pay-card-icon" />
-                        {t("page:payment.chargeButton", { amount: chargeAmount })}
+                        {t("page:payment.chargeButton", { amount: numAmount })}
                       </>
                     )}
                   </button>
@@ -309,7 +291,7 @@ export default function PaymentPage() {
                       step="1"
                       value={autoRecharge.amount}
                       onChange={(e) => setAutoRecharge({ ...autoRecharge, amount: Math.max(1, parseInt(e.target.value) || 0) })}
-                      className="w-24 border rounded-lg px-3 py-1.5"
+                      className="w-24 border rounded-lg px-3 py-1.5 payment-amount-input"
                       data-oid="auto-amount-input"
                     />
                   </div>

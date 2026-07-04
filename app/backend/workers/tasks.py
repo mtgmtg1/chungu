@@ -157,6 +157,11 @@ def run_job(job_id: str) -> dict:
     if job.status == "retrying":
         _set_status(db, job, "queued")
 
+    # 실제 처리 시작 시점을 기록한다. 새로고침 후에도 시간진행바가 0%로 돌아가지 않도록 백엔드에서 관리.
+    if not job.processing_started_at:
+        job.processing_started_at = datetime.now(timezone.utc)
+        db.commit()
+
     try:
         # Step 1: 런타임 설정 주입
         endpoint = job.endpoint or settings_store.get_setting(db, "llm_endpoint")
@@ -288,7 +293,8 @@ def run_job(job_id: str) -> dict:
 
             job.total_files = 1
             job.done_files = 1
-            job.total_pages = len(page_tables)
+            # [Flow: 업로드 시점의 페이지 수와 처리 결과 중 더 큰 값 유지 — 빈 페이지로 인해 total_pages가 감소하는 것 방지]
+            job.total_pages = max(job.total_pages or 0, len(page_tables))
             job.done_pages = len(page_tables)
             db.commit()
 
@@ -339,7 +345,8 @@ def run_job(job_id: str) -> dict:
 
             job.total_files = 1
             job.done_files = 1
-            job.total_pages = len(page_tables)
+            # [Flow: 업로드 시점의 페이지 수와 처리 결과 중 더 큰 값 유지]
+            job.total_pages = max(job.total_pages or 0, len(page_tables))
             job.done_pages = len(page_tables)
             db.commit()
         else:
@@ -524,6 +531,10 @@ def run_job(job_id: str) -> dict:
                 job.extracted_files = extracted_info
                 job.total_files = len(extracted)
                 job.done_files = len(extracted)
+                # [Flow: 멀티미디어 작업의 total_pages를 처리된 페이지 수로 설정 — 업로드 시에는 0이었음]
+                if not job.total_pages:
+                    job.total_pages = len(all_page_contents)
+                job.done_pages = len(all_page_contents)
 
         # Step 4: CSV + MD 저장 (xlsx는 별도 LLM 변환으로 제공)
         _set_status(db, job, "merging")
@@ -617,17 +628,18 @@ def run_job(job_id: str) -> dict:
         db.close()
 
 
-# OCR 업로드 원본 파일의 Supabase Storage 보관 기간 (시간)
-UPLOAD_RETENTION_HOURS = 48
+# OCR 업로드 원본 파일 및 변환 결과의 Supabase Storage 보관 기간 (일)
+# 실제 Storage 삭제는 별도 아카이빙 스토리지 구성 전까지 수행하지 않는다.
+RETENTION_DAYS = 30
 
 
-# [Flow: Step 1 (48시간 이전 생성된 job 조회) -> Step 2 (pdfs 버킷 원본 파일 삭제) -> Step 3 (DB 경로 참조 제거)]
+# [Flow: Step 1 (30일 이전 생성된 job 조회) -> Step 2 (실제 삭제는 보류, 아카이빙 스토리지 구성 후 활성화) -> Step 3 (현재는 로그만 기록)]
 @celery.task(name="backend.workers.tasks.cleanup_expired_uploads")
 def cleanup_expired_uploads() -> dict:
-    """created_at 기준 48시간이 지난 job의 원본 업로드 파일을 Storage에서 삭제한다."""
+    """created_at 기준 30일이 지난 job의 원본 업로드 파일 삭제를 보류한다. (아카이빙 스토리지 구성 전까지)"""
     db = SessionLocal()
     try:
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=UPLOAD_RETENTION_HOURS)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)
         jobs = (
             db.query(Job)
             .filter(Job.created_at < cutoff)
@@ -635,7 +647,7 @@ def cleanup_expired_uploads() -> dict:
             .all()
         )
 
-        cleaned = 0
+        pending = 0
         skipped = 0
         for job in jobs:
             has_source = bool(job.pdf_storage_path) or any(
@@ -646,17 +658,10 @@ def cleanup_expired_uploads() -> dict:
                 skipped += 1
                 continue
 
-            try:
-                supabase_client.delete_source_files(job)
-                supabase_client.clear_source_paths(job)
-                db.commit()
-                cleaned += 1
-                logger.info(f"[cleanup_expired_uploads] {job.id} 원본 파일 삭제 완료")
-            except Exception as e:
-                db.rollback()
-                logger.warning(f"[cleanup_expired_uploads] {job.id} 삭제 중 오류: {e}")
+            pending += 1
+            logger.info(f"[cleanup_expired_uploads] {job.id} 원본 파일 삭제 보류 (아카이빙 스토리지 미구성)")
 
-        return {"cleaned": cleaned, "skipped": skipped}
+        return {"pending": pending, "skipped": skipped}
     except Exception as e:
         logger.exception(f"[cleanup_expired_uploads] 태스크 오류: {e}")
         return {"error": str(e)}

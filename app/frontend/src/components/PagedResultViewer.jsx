@@ -1,12 +1,34 @@
-// [Flow: Step 1 (페이지 메타데이터 로드) -> Step 2 (현재 페이지 markdown/이미지/PDF 동기 로드) -> Step 3 (SimpleEditor로 페이지 편집) -> Step 4 (저장만 노출, 페이지네이션은 소스 뷰어에 위임)]
-import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from "react";
+// [Flow: Step 1 (페이지 메타데이터 로드) -> Step 2 (현재 페이지 markdown/이미지/PDF 동기 로드) -> Step 3 (기본 보기 모드: MarkdownPreview) -> Step 4 (편집 모드: SimpleEditor) -> Step 5 (저장만 노출, 페이지네이션은 소스 뷰어에 위임)]
+import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle, memo } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { useTranslation } from "react-i18next";
+import { Loader2 } from "lucide-react";
 import { api } from "../api.js";
 import SourcePanel from "./SourcePanel.jsx";
 import SimpleEditor from "./SimpleEditor.jsx";
+import MarkdownPreview from "./MarkdownPreview.jsx";
 
-const PagedResultViewer = forwardRef(function PagedResultViewer({
+const MarkdownViewToolbar = memo(function MarkdownViewToolbar({ editMode, onToggle, t }) {
+  return (
+    <div className="flex items-center justify-end px-4 py-2 border-b border-outline-variant bg-surface flex-shrink-0 gap-2">
+      <span className="text-xs text-on-surface-variant">
+        {editMode ? t("page:result.editMode") : t("page:result.viewMode")}
+      </span>
+      <button
+        onClick={onToggle}
+        className={`text-xs px-3 py-1.5 rounded font-medium border transition-colors ${
+          editMode
+            ? "bg-primary text-white border-primary"
+            : "bg-surface text-on-surface border-outline-variant hover:bg-surface-container-high"
+        }`}
+      >
+        {editMode ? t("page:result.view") : t("page:result.edit")}
+      </button>
+    </div>
+  );
+});
+
+const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
   jobId,
   pages,
   sourceUrl,
@@ -19,6 +41,7 @@ const PagedResultViewer = forwardRef(function PagedResultViewer({
   const [pageMarkdown, setPageMarkdown] = useState("");
   const [loadingPage, setLoadingPage] = useState(false);
   const [error, setError] = useState("");
+  const [editMode, setEditMode] = useState(false);
   const editorRef = useRef(null);
 
   const loadPage = useCallback(
@@ -67,6 +90,30 @@ const PagedResultViewer = forwardRef(function PagedResultViewer({
   sourceType === "video" ||
   (sourceFiles && sourceFiles.length > 0);
 
+  const renderMarkdownArea = () => {
+    if (loadingPage) {
+      return (
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="animate-spin text-primary" size={24} />
+        </div>
+      );
+    }
+    return (
+      <>
+        <MarkdownViewToolbar editMode={editMode} onToggle={() => setEditMode((v) => !v)} t={t} />
+        {editMode ? (
+          <SimpleEditor
+            ref={editorRef}
+            markdown={pageMarkdown}
+            editable
+          />
+        ) : (
+          <MarkdownPreview markdown={pageMarkdown} />
+        )}
+      </>
+    );
+  };
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden" data-oid="9grrz:c">
       {error &&
@@ -112,25 +159,8 @@ const PagedResultViewer = forwardRef(function PagedResultViewer({
           className="flex flex-col bg-white overflow-hidden"
           data-oid="ue-8gmm">
 
-            {loadingPage ?
-          <div
-            className="flex-1 flex items-center justify-center"
-            data-oid="kti5mwj">
+            {renderMarkdownArea()}
 
-              <Loader2
-              className="animate-spin text-primary"
-              size={24}
-              data-oid="2acty.6" />
-
-            </div> :
-
-          <SimpleEditor
-            ref={editorRef}
-            markdown={pageMarkdown}
-            editable
-            data-oid="-ocn9ti" />
-
-          }
           </Panel>
         </PanelGroup> :
 
@@ -138,29 +168,12 @@ const PagedResultViewer = forwardRef(function PagedResultViewer({
         className="flex-1 flex flex-col bg-white overflow-hidden"
         data-oid="8m4s7e_">
 
-          {loadingPage ?
-        <div
-          className="flex-1 flex items-center justify-center"
-          data-oid="ms_jktn">
+          {renderMarkdownArea()}
 
-              <Loader2
-            className="animate-spin text-primary"
-            size={24}
-            data-oid="pxexur0" />
-
-            </div> :
-
-        <SimpleEditor
-          ref={editorRef}
-          markdown={pageMarkdown}
-          editable
-          data-oid="1bhay7t" />
-
-        }
         </div>
       }
     </div>);
 
-});
+}));
 
 export default PagedResultViewer;

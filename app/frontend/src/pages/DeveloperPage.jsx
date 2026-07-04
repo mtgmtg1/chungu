@@ -1,6 +1,5 @@
 // [Flow: Step 1 (로그인/개발자 권한 확인) -> Step 2 (계정/키/사용량 데이터 로드) -> Step 3 (키 발급/삭제/복사 UI) -> Step 4 (사용량 차트 + Docs 렌더링)]
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { api } from "../api.js";
 import { useAuth } from "../AuthContext.jsx";
@@ -17,9 +16,8 @@ const curlExample = `curl -X POST ${baseUrl}/api/v1/jobs/upload \\
   -F "pipeline=vision"`;
 
 export default function DeveloperPage() {
-  const { user, loading } = useAuth();
+  const { user } = useAuth();
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const [account, setAccount] = useState(null);
   const [keys, setKeys] = useState([]);
   const [pricing, setPricing] = useState(null);
@@ -33,13 +31,9 @@ export default function DeveloperPage() {
   const [dataLoading, setDataLoading] = useState(true);
 
   useEffect(() => {
-    if (loading) return;
-    if (!user) {
-      navigate("/login");
-      return;
-    }
+    if (!user) return;
     loadAll();
-  }, [user, loading, navigate]);
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
@@ -118,20 +112,6 @@ export default function DeveloperPage() {
   const balance = account?.points_balance || 0;
   const limit = 12500;  // milli-USD ($12.50)
   const usagePct = Math.min(100, Math.round(totalUsage / limit * 100));
-
-  if (loading || !user) {
-    return (
-      <div
-        className="min-h-screen bg-background flex items-center justify-center"
-        data-oid="e4pvewk">
-
-        <div
-          className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"
-          data-oid="ktavr95">
-        </div>
-      </div>);
-
-  }
 
   return (
     <SidebarLayout

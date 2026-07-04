@@ -1,7 +1,7 @@
 // [Flow: Step 1 (사용자 확인 + 작업 목록 로드) -> Step 2 (검색/필터 상태) -> Step 3 (테이블 렌더링 + Actions) -> Step 4 (페이지네이션)]
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   Download,
@@ -151,9 +151,8 @@ const MOCK_JOBS = import.meta.env.DEV ? [
 ] : [];
 
 export default function JobsPage() {
-  const { user, loading: authLoading } = useAuth();
+  const { user } = useAuth();
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -176,13 +175,7 @@ export default function JobsPage() {
   const fileTypeLabel = (type) => t(`common:fileType.${type}`) || type;
 
   useEffect(() => {
-    if (!user) {
-      if (import.meta.env.DEV) {
-        setJobs(MOCK_JOBS);
-        setLoading(false);
-      }
-      return;
-    }
+    if (!user) return;
     load();
   }, [user]);
 
@@ -392,43 +385,6 @@ export default function JobsPage() {
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageJobs = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  if (authLoading || (!user && !import.meta.env.DEV && !error)) {
-    return (
-      <div
-        className="min-h-screen flex items-center justify-center bg-background"
-        data-oid="kq5:r74">
-
-        <Loader2
-          className="animate-spin text-primary"
-          size={32}
-          data-oid="-7zx915" />
-
-      </div>);
-
-  }
-
-  if (!user && !import.meta.env.DEV) {
-    return (
-      <div
-        className="min-h-screen flex items-center justify-center bg-background"
-        data-oid="__j1q4x">
-
-        <div className="text-center" data-oid="2ha4jhb">
-          <p className="mb-4 text-on-surface-variant" data-oid="6.h-jmz">
-            {t("common:auth.loginRequired")}
-          </p>
-          <button
-            onClick={() => navigate("/login")}
-            className="bg-primary text-on-primary px-4 py-2 rounded-lg"
-            data-oid="nguyl5s">
-
-            {t("page:auth.loginButton")}
-          </button>
-        </div>
-      </div>);
-
-  }
 
   return (
     <SidebarLayout
@@ -691,7 +647,8 @@ export default function JobsPage() {
                     {t("page:jobs.expiresIn")}
                     <span
                       className="material-symbols-outlined text-[14px] cursor-help"
-                      data-oid="eeloa-0">
+                      data-oid="eeloa-0"
+                      title={t("page:jobs.expiresInfo")}>
                       info
                     </span>
                   </div>
@@ -746,12 +703,21 @@ export default function JobsPage() {
                             </span>
                           </div>
                           <div className="min-w-0" data-oid="ats28o7">
-                            <Link
-                            to={`/jobs/${j.job_id}`}
-                            className="font-body-md text-body-md font-medium text-on-surface truncate hover:text-primary hover:underline block"
-                            data-oid="7sy3qzp">
-                            {j.filename}
-                          </Link>
+                            {j.is_expired ? (
+                              <span
+                                className="font-body-md text-body-md font-medium text-outline truncate block"
+                                data-oid="7sy3qzp-expired"
+                                title={t("page:errors.jobExpired")}>
+                                {j.filename}
+                              </span>
+                            ) : (
+                              <Link
+                                to={`/jobs/${j.job_id}`}
+                                className="font-body-md text-body-md font-medium text-on-surface truncate hover:text-primary hover:underline block"
+                                data-oid="7sy3qzp">
+                                {j.filename}
+                              </Link>
+                            )}
                             <p
                             className="font-label-sm text-label-sm text-outline"
                             data-oid="i0y1sq2">
@@ -826,18 +792,20 @@ export default function JobsPage() {
                               data-oid="3nnh9iw">
                                 <Trash2 size={18} data-oid="fp7w_cf" />
                               </button>
-                              <DownloadMenu
-                                job={j}
-                                fileTypeLabel={fileTypeLabel}
-                                download={download}
-                                convertAndDownload={convertAndDownload}
-                                converting={converting}
-                                xlsxBasicCost={xlsxBasicCost}
-                                xlsxAdvancedCost={xlsxAdvancedCost}
-                                onMenuItemClick={() => {}}
-                              >
-                                <Download size={18} data-oid="x4fihqx" />
-                              </DownloadMenu>
+                              {!j.is_expired && (
+                                <DownloadMenu
+                                  job={j}
+                                  fileTypeLabel={fileTypeLabel}
+                                  download={download}
+                                  convertAndDownload={convertAndDownload}
+                                  converting={converting}
+                                  xlsxBasicCost={xlsxBasicCost}
+                                  xlsxAdvancedCost={xlsxAdvancedCost}
+                                  onMenuItemClick={() => {}}
+                                >
+                                  <Download size={18} data-oid="x4fihqx" />
+                                </DownloadMenu>
+                              )}
                             </> :
 
                         j.status === "error" && j.refundable ?
@@ -911,9 +879,15 @@ export default function JobsPage() {
                       <span className="material-symbols-outlined">{isDone ? "table_chart" : "description"}</span>
                     </div>
                     <div className="min-w-0 flex-1">
-                      <Link to={`/jobs/${j.job_id}`} className="font-body-md text-body-md font-medium text-on-surface hover:text-primary hover:underline block break-all">
-                        {j.filename}
-                      </Link>
+                      {j.is_expired ? (
+                        <span className="font-body-md text-body-md font-medium text-outline block break-all" title={t("page:errors.jobExpired")}>
+                          {j.filename}
+                        </span>
+                      ) : (
+                        <Link to={`/jobs/${j.job_id}`} className="font-body-md text-body-md font-medium text-on-surface hover:text-primary hover:underline block break-all">
+                          {j.filename}
+                        </Link>
+                      )}
                       <p className="font-label-sm text-label-sm text-outline mt-0.5">
                         {fileSize(j.file_size)} · {pageCount(j)}
                       </p>
@@ -928,18 +902,20 @@ export default function JobsPage() {
                           >
                             <Trash2 size={18} />
                           </button>
-                          <DownloadMenu
-                            job={j}
-                            fileTypeLabel={fileTypeLabel}
-                            download={download}
-                            convertAndDownload={convertAndDownload}
-                            converting={converting}
-                            xlsxBasicCost={xlsxBasicCost}
-                            xlsxAdvancedCost={xlsxAdvancedCost}
-                            onMenuItemClick={() => {}}
-                          >
-                            <Download size={18} />
-                          </DownloadMenu>
+                          {!j.is_expired && (
+                            <DownloadMenu
+                              job={j}
+                              fileTypeLabel={fileTypeLabel}
+                              download={download}
+                              convertAndDownload={convertAndDownload}
+                              converting={converting}
+                              xlsxBasicCost={xlsxBasicCost}
+                              xlsxAdvancedCost={xlsxAdvancedCost}
+                              onMenuItemClick={() => {}}
+                            >
+                              <Download size={18} />
+                            </DownloadMenu>
+                          )}
                         </>
                       ) : j.status === "error" && j.refundable ? (
                         <button

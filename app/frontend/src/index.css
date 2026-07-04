@@ -163,3 +163,27 @@ body {
 .ProseMirror u {
   text-decoration: underline;
 }
+
+/* 결제 금액 입력: 스피너 항상 표시 (모바일에서 호버 불가 문제 해결) */
+.payment-amount-input::-webkit-inner-spin-button,
+.payment-amount-input::-webkit-outer-spin-button {
+  opacity: 1;
+}
+
+/* 마크다운 가상화 페이지 섹션: 페이지 구분선 및 content-visibility 최적화 */
+.markdown-page-section {
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.08);
+  padding-bottom: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.markdown-page-section:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+  margin-bottom: 0;
+}
+
+/* Tiptap 페이지 마커: 시각적으로 보이지 않되 DOM에 존재하여 scrollToPage 대상으로 사용 */
+.page-marker {
+  pointer-events: none;
+}

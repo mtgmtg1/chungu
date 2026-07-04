@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import math
 import re as _re
 import tempfile
 import uuid
@@ -31,16 +32,50 @@ from ..workers.tasks import run_job
 
 router = APIRouter(prefix="/api", tags=["jobs"])
 
-# OCR 업로드 원본 파일의 Supabase Storage 보관 기간 (시간)
-UPLOAD_RETENTION_HOURS = 48
+# OCR 업로드 원본 파일 및 변환 결과의 Supabase Storage 보관 기간 (일)
+# 보관 기간이 지난 후에는 UI에서만 만료로 표시하고, 실제 Storage 삭제는 별도 아카이빙 스토리지 구성 전까지 수행하지 않는다.
+RETENTION_DAYS = 30
 
 
-def _source_expires_at(job: Job) -> datetime:
-    """작업 생성 시점으로부터 48시간 후의 원본 업로드 만료 시각을 계산한다."""
+def _calculate_work_units(pages: int, image_count: int, audio_seconds: int, video_seconds: int) -> int:
+    """시간진행바용 총 작업량을 계산한다.
+
+    매개변수:
+        pages: PDF/Office/HWP 문서 페이지 수
+        image_count: 이미지 파일 수
+        audio_seconds: 오디오 총 재생 시간(초)
+        video_seconds: 비디오 총 재생 시간(초)
+
+    반환값:
+        총 작업량 단위(1페이지=1, 1이미지=1, 오디오 2초=1, 비디오 1초=1)
+    """
+    audio_units = math.ceil(audio_seconds / 2) if audio_seconds > 0 else 0
+    video_units = video_seconds if video_seconds > 0 else 0
+    return max(1, pages + image_count + audio_units + video_units)
+
+
+def _job_expires_at(job: Job) -> datetime:
+    """작업 생성 시점으로부터 30일 후의 만료 시각을 계산한다."""
     created = job.created_at or datetime.now(timezone.utc)
     if created.tzinfo is None:
         created = created.replace(tzinfo=timezone.utc)
-    return created + timedelta(hours=UPLOAD_RETENTION_HOURS)
+    return created + timedelta(days=RETENTION_DAYS)
+
+
+def _is_job_expired(job: Job) -> bool:
+    """작업 생성 시점으로부터 30일이 지났는지 확인한다."""
+    return datetime.now(timezone.utc) >= _job_expires_at(job)
+
+
+def _require_job_not_expired(job: Job) -> None:
+    """만료된 작업에 접근할 경우 404 오류를 발생시킨다."""
+    if _is_job_expired(job):
+        raise HTTPException(status_code=404, detail="Job expired")
+
+
+def _source_expires_at(job: Job) -> datetime:
+    """작업 생성 시점으로부터 30일 후의 만료 시각을 계산한다. (하위 호환)"""
+    return _job_expires_at(job)
 
 
 MEDIA_EXTENSIONS = {
@@ -275,6 +310,7 @@ async def upload_job(
             raise HTTPException(status_code=413, detail=f"Too many pages (max {max_pages})")
 
         job.total_pages = pages
+        job.total_work_units = _calculate_work_units(pages, image_count, audio_seconds, video_seconds)
         db.commit()
     except HTTPException:
         raise
@@ -551,6 +587,7 @@ async def create_job(
             raise HTTPException(status_code=413, detail=f"Too many pages (max {max_pages})")
 
         job.total_pages = pages
+        job.total_work_units = _calculate_work_units(pages, image_count, audio_seconds, video_seconds)
         job.status = "pending"
         db.commit()
     except HTTPException:
@@ -692,6 +729,7 @@ def get_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: Sess
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
         raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_not_expired(job)
     summary = _job_summary(job)
     if job.status == "pending":
         user_id = uuid.UUID(user.user_id)
@@ -749,6 +787,7 @@ def download_job(
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
         raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_not_expired(job)
     if job.status != "done":
         raise HTTPException(status_code=400, detail="Only completed jobs can be downloaded")
 
@@ -915,6 +954,7 @@ def preview_job(
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
         raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_not_expired(job)
     if not job.result_md_storage_path and not job.result_edited_md_storage_path:
         detail = f"Result file not ready (status={job.status}, md_path={job.result_md_storage_path or '-'}, edited_path={job.result_edited_md_storage_path or '-'}, error_log={job.error_log or '-'}"
         raise HTTPException(status_code=400, detail=detail)
@@ -982,6 +1022,7 @@ def preview_job_pages(
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
         raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_not_expired(job)
     if not job.result_md_storage_path and not job.result_edited_md_storage_path:
         detail = f"Result file not ready (status={job.status}, md_path={job.result_md_storage_path or '-'}, edited_path={job.result_edited_md_storage_path or '-'}, error_log={job.error_log or '-'}"
         raise HTTPException(status_code=400, detail=detail)
@@ -1022,6 +1063,7 @@ def save_result_markdown(
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
         raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_not_expired(job)
     if job.status != "done":
         raise HTTPException(status_code=400, detail="Only completed jobs can be edited")
 
@@ -1065,6 +1107,7 @@ def save_result_page(
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
         raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_not_expired(job)
     if job.status != "done":
         raise HTTPException(status_code=400, detail="Only completed jobs can be edited")
 
@@ -1109,6 +1152,7 @@ def convert_job(
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
         raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_not_expired(job)
     if job.status != "done":
         raise HTTPException(status_code=400, detail="Only completed jobs can be converted")
 
@@ -1222,6 +1266,7 @@ async def save_edited_xlsx(
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
         raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_not_expired(job)
     if job.status != "done":
         raise HTTPException(status_code=400, detail="Only completed jobs can be edited")
 
@@ -1251,6 +1296,7 @@ def get_edited_xlsx_url(
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
         raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_not_expired(job)
     if not job.result_edited_xlsx_storage_path:
         raise HTTPException(status_code=404, detail="No saved edited file")
     try:
@@ -1271,6 +1317,7 @@ def xlsx_advanced_action(
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
         raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_not_expired(job)
     if job.xlsx_advanced_status != "error" or not job.xlsx_advanced_refundable:
         raise HTTPException(status_code=400, detail="Not in a refundable or retryable state")
 
@@ -1315,6 +1362,7 @@ def job_action(
     job = db.get(Job, job_id)
     if job is None or str(job.user_id) != user.user_id:
         raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_not_expired(job)
     if job.status != "error" or not job.refundable:
         raise HTTPException(status_code=400, detail="Not in a refundable or retryable state")
 
@@ -1370,6 +1418,7 @@ def _job_summary(job: Job) -> dict:
         "done_files": job.done_files,
         "file_size": job.file_size,
         "media_duration_seconds": job.media_duration_seconds,
+        "total_work_units": job.total_work_units,
         "docling_refinement": job.use_docling_refinement,
         "docling_refinement_pages": job.total_pages if job.use_docling_refinement else 0,
         "ocr_model": job.ocr_model or "premium",
@@ -1377,10 +1426,12 @@ def _job_summary(job: Job) -> dict:
         "cost_points": job.cost_points,
         "error_log": job.error_log,
         "created_at": job.created_at.isoformat() if job.created_at else None,
+        "processing_started_at": job.processing_started_at.isoformat() if job.processing_started_at else None,
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
         "expires_at": job.expires_at.isoformat() if job.expires_at else None,
         "source_expires_at": _source_expires_at(job).isoformat(),
-        "downloadable": job.status == "done",
+        "is_expired": _is_job_expired(job),
+        "downloadable": job.status == "done" and not _is_job_expired(job),
         "xlsx_converted": bool(job.result_xlsx_storage_path),
         "xlsx_basic_converted": bool(job.result_xlsx_basic_storage_path),
         "xlsx_advanced_converted": bool(job.result_xlsx_advanced_storage_path),

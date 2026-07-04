@@ -1,5 +1,5 @@
 // [Flow: Step 1 (job ID로 진입) -> Step 2 (작업 상태 폴링) -> Step 3 (완료 시 preview API 호출) -> Step 4 (100페이지 초과 시 페이지 단위 뷰어, 이하 시 PDF.js + 전체 에디터) -> Step 5 (마크다운/Office/CSV 다운로드)]
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -19,6 +19,7 @@ import SourcePanel from "../components/SourcePanel.jsx";
 import PoetryProgress from "../components/PoetryProgress.jsx";
 import PagedResultViewer from "../components/PagedResultViewer.jsx";
 import SimpleEditor from "../components/SimpleEditor.jsx";
+import MarkdownPreview from "../components/MarkdownPreview.jsx";
 import SpreadsheetEditor from "../components/SpreadsheetEditor.jsx";
 import { api } from "../api.js";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
@@ -34,6 +35,33 @@ function downloadByUrl(url, filename) {
   a.click();
   document.body.removeChild(a);
 }
+
+/**
+ * [Flow: Step 1 (editMode 상태 확인) -> Step 2 (보기/편집 토글 버튼 렌더링) -> Step 3 (onToggle 콜백 호출)]
+ * @param {object} props
+ * @param {boolean} props.editMode
+ * @param {function} props.onToggle
+ * @param {function} props.t
+ */
+const MarkdownViewToolbar = memo(function MarkdownViewToolbar({ editMode, onToggle, t }) {
+  return (
+    <div className="flex items-center justify-end px-4 py-2 border-b border-outline-variant bg-surface flex-shrink-0 gap-2">
+      <span className="text-xs text-on-surface-variant">
+        {editMode ? t("page:result.editMode") : t("page:result.viewMode")}
+      </span>
+      <button
+        onClick={onToggle}
+        className={`text-xs px-3 py-1.5 rounded font-medium border transition-colors ${
+          editMode
+            ? "bg-primary text-white border-primary"
+            : "bg-surface text-on-surface border-outline-variant hover:bg-surface-container-high"
+        }`}
+      >
+        {editMode ? t("page:result.view") : t("page:result.edit")}
+      </button>
+    </div>
+  );
+});
 
 export default function JobResultPage() {
   const { jobId } = useParams();
@@ -58,9 +86,11 @@ export default function JobResultPage() {
   const [now, setNow] = useState(Date.now());
   const pollRef = useRef(null);
   const editorRef = useRef(null);
+  const previewRef = useRef(null);
   const pagedViewerRef = useRef(null);
 
   const [previewMode, setPreviewMode] = useState("markdown"); // "markdown" | "xlsxBasic" | "xlsxAdvanced"
+  const [editMode, setEditMode] = useState(false);
   const [basicUrl, setBasicUrl] = useState(null);
   const [advancedUrl, setAdvancedUrl] = useState(null);
   const [xlsxAdvancedPolling, setXlsxAdvancedPolling] = useState(false);
@@ -86,6 +116,16 @@ export default function JobResultPage() {
     setCurrentPdfPage(1);
   }, [selectedFileIndex]);
 
+  // [Flow: Step 1 (currentPdfPage 변경 감지) -> Step 2 (에디터/프리뷰에 scrollToPage 호출) -> Step 3 (해당 페이지 마커로 스크롤)]
+  useEffect(() => {
+    if (needsPagedMode(job)) return;
+    if (editMode && editorRef.current?.scrollToPage) {
+      editorRef.current.scrollToPage(currentPdfPage);
+    } else if (!editMode && previewRef.current?.scrollToPage) {
+      previewRef.current.scrollToPage(currentPdfPage);
+    }
+  }, [currentPdfPage, editMode, job]);
+
   // [Flow: Step 1 (활성 작업 확인) -> Step 2 (1초 간격 now 갱신) -> Step 3 (시간진행바 리렌더링)]
   useEffect(() => {
     if (job?.status === "done" || job?.status === "error") return;
@@ -110,7 +150,12 @@ export default function JobResultPage() {
         startPolling();
       }
     } catch (e) {
-      setError(e.message || t("page:errors.loadFailed"));
+      const msg = e.message || "";
+      if (msg.includes("Job expired") || msg.includes("Job not found")) {
+        setError(t("page:errors.jobExpired"));
+      } else {
+        setError(msg || t("page:errors.loadFailed"));
+      }
       setLoading(false);
     }
   }
@@ -155,7 +200,9 @@ export default function JobResultPage() {
       const fms = (preview.source_files || []).map((f) => f.result_markdown || "");
       setFileMarkdowns(fms);
       setSelectedFileIndex(0);
-      if (needsPagedMode(job)) {
+      // [Flow: Step 1 (DB의 total_pages/total_files 확인) -> Step 2 (폴백: 마크다운의 last_page 확인) -> Step 3 (둘 중 하나라도 임계값 초과 시 페이징 모드)]
+      const usePaged = needsPagedMode(job) || (preview.last_page || 0) > PAGE_THRESHOLD;
+      if (usePaged) {
         const meta = await api.previewJobPages(jobId);
         setPages(meta.pages || []);
         setMarkdown("");
@@ -174,7 +221,7 @@ export default function JobResultPage() {
     setSaving(true);
     setSaveMessage("");
     try {
-      if (needsPagedMode(job) && pagedViewerRef.current) {
+      if (pages.length > 0 && pagedViewerRef.current) {
         // 100페이지 초과 페이징 모드: PagedResultViewer가 현재 페이지 저장
         await pagedViewerRef.current.save();
       } else {
@@ -526,7 +573,7 @@ export default function JobResultPage() {
         </div>
       }
 
-      {loading && !job &&
+      {loading && (!job || job?.status === "done") &&
       <SkeletonPageResult data-oid="bv9f2yo" />
       }
 
@@ -675,11 +722,24 @@ export default function JobResultPage() {
               className="flex flex-col h-full bg-white overflow-hidden"
               data-oid="1pwia81">
 
-                  <SimpleEditor
-                ref={editorRef}
-                markdown={displayMarkdown}
-                editable
-                data-oid="xzqyv5." />
+                  <MarkdownViewToolbar
+                editMode={editMode}
+                onToggle={() => setEditMode((v) => !v)}
+                t={t}
+                data-oid="markdown-view-toolbar" />
+
+                  {editMode ? (
+                <SimpleEditor
+                  ref={editorRef}
+                  markdown={displayMarkdown}
+                  editable
+                  data-oid="xzqyv5." />
+              ) : (
+                <MarkdownPreview
+                  ref={previewRef}
+                  markdown={displayMarkdown}
+                  data-oid="markdown-preview" />
+              )}
 
                 </div>
               </Panel>
@@ -689,11 +749,24 @@ export default function JobResultPage() {
           className="flex-1 flex flex-col bg-white overflow-hidden min-h-0"
           data-oid="w605w2j">
 
-              <SimpleEditor
-            ref={editorRef}
-            markdown={displayMarkdown}
-            editable
-            data-oid="r9i48wh" />
+              <MarkdownViewToolbar
+            editMode={editMode}
+            onToggle={() => setEditMode((v) => !v)}
+            t={t}
+            data-oid="markdown-view-toolbar" />
+
+              {editMode ? (
+            <SimpleEditor
+              ref={editorRef}
+              markdown={displayMarkdown}
+              editable
+              data-oid="r9i48wh" />
+          ) : (
+            <MarkdownPreview
+              ref={previewRef}
+              markdown={displayMarkdown}
+              data-oid="markdown-preview" />
+          )}
 
             </div>
         )}

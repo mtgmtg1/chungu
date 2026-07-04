@@ -1,10 +1,9 @@
 // [Flow: Step 1 (사용자/프로필 + 작업 목록 로드) -> Step 2 (종합 통계 계산) -> Step 3 (요약 카드 + 상태 분포 + 최근 작업 렌더링)]
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   Coins,
-  Loader2,
   ArrowRight,
   Upload,
   FileText,
@@ -29,9 +28,8 @@ const STATUS_COLOR = {
 };
 
 export default function DashboardPage() {
-  const { user, loading: authLoading } = useAuth();
+  const { user } = useAuth();
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -82,43 +80,6 @@ export default function DashboardPage() {
       hour: "2-digit",
       minute: "2-digit"
     });
-  }
-
-  if (authLoading) {
-    return (
-      <div
-        className="min-h-screen flex items-center justify-center bg-background"
-        data-oid="jkwgbnm">
-
-        <Loader2
-          className="animate-spin text-primary"
-          size={32}
-          data-oid="fs6-n.h" />
-
-      </div>);
-
-  }
-
-  if (!user) {
-    return (
-      <div
-        className="min-h-screen flex items-center justify-center bg-background"
-        data-oid="22_6cf8">
-
-        <div className="text-center" data-oid="j86uk-_">
-          <p className="mb-4 text-on-surface-variant" data-oid="kd7t84i">
-            {t("common:auth.loginRequired")}
-          </p>
-          <button
-            onClick={() => navigate("/login")}
-            className="bg-primary text-on-primary px-4 py-2 rounded-lg"
-            data-oid="gvf4git">
-
-            {t("page:auth.loginButton")}
-          </button>
-        </div>
-      </div>);
-
   }
 
   return (

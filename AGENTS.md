@@ -217,6 +217,7 @@ npm run start        # dev server at localhost:3000
   - 50페이지 이상 시 자동으로 썸네일 패널 활성화, `IntersectionObserver` 기반 가상화 썸네일 렌더링.
   - 썸네일 클릭 시 해당 페이지로 이동, 현재 페이지 썸네일이 중앙에 보이도록 자동 스크롤.
   - `React.memo` 적용으로 불필요한 리렌더링 방지.
+  - **주의**: `getPdfPage`는 `measureFitScale`보다 먼저 선언해야 한다. `measureFitScale`의 `useCallback` 의존성 배열에서 아직 초기화되지 않은 `getPdfPage`를 참조하면 `ReferenceError: Cannot access '...' before initialization`(TDZ)가 발생하여 PDF/Docx/HWP 미리보기가 필요한 작업 결과 페이지 전체가 blank 처리될 수 있다.
 - **MarkdownPreview** (`app/frontend/src/components/MarkdownPreview.jsx`):
   - 읽기 전용 마크다운 뷰어. `marked.parse`로 HTML 렌더링 후 `dangerouslySetInnerHTML` 사용 (백엔드 신뢰 출력, DOMPurify 미사용).
   - `<!-- 페이지 N -->` 마커 기준으로 마크다운을 페이지 섹션으로 분할.
@@ -224,6 +225,7 @@ npm run start        # dev server at localhost:3000
   - `IntersectionObserver`로 가시 페이지 추적.
   - `scrollToPage(pageNum)` imperative API로 PDF 페이지 이동 시 해당 섹션으로 스무스 스크롤.
   - `React.memo` 적용.
+  - **방어 로직**: 첫 페이지는 초기부터 `visible`로 설정, `markdown` 변경 시 `visiblePages` 초기화. 페이지 수가 10개 이하일 때는 `content-visibility` 가상화를 비활성화하여 브라우저별 렌더링 차이/blank 현상을 방지.
 - **SimpleEditor** (`app/frontend/src/components/SimpleEditor.jsx`):
   - Tiptap 기반 편집 가능 마크다운 에디터.
   - `PageMarkerNode` 커스텀 Tiptap 노드: `<!-- 페이지 N -->` 마커를 `div[data-page-marker]`로 변환하여 ProseMirror 스키마에 등록. 기본 스키마에 없는 div가 `setContent` 시 제거되는 문제 해결.
@@ -241,6 +243,7 @@ npm run start        # dev server at localhost:3000
   - `saveMarkdown()`는 `pages.length > 0`으로 페이징 모드 판단 (DB 값 의존 제거).
   - `MarkdownViewToolbar`로 보기/편집 토글 UI 제공.
   - i18n 키: `thumbnails`, `editMode`, `viewMode`, `edit`, `view` (ko/en/ja).
+  - **방어 로직**: 다중 파일 작업에서 `source_files[i].result_markdown`이 비어 있을 경우 전체 결합 마크다운로 폴백하여 빈 화면 방지.
 - **total_pages 보정** (`app/backend/workers/tasks.py`):
   - 워커 처리 후 `total_pages`를 `len(page_tables)`로 덮어쓰지 않고 `max(job.total_pages, len(page_tables))`로 업로드 시점 페이지 수 보존. 빈 페이지로 인해 `total_pages`가 감소하는 것 방지.
   - 멀티미디어/이미지 작업 완료 후 `total_pages`/`done_pages` 설정 추가 (기존에는 0으로 유지됨).

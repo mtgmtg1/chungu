@@ -286,6 +286,14 @@ export default function AdminDashboard() {
             {field("paddle_price_id", "Paddle Price ID ($1.00 Product)")}
             {field("auto_recharge_min_threshold", "자동 충전 최소 임계값 (milli-USD)")}
           </div>
+          <div className="grid md:grid-cols-3 gap-4" data-oid="subscription-price-ids">
+            {field("paddle_subscription_price_id_free_monthly", "Free 월간 Price ID")}
+            {field("paddle_subscription_price_id_free_yearly", "Free 연간 Price ID")}
+            {field("paddle_subscription_price_id_pro_monthly", "Pro 월간 Price ID")}
+            {field("paddle_subscription_price_id_pro_yearly", "Pro 연간 Price ID")}
+            {field("paddle_subscription_price_id_max_monthly", "Max 월간 Price ID")}
+            {field("paddle_subscription_price_id_max_yearly", "Max 연간 Price ID")}
+          </div>
         </section>
 
         <button

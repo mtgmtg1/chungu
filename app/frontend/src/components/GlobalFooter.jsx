@@ -35,6 +35,12 @@ export default function GlobalFooter() {
             data-oid="global-footer-refund">
             {t("common:footer.refundPolicy")}
           </Link>
+          <Link
+            to="/plans"
+            className="hover:text-primary transition-colors"
+            data-oid="global-footer-plans">
+            {t("common:footer.plans")}
+          </Link>
           <a
             href="/docs"
             className="hover:text-primary transition-colors"

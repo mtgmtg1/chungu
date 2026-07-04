@@ -92,6 +92,11 @@ export const api = {
   getAutoRechargeSettings: () => request('/api/payments/auto-recharge/settings'),
   updateAutoRechargeSettings: (payload) => request('/api/payments/auto-recharge/settings', { method: 'POST', body: JSON.stringify(payload) }),
   getPaymentMethods: () => request('/api/payments/paddle/payment-methods'),
+  // 구독 요금제
+  getSubscriptionPlans: () => request('/api/subscriptions/plans'),
+  getMySubscription: () => request('/api/subscriptions/me'),
+  createSubscriptionCheckout: (payload) => request('/api/subscriptions/checkout', { method: 'POST', body: JSON.stringify(payload) }),
+  cancelSubscription: () => request('/api/subscriptions/cancel', { method: 'POST' }),
 
   // 온프레미스 로컬 서버
   submitOnPremiseInquiry: (payload) =>

@@ -198,11 +198,11 @@ export default function UploadPage() {
                   {t("page:upload.myJobs")}
                 </Link>
                 <Link
-                to="/payment"
+                to="/plans"
                 className="text-body-md flex items-center gap-1 text-primary hover:underline font-medium" data-oid="j8k1rq5">
 
-                  <Coins size={18} data-oid="w8q2nfw" /> {profile?.points_balance ?? "-"}{" "}
-                  {t("page:upload.points")}
+                  <Coins size={18} data-oid="w8q2nfw" /> {profile?.subscription_plan ?? "Free"}{" "}
+                  {t("page:upload.plan")}
                 </Link>
               </> :
 

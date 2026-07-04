@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from .. import settings_store
 from ..auth.supabase_auth import CurrentUser, get_current_admin, get_current_user
-from ..core import points_service
+from ..core import points_service, subscription_service
 from ..db.models import Payment, User
 from ..db.session import get_db
 
@@ -126,8 +126,8 @@ def paddle_webhook(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """Paddle 웹훅을 검증하고 크레딧을 충전한다."""
-    # [Flow: Step 1 (서명 검증) -> Step 2 (이벤트 필터) -> Step 3 (custom_data 추출) -> Step 4 (중복 방지) -> Step 5 (크레딧 충전)]
+    """Paddle 웹훅을 검증하고 크레딧 충전 또는 구독 동기화를 처리한다."""
+    # [Flow: Step 1 (서명 검증) -> Step 2 (이벤트 분기) -> Step 3 (크레딧 충전 또는 구독 동기화)]
     body = (request.body() or b"").decode()
     signature = request.headers.get("paddle-signature") or ""
     secret = settings_store.get_setting(db, "paddle_webhook_secret")
@@ -139,9 +139,68 @@ def paddle_webhook(
 
     data = json.loads(body)
     event_type = data.get("event_type")
-    if event_type != "transaction.completed":
-        return {"ok": True, "ignored": event_type}
 
+    if event_type in ("subscription.created", "subscription.updated"):
+        return _handle_subscription_event(db, data)
+    if event_type == "subscription.canceled":
+        return _handle_subscription_canceled(db, data)
+    if event_type == "transaction.completed":
+        return _handle_transaction_completed(db, data)
+
+    return {"ok": True, "ignored": event_type}
+
+
+def _handle_subscription_event(db: Session, data: dict) -> dict:
+    """Paddle subscription.created/updated 이벤트에서 구독 정보를 동기화한다."""
+    sub = data.get("data", {})
+    customer_id = sub.get("customer_id", "")
+    subscription_id = sub.get("id", "")
+    status = sub.get("status", "")
+    price_id = ""
+    items = sub.get("items", [])
+    if items:
+        price_id = items[0].get("price_id", "")
+
+    period = sub.get("current_billing_period", {})
+    period_start = _parse_paddle_datetime(period.get("starts_at"))
+    period_end = _parse_paddle_datetime(period.get("ends_at"))
+
+    plan = _plan_from_price_id(db, price_id)
+
+    db_user = _find_user_by_paddle_customer_id(db, customer_id)
+    if db_user is None:
+        # transaction.custom_data에서 user_id를 찾아 fallback
+        db_user = _find_user_by_subscription_custom_data(db, sub)
+    if db_user is None:
+        return {"ok": False, "detail": "User not found for subscription"}
+
+    subscription_service.sync_subscription_from_paddle(
+        db,
+        db_user,
+        plan=plan,
+        status=status,
+        period_start=period_start,
+        period_end=period_end,
+        price_id=price_id,
+        paddle_subscription_id=subscription_id,
+    )
+    return {"ok": True, "plan": plan, "status": status}
+
+
+def _handle_subscription_canceled(db: Session, data: dict) -> dict:
+    """Paddle subscription.canceled 이벤트에서 구독 상태를 canceled로 변경한다."""
+    sub = data.get("data", {})
+    subscription_id = sub.get("id", "")
+    db_user = db.query(User).filter(User.paddle_subscription_id == subscription_id).first()
+    if db_user is None:
+        return {"ok": False, "detail": "User not found for subscription"}
+    db_user.subscription_status = "canceled"
+    db.commit()
+    return {"ok": True, "status": "canceled"}
+
+
+def _handle_transaction_completed(db: Session, data: dict) -> dict:
+    """Paddle transaction.completed 이벤트에서 크레딧을 충전한다 (API 요금제용)."""
     custom = data.get("data", {}).get("custom_data", {})
     user_id = custom.get("user_id")
     credits = int(custom.get("credits") or 0)
@@ -152,13 +211,11 @@ def paddle_webhook(
     if db_user is None:
         return {"ok": False, "detail": "User not found"}
 
-    # 중복 처리 방지
     external_id = data.get("data", {}).get("id", "")
     existing = db.query(Payment).filter(Payment.external_id == external_id).first()
     if existing:
         return {"ok": True, "duplicate": True}
 
-    # paddle_customer_id가 없으면 저장 (첫 결제 후)
     if not db_user.paddle_customer_id:
         customer_id = data.get("data", {}).get("customer_id", "")
         if customer_id:
@@ -180,6 +237,50 @@ def paddle_webhook(
 
     points_service.charge_points(db, db_user, credits, f"Paddle 결제 ${amount_str}")
     return {"ok": True, "credits": credits, "balance": db_user.points_balance}
+
+
+def _parse_paddle_datetime(value) -> datetime | None:
+    """Paddle datetime 문자열을 UTC datetime으로 파싱한다."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _plan_from_price_id(db: Session, price_id: str) -> str:
+    """Paddle price_id로부터 PROOF 플랜을 역으로 매핑한다."""
+    mapping = {
+        settings_store.get_setting(db, "paddle_subscription_price_id_free_monthly"): "free",
+        settings_store.get_setting(db, "paddle_subscription_price_id_free_yearly"): "free",
+        settings_store.get_setting(db, "paddle_subscription_price_id_pro_monthly"): "pro",
+        settings_store.get_setting(db, "paddle_subscription_price_id_pro_yearly"): "pro",
+        settings_store.get_setting(db, "paddle_subscription_price_id_max_monthly"): "max",
+        settings_store.get_setting(db, "paddle_subscription_price_id_max_yearly"): "max",
+    }
+    return mapping.get(price_id, "free")
+
+
+def _find_user_by_paddle_customer_id(db: Session, customer_id: str) -> User | None:
+    """Paddle customer_id로 사용자를 조회한다."""
+    if not customer_id:
+        return None
+    return db.query(User).filter(User.paddle_customer_id == customer_id).first()
+
+
+def _find_user_by_subscription_custom_data(db: Session, sub: dict) -> User | None:
+    """subscription의 related_transactions custom_data에서 user_id를 찾아 사용자를 조회한다."""
+    transactions = sub.get("related_transactions", [])
+    for tx in transactions:
+        custom = tx.get("custom_data", {})
+        user_id = custom.get("user_id")
+        if user_id:
+            try:
+                return db.get(User, uuid.UUID(user_id))
+            except ValueError:
+                return None
+    return None
 
 
 def _verify_paddle_signature(body: str, signature: str, secret: str) -> bool:

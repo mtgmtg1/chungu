@@ -34,6 +34,13 @@ SETTING_DEFS: dict[str, tuple[str, bool]] = {
     "paddle_price_id": ("", False),
     "paddle_krw_price_id": ("", False),
     "auto_recharge_min_threshold": ("500", False),
+    # 구독 요금제 Paddle price IDs
+    "paddle_subscription_price_id_free_monthly": ("", False),
+    "paddle_subscription_price_id_free_yearly": ("", False),
+    "paddle_subscription_price_id_pro_monthly": ("", False),
+    "paddle_subscription_price_id_pro_yearly": ("", False),
+    "paddle_subscription_price_id_max_monthly": ("", False),
+    "paddle_subscription_price_id_max_yearly": ("", False),
     # 미디어 전용 LLM (오디오/비디오)
     "media_llm_endpoint": (settings.media_llm_endpoint, False),
     "media_llm_model": (settings.media_llm_model, False),

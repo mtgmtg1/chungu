@@ -213,17 +213,33 @@ export default function PricePage() {
             className="text-3xl font-bold text-slate-900 mb-3"
             data-oid="price-hero-title"
           >
-            {t("page:price.title")}
+            {t("page:price.apiTitle")}
           </h2>
           <p
             className="text-lg text-slate-600 max-w-2xl mx-auto"
             data-oid="price-hero-desc"
           >
-            {t("page:price.subtitle")}
+            {t("page:price.apiSubtitle")}
           </p>
         </div>
 
-        {/* 크레딧 구매 섹션 (최상단 — Paddle 체크아웃과 동일한 상품/가격) */}
+        <div
+          className="bg-blue-50 border border-blue-100 rounded-2xl p-5 mb-10 text-center"
+          data-oid="price-subscription-notice"
+        >
+          <p className="text-blue-800 text-sm font-medium mb-2">
+            {t("page:price.subscriptionNotice")}
+          </p>
+          <Link
+            to="/plans"
+            className="inline-flex items-center gap-1 text-blue-600 hover:underline font-semibold"
+            data-oid="price-to-plans-link"
+          >
+            {t("page:price.subscriptionLink")}
+          </Link>
+        </div>
+
+        {/* 크레딧 구매 섹션 (API 요금제 — Paddle 체크아웃과 동일한 상품/가격) */}
         <div
           className="bg-white border border-slate-200 rounded-3xl p-6 md:p-8 shadow-lg mb-14"
           data-oid="price-credit-card"

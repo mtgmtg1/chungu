@@ -35,6 +35,8 @@ def me(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_
         "user_id": user.user_id,
         "email": user.email,
         "points_balance": user.points_balance,
+        "subscription_plan": user.subscription_plan or "free",
+        "subscription_status": user.subscription_status or "inactive",
         "is_admin": user.is_admin,
         "language": user.language or "en",
         **rate_limit,

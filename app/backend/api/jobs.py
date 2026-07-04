@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from .. import settings_store
 from ..auth.supabase_auth import CurrentUser, get_current_admin, get_current_user
-from ..core import archive_handler, converter, docling_client, hwp_converter, media_loader, office_converter, pdf_preview_converter, points_service, supabase_client
+from ..core import archive_handler, converter, docling_client, hwp_converter, media_loader, office_converter, pdf_preview_converter, points_service, subscription_service, supabase_client
 
 
 logger = logging.getLogger(__name__)
@@ -676,7 +676,7 @@ def confirm_job(
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # 작업 정보에서 비용 재계산
+    # 작업 정보에서 비용 재계산 (UI 표시용)
     pages = job.total_pages
     image_count = 0
     audio_seconds = 0
@@ -697,12 +697,25 @@ def confirm_job(
     docling_refinement_pages = job.total_pages if job.use_docling_refinement else 0
     ocr_model = job.ocr_model or "premium"
     cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages, ocr_model=ocr_model, user_id=job.user_id)
-    if ocr_model == "basic":
-        points_service.record_daily_usage(db, job.user_id, pages + image_count)
+
+    # UI 일반 사용자는 구독 요금제로 사용량 제한 적용
+    basic_pages = pages + image_count if ocr_model == "basic" else 0
+    premium_pages = pages + image_count if ocr_model != "basic" else 0
+    premium_pages += docling_refinement_pages
+    media_seconds = audio_seconds + video_seconds
     try:
-        points_service.spend_points(db, db_user, cost["points"], f"미디어 작업: {job.original_filename}")
+        subscription_service.reserve_usage(
+            db,
+            db_user,
+            basic_pages=basic_pages,
+            premium_pages=premium_pages,
+            media_seconds=media_seconds,
+        )
     except ValueError as e:
         raise HTTPException(status_code=402, detail=str(e))
+
+    if ocr_model == "basic":
+        points_service.record_daily_usage(db, job.user_id, pages + image_count)
 
     job.cost_points = cost["points"]
     job.status = "queued"

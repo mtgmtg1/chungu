@@ -350,17 +350,17 @@ export default function SettingsPage() {
         <div className="flex items-center justify-between mb-4" data-oid="g986wss">
           <div data-oid="399lxub">
             <p className="text-on-surface-variant text-body-md mb-1" data-oid="kyfb3l8">
-              {t("page:settings.pointsBalance")}
+              {t("page:settings.subscriptionPlan")}
             </p>
             <p className="font-headline-lg text-headline-lg text-on-surface" data-oid="454aqs4">
-              ${((account?.points_balance || 0) / 1000).toFixed(2)}
+              {(account?.subscription_plan || "free").toUpperCase()}
             </p>
           </div>
           <button
-          onClick={() => navigate("/payment")}
+          onClick={() => navigate("/plans")}
           className="bg-primary text-on-primary px-6 py-3 rounded-xl font-body-md hover:bg-primary/90 transition-all" data-oid="q8zcvdg">
 
-            {t("page:settings.recharge")}
+            {t("page:settings.changePlan")}
           </button>
         </div>
         <div className="h-px bg-outline-variant/40 mb-6" data-oid="etbfmrz"></div>

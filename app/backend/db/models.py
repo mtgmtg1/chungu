@@ -33,12 +33,21 @@ class User(Base):
     auto_recharge_retries: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
+    # 구독 요금제 (Free / Pro / Max)
+    subscription_plan: Mapped[str] = mapped_column(String(20), default="free")
+    subscription_status: Mapped[str] = mapped_column(String(20), default="inactive")
+    subscription_period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    subscription_period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    subscription_price_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    paddle_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     jobs: Mapped[list["Job"]] = relationship("Job", back_populates="user", lazy="selectin")
     payments: Mapped[list["Payment"]] = relationship("Payment", back_populates="user", lazy="selectin")
     point_transactions: Mapped[list["PointTransaction"]] = relationship("PointTransaction", back_populates="user", lazy="selectin")
     api_keys: Mapped[list["ApiKey"]] = relationship("ApiKey", back_populates="user", lazy="selectin")
     api_usage: Mapped[list["ApiUsage"]] = relationship("ApiUsage", back_populates="user", lazy="selectin")
     on_premise_inquiries: Mapped[list["OnPremiseInquiry"]] = relationship("OnPremiseInquiry", back_populates="user", lazy="selectin")
+    subscription_usages: Mapped[list["SubscriptionUsage"]] = relationship("SubscriptionUsage", back_populates="user", lazy="selectin")
 
 
 class Job(Base):
@@ -241,3 +250,20 @@ class OnPremiseInquiry(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     user: Mapped["User | None"] = relationship("User", back_populates="on_premise_inquiries")
+
+
+class SubscriptionUsage(Base):
+    """사용자별 구독 기간 사용량 (월간 기준)."""
+
+    __tablename__ = "subscription_usages"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), index=True)
+    period_start: Mapped[datetime] = mapped_column(DateTime, index=True)
+    basic_pages: Mapped[int] = mapped_column(Integer, default=0)
+    premium_pages: Mapped[int] = mapped_column(Integer, default=0)
+    media_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=datetime.utcnow)
+
+    user: Mapped["User"] = relationship("User", back_populates="subscription_usages")

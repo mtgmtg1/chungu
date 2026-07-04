@@ -16,6 +16,7 @@ export default function JobConfirmPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [ocrModel, setOcrModel] = useState("premium");
+  const [subscription, setSubscription] = useState(null);
 
   useEffect(() => {
     if (!jobId) return;
@@ -24,9 +25,14 @@ export default function JobConfirmPage() {
 
   async function load() {
     try {
-      const [jobData, me] = await Promise.all([api.getJob(jobId), api.me()]);
+      const [jobData, me, sub] = await Promise.all([
+        api.getJob(jobId),
+        api.me(),
+        api.getMySubscription(),
+      ]);
       setJob(jobData);
       setProfile(me);
+      setSubscription(sub);
       setOcrModel(jobData.ocr_model || "premium");
     } catch (e) {
       setError(e.message || t("page:confirm.loadError"));
@@ -44,7 +50,7 @@ export default function JobConfirmPage() {
       nav(`/jobs/${jobId}`);
     } catch (e) {
       setError(e.message || t("page:errors.unknown"));
-      if (e.message && e.message.includes("point")) nav("/payment");
+      if (e.message && (e.message.includes("한도") || e.message.includes("구독"))) nav("/plans");
     } finally {
       setSubmitting(false);
     }
@@ -86,13 +92,20 @@ export default function JobConfirmPage() {
 
   }
 
-  const balance = profile?.points_balance ?? job.balance ?? 0;
   const hasMedia = job.has_media || false;
   const effectiveModel = hasMedia ? "premium" : ocrModel;
   const costData = effectiveModel === "basic" ? job.cost_basic : job.cost_premium;
   const cost = costData?.points ?? job.cost?.points ?? 0;
   const freeRemaining = job.free_pages_remaining ?? 0;
-  const insufficient = balance < cost;
+
+  const remaining = subscription?.remaining ?? {};
+  const basicPages = effectiveModel === "basic" ? job.total_pages : 0;
+  const premiumPages = effectiveModel !== "basic" ? job.total_pages : 0;
+  const mediaSeconds = job.media_duration_seconds || 0;
+  const insufficientBasic = basicPages > (remaining.basic_pages ?? 0);
+  const insufficientPremium = premiumPages > (remaining.premium_pages ?? 0);
+  const insufficientMedia = mediaSeconds > (remaining.media_seconds ?? 0);
+  const insufficient = !subscription?.active || insufficientBasic || insufficientPremium || insufficientMedia;
 
   return (
     <div
@@ -338,12 +351,12 @@ export default function JobConfirmPage() {
                 {t("page:confirm.insufficient")}
               </p>
               <Link
-              to="/payment"
+              to="/plans"
               className="inline-flex items-center gap-1 underline"
               data-oid="ziafjhh">
 
                 <CreditCard size={14} data-oid="nmf-rh4" />{" "}
-                {t("page:confirm.recharge")}
+                {t("page:confirm.upgradePlan")}
               </Link>
             </div>
           }

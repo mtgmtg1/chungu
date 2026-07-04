@@ -123,7 +123,7 @@ export default function DashboardPage() {
               className="font-label-sm text-label-sm text-on-surface-variant"
               data-oid=":36qpea">
 
-              {t("page:dashboard.points")}
+              {t("page:dashboard.plan")}
             </p>
             <div
               className="p-2 bg-yellow-50 rounded-lg text-yellow-600"
@@ -133,15 +133,15 @@ export default function DashboardPage() {
             </div>
           </div>
           <p className="text-3xl font-bold text-on-surface" data-oid="7z.7l1t">
-            ${profile?.points_balance ? (profile.points_balance / 1000).toFixed(2) : "0.00"}
+            {profile?.subscription_plan ? profile.subscription_plan.toUpperCase() : "FREE"}
           </p>
           <Link
-            to="/payment"
+            to="/plans"
             className="mt-3 inline-flex items-center gap-1 text-primary text-sm font-medium hover:underline"
             data-oid="_78h3f4">
 
             <CreditCard size={14} data-oid="9yjdx0:" />{" "}
-            {t("page:dashboard.recharge")}
+            {t("page:dashboard.changePlan")}
           </Link>
         </div>
 

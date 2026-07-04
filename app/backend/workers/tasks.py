@@ -15,7 +15,7 @@ from sqlalchemy import text as sql_text
 from ..celery_app import celery
 from celery.signals import worker_ready
 from ..config import settings
-from ..core import archive_handler, converter, excel_writer, media_loader, merge, supabase_client, xlsx_advanced_converter
+from ..core import archive_handler, converter, excel_writer, media_loader, merge, subscription_service, supabase_client, xlsx_advanced_converter
 from ..core.ocr_client import has_pdf_text_layer
 from ..core.pipeline_docling import run_docling, run_hwp
 from ..core.pipeline_hybrid import run_hybrid
@@ -71,6 +71,7 @@ def recover_stuck_jobs(sender=None, **kwargs):
                 recovered += 1
                 logger.info(f"[recover] job {job.id} 재시도 ({job.retry_count}/{MAX_RETRY_COUNT})")
             else:
+                _release_subscription_usage(db, job)
                 job.status = "error"
                 job.refundable = True
                 job.error_log = (job.error_log + f"\nRetry limit exceeded (server restart, {MAX_RETRY_COUNT} attempts)").strip()
@@ -91,6 +92,46 @@ def _set_status(db, job: Job, status: str) -> None:
     db.commit()
 
 
+def _release_subscription_usage(db, job: Job) -> None:
+    """최종 실패한 작업이 차감한 구독 사용량을 되돌린다."""
+    if not job.user_id:
+        return
+    db_user = db.get(User, job.user_id)
+    if db_user is None:
+        return
+    pages = job.total_pages or 0
+    image_count = 0
+    audio_seconds = 0
+    video_seconds = 0
+    for info in job.extracted_files or []:
+        ftype = info.get("type", "")
+        if ftype == "image":
+            image_count += 1
+        elif ftype == "audio":
+            audio_seconds += info.get("duration", 0)
+        elif ftype == "video":
+            video_seconds += info.get("duration", 0)
+    if job.file_type in media_loader.DOCLING_TYPES or job.file_type in media_loader.HWP_TYPES:
+        image_count = 0
+        audio_seconds = 0
+        video_seconds = 0
+    ocr_model = job.ocr_model or "premium"
+    basic_pages = pages + image_count if ocr_model == "basic" else 0
+    premium_pages = pages + image_count if ocr_model != "basic" else 0
+    premium_pages += pages if job.use_docling_refinement else 0
+    media_seconds = audio_seconds + video_seconds
+    try:
+        subscription_service.release_usage(
+            db,
+            db_user,
+            basic_pages=basic_pages,
+            premium_pages=premium_pages,
+            media_seconds=media_seconds,
+        )
+    except Exception as e:
+        logger.warning(f"[run_job:{job.id}] 구독 사용량 환불 중 오류 (무시): {e}")
+
+
 # [Flow: Step 1 (retry_count 증가) -> Step 2 (3회 미만이면 retrying 상태로 재시도) -> Step 3 (3회 이상이면 error + refundable + 이메일)]
 def _handle_job_failure(db, job: Job, error_detail: str) -> dict:
     """run_job 실행 실패 시 retry_count를 증가시키고 재시도 또는 최종 에러 상태로 전환한다."""
@@ -105,6 +146,7 @@ def _handle_job_failure(db, job: Job, error_detail: str) -> dict:
         logger.info(f"[run_job:{job.id}] 재시도 예약 ({job.retry_count}/{MAX_RETRY_COUNT})")
         return {"job_id": job.id, "status": "retrying", "retry_count": job.retry_count}
 
+    _release_subscription_usage(db, job)
     job.status = "error"
     job.refundable = True
     job.finished_at = datetime.now(timezone.utc)

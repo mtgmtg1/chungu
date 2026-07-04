@@ -22,6 +22,7 @@ import LegalTermsPage from "./pages/LegalTermsPage.jsx";
 import LegalPrivacyPage from "./pages/LegalPrivacyPage.jsx";
 import LegalRefundPage from "./pages/LegalRefundPage.jsx";
 import PricePage from "./pages/PricePage.jsx";
+import PlansPage from "./pages/PlansPage.jsx";
 import CookieConsent from "./components/CookieConsent.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 
@@ -79,6 +80,12 @@ ReactDOM.createRoot(rootEl).render(
                 path="/price"
                 element={<PricePage data-oid="price-route" />}
                 data-oid="price-route-r" />
+
+
+              <Route
+                path="/plans"
+                element={<PlansPage data-oid="plans-route" />}
+                data-oid="plans-route-r" />
 
 
               <Route

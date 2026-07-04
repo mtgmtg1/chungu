@@ -101,8 +101,12 @@ export default function JobResultPage() {
   (j?.total_pages || 0) > PAGE_THRESHOLD ||
   (j?.total_files || 0) > PAGE_THRESHOLD;
 
-  const hasFileMarkdowns = fileMarkdowns.length > 1;
-  const displayMarkdown = hasFileMarkdowns ? fileMarkdowns[selectedFileIndex] : markdown;
+  // [Flow: Step 1 (source_files가 2개 이상이고 실제 마크다운이 있는지 확인) -> Step 2 (선택한 파일의 마크다운이 비어 있으면 전체 결합 마크다운로 폴백)]
+  const hasFileMarkdowns = fileMarkdowns.length > 1 && fileMarkdowns.some(Boolean);
+  const selectedFileMarkdown = fileMarkdowns[selectedFileIndex] || "";
+  const displayMarkdown = hasFileMarkdowns && selectedFileMarkdown.trim()
+    ? selectedFileMarkdown
+    : markdown;
 
   useEffect(() => {
     if (!jobId) return;

@@ -36,9 +36,31 @@ function splitMarkdownByPages(markdown) {
 const MarkdownPreview = memo(forwardRef(function MarkdownPreview({ markdown }, ref) {
   const containerRef = useRef(null);
   const sectionRefs = useRef({});
-  const [visiblePages, setVisiblePages] = useState(new Set());
-
   const pages = useMemo(() => splitMarkdownByPages(markdown), [markdown]);
+  // [Flow: Step 1 (첫 페이지는 항상 보이도록 초기화) -> Step 2 (IntersectionObserver가 스크롤 후 나머지 페이지 가시성 업데이트)]
+  const [visiblePages, setVisiblePages] = useState(() =>
+    pages.length > 0 ? new Set([pages[0].pageNum]) : new Set()
+  );
+
+  // [Flow: Step 1 (markdown 변경 시 visiblePages 초기화) -> Step 2 (존재하지 않는 페이지 번호 제거) -> Step 3 (첫 페이지 다시 보이도록 설정)]
+  useEffect(() => {
+    const validPageNums = new Set(pages.map((p) => p.pageNum));
+    setVisiblePages((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const pageNum of prev) {
+        if (!validPageNums.has(pageNum)) {
+          next.delete(pageNum);
+          changed = true;
+        }
+      }
+      if (pages.length > 0 && !next.has(pages[0].pageNum)) {
+        next.add(pages[0].pageNum);
+        changed = true;
+      }
+      return changed ? new Set(next) : next;
+    });
+  }, [pages]);
 
   /**
    * [Flow: Step 1 (IntersectionObserver 설정) -> Step 2 (보이는 페이지 번호 추적) -> Step 3 (초기 가시 페이지 설정)]
@@ -93,6 +115,18 @@ const MarkdownPreview = memo(forwardRef(function MarkdownPreview({ markdown }, r
     );
   }
 
+  // [Flow: Step 1 (마커는 있지만 콘텐츠가 없는 경우 감지) -> Step 2 (빈 결과 안내 메시지 렌더링)]
+  if (pages.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-on-surface-variant text-sm">
+        No content
+      </div>
+    );
+  }
+
+  // [Flow: Step 1 (페이지 수가 적을 때는 가상화 비용이 이득보다 큼) -> Step 2 (10페이지 이하일 때 content-visibility 비활성화)]
+  const shouldVirtualize = pages.length > 10;
+
   return (
     <div
       ref={containerRef}
@@ -111,7 +145,7 @@ const MarkdownPreview = memo(forwardRef(function MarkdownPreview({ markdown }, r
               data-page-section
               data-page={pageNum}
               className="markdown-page-section"
-              style={{ contentVisibility: isVisible ? "visible" : "auto", containIntrinsicHeight: "auto 300px" }}
+              style={shouldVirtualize ? { contentVisibility: isVisible ? "visible" : "auto", containIntrinsicHeight: "auto 300px" } : undefined}
               dangerouslySetInnerHTML={{ __html: html }}
             />
           );

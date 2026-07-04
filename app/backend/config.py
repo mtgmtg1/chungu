@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     turnstile_site_key: str = ""
     turnstile_worker_url: str = ""
 
+    # Paddle Billing (결제)
+    paddle_api_key: str = ""
+
     # 로컬 개발 전용 인증 bypass (절대 프로덕션에서 활성화하지 마세요)
     dev_bypass_auth: bool = False
     dev_bypass_email: str = "dev@proof.local"

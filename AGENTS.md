@@ -625,3 +625,22 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
 - When adding UI text, always use i18n translation keys. Never hardcode user-facing strings.
 - Add new translation keys to all three locale files (en/ko/ja) simultaneously.
 - When adding new Docusaurus docs pages, create the English source in `app/docs/docs/` and add Korean/Japanese translations under `app/docs/i18n/{ko,ja}/docusaurus-plugin-content-docs/current/`.
+
+## Subscription Plans (Free / Pro / Max)
+
+- **UI users** (web app) use subscription plans only. API users continue to use the pay-as-you-go credit system (`points_balance`).
+- **Plans**:
+  - Free: 1,000 basic pages + 500 premium pages + 150 min media/month
+  - Pro: $20/month or $200/year — 10,000 basic + 5,000 premium + 1,500 min media/month
+  - Max: $100/month or $1,000/year — 60,000 basic + 30,000 premium + 9,000 min media/month
+- **Key files**:
+  - `app/backend/core/subscription_service.py` — monthly quota tracking and reservation.
+  - `app/backend/api/subscriptions.py` — public plan listing, checkout, and cancel endpoints.
+  - `app/backend/api/payments.py` — Paddle webhook handling for `subscription.*` events.
+  - `app/backend/db/migrations/018_add_subscription_plan.sql` — schema migration.
+  - `app/frontend/src/pages/PlansPage.jsx` — subscription plan UI.
+  - `scripts/create_paddle_subscription_catalog.py` — automated Paddle product/price creation.
+- **Paddle API key**: store in `app/.env` as `PADDLE_API_KEY`. It is seeded into `app_settings` via `settings_store.py` and `config.py`.
+- **Creating catalog**: run `PADDLE_API_KEY=... DATABASE_URL=... python scripts/create_paddle_subscription_catalog.py`. This creates products and monthly/yearly prices for Free/Pro/Max and saves the resulting `price_id`s into `app_settings`.
+- **Webhooks**: Paddle dashboard must send `subscription.created`, `subscription.updated`, `subscription.canceled`, and `transaction.completed` to `https://proof.teamcat.app/api/payments/paddle/webhook`.
+- **Free $0 note**: if Paddle does not allow a $0 recurring checkout, the Free tier can stay internal-only (no Paddle subscription) and only Pro/Max use Paddle checkout. The backend treats `subscription_plan == "free"` as always active.

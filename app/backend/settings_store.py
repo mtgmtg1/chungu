@@ -28,7 +28,7 @@ SETTING_DEFS: dict[str, tuple[str, bool]] = {
     "cost_premium_audio_sec_krw": ("1", False),
     "cost_premium_video_sec_krw": ("5", False),
     "free_daily_pages_basic": ("100", False),
-    "paddle_api_key": ("", True),
+    "paddle_api_key": (settings.paddle_api_key, True),
     "paddle_webhook_secret": ("", True),
     "paddle_vendor_id": ("", False),
     "paddle_price_id": ("", False),

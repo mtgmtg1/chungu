@@ -139,6 +139,7 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
           data-oid="_4r5fdj">
 
             <SourcePanel
+              jobId={jobId}
               sourceFiles={sourceFiles}
               sourceUrl={sourceUrl}
               sourceType={sourceType}

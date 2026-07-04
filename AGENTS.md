@@ -216,6 +216,7 @@ npm run start        # dev server at localhost:3000
   - 현재 페이지 ±1 프리페치로 인접 페이지 렌더링 지연 최소화.
   - 50페이지 이상 시 자동으로 썸네일 패널 활성화, `IntersectionObserver` 기반 가상화 썸네일 렌더링.
   - 썸네일 클릭 시 해당 페이지로 이동, 현재 페이지 썸네일이 중앙에 보이도록 자동 스크롤.
+  - 50페이지 이상 자동 썸네일 패널에서 **서버 측 생성 PNG 썸네일**을 사용한다: `api.getThumbnails()` → `/api/jobs/{id}/preview/thumbnails` → `pdf_thumbnail_service.py` (PyMuPDF)가 `pdf-thumbnails/{content_hash}/{page}.png`를 Storage에 생성/캐싱. 프론트는 `<img loading="lazy">`로 표시하므로 PDF.js가 썸네일마다 canvas를 그리는 병목이 사라진다. 썸네일 생성 실패 시 PDF.js 캔버스 렌더링으로 폴백한다.
   - `React.memo` 적용으로 불필요한 리렌더링 방지.
   - **주의**: `getPdfPage`는 `measureFitScale`보다 먼저 선언해야 한다. `measureFitScale`의 `useCallback` 의존성 배열에서 아직 초기화되지 않은 `getPdfPage`를 참조하면 `ReferenceError: Cannot access '...' before initialization`(TDZ)가 발생하여 PDF/Docx/HWP 미리보기가 필요한 작업 결과 페이지 전체가 blank 처리될 수 있다.
 - **MarkdownPreview** (`app/frontend/src/components/MarkdownPreview.jsx`):
@@ -499,13 +500,13 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
   - `fonts-noto-cjk`, `fonts-nanum`, `fonts-unfonts-core`, `fonts-noto-color-emoji`
   - `libreoffice-l10n-ko`, `libreoffice-help-ko`, `locales` with `LANG=ko_KR.UTF-8`/`LC_ALL=ko_KR.UTF-8`
 - For `.hwp` files, the backend first tries `pyhwp`'s `hwp5odt` to produce an ODT and then converts it to PDF with LibreOffice. If `hwp5odt` is unavailable or fails, it falls back to direct LibreOffice conversion.
-- Key files: `app/backend/core/pdf_preview_converter.py`, `app/Dockerfile.backend`, `app/backend/api/jobs.py`, `app/frontend/src/components/SourcePanel.jsx`.
+- Key files: `app/backend/core/pdf_preview_converter.py`, `app/backend/core/pdf_thumbnail_service.py`, `app/Dockerfile.backend`, `app/backend/api/jobs.py`, `app/frontend/src/components/SourcePanel.jsx`, `app/frontend/src/components/PdfViewer.jsx`.
 
 ## Result Preview & Multi-file Uploads
 
 - Uploading multiple files creates one job; each file's parsing result is stored separately in `extracted_files[].result_markdown`.
 - The combined markdown uses file markers (`<!-- 파일 N -->`) via `converter.build_combined_file_markdowns()`.
-- `/api/jobs/{id}/preview` returns `source_files` (name, type, url, page_num, result_markdown) for each original file.
+- `/api/jobs/{id}/preview` returns `source_files` (name, type, url, storage_path, page_num, result_markdown) for each original file. `storage_path`는 `SourcePanel`에서 `/api/jobs/{id}/preview/thumbnails`를 호출해 서버 측 썸네일을 생성하는 데 사용된다.
 - PDF preview uses PDF.js (`PdfViewer`) to render one page at a time on a canvas, auto-fitted to the container. The toolbar with page navigation and zoom controls is at the top of the preview panel. The preview panel scrolls independently and the page is aligned to the top.
 - `SourcePanel` renders a single source when only one exists, and a file list + selected preview when multiple sources exist.
 - `SourcePanel` supports controlled selection via `selectedFileIndex` / `onFileSelect` props.

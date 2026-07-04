@@ -20,7 +20,7 @@ const RESIZE_DEBOUNCE_MS = 100;
  * @param {number} page - 초기 페이지 번호
  * @param {function} onPageChange - 페이지 변경 시 상위 컴포넌트에 알리는 콜백
  */
-function PdfViewer({ url, page = 1, onPageChange }) {
+function PdfViewer({ url, page = 1, onPageChange, thumbnails, thumbnailsLoading, onLoadMoreThumbnails }) {
   const { t } = useTranslation();
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -373,6 +373,9 @@ function PdfViewer({ url, page = 1, onPageChange }) {
             visibleThumbnails={visibleThumbnails}
             getPdfPage={getPdfPage}
             onPageClick={goToPage}
+            thumbnails={thumbnails}
+            thumbnailsLoading={thumbnailsLoading}
+            onLoadMore={onLoadMoreThumbnails}
           />
         )}
         <div
@@ -396,7 +399,7 @@ function PdfViewer({ url, page = 1, onPageChange }) {
 }
 
 /**
- * [Flow: Step 1 (보이는 썸네일 번호 확인) -> Step 2 (해당 페이지 canvas 렌더링) -> Step 3 (클릭 시 페이지 이동)]
+ * [Flow: Step 1 (보이는 썸네일 번호 확인) -> Step 2 (이미지 썸네일이면 <img>로, 없으면 PDF.js 캔버스로 렌더링) -> Step 3 (클릭 시 페이지 이동)]
  * @param {object} props
  * @param {number} props.currentPage
  * @param {number} props.totalPages
@@ -404,6 +407,8 @@ function PdfViewer({ url, page = 1, onPageChange }) {
  * @param {Set<number>} props.visibleThumbnails
  * @param {function} props.getPdfPage
  * @param {function} props.onPageClick
+ * @param {Array<{page: number, url: string}>} props.thumbnails - 서버에서 생성한 이미지 썸네일 목록
+ * @param {boolean} props.thumbnailsLoading - 서버 썸네일 로딩 중 여부
  */
 function ThumbnailPanel({
   currentPage,
@@ -412,14 +417,22 @@ function ThumbnailPanel({
   visibleThumbnails,
   getPdfPage,
   onPageClick,
+  thumbnails,
+  thumbnailsLoading,
+  onLoadMore,
 }) {
   const { t } = useTranslation();
   const canvasRefs = useRef({});
   const renderedRef = useRef(new Set());
   const panelRef = useRef(null);
+  const sentinelRef = useRef(null);
 
   const itemHeight = 120;
   const totalHeight = thumbnailPages.length * itemHeight;
+  const useImageThumbnails = thumbnails && thumbnails.length > 0;
+  const thumbnailMap = useImageThumbnails
+    ? Object.fromEntries(thumbnails.map((t) => [t.page, t.url]))
+    : {};
 
   const renderThumbnail = useCallback(
     async (pageNum, canvas) => {
@@ -444,11 +457,12 @@ function ThumbnailPanel({
   );
 
   useEffect(() => {
+    if (useImageThumbnails) return;
     visibleThumbnails.forEach((pageNum) => {
       const canvas = canvasRefs.current[pageNum];
       if (canvas) renderThumbnail(pageNum, canvas);
     });
-  }, [visibleThumbnails, renderThumbnail]);
+  }, [visibleThumbnails, renderThumbnail, useImageThumbnails]);
 
   // 현재 페이지 썸네일이 스크롤 영역 중앙에 보이도록 이동
   useEffect(() => {
@@ -458,6 +472,24 @@ function ThumbnailPanel({
       activeItem.scrollIntoView({ block: "center", behavior: "smooth" });
     }
   }, [currentPage]);
+
+  // 이미지 썸네일 사용 시 Sentinel 기반 추가 로드
+  useEffect(() => {
+    if (!useImageThumbnails || !onLoadMore) return;
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          onLoadMore();
+        }
+      },
+      { root: panelRef.current?.querySelector("[data-oid='pdf-thumbnail-scroll']"), rootMargin: "200px", threshold: 0 }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [useImageThumbnails, onLoadMore]);
 
   return (
     <div
@@ -477,6 +509,7 @@ function ThumbnailPanel({
             const top = (pageNum - 1) * itemHeight;
             const isVisible = visibleThumbnails.has(pageNum);
             const isActive = pageNum === currentPage;
+            const imageUrl = thumbnailMap[pageNum];
             return (
               <div
                 key={pageNum}
@@ -491,7 +524,23 @@ function ThumbnailPanel({
                 <span className={`text-[10px] mb-1 ${isActive ? "text-primary font-bold" : "text-on-surface-variant"}`}>
                   {pageNum}
                 </span>
-                {isVisible ? (
+                {useImageThumbnails ? (
+                  imageUrl ? (
+                    <img
+                      src={imageUrl}
+                      alt={`${t("page:result.thumbnails")} ${pageNum}`}
+                      loading="lazy"
+                      decoding="async"
+                      className="rounded border border-outline-variant bg-white max-w-full max-h-[80px]"
+                    />
+                  ) : (
+                    <div className="w-16 h-20 bg-surface-container-high rounded border border-outline-variant/50 flex items-center justify-center">
+                      {thumbnailsLoading ? (
+                        <span className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                      ) : null}
+                    </div>
+                  )
+                ) : isVisible ? (
                   <canvas
                     ref={(el) => {
                       canvasRefs.current[pageNum] = el;
@@ -504,6 +553,14 @@ function ThumbnailPanel({
               </div>
             );
           })}
+          {useImageThumbnails && onLoadMore && (
+            <div
+              ref={sentinelRef}
+              data-oid="pdf-thumbnail-sentinel"
+              style={{ top: totalHeight, height: 1 }}
+              className="absolute left-0 right-0"
+            />
+          )}
         </div>
       </div>
     </div>

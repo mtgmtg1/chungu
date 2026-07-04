@@ -1,10 +1,11 @@
-// [Flow: Step 1 (sourceFiles/sourceUrl/sourceType/imageUrls 수신) -> Step 2 (파일 개수 판단) -> Step 3 (단일 파일이면 직접 렌더링) -> Step 4 (다중 파일이면 목록+선택 프리뷰, PDF.js 뷰어가 페이지/줌 처리, docx/hwp는 PDF 변환 후 표시)]
-import { useState } from "react";
+// [Flow: Step 1 (sourceFiles/sourceUrl/sourceType/imageUrls/jobId 수신) -> Step 2 (선택한 pdf/docx/hwp 파일의 썸네일을 서버에서 로드) -> Step 3 (단일/다중 파일에 따라 PdfViewer에 썸네일 전달) -> Step 4 (pdf/docx/hwp가 아니면 기존 미디어/이미지 프리뷰)]
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FileText, ImageIcon, Volume2, Film } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer from "./PdfViewer.jsx";
 import MediaPlayer from "./MediaPlayer.jsx";
+import { api } from "../api.js";
 
 function SourceIcon({ type }) {
   if (type === "pdf") return <FileText size={16} className="text-error flex-shrink-0" />;
@@ -59,7 +60,87 @@ function ImageList({ urls, t }) {
   );
 }
 
+/**
+ * [Flow: Step 1 (jobId와 선택된 파일 인덱스 확인) -> Step 2 (pdf/docx/hwp 파일이면 첫 100개 썸네일 로드) -> Step 3 (스크롤/페이지 이동 시 다음 배치 추가 로드) -> Step 4 (썸네일 상태 반환)]
+ * @param {string} jobId
+ * @param {Array<{type: string, storage_path?: string}>} files
+ * @param {number} selectedIndex
+ */
+function useThumbnails(jobId, files, selectedIndex) {
+  const [thumbnails, setThumbnails] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [totalPages, setTotalPages] = useState(0);
+  const loadedRef = useRef(new Set());
+  const loadingRef = useRef(false);
+  const fetchIdRef = useRef(0);
+  const currentFetchIdRef = useRef(0);
+  const BATCH_SIZE = 100;
+
+  const loadBatch = useCallback(
+    async (startPage, endPage) => {
+      if (!jobId || !files || files.length === 0) return;
+      const file = files[selectedIndex] || files[0];
+      if (!file || !file.storage_path || !["pdf", "docx", "hwp"].includes(file.type)) return;
+      if (loadingRef.current) return;
+
+      const pagesToLoad = [];
+      for (let p = startPage; p <= endPage; p++) {
+        if (!loadedRef.current.has(p)) pagesToLoad.push(p);
+      }
+      if (pagesToLoad.length === 0) return;
+
+      const fetchId = ++fetchIdRef.current;
+      currentFetchIdRef.current = fetchId;
+      loadingRef.current = true;
+      setLoading(true);
+      try {
+        const res = await api.getThumbnails(jobId, selectedIndex, startPage, endPage);
+        if (currentFetchIdRef.current !== fetchId) return;
+        setTotalPages(res.total_pages || 0);
+        for (const p of pagesToLoad) {
+          loadedRef.current.add(p);
+        }
+        setThumbnails((prev) => {
+          const map = new Map(prev.map((t) => [t.page, t]));
+          for (const t of res.thumbnails || []) {
+            map.set(t.page, t);
+          }
+          return Array.from(map.values()).sort((a, b) => a.page - b.page);
+        });
+      } catch {
+        // 썸네일 로드 실패 시 기존 PDF.js 캔버스 렌더링으로 폴백
+      } finally {
+        if (currentFetchIdRef.current === fetchId) {
+          loadingRef.current = false;
+          setLoading(false);
+        }
+      }
+    },
+    [jobId, files, selectedIndex]
+  );
+
+  useEffect(() => {
+    setThumbnails([]);
+    loadedRef.current = new Set();
+    loadingRef.current = false;
+    fetchIdRef.current = 0;
+    currentFetchIdRef.current = 0;
+    setTotalPages(0);
+    loadBatch(1, BATCH_SIZE);
+  }, [loadBatch]);
+
+  const loadMore = useCallback(() => {
+    const maxLoaded = loadedRef.current.size > 0 ? Math.max(...loadedRef.current) : 0;
+    if (maxLoaded < totalPages) {
+      loadBatch(maxLoaded + 1, Math.min(totalPages, maxLoaded + BATCH_SIZE));
+    }
+  }, [totalPages, loadBatch]);
+
+  return { thumbnails, loading, totalPages, loadMore };
+}
+
 export default function SourcePanel({
+  jobId,
   sourceFiles,
   sourceUrl,
   sourceType,
@@ -76,11 +157,21 @@ export default function SourcePanel({
   const isControlled = selectedFileIndex !== undefined && onFileSelect;
   const selectedIndex = isControlled ? selectedFileIndex : internalIndex;
   const setSelectedIndex = isControlled ? onFileSelect : setInternalIndex;
+  const { thumbnails, loading: thumbnailsLoading, loadMore } = useThumbnails(jobId, files, selectedIndex);
 
   if (files.length === 1) {
     const file = files[0];
     if (file.type === "pdf") {
-      return <PdfViewer url={file.url} page={currentPage} onPageChange={onPageChange} />;
+      return (
+        <PdfViewer
+          url={file.url}
+          page={currentPage}
+          onPageChange={onPageChange}
+          thumbnails={thumbnails}
+          thumbnailsLoading={thumbnailsLoading}
+          onLoadMoreThumbnails={loadMore}
+        />
+      );
     }
     return <SingleFilePreview file={file} filename={filename || file.name} />;
   }
@@ -123,7 +214,14 @@ export default function SourcePanel({
             <PanelResizeHandle className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize" />
             <Panel className="overflow-hidden min-h-0 flex flex-col">
               {selected.type === "pdf" || selected.type === "docx" || selected.type === "hwp" ? (
-                <PdfViewer url={selected.preview_url || selected.url} page={currentPage} onPageChange={onPageChange} />
+                <PdfViewer
+                  url={selected.preview_url || selected.url}
+                  page={currentPage}
+                  onPageChange={onPageChange}
+                  thumbnails={thumbnails}
+                  thumbnailsLoading={thumbnailsLoading}
+                  onLoadMoreThumbnails={loadMore}
+                />
               ) : (
                 <SingleFilePreview file={selected} filename={selected.name} />
               )}

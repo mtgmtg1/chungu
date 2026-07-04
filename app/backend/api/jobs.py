@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from .. import settings_store
 from ..auth.supabase_auth import CurrentUser, get_current_admin, get_current_user
-from ..core import archive_handler, converter, docling_client, hwp_converter, media_loader, office_converter, pdf_preview_converter, points_service, subscription_service, supabase_client
+from ..core import archive_handler, converter, docling_client, hwp_converter, media_loader, office_converter, pdf_preview_converter, pdf_thumbnail_service, points_service, subscription_service, supabase_client
 
 
 logger = logging.getLogger(__name__)
@@ -872,6 +872,7 @@ def _source_files(job: Job) -> list[dict]:
                 "name": info.get("path", info.get("storage_path", "")),
                 "type": ftype,
                 "url": url,
+                "storage_path": storage_path,
                 "page_num": idx + 1,
                 "result_markdown": info.get("result_markdown", ""),
             }
@@ -1063,6 +1064,59 @@ def preview_job_pages(
         "job": _job_summary(job),
         "total_pages": len(pages),
         "pages": out_pages,
+    }
+
+
+@router.get("/jobs/{job_id}/preview/thumbnails")
+def preview_job_thumbnails(
+    job_id: str,
+    start_page: int = Query(1, ge=1, description="시작 페이지 번호"),
+    end_page: int | None = Query(None, ge=1, description="종료 페이지 번호(미지정 시 마지막 페이지)"),
+    source_file_index: int = Query(0, ge=0, description="썸네일을 생성할 원본 파일의 extracted_files 인덱스"),
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """완료된 작업의 원본 PDF를 페이지별 PNG 썸네일로 변환하여 서명된 URL 목록을 반환한다.
+
+    PDF 원본과 DOCX/HWP 미리보기 PDF를 모두 지원하며, 이미 생성된 썸네일은
+    Storage에서 재사용한다.
+    """
+    job = db.get(Job, job_id)
+    if job is None or str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_not_expired(job)
+
+    files = job.extracted_files or []
+    if source_file_index >= len(files):
+        raise HTTPException(status_code=400, detail="Invalid source file index")
+
+    info = files[source_file_index]
+    if not isinstance(info, dict):
+        raise HTTPException(status_code=400, detail="Invalid source file metadata")
+
+    ftype = info.get("type", "")
+    storage_path = info.get("storage_path")
+    if not storage_path or ftype not in ("pdf", "docx", "hwp"):
+        raise HTTPException(status_code=400, detail="No thumbnailable source file")
+
+    try:
+        total_pages, thumbnails = pdf_thumbnail_service.get_or_create_thumbnails(
+            storage_path,
+            source_type=ftype,
+            start_page=start_page,
+            end_page=end_page,
+        )
+    except Exception as e:
+        logger.warning(f"[preview-thumbnails] 썸네일 생성 실패 ({job_id}, index={source_file_index}): {e}")
+        raise HTTPException(status_code=502, detail=f"Failed to generate thumbnails: {e}")
+
+    actual_end = thumbnails[-1]["page"] if thumbnails else min(start_page, total_pages)
+    return {
+        "source_file_index": source_file_index,
+        "total_pages": total_pages,
+        "start_page": start_page,
+        "end_page": actual_end,
+        "thumbnails": thumbnails,
     }
 
 

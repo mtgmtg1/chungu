@@ -31,17 +31,37 @@ PLAN_LIMITS: dict[str, dict[str, int]] = {
 }
 
 
+def _normalize_period_start(value: datetime | None) -> datetime:
+    """period_start를 UTC timezone-aware datetime으로 정규화한다."""
+    if value is None:
+        now = datetime.now(timezone.utc)
+        return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _get_period_start(user: User) -> datetime:
     """사용자의 현재 구독 기간 시작일을 반환한다.
     Paddle에서 받은 구독 기간이 없으면 달력월 시작일을 기본으로 사용한다."""
-    if user.subscription_period_start:
-        return user.subscription_period_start
-    now = datetime.now(timezone.utc)
-    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return _normalize_period_start(user.subscription_period_start)
 
 
-def _get_or_create_usage(db: Session, user_id: uuid.UUID, period_start: datetime) -> SubscriptionUsage:
-    """특정 구독 기간의 사용량 레코드를 조회하거나 생성한다."""
+def is_subscription_active(user: User) -> bool:
+    """사용자의 구독이 현재 활성 상태인지 확인한다.
+    Free 플랜은 Paddle 구독 없이도 항상 활성으로 간주한다."""
+    if user.subscription_plan == "free":
+        return True
+    if user.subscription_status not in ("active", "trialing"):
+        return False
+    if user.subscription_period_end and datetime.now(timezone.utc) > user.subscription_period_end:
+        return False
+    return True
+
+
+def _get_usage_for_period(db: Session, user_id: uuid.UUID, period_start: datetime) -> SubscriptionUsage:
+    """특정 기간의 사용량 레코드를 조회하거나 생성한다. (내부용)"""
+    period_start = _normalize_period_start(period_start)
     usage = (
         db.query(SubscriptionUsage)
         .filter(
@@ -64,30 +84,18 @@ def _get_or_create_usage(db: Session, user_id: uuid.UUID, period_start: datetime
     return usage
 
 
-def is_subscription_active(user: User) -> bool:
-    """사용자의 구독이 현재 활성 상태인지 확인한다.
-    Free 플랜은 Paddle 구독 없이도 항상 활성으로 간주한다."""
-    if user.subscription_plan == "free":
-        return True
-    if user.subscription_status not in ("active", "trialing"):
-        return False
-    if user.subscription_period_end and datetime.now(timezone.utc) > user.subscription_period_end:
-        return False
-    return True
-
-
 def get_subscription_status(db: Session, user: User) -> dict[str, Any]:
     """사용자의 구독 플랜, 상태, 현재 기간 사용량 및 잔여 한도를 반환한다."""
     plan = user.subscription_plan or "free"
     limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
     period_start = _get_period_start(user)
-    usage = _get_or_create_usage(db, user.id, period_start)
+    usage = _get_usage_for_period(db, user.id, period_start)
 
     return {
         "plan": plan,
         "status": user.subscription_status or "inactive",
         "active": is_subscription_active(user),
-        "period_start": period_start.isoformat() if period_start else None,
+        "period_start": period_start.isoformat(),
         "period_end": user.subscription_period_end.isoformat() if user.subscription_period_end else None,
         "limits": limits,
         "used": {
@@ -100,6 +108,75 @@ def get_subscription_status(db: Session, user: User) -> dict[str, Any]:
             "premium_pages": max(0, limits["premium_pages"] - usage.premium_pages),
             "media_seconds": max(0, limits["media_seconds"] - usage.media_seconds),
         },
+    }
+
+
+def check_enough(
+    db: Session,
+    user: User,
+    basic_pages: int = 0,
+    premium_pages: int = 0,
+    media_seconds: int = 0,
+) -> dict[str, Any]:
+    """주어진 사용량이 현재 구독 한도 내에서 가능한지 확인한다. (차감하지 않음)
+
+    반환값: {"ok": bool, "reason": str|None, "remaining": dict, "limits": dict}
+    """
+    if not is_subscription_active(user):
+        return {"ok": False, "reason": "구독이 활성 상태가 아닙니다.", "remaining": {}, "limits": {}}
+
+    plan = user.subscription_plan or "free"
+    limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+    period_start = _get_period_start(user)
+    usage = _get_usage_for_period(db, user.id, period_start)
+
+    remaining_basic = max(0, limits["basic_pages"] - usage.basic_pages)
+    remaining_premium = max(0, limits["premium_pages"] - usage.premium_pages)
+    remaining_media = max(0, limits["media_seconds"] - usage.media_seconds)
+
+    if basic_pages > remaining_basic:
+        return {
+            "ok": False,
+            "reason": f"기본 모델 월간 한도 초과 (잔여: {remaining_basic}페이지)",
+            "remaining": {
+                "basic_pages": remaining_basic,
+                "premium_pages": remaining_premium,
+                "media_seconds": remaining_media,
+            },
+            "limits": limits,
+        }
+    if premium_pages > remaining_premium:
+        return {
+            "ok": False,
+            "reason": f"고급 모델 월간 한도 초과 (잔여: {remaining_premium}페이지)",
+            "remaining": {
+                "basic_pages": remaining_basic,
+                "premium_pages": remaining_premium,
+                "media_seconds": remaining_media,
+            },
+            "limits": limits,
+        }
+    if media_seconds > remaining_media:
+        return {
+            "ok": False,
+            "reason": f"미디어 월간 한도 초과 (잔여: {remaining_media // 60}분)",
+            "remaining": {
+                "basic_pages": remaining_basic,
+                "premium_pages": remaining_premium,
+                "media_seconds": remaining_media,
+            },
+            "limits": limits,
+        }
+
+    return {
+        "ok": True,
+        "reason": None,
+        "remaining": {
+            "basic_pages": remaining_basic,
+            "premium_pages": remaining_premium,
+            "media_seconds": remaining_media,
+        },
+        "limits": limits,
     }
 
 
@@ -119,7 +196,7 @@ def reserve_usage(
     plan = user.subscription_plan or "free"
     limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
     period_start = _get_period_start(user)
-    usage = _get_or_create_usage(db, user.id, period_start)
+    usage = _get_usage_for_period(db, user.id, period_start)
 
     if usage.basic_pages + basic_pages > limits["basic_pages"]:
         raise ValueError(
@@ -142,7 +219,7 @@ def reserve_usage(
 
     return {
         "plan": plan,
-        "period_start": period_start.isoformat() if period_start else None,
+        "period_start": period_start.isoformat(),
         "used": {
             "basic_pages": usage.basic_pages,
             "premium_pages": usage.premium_pages,
@@ -162,9 +239,13 @@ def release_usage(
     basic_pages: int = 0,
     premium_pages: int = 0,
     media_seconds: int = 0,
+    period_start: datetime | None = None,
 ) -> None:
-    """작업 실패/취소 등으로 예약된 사용량을 되돌린다."""
-    period_start = _get_period_start(user)
+    """작업 실패/취소 등으로 예약된 사용량을 되돌린다.
+
+    period_start를 지정하면 해당 구독 기간의 사용량만 환불한다.
+    미지정 시 현재 구독 기간 시작일을 사용한다."""
+    period_start = _normalize_period_start(period_start) if period_start else _get_period_start(user)
     usage = (
         db.query(SubscriptionUsage)
         .filter(

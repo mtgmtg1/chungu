@@ -93,12 +93,31 @@ def _set_status(db, job: Job, status: str) -> None:
 
 
 def _release_subscription_usage(db, job: Job) -> None:
-    """최종 실패한 작업이 차감한 구독 사용량을 되돌린다."""
+    """최종 실패한 작업이 차감한 구독 사용량을 되돌린다.
+    Job에 예약 기록이 있으면 해당 기록을 우선 사용하고, 없으면 extracted_files로부터 계산한다."""
     if not job.user_id:
         return
     db_user = db.get(User, job.user_id)
     if db_user is None:
         return
+
+    # 예약 기록이 있으면 정확한 기간과 단위로 환불
+    if job.reserved_period_start:
+        try:
+            subscription_service.release_usage(
+                db,
+                db_user,
+                basic_pages=job.reserved_basic_pages,
+                premium_pages=job.reserved_premium_pages,
+                media_seconds=job.reserved_media_seconds,
+                period_start=job.reserved_period_start,
+            )
+            logger.info(f"[run_job:{job.id}] 구독 사용량 환불 완료 (기록 기준)")
+        except Exception as e:
+            logger.warning(f"[run_job:{job.id}] 구독 사용량 환불 중 오류 (무시): {e}")
+        return
+
+    # fallback: extracted_files로부터 계산 (구식 job 지원)
     pages = job.total_pages or 0
     image_count = 0
     audio_seconds = 0

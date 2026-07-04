@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { FileUp, Loader2, LogIn, Coins, X } from "lucide-react";
+import { FileUp, Loader2, LogIn, X } from "lucide-react";
 import GridScan from "../components/GridScan.jsx";
 import { AnimatedRow } from "../components/AnimatedList.jsx";
 import { useAuth } from "../AuthContext.jsx";
@@ -200,8 +200,7 @@ export default function UploadPage() {
                 <Link
                 to="/plans"
                 className="text-body-md flex items-center gap-1 text-primary hover:underline font-medium" data-oid="j8k1rq5">
-
-                  <Coins size={18} data-oid="w8q2nfw" /> {profile?.subscription_plan ?? "Free"}{" "}
+                  {profile?.subscription?.plan?.toUpperCase() ?? "Free"}{" "}
                   {t("page:upload.plan")}
                 </Link>
               </> :
@@ -402,12 +401,6 @@ export default function UploadPage() {
           </div>
         </div>
       </main>
-
-      <div className="w-full bg-white/60 border-t border-outline-variant py-4 px-gutter text-center" data-oid="upload-price-summary">
-        <Link to="/price" className="text-sm text-on-surface-variant hover:text-primary transition-colors font-medium" data-oid="upload-price-summary-link">
-          {t("page:upload.priceSummary")}
-        </Link>
-      </div>
 
       <GlobalFooter />
     </div>);

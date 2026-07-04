@@ -216,7 +216,7 @@ npm run start        # dev server at localhost:3000
   - 현재 페이지 ±1 프리페치로 인접 페이지 렌더링 지연 최소화.
   - 50페이지 이상 시 자동으로 썸네일 패널 활성화, `IntersectionObserver` 기반 가상화 썸네일 렌더링.
   - 썸네일 클릭 시 해당 페이지로 이동, 현재 페이지 썸네일이 중앙에 보이도록 자동 스크롤.
-  - 50페이지 이상 자동 썸네일 패널에서 **서버 측 생성 PNG 썸네일**을 사용한다: `api.getThumbnails()` → `/api/jobs/{id}/preview/thumbnails` → `pdf_thumbnail_service.py` (PyMuPDF)가 `pdf-thumbnails/{content_hash}/{page}.png`를 Storage에 생성/캐싱. 프론트는 `<img loading="lazy">`로 표시하므로 PDF.js가 썸네일마다 canvas를 그리는 병목이 사라진다. 썸네일 생성 실패 시 PDF.js 캔버스 렌더링으로 폴백한다.
+  - 50페이지 이상 자동 썸네일 패널은 **서버 측 생성 PNG 썸네일**을 사용한다. 자세한 내용은 아래 "PDF Thumbnail Caching (Server-Side)" 섹션 참조.
   - `React.memo` 적용으로 불필요한 리렌더링 방지.
   - **주의**: `getPdfPage`는 `measureFitScale`보다 먼저 선언해야 한다. `measureFitScale`의 `useCallback` 의존성 배열에서 아직 초기화되지 않은 `getPdfPage`를 참조하면 `ReferenceError: Cannot access '...' before initialization`(TDZ)가 발생하여 PDF/Docx/HWP 미리보기가 필요한 작업 결과 페이지 전체가 blank 처리될 수 있다.
 - **MarkdownPreview** (`app/frontend/src/components/MarkdownPreview.jsx`):
@@ -252,6 +252,16 @@ npm run start        # dev server at localhost:3000
   - `.markdown-page-section`: 페이지 섹션 구분선 스타일.
   - `.page-marker`: Tiptap 페이지 마커 div (`pointer-events: none`).
 - 페이지 마커 형식: `<!-- 페이지 N -->` (백엔드 `converter.build_layout_markdown_string()`에서 생성).
+
+## PDF Thumbnail Caching (Server-Side)
+
+- 100페이지 이상 대용량 PDF의 원본 프리뷰 성능을 개선하기 위해 썸네일을 백엔드에서 미리 생성한다.
+- **백엔드 서비스**: `app/backend/core/pdf_thumbnail_service.py` — PyMuPDF(`fitz`)로 PDF 페이지를 150px 폭 PNG로 렌더링. 썸네일은 `pdfs` 버킷의 `pdf-thumbnails/{content_hash}/{page}.png`에 저장되며, 동일 내용의 PDF는 캐시를 재사용한다.
+- **API**: `GET /api/jobs/{job_id}/preview/thumbnails` — `source_file_index`로 `extracted_files`에서 원본 파일을 선택하고, `start_page`/`end_page` 범위의 썸네일 URL을 반환한다. 단일 요청은 최대 100개로 제한한다. PDF뿐 아니라 DOCX/HWP의 LibreOffice 미리보기 PDF에도 적용된다.
+- **프론트**: `app/frontend/src/components/SourcePanel.jsx`의 `useThumbnails` hook이 첫 100개를 먼저 로드하고, `ThumbnailPanel`의 sentinel 기반 IntersectionObserver로 추가 100개씩 로드한다. 썸네일은 `<img loading="lazy" decoding="async">`로 표시되어 브라우저가 필요한 만큼만 디코딩한다.
+- **폴백**: `source_files`가 없거나 썸네일 API가 실패하면 `PdfViewer`는 기존 PDF.js 캔버스 렌더링으로 돌아간다.
+- **Storage 정리**: `pdf-thumbnails/` 아래 썸네일은 Storage cleanup 정책(48시간)에 따라 삭제될 수 있다. 삭제 후 재접근 시 자동 재생성된다.
+- Key files: `app/backend/core/pdf_thumbnail_service.py`, `app/backend/api/jobs.py`, `app/frontend/src/components/SourcePanel.jsx`, `app/frontend/src/components/PdfViewer.jsx`, `app/frontend/src/api.js`.
 
 ## Deployment
 

@@ -59,13 +59,6 @@ export const api = {
     return request(`/api/jobs/${id}/preview?${params.toString()}`)
   },
   previewJobPages: (id) => request(`/api/jobs/${id}/preview/pages`),
-  getThumbnails: (id, sourceFileIndex = 0, startPage = 1, endPage = null) => {
-    const params = new URLSearchParams()
-    params.set('source_file_index', String(sourceFileIndex))
-    params.set('start_page', String(startPage))
-    if (endPage) params.set('end_page', String(endPage))
-    return request(`/api/jobs/${id}/preview/thumbnails?${params.toString()}`)
-  },
   saveResultMarkdown: (id, markdown) =>
     request(`/api/jobs/${id}/result`, { method: 'PUT', body: JSON.stringify({ markdown }) }),
   saveResultFileMarkdowns: (id, fileMarkdowns) =>

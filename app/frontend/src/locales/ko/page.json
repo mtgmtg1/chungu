@@ -207,7 +207,7 @@
     "pageProgress": "{{done}} / {{total}} 페이지 ({{pct}}%)",
     "fileProgress": "{{done}} / {{total}} 파일 ({{pct}}%)",
     "originalImage": "원본 이미지 {{number}}",
-    "thumbnails": "페이지 목록",
+    "page": "페이지",
     "leaveNotice": "이 페이지를 나가셔도 됩니다. 완료 시 완료 이메일을 보내드립니다."
   },
   "poems": [

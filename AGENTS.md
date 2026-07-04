@@ -210,15 +210,10 @@ npm run start        # dev server at localhost:3000
 ## PDF Viewer & Markdown Editor Optimization
 
 - **PdfViewer** (`app/frontend/src/components/PdfViewer.jsx`):
-  - `disableAutoFetch` + `disableStream`으로 전체 PDF 미리 다운로드 방지 (partial loading).
-  - `pdf.getPage()` 결과를 `Map`에 캐싱하여 동일 페이지 재렌더링 시 재요청 방지.
-  - `ResizeObserver`를 100ms 디바운스하여 컨테이너 크기 변화 시에만 `fitScale` 재계산.
-  - 현재 페이지 ±1 프리페치로 인접 페이지 렌더링 지연 최소화.
-  - 50페이지 이상 시 자동으로 썸네일 패널 활성화, `IntersectionObserver` 기반 가상화 썸네일 렌더링.
-  - 썸네일 클릭 시 해당 페이지로 이동, 현재 페이지 썸네일이 중앙에 보이도록 자동 스크롤.
-  - 50페이지 이상 자동 썸네일 패널은 **서버 측 생성 PNG 썸네일**을 사용한다. 자세한 내용은 아래 "PDF Thumbnail Caching (Server-Side)" 섹션 참조.
-  - `React.memo` 적용으로 불필요한 리렌더링 방지.
-  - **주의**: `getPdfPage`는 `measureFitScale`보다 먼저 선언해야 한다. `measureFitScale`의 `useCallback` 의존성 배열에서 아직 초기화되지 않은 `getPdfPage`를 참조하면 `ReferenceError: Cannot access '...' before initialization`(TDZ)가 발생하여 PDF/Docx/HWP 미리보기가 필요한 작업 결과 페이지 전체가 blank 처리될 수 있다.
+  - 브라우저 네이티브 PDF 뷰어를 `<iframe src="{pdf_url}#page={page}" />`로 표시한다. Chrome PDFium, Safari PDFKit 등 브라우저의 네이티브 엔진이 렌더링하므로 100페이지 이상 대용량 PDF도 빠르게 표시된다.
+  - 툴바에서 이전/다음 페이지, 페이지 번호 직접 입력으로 이동할 수 있다. 입력한 페이지 번호는 `#page` URL 프래그먼트로 iframe에 전달된다.
+  - Markdown 미리보기와의 동기화는 **툴바로 페이지 이동할 때만** `onPageChange` 콜백을 통해 이루어진다. iframe 내부에서 사용자가 스크롤하거나 네이티브 뷰어의 페이지 컨트롤을 사용하면 부모에게 이벤트가 전달되지 않아 양방향 동기화는 불가능하다.
+  - PDF.js, 캔버스 렌더링, 썸네일 패널은 사용하지 않는다.
 - **MarkdownPreview** (`app/frontend/src/components/MarkdownPreview.jsx`):
   - 읽기 전용 마크다운 뷰어. `marked.parse`로 HTML 렌더링 후 `dangerouslySetInnerHTML` 사용 (백엔드 신뢰 출력, DOMPurify 미사용).
   - `<!-- 페이지 N -->` 마커 기준으로 마크다운을 페이지 섹션으로 분할.
@@ -243,7 +238,7 @@ npm run start        # dev server at localhost:3000
   - `loadPreview()`에서 `preview.last_page > PAGE_THRESHOLD` 폴백 체크: DB의 `total_pages`가 잘못되어도 마크다운의 실제 페이지 수로 페이징 모드 전환.
   - `saveMarkdown()`는 `pages.length > 0`으로 페이징 모드 판단 (DB 값 의존 제거).
   - `MarkdownViewToolbar`로 보기/편집 토글 UI 제공.
-  - i18n 키: `thumbnails`, `editMode`, `viewMode`, `edit`, `view` (ko/en/ja).
+  - i18n 키: `editMode`, `viewMode`, `edit`, `view` (ko/en/ja).
   - **방어 로직**: 다중 파일 작업에서 `source_files[i].result_markdown`이 비어 있을 경우 전체 결합 마크다운로 폴백하여 빈 화면 방지.
 - **total_pages 보정** (`app/backend/workers/tasks.py`):
   - 워커 처리 후 `total_pages`를 `len(page_tables)`로 덮어쓰지 않고 `max(job.total_pages, len(page_tables))`로 업로드 시점 페이지 수 보존. 빈 페이지로 인해 `total_pages`가 감소하는 것 방지.
@@ -252,16 +247,6 @@ npm run start        # dev server at localhost:3000
   - `.markdown-page-section`: 페이지 섹션 구분선 스타일.
   - `.page-marker`: Tiptap 페이지 마커 div (`pointer-events: none`).
 - 페이지 마커 형식: `<!-- 페이지 N -->` (백엔드 `converter.build_layout_markdown_string()`에서 생성).
-
-## PDF Thumbnail Caching (Server-Side)
-
-- 100페이지 이상 대용량 PDF의 원본 프리뷰 성능을 개선하기 위해 썸네일을 백엔드에서 미리 생성한다.
-- **백엔드 서비스**: `app/backend/core/pdf_thumbnail_service.py` — PyMuPDF(`fitz`)로 PDF 페이지를 150px 폭 PNG로 렌더링. 썸네일은 `pdfs` 버킷의 `pdf-thumbnails/{content_hash}/{page}.png`에 저장되며, 동일 내용의 PDF는 캐시를 재사용한다.
-- **API**: `GET /api/jobs/{job_id}/preview/thumbnails` — `source_file_index`로 `extracted_files`에서 원본 파일을 선택하고, `start_page`/`end_page` 범위의 썸네일 URL을 반환한다. 단일 요청은 최대 100개로 제한한다. PDF뿐 아니라 DOCX/HWP의 LibreOffice 미리보기 PDF에도 적용된다.
-- **프론트**: `app/frontend/src/components/SourcePanel.jsx`의 `useThumbnails` hook이 첫 100개를 먼저 로드하고, `ThumbnailPanel`의 sentinel 기반 IntersectionObserver로 추가 100개씩 로드한다. 썸네일은 `<img loading="lazy" decoding="async">`로 표시되어 브라우저가 필요한 만큼만 디코딩한다.
-- **폴백**: `source_files`가 없거나 썸네일 API가 실패하면 `PdfViewer`는 기존 PDF.js 캔버스 렌더링으로 돌아간다.
-- **Storage 정리**: `pdf-thumbnails/` 아래 썸네일은 Storage cleanup 정책(48시간)에 따라 삭제될 수 있다. 삭제 후 재접근 시 자동 재생성된다.
-- Key files: `app/backend/core/pdf_thumbnail_service.py`, `app/backend/api/jobs.py`, `app/frontend/src/components/SourcePanel.jsx`, `app/frontend/src/components/PdfViewer.jsx`, `app/frontend/src/api.js`.
 
 ## Deployment
 
@@ -510,14 +495,14 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
   - `fonts-noto-cjk`, `fonts-nanum`, `fonts-unfonts-core`, `fonts-noto-color-emoji`
   - `libreoffice-l10n-ko`, `libreoffice-help-ko`, `locales` with `LANG=ko_KR.UTF-8`/`LC_ALL=ko_KR.UTF-8`
 - For `.hwp` files, the backend first tries `pyhwp`'s `hwp5odt` to produce an ODT and then converts it to PDF with LibreOffice. If `hwp5odt` is unavailable or fails, it falls back to direct LibreOffice conversion.
-- Key files: `app/backend/core/pdf_preview_converter.py`, `app/backend/core/pdf_thumbnail_service.py`, `app/Dockerfile.backend`, `app/backend/api/jobs.py`, `app/frontend/src/components/SourcePanel.jsx`, `app/frontend/src/components/PdfViewer.jsx`.
+- Key files: `app/backend/core/pdf_preview_converter.py`, `app/Dockerfile.backend`, `app/backend/api/jobs.py`, `app/frontend/src/components/SourcePanel.jsx`, `app/frontend/src/components/PdfViewer.jsx`.
 
 ## Result Preview & Multi-file Uploads
 
 - Uploading multiple files creates one job; each file's parsing result is stored separately in `extracted_files[].result_markdown`.
 - The combined markdown uses file markers (`<!-- 파일 N -->`) via `converter.build_combined_file_markdowns()`.
-- `/api/jobs/{id}/preview` returns `source_files` (name, type, url, storage_path, page_num, result_markdown) for each original file. `storage_path`는 `SourcePanel`에서 `/api/jobs/{id}/preview/thumbnails`를 호출해 서버 측 썸네일을 생성하는 데 사용된다.
-- PDF preview uses PDF.js (`PdfViewer`) to render one page at a time on a canvas, auto-fitted to the container. The toolbar with page navigation and zoom controls is at the top of the preview panel. The preview panel scrolls independently and the page is aligned to the top.
+- `/api/jobs/{id}/preview` returns `source_files` (name, type, url, storage_path, page_num, result_markdown) for each original file. PDF 원본은 signed URL로 브라우저 네이티브 뷰어에 표시된다.
+- PDF preview uses an iframe with the browser's native PDF viewer (`PdfViewer`). The toolbar with page navigation is at the top of the preview panel. The preview panel scrolls independently and the page is aligned to the top.
 - `SourcePanel` renders a single source when only one exists, and a file list + selected preview when multiple sources exist.
 - `SourcePanel` supports controlled selection via `selectedFileIndex` / `onFileSelect` props.
 - `JobResultPage` manages `fileMarkdowns` state: when multiple files exist, `SimpleEditor` shows only the selected file's markdown.

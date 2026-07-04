@@ -207,7 +207,7 @@
     "pageProgress": "{{done}} / {{total}} pages ({{pct}}%)",
     "fileProgress": "{{done}} / {{total}} files ({{pct}}%)",
     "originalImage": "Original Image {{number}}",
-    "thumbnails": "Page List",
+    "page": "Page",
     "leaveNotice": "You can leave this page. We'll send you an email when complete."
   },
   "poems": [

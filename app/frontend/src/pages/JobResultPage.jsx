@@ -704,7 +704,6 @@ export default function JobResultPage() {
             data-oid="8gj26he">
 
                 <SourcePanel
-                  jobId={jobId}
                   sourceFiles={sourceFiles}
                   sourceUrl={sourceUrl}
                   sourceType={sourceType}

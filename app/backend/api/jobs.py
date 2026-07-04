@@ -872,7 +872,7 @@ def _source_files(job: Job) -> list[dict]:
                 "name": info.get("path", info.get("storage_path", "")),
                 "type": ftype,
                 "url": url,
-                "storage_path": storage_path,
+                "storage_path": info.get("storage_path", ""),
                 "page_num": idx + 1,
                 "result_markdown": info.get("result_markdown", ""),
             }

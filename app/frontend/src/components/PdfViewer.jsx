@@ -101,6 +101,23 @@ function PdfViewer({ url, page = 1, onPageChange }) {
   }, [url, t]);
 
   /**
+   * [Flow: Step 1 (페이지 번호로 캐시 조회) -> Step 2 (미스 시 pdf.getPage 호출) -> Step 3 (캐시 저장) -> Step 4 (PDFPageProxy 반환)]
+   * @param {number} pageNum
+   * @returns {Promise<PDFPageProxy>}
+   */
+  const getPdfPage = useCallback(async (pageNum) => {
+    const cache = pageCacheRef.current;
+    if (cache.has(pageNum)) {
+      return cache.get(pageNum);
+    }
+    const pdf = pdfRef.current;
+    if (!pdf) throw new Error("PDF not loaded");
+    const page = await pdf.getPage(pageNum);
+    cache.set(pageNum, page);
+    return page;
+  }, []);
+
+  /**
    * [Flow: Step 1 (컨테이너 크기 측정) -> Step 2 (이전 크기와 비교) -> Step 3 (변화 있을 때만 fitScale 계산) -> Step 4 (페이지 캐시 활용)]
    */
   const measureFitScale = useCallback(async () => {
@@ -134,23 +151,6 @@ function PdfViewer({ url, page = 1, onPageChange }) {
       // 측정 실패 시 무시
     }
   }, [currentPage, getPdfPage]);
-
-  /**
-   * [Flow: Step 1 (페이지 번호로 캐시 조회) -> Step 2 (미스 시 pdf.getPage 호출) -> Step 3 (캐시 저장) -> Step 4 (PDFPageProxy 반환)]
-   * @param {number} pageNum
-   * @returns {Promise<PDFPageProxy>}
-   */
-  const getPdfPage = useCallback(async (pageNum) => {
-    const cache = pageCacheRef.current;
-    if (cache.has(pageNum)) {
-      return cache.get(pageNum);
-    }
-    const pdf = pdfRef.current;
-    if (!pdf) throw new Error("PDF not loaded");
-    const page = await pdf.getPage(pageNum);
-    cache.set(pageNum, page);
-    return page;
-  }, []);
 
   /**
    * [Flow: Step 1 (현재 페이지 ±1 페이지를 비동기로 요청) -> Step 2 (캐시에 저장) -> Step 3 (실패 시 무시)]

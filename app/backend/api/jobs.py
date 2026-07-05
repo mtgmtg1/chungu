@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from .. import settings_store
 from ..auth.supabase_auth import CurrentUser, get_current_admin, get_current_user
-from ..core import archive_handler, cache, converter, docling_client, hwp_converter, media_loader, office_converter, pdf_preview_converter, subscription_service, supabase_client
+from ..core import archive_handler, cache, converter, docling_client, hwp_converter, media_loader, office_converter, pdf_preview_converter, points_service, subscription_service, supabase_client
 
 
 logger = logging.getLogger(__name__)

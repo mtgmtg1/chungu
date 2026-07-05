@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-# [Flow: Step 1 (Supabase에서 원본 다운로드) -> Step 2 (LibreOffice로 PDF 변환) -> Step 3 (PDF를 Supabase에 업로드) -> Step 4 (서명된 URL 반환)]
+# [Flow: Step 1 (Supabase에서 원본 다운로드) -> Step 2 (LibreOffice로 PDF 변환) -> Step 3 (선형화 + 필요시 저화질 PDF 생성) -> Step 4 (Storage 업로드) -> Step 5 (서명된 URL 반환)]
 import logging
 import os
 import subprocess
 import tempfile
 from pathlib import Path
+
+import fitz
 
 from . import supabase_client
 
@@ -13,6 +15,10 @@ logger = logging.getLogger(__name__)
 
 _PREVIEW_PDF_BUCKET = "pdfs"
 _PREVIEW_PDF_PREFIX = "preview_pdfs"
+_LOWRES_PREVIEW_PDF_PREFIX = "preview_pdfs_lowres"
+_LOWRES_THRESHOLD_BYTES = 10 * 1024 * 1024  # 10MB
+_LOWRES_THRESHOLD_PAGES = 50
+_LOWRES_DPI = 100
 
 
 def _libreoffice_env() -> dict[str, str]:
@@ -92,10 +98,74 @@ def _convert_to_pdf(input_path: Path, output_dir: Path) -> Path:
     return _run_libreoffice(input_path, output_dir)
 
 
+def _linearize_pdf(input_path: Path, output_path: Path) -> None:
+    """PDF를 Fast Web View(linearized) 형식으로 재저장하여 첫 페이지 바이트만 받아도 렌더링 가능하게 한다."""
+    doc = fitz.open(str(input_path))
+    try:
+        doc.save(str(output_path), linear=True, garbage=4, deflate=True)
+    finally:
+        doc.close()
+
+
+def _create_lowres_preview_pdf(input_path: Path, output_path: Path, dpi: int = _LOWRES_DPI) -> None:
+    """각 페이지를 저해상도 이미지로 렌더링하여 용량이 작은 미리보기 PDF를 생성한다."""
+    src = fitz.open(str(input_path))
+    dst = fitz.open()
+    try:
+        for page in src:
+            rect = page.rect
+            zoom = dpi / 72
+            mat = fitz.Matrix(zoom, zoom)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+            new_page = dst.new_page(width=rect.width, height=rect.height)
+            new_page.insert_image(rect, pixmap=pix)
+        dst.save(str(output_path), linear=True, garbage=4, deflate=True)
+    finally:
+        src.close()
+        dst.close()
+
+
+def _needs_lowres_pdf(pdf_path: Path) -> bool:
+    """PDF 파일 크기와 페이지 수를 기준으로 저화질 미리보기 생성이 필요한지 판단한다."""
+    size = pdf_path.stat().st_size
+    if size >= _LOWRES_THRESHOLD_BYTES:
+        return True
+    try:
+        doc = fitz.open(str(pdf_path))
+        try:
+            return doc.page_count >= _LOWRES_THRESHOLD_PAGES
+        finally:
+            doc.close()
+    except Exception:
+        return False
+
+
 def _preview_pdf_path(original_path: str) -> str:
     """원본 storage_path에 대응하는 미리보기 PDF storage_path를 생성한다."""
     safe = original_path.replace("/", "__")
     return f"{_PREVIEW_PDF_PREFIX}/{safe.rsplit('.', 1)[0]}.pdf"
+
+
+def _lowres_preview_pdf_path(original_path: str) -> str:
+    """원본 storage_path에 대응하는 저화질 미리보기 PDF storage_path를 생성한다."""
+    safe = original_path.replace("/", "__")
+    return f"{_LOWRES_PREVIEW_PDF_PREFIX}/{safe.rsplit('.', 1)[0]}.pdf"
+
+
+def _get_existing_preview_url(storage_path: str, expires_in: int) -> str | None:
+    """Storage에 이미 존재하는 미리보기 PDF에 대한 서명 URL을 생성한다."""
+    if not storage_path:
+        return None
+    try:
+        prefix = str(Path(storage_path).parent)
+        client = supabase_client.get_service_client()
+        existing = client.storage.from_(_PREVIEW_PDF_BUCKET).list(prefix)
+        names = {item["name"] for item in (existing or [])}
+        if Path(storage_path).name in names:
+            return supabase_client.get_signed_download_url(storage_path, bucket=_PREVIEW_PDF_BUCKET, expires_in=expires_in)
+    except Exception as e:
+        logger.debug(f"[preview-pdf] 기존 PDF 확인 실패 ({storage_path}): {e}")
+    return None
 
 
 def get_preview_pdf_url(original_storage_path: str, expires_in: int = 3600) -> str | None:
@@ -104,16 +174,11 @@ def get_preview_pdf_url(original_storage_path: str, expires_in: int = 3600) -> s
         return None
 
     preview_path = _preview_pdf_path(original_storage_path)
-    client = supabase_client.get_service_client()
+    existing = _get_existing_preview_url(preview_path, expires_in)
+    if existing:
+        return existing
 
-    # 이미 변환된 PDF가 있으면 서명 URL 생성
-    try:
-        existing = client.storage.from_(_PREVIEW_PDF_BUCKET).list(_PREVIEW_PDF_PREFIX)
-        names = {item["name"] for item in (existing or [])}
-        if Path(preview_path).name in names:
-            return supabase_client.get_signed_download_url(preview_path, bucket=_PREVIEW_PDF_BUCKET, expires_in=expires_in)
-    except Exception as e:
-        logger.debug(f"[preview-pdf] 기존 PDF 확인 실패: {e}")
+    client = supabase_client.get_service_client()
 
     # 원본 파일 다운로드
     try:
@@ -130,9 +195,14 @@ def get_preview_pdf_url(original_storage_path: str, expires_in: int = 3600) -> s
             input_path = tmpdir_path / f"input{ext}"
             input_path.write_bytes(original_bytes)
             pdf_path = _convert_to_pdf(input_path, tmpdir_path)
+
+            # 선형화 적용
+            linearized_path = tmpdir_path / "linearized.pdf"
+            _linearize_pdf(pdf_path, linearized_path)
+
             client.storage.from_(_PREVIEW_PDF_BUCKET).upload(
                 preview_path,
-                pdf_path.read_bytes(),
+                linearized_path.read_bytes(),
                 {"content-type": "application/pdf", "upsert": "true"},
             )
     except Exception as e:
@@ -140,3 +210,69 @@ def get_preview_pdf_url(original_storage_path: str, expires_in: int = 3600) -> s
         return None
 
     return supabase_client.get_signed_download_url(preview_path, bucket=_PREVIEW_PDF_BUCKET, expires_in=expires_in)
+
+
+def get_lowres_preview_pdf_url(original_storage_path: str, expires_in: int = 3600) -> str | None:
+    """대용량 원본 파일에 대한 저화질 미리보기 PDF URL을 반환한다."""
+    if not original_storage_path:
+        return None
+
+    lowres_path = _lowres_preview_pdf_path(original_storage_path)
+    client = supabase_client.get_service_client()
+
+    # 이미 저화질 PDF가 있으면 재사용
+    try:
+        existing_lowres = client.storage.from_(_PREVIEW_PDF_BUCKET).list(_LOWRES_PREVIEW_PDF_PREFIX)
+        names = {item["name"] for item in (existing_lowres or [])}
+        if Path(lowres_path).name in names:
+            return supabase_client.get_signed_download_url(lowres_path, bucket=_PREVIEW_PDF_BUCKET, expires_in=expires_in)
+    except Exception as e:
+        logger.debug(f"[preview-pdf-lowres] 기존 저화질 PDF 확인 실패: {e}")
+
+    is_original_pdf = Path(original_storage_path).suffix.lower() == ".pdf"
+    highres_path = original_storage_path if is_original_pdf else _preview_pdf_path(original_storage_path)
+
+    # 원본이 PDF가 아니면 고화질 미리보기 PDF가 있는지 확인하고 없으면 생성
+    if not is_original_pdf:
+        try:
+            existing_preview = client.storage.from_(_PREVIEW_PDF_BUCKET).list(_PREVIEW_PDF_PREFIX)
+            names = {item["name"] for item in (existing_preview or [])}
+            if Path(highres_path).name not in names:
+                return get_preview_pdf_url(original_storage_path, expires_in=expires_in)
+        except Exception as e:
+            logger.debug(f"[preview-pdf-lowres] 기존 PDF 확인 실패: {e}")
+            return None
+
+    # 고화질 원본/미리보기 PDF 다운로드
+    try:
+        highres_bytes = client.storage.from_(_PREVIEW_PDF_BUCKET).download(highres_path)
+    except Exception as e:
+        logger.warning(f"[preview-pdf-lowres] 고화질 PDF 다운로드 실패 ({highres_path}): {e}")
+        return None
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            highres_local = tmpdir_path / "highres.pdf"
+            highres_local.write_bytes(highres_bytes)
+
+            if not _needs_lowres_pdf(highres_local):
+                # 저화질이 필요 없으면 고화질 URL 반환
+                return supabase_client.get_signed_download_url(highres_path, bucket=_PREVIEW_PDF_BUCKET, expires_in=expires_in)
+
+            lowres_local = tmpdir_path / "lowres.pdf"
+            _create_lowres_preview_pdf(highres_local, lowres_local)
+            client.storage.from_(_PREVIEW_PDF_BUCKET).upload(
+                lowres_path,
+                lowres_local.read_bytes(),
+                {"content-type": "application/pdf", "upsert": "true"},
+            )
+    except Exception as e:
+        logger.warning(f"[preview-pdf-lowres] 저화질 PDF 생성 실패 ({original_storage_path}): {e}")
+        # 실패 시 고화질 URL 폴백
+        try:
+            return supabase_client.get_signed_download_url(highres_path, bucket=_PREVIEW_PDF_BUCKET, expires_in=expires_in)
+        except Exception:
+            return None
+
+    return supabase_client.get_signed_download_url(lowres_path, bucket=_PREVIEW_PDF_BUCKET, expires_in=expires_in)

@@ -12,12 +12,17 @@ from unidecode import unidecode
 from ..config import settings
 
 
-@lru_cache
-def get_service_client() -> Client:
-    """서비스 롤 키로 Supabase에 접근 (백엔드 전용)."""
+def create_fresh_service_client() -> Client:
+    """스레드 안전을 위해 캐싱되지 않은 새로운 서비스 롤 클라이언트를 생성한다."""
     if not settings.supabase_url or not settings.supabase_service_key:
         raise RuntimeError("Supabase URL/Service Key is not configured")
     return create_client(settings.supabase_url, settings.supabase_service_key)
+
+
+@lru_cache
+def get_service_client() -> Client:
+    """서비스 롤 키로 Supabase에 접근 (백엔드 전용)."""
+    return create_fresh_service_client()
 
 
 @lru_cache
@@ -38,126 +43,135 @@ def _sanitize_storage_filename(filename: str) -> str:
     # 2. 공백은 언더스코어로, 위험 문자는 제거
     safe = re.sub(r"[^\w\-. ]", "", ascii_name).strip()
     safe = re.sub(r"\s+", "_", safe)
-    # 3. 확장자가 제거되었으면 복원
-    if "." not in safe:
-        ext = Path(filename).suffix
-        if ext:
-            safe = safe + ext
-    return safe or "document"
+    # 3. 연속된 점/언더스코어 정리, 소문자화
+    safe = re.sub(r"[._]{2,}", "_", safe).lower()
+    # 4. 빈 이름 방지
+    if not safe:
+        safe = "file"
+    # 5. 확장자 보존 (없으면 .bin)
+    ext = Path(filename).suffix.lower() or ".bin"
+    if not safe.endswith(ext):
+        safe = safe + ext
+    return safe
 
 
-def upload_pdf(job_id: str, data: bytes, filename: str) -> str:
-    """pdfs 버킷에 PDF를 업로드하고 경로를 반환합니다."""
+def _safe_job_path(filename: str, job_id: str | None = None) -> str:
+    """업로드 파일의 안전한 Storage 경로를 생성한다."""
+    safe = _sanitize_storage_filename(filename)
+    if job_id:
+        return f"{job_id}/{safe}"
+    return safe
+
+
+def upload_input(file: BytesIO, filename: str, job_id: str) -> str:
+    """업로드된 입력 파일을 pdfs 버킷에 저장하고 storage_path를 반환한다."""
     client = get_service_client()
-    safe_filename = _sanitize_storage_filename(filename)
-    path = f"{job_id}/{safe_filename}"
-    client.storage.from_("pdfs").upload(path, data, {"content-type": "application/pdf", "upsert": "true"})
-    return path
-
-
-def upload_input(job_id: str, data: bytes, filename: str, content_type: str = "application/octet-stream") -> str:
-    """pdfs 버킷에 압축/미디어 입력 파일을 업로드하고 경로를 반환합니다."""
-    client = get_service_client()
-    safe_filename = _sanitize_storage_filename(filename)
-    path = f"{job_id}/{safe_filename}"
-    client.storage.from_("pdfs").upload(path, data, {"content-type": content_type, "upsert": "true"})
-    return path
-
-
-def upload_result(
-    job_id: str,
-    csv_path: Path | None = None,
-    md_path: Path | None = None,
-    xlsx_path: Path | None = None,
-    docx_path: Path | None = None,
-    pptx_path: Path | None = None,
-    edited_md_path: Path | None = None,
-) -> dict:
-    """results 버킷에 CSV/MD/XLSX/DOCX/PPTX/편집된 MD를 업로드하고 경로를 반환합니다."""
-    client = get_service_client()
-    out = {}
-    uploads = [
-        (csv_path, f"{job_id}/result.csv", "text/csv"),
-        (md_path, f"{job_id}/result.md", "text/markdown"),
-        (xlsx_path, f"{job_id}/result.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
-        (docx_path, f"{job_id}/result.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
-        (pptx_path, f"{job_id}/result.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
-        (edited_md_path, f"{job_id}/result_edited.md", "text/markdown"),
-    ]
-    for path, storage_path, content_type in uploads:
-        if path and path.exists():
-            client.storage.from_("results").upload(storage_path, path.read_bytes(), {"content-type": content_type, "upsert": "true"})
-            key = storage_path.split("/")[-1].split(".")[-1]
-            if key == "md" and storage_path.endswith("result_edited.md"):
-                key = "edited_md"
-            out[key] = storage_path
-    return out
-
-
-def upload_office_result(job_id: str, path: Path, ext: str) -> str:
-    """단일 office 파일을 results 버킷에 업로드하고 경로를 반환합니다."""
-    client = get_service_client()
-    content_type_map = {
-        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    }
-    storage_path = f"{job_id}/result.{ext}"
-    client.storage.from_("results").upload(storage_path, path.read_bytes(), {"content-type": content_type_map.get(ext, "application/octet-stream"), "upsert": "true"})
-    return storage_path
-
-
-def upload_edited_xlsx(job_id: str, data: bytes, filename: str = "result_edited.xlsx") -> str:
-    """사용자가 편집한 xlsx 파일을 results 버킷에 업로드하고 경로를 반환합니다."""
-    client = get_service_client()
-    safe_filename = _sanitize_storage_filename(filename)
-    storage_path = f"{job_id}/{safe_filename}"
-    client.storage.from_("results").upload(
+    storage_path = _safe_job_path(filename, job_id)
+    content = file.read()
+    client.storage.from_("pdfs").upload(
         storage_path,
-        data,
-        {"content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "upsert": "true"}
+        content,
+        {"content-type": "application/octet-stream", "upsert": "true"},
     )
     return storage_path
 
 
-def download_pdf(storage_path: str) -> BytesIO:
-    """pdfs 버킷에서 PDF를 다운로드합니다."""
+def upload_result(
+    job_id: str,
+    md_path: Path | None = None,
+    edited_md_path: Path | None = None,
+    csv_path: Path | None = None,
+    xlsx_basic_path: Path | None = None,
+    xlsx_advanced_path: Path | None = None,
+    docx_path: Path | None = None,
+    pptx_path: Path | None = None,
+) -> dict[str, str]:
+    """결과 파일들을 results 버킷에 업로드하고 storage_path 맵을 반환한다."""
     client = get_service_client()
-    data = client.storage.from_("pdfs").download(storage_path)
-    return BytesIO(data)
+    paths: dict[str, str] = {}
+    base = f"{job_id}/"
+
+    def _upload(path: Path | None, key: str, ext: str) -> None:
+        if not path:
+            return
+        storage_path = f"{base}{key}.{ext}"
+        client.storage.from_("results").upload(
+            storage_path,
+            path.read_bytes(),
+            {"content-type": "application/octet-stream", "upsert": "true"},
+        )
+        paths[key] = storage_path
+
+    _upload(md_path, "md", "md")
+    _upload(edited_md_path, "edited_md", "md")
+    _upload(csv_path, "csv", "csv")
+    _upload(xlsx_basic_path, "xlsx_basic", "xlsx")
+    _upload(xlsx_advanced_path, "xlsx_advanced", "xlsx")
+    _upload(docx_path, "docx", "docx")
+    _upload(pptx_path, "pptx", "pptx")
+    return paths
 
 
-def upload_image(job_id: str, local_path: Path, filename: str) -> str:
-    """개별 이미지 파일을 pdfs 버킷에 업로드하고 경로를 반환합니다."""
-    client = get_service_client()
-    ext = Path(filename).suffix.lower()
-    safe_stem = re.sub(r"[^\w\-.]", "", unidecode(Path(filename).stem)) or "image"
-    unique = hashlib.md5(filename.encode("utf-8")).hexdigest()[:8]
-    storage_path = f"{job_id}/images/{safe_stem}_{unique}{ext}"
+def _get_content_type(filename: str) -> str:
+    """파일 확장자에 따른 Content-Type을 반환한다."""
     content_type_map = {
-        ".png": "image/png",
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
+        ".png": "image/png",
         ".gif": "image/gif",
-        ".bmp": "image/bmp",
         ".webp": "image/webp",
+        ".bmp": "image/bmp",
         ".tiff": "image/tiff",
         ".tif": "image/tiff",
     }
     ext = Path(filename).suffix.lower()
-    content_type = content_type_map.get(ext, "image/jpeg")
-    client.storage.from_("pdfs").upload(storage_path, local_path.read_bytes(), {"content-type": content_type, "upsert": "true"})
+    return content_type_map.get(ext, "image/jpeg")
+
+
+def upload_image_result(local_path: Path, job_id: str, filename: str) -> str:
+    """OCR 결과 이미지를 results 버킷에 업로드하고 storage_path를 반환한다."""
+    client = get_service_client()
+    ext = Path(filename).suffix.lower()
+    # 안전한 파일명으로 변환 후 저장
+    safe_name = _sanitize_storage_filename(filename)
+    base = hashlib.md5(safe_name.encode()).hexdigest()[:8]
+    storage_path = f"{job_id}/images/{base}{ext}"
+    content_type = _get_content_type(filename)
+    client.storage.from_("results").upload(
+        storage_path,
+        local_path.read_bytes(),
+        {"content-type": content_type, "upsert": "true"},
+    )
     return storage_path
 
 
-def get_signed_download_url(storage_path: str, bucket: str = "results", expires_in: int = 3600) -> str:
-    """결과 파일의 서명된 다운로드 URL을 생성합니다. 외부 노출 URL로 재작성합니다."""
+def upload_page_image(local_path: Path, job_id: str, page_num: int) -> str:
+    """페이지 이미지를 results 버킷에 업로드하고 storage_path를 반환한다."""
     client = get_service_client()
+    ext = Path(local_path.name).suffix.lower() or ".png"
+    storage_path = f"{job_id}/pages/{page_num}{ext}"
+    content_type = _get_content_type(f"page{ext}")
+    client.storage.from_("pdfs").upload(
+        storage_path,
+        local_path.read_bytes(),
+        {"content-type": content_type, "upsert": "true"},
+    )
+    return storage_path
+
+
+def get_signed_download_url_with_client(client: Client, storage_path: str, bucket: str = "results", expires_in: int = 3600) -> str:
+    """지정한 Supabase 클라이언트로 서명된 다운로드 URL을 생성합니다. 외부 노출 URL로 재작성합니다."""
     url = client.storage.from_(bucket).create_signed_url(storage_path, expires_in).get("signedURL", "")
     if url and settings.supabase_public_url:
         internal = settings.supabase_url.rstrip("/")
         url = url.replace(internal, settings.supabase_public_url.rstrip("/"))
     return url
+
+
+def get_signed_download_url(storage_path: str, bucket: str = "results", expires_in: int = 3600) -> str:
+    """결과 파일의 서명된 다운로드 URL을 생성합니다. 외부 노출 URL로 재작성합니다."""
+    client = get_service_client()
+    return get_signed_download_url_with_client(client, storage_path, bucket, expires_in)
 
 
 def _delete_storage_path(bucket: str, path: str) -> None:
@@ -177,13 +191,10 @@ def delete_source_files(job) -> None:
     if job.pdf_storage_path:
         _delete_storage_path("pdfs", job.pdf_storage_path)
     for info in job.extracted_files or []:
-        if isinstance(info, dict) and info.get("storage_path"):
-            _delete_storage_path("pdfs", info["storage_path"])
-
-
-def clear_source_paths(job) -> None:
-    """원본 Storage 경로 참조를 제거합니다. DB 커밋은 호출자가 담당합니다."""
-    job.pdf_storage_path = ""
-    for info in job.extracted_files or []:
-        if isinstance(info, dict) and "storage_path" in info:
-            info["storage_path"] = ""
+        sp = info.get("storage_path") if isinstance(info, dict) else None
+        if sp:
+            _delete_storage_path("pdfs", sp)
+    for info in job.source_images or []:
+        sp = info.get("storage_path") if isinstance(info, dict) else None
+        if sp:
+            _delete_storage_path("results", sp)

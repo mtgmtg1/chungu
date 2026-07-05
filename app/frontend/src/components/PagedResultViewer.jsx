@@ -41,7 +41,7 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
   const [pageMarkdown, setPageMarkdown] = useState("");
   const [loadingPage, setLoadingPage] = useState(false);
   const [error, setError] = useState("");
-  const [editMode, setEditMode] = useState(false);
+  const [editMode, setEditMode] = useState(true);
   const editorRef = useRef(null);
 
   const loadPage = useCallback(

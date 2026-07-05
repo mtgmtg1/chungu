@@ -13,7 +13,8 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
   sourceUrl,
   sourceType,
   sourceFiles,
-  imageUrls
+  imageUrls,
+  onSaveAnnotations
 }, ref) {
   const { t } = useTranslation();
   const [currentPage, setCurrentPage] = useState(pages[0]?.page_num || 1);
@@ -115,6 +116,7 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
               sourceType={sourceType}
               imageUrls={imageUrls}
               currentPage={currentPage}
+              onSaveAnnotations={onSaveAnnotations}
               data-oid="8kmamif" />
 
           </Panel>

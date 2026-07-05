@@ -80,6 +80,11 @@ export const api = {
     }),
   annotateAction: (id, action) =>
     request(`/api/jobs/${id}/annotate-action`, { method: 'POST', body: JSON.stringify({ action }) }),
+  saveUserAnnotations: (id, { source_index, annotations }) =>
+    request(`/api/jobs/${id}/user-annotations`, {
+      method: 'POST',
+      body: JSON.stringify({ source_index, annotations }),
+    }),
   jobAction: (id, action) =>
     request(`/api/jobs/${id}/action`, { method: 'POST', body: JSON.stringify({ action }) }),
   saveEditedXlsx: (id, blob, filename = 'result_edited.xlsx') => {

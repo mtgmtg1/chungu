@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import logging
 import math
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import fitz  # PyMuPDF
 
@@ -145,6 +147,127 @@ def annotate_pdf(pdf_bytes: bytes, targets: list[AnnotationTarget], mode: str) -
             _apply_target(page, t, mode, matrix, visual.x1 if needs_margin else None, note_top, note_height)
 
     return doc.tobytes()
+
+
+def build_fresh_air_annotations(
+    pdf_bytes: bytes,
+    targets: list[AnnotationTarget],
+    mode: str,
+) -> list[dict]:
+    """[Flow: Step 1 (AnnotationTarget 목록과 PDF 수신) -> Step 2 (페이지별 시각적 크기/회전 캡처)
+          -> Step 3 (여백 주석 레이아웃 계산) -> Step 4 (Fresh Air PDF JSON 배열 생성)
+          -> Step 5 (하이라이트는 quad, 여백 코멘트는 free-text로 변환)]
+
+    백엔드에서 생성한 주석을 Fresh Air PDF의 importAnnotations()로 바로 로드할 수 있는
+    annotation 객체 배열로 변환한다. 이 형식으로 프론트에서 사용자가 직접 수정/저장할 수 있다.
+
+    Args:
+        pdf_bytes: 원본 PDF 바이트 (페이지 시각적 크기 계산용)
+        targets: AnnotationTarget 목록
+        mode: "highlight" | "margin_note" | "both"
+
+    Returns:
+        Fresh Air PDF importAnnotations()가 기대하는 annotation 객체 배열
+    """
+    if mode not in ("highlight", "margin_note", "both"):
+        raise ValueError(f"Unsupported annotate mode: {mode}")
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    needs_margin = mode in ("margin_note", "both")
+    enable_highlight = mode in ("highlight", "both")
+
+    original_visual_rects: dict[int, fitz.Rect] = {}
+    for page in doc:
+        original_visual_rects[page.number] = page.rect
+
+    by_page: dict[int, list[AnnotationTarget]] = {}
+    for t in targets:
+        by_page.setdefault(t.page_no, []).append(t)
+    for page_targets in by_page.values():
+        page_targets.sort(key=lambda t: t.bbox_pdf[1])
+
+    note_layouts_by_page: dict[int, dict[int, tuple[float, float]]] = {}
+    if needs_margin:
+        for page_no, page_targets in by_page.items():
+            if page_no < 1 or page_no > doc.page_count:
+                continue
+            page = doc[page_no - 1]
+            visual = original_visual_rects[page.number]
+            note_layouts = _layout_margin_notes(page_targets, page_top=visual.y0)
+            note_layouts_by_page[page.number] = note_layouts
+
+    annotations: list[dict] = []
+    now = datetime.now(timezone.utc).isoformat()
+
+    for page_no, page_targets in by_page.items():
+        if page_no < 1 or page_no > doc.page_count:
+            continue
+        page = doc[page_no - 1]
+        visual = original_visual_rects[page.number]
+        note_layouts = note_layouts_by_page.get(page.number, {})
+
+        for idx, t in enumerate(page_targets):
+            base_id = f"backend-{page_no}-{idx}"
+            x0, y0, x1, y1 = t.bbox_pdf
+
+            if enable_highlight:
+                annotations.append({
+                    "id": f"{base_id}-highlight",
+                    "type": "highlight",
+                    "pageNumber": page_no,
+                    "color": _rgb_to_hex(t.color),
+                    "opacity": 0.45,
+                    "quads": [_rect_to_quad(x0, y0, x1, y1)],
+                    "text": t.comment,
+                    "createdAt": now,
+                    "modifiedAt": now,
+                })
+
+            if needs_margin:
+                layout = note_layouts.get(id(t))
+                if layout:
+                    note_top, note_height = layout
+                    margin_x0 = visual.x1 + 4
+                    margin_x1 = visual.x1 + MARGIN_WIDTH_PT - 4
+                    annotations.append({
+                        "id": f"{base_id}-note",
+                        "type": "free-text",
+                        "pageNumber": page_no,
+                        "color": _rgb_to_hex(DEFAULT_MARGIN_BORDER_COLOR),
+                        "opacity": 1.0,
+                        "rect": {
+                            "x": margin_x0,
+                            "y": note_top,
+                            "width": margin_x1 - margin_x0,
+                            "height": note_height,
+                        },
+                        "content": t.comment,
+                        "fontSize": MARGIN_NOTE_FONT_SIZE,
+                        "fontFamily": "Helvetica",
+                        "textAlign": "left",
+                        "createdAt": now,
+                        "modifiedAt": now,
+                    })
+
+    return annotations
+
+
+def _rgb_to_hex(rgb: tuple[float, float, float]) -> str:
+    """[Flow: Step 1 (0-1 RGB 튜플 수신) -> Step 2 (각 채널을 8비트 정수로 변환)
+          -> Step 3 (6자리 hex 문자열 반환)]"""
+    r, g, b = rgb
+    return f"#{int(round(r * 255)):02X}{int(round(g * 255)):02X}{int(round(b * 255)):02X}"
+
+
+def _rect_to_quad(x0: float, y0: float, x1: float, y1: float) -> dict:
+    """[Flow: Step 1 (사각형 좌표 수신) -> Step 2 (PDF 좌표계에 맞게 4개 꼭지점 생성)
+          -> Step 3 (Fresh Air PDF Quad 객체 형식 반환)]"""
+    return {
+        "topLeft": {"x": x0, "y": y1},
+        "topRight": {"x": x1, "y": y1},
+        "bottomLeft": {"x": x0, "y": y0},
+        "bottomRight": {"x": x1, "y": y0},
+    }
 
 
 def _extend_mediabox_for_visual_margins(

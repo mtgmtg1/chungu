@@ -1,7 +1,7 @@
 // [Flow: Step 1 (URL과 page prop 수신) -> Step 2 (IntersectionObserver로 패널 가시성 감지)
 //       -> Step 3 (보이면 FAPDFViewer를 dynamic import로 로드) -> Step 4 (문서 로드 완료 후 page prop에 해당하는 페이지로 이동)
 //       -> Step 5 (page prop 변경 시 goToPage로 동기화)]
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { forwardRef, lazy, Suspense, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 /**
@@ -22,12 +22,20 @@ const FAPDFViewer = lazy(() =>
  * @param {string} url - PDF 서명 URL
  * @param {number} page - 초기 페이지 번호
  */
-function PdfViewer({ url, page = 1 }) {
+const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson, onAnnotationChanged }, ref) {
   const { t, i18n } = useTranslation();
   const containerRef = useRef(null);
   const viewerRef = useRef(null);
   const [hasBeenVisible, setHasBeenVisible] = useState(false);
   const [isReady, setIsReady] = useState(false);
+  const importedAnnotationsJsonRef = useRef(null);
+
+  /**
+   * [Flow: Step 1 (상위 ref로 노출할 API 정의) -> Step 2 (exportAnnotations 메서드 제공)]
+   */
+  useImperativeHandle(ref, () => ({
+    exportAnnotations: () => viewerRef.current?.exportAnnotations?.(),
+  }));
 
   // 상위에서 page prop이 변경되면 viewer API로 페이지 이동
   useEffect(() => {
@@ -77,12 +85,31 @@ function PdfViewer({ url, page = 1 }) {
   })();
 
   /**
-   * [Flow: Step 1 (문서 로드 완료 이벤트 수신) -> Step 2 (isReady true) -> Step 3 (page prop 위치로 이동)]
+   * [Flow: Step 1 (문서 로드 완료 이벤트 수신) -> Step 2 (isReady true)
+   *       -> Step 3 (page prop 위치로 이동) -> Step 4 (annotationsJson이 있으면 import)]
    */
   const handleDocumentLoaded = () => {
     setIsReady(true);
     if (viewerRef.current && page > 1) {
       viewerRef.current.goToPage(page);
+    }
+    if (
+      viewerRef.current &&
+      annotationsJson &&
+      annotationsJson.length > 0 &&
+      JSON.stringify(annotationsJson) !== importedAnnotationsJsonRef.current
+    ) {
+      viewerRef.current.importAnnotations(JSON.stringify(annotationsJson));
+      importedAnnotationsJsonRef.current = JSON.stringify(annotationsJson);
+    }
+  };
+
+  /**
+   * [Flow: Step 1 (주석 변경 이벤트 수신) -> Step 2 (상위 콜백에 전달)]
+   */
+  const handleAnnotationChanged = (event) => {
+    if (onAnnotationChanged) {
+      onAnnotationChanged(event);
     }
   };
 
@@ -101,6 +128,7 @@ function PdfViewer({ url, page = 1 }) {
               ref={viewerRef}
               document={url}
               onDocumentLoaded={handleDocumentLoaded}
+              onAnnotationChanged={handleAnnotationChanged}
               className="w-full h-full"
               config={{
                 enableAnnotations: true,
@@ -124,6 +152,6 @@ function PdfViewer({ url, page = 1 }) {
       </div>
     </div>
   );
-}
+});
 
 export default PdfViewer;

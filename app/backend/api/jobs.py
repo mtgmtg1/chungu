@@ -1870,6 +1870,18 @@ def save_user_annotations(
     if not isinstance(source_index, int) or not isinstance(annotations, list):
         raise HTTPException(status_code=400, detail="Invalid source_index or annotations")
 
+    def _has_annotation(item):
+        if not isinstance(item, dict):
+            return False
+        if "annotation" in item and isinstance(item["annotation"], dict):
+            return item["annotation"].get("type") is not None and item["annotation"].get("pageIndex") is not None
+        return item.get("type") is not None and item.get("pageIndex") is not None
+
+    valid_count = sum(1 for a in annotations if _has_annotation(a))
+    logger.info(f"[save_user_annotations] {job_id} source_index={source_index} raw={len(annotations)} valid={valid_count}")
+    if valid_count == 0:
+        raise HTTPException(status_code=400, detail="No valid annotations found")
+
     entries = list(job.annotated_pdf_files or [])
     if not entries:
         # 하위 호환: 목록 컬럼 추가 전에 생성된 단일 주석 PDF

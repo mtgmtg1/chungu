@@ -56,6 +56,7 @@ def apply_user_annotations(pdf_bytes: bytes, annotations: list[dict]) -> bytes:
         page_number = page_index + 1  # EmbedPDF는 0-based, PyMuPDF는 0-based이나 로직상 1-based로 처리
         by_page.setdefault(page_number, []).append(a)
 
+    applied = 0
     for page_no, page_annotations in by_page.items():
         if page_no > doc.page_count:
             logger.warning(f"[pdf_user_annotator] 잘못된 pageIndex {page_no - 1} (총 {doc.page_count}페이지), 건너뜀")
@@ -64,9 +65,11 @@ def apply_user_annotations(pdf_bytes: bytes, annotations: list[dict]) -> bytes:
         for a in page_annotations:
             try:
                 _apply_annotation(page, a)
+                applied += 1
             except Exception as e:
                 logger.warning(f"[pdf_user_annotator] 주석 적용 실패 {a.get('id')}: {e}")
 
+    logger.info(f"[pdf_user_annotator] 총 {len(annotations)}개 항목 중 {applied}개 주석 적용 완료")
     return doc.tobytes()
 
 

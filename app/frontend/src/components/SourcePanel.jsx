@@ -96,7 +96,7 @@ export default function SourcePanel({
       return;
     }
     let cancelled = false;
-    fetch(url)
+    fetch(url, { cache: "no-store" })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();

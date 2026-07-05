@@ -38,7 +38,8 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
 
   /**
    * [Flow: Step 1 (상위 ref로 노출할 API 정의) -> Step 2 (annotation plugin exportAnnotations를 Promise로 반환)]
-   * exportAnnotations()는 Task를 반환하므로 toPromise()로 JSON 문자열로 변환해 상위에 전달한다.
+   * exportAnnotations()는 Task를 반환한다. Task에 toPromise()가 있으면 사용하고,
+   * 없으면 wait()를 Promise로 감싸서 AnnotationTransferItem[]을 받은 뒤 JSON 문자열로 변환한다.
    */
   useImperativeHandle(ref, () => ({
     exportAnnotations: async () => {
@@ -46,9 +47,22 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
       if (!api) return null;
       try {
         const task = api.exportAnnotations();
-        const items = await (task.toPromise ? task.toPromise() : task);
+        if (!task) return null;
+        if (typeof task.toPromise === "function") {
+          const items = await task.toPromise();
+          return JSON.stringify(items ?? []);
+        }
+        if (typeof task.wait === "function") {
+          const items = await new Promise((resolve, reject) => {
+            task.wait((result) => resolve(result ?? []), (error) => reject(error));
+          });
+          return JSON.stringify(items);
+        }
+        // 이미 Promise-like이거나 배열인 경우
+        const items = await task;
         return JSON.stringify(items ?? []);
-      } catch {
+      } catch (e) {
+        console.error("[PdfViewer] exportAnnotations failed:", e);
         return null;
       }
     },
@@ -63,6 +77,22 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
   }, [page, isReady]);
 
   /**
+   * [Flow: Step 1 (annotation plugin이 있으면 importAnnotations Task를 Promise로 변환)
+   *       -> Step 2 (toPromise/wait 중 사용 가능한 메서드로 await)]
+   */
+  const importAnnotationsAsPromise = async (api, items) => {
+    const task = api.importAnnotations(items);
+    if (!task) return;
+    if (typeof task.toPromise === "function") {
+      await task.toPromise();
+    } else if (typeof task.wait === "function") {
+      await new Promise((resolve, reject) => {
+        task.wait(resolve, reject);
+      });
+    }
+  };
+
+  /**
    * [Flow: Step 1 (annotationsJson 변경 감지) -> Step 2 (annotation plugin이 준비되면 importAnnotations 호출)
    *       -> Step 3 (중복 import 방지를 위해 마지막 import 문자열 기록)]
    */
@@ -72,12 +102,15 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
     if (!annotationsJson || annotationsJson.length === 0) return;
     const currentJson = JSON.stringify(annotationsJson);
     if (currentJson === importedAnnotationsJsonRef.current) return;
-    try {
-      api.importAnnotations(annotationsJson);
-      importedAnnotationsJsonRef.current = currentJson;
-    } catch {
-      // import 실패 시 무시
-    }
+    const runImport = async () => {
+      try {
+        await importAnnotationsAsPromise(api, annotationsJson);
+        importedAnnotationsJsonRef.current = currentJson;
+      } catch (e) {
+        console.error("[PdfViewer] importAnnotations failed:", e);
+      }
+    };
+    runImport();
   }, [annotationsJson, isReady]);
 
   /**
@@ -130,12 +163,13 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
       if (annotationsJson && annotationsJson.length > 0) {
         const currentJson = JSON.stringify(annotationsJson);
         if (currentJson !== importedAnnotationsJsonRef.current) {
-          try {
-            api.importAnnotations(annotationsJson);
-            importedAnnotationsJsonRef.current = currentJson;
-          } catch {
-            // import 실패 시 무시
-          }
+          importAnnotationsAsPromise(api, annotationsJson)
+            .then(() => {
+              importedAnnotationsJsonRef.current = currentJson;
+            })
+            .catch((e) => {
+              console.error("[PdfViewer] initial importAnnotations failed:", e);
+            });
         }
       }
       if (api.onAnnotationEvent) {

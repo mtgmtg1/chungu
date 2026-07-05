@@ -1633,43 +1633,25 @@ def annotate_action(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """PDF 주석 생성 완전 실패 시 재시도 또는 포인트 환불을 처리한다 (xlsx_advanced_action과 동일 패턴)."""
+    """PDF 주석 생성 실패 시 재시도를 처리한다 (구독제이므로 환불은 제공하지 않는다)."""
     job = db.get(Job, job_id)
     _require_job_access(job, user)
     _require_job_not_expired(job)
-    if job.annotate_status != "error" or not job.annotate_refundable:
-        raise HTTPException(status_code=400, detail="Not in a refundable or retryable state")
+    if job.annotate_status != "error":
+        raise HTTPException(status_code=400, detail="Not in a retryable state")
 
     # 비회원 사용자 체크
     if job.user_id is None:
         raise HTTPException(status_code=402, detail="구독이 필요한 기능입니다.")
 
     action = str(payload.get("action", "")).lower()
-    if action not in ("retry", "refund"):
+    if action != "retry":
         raise HTTPException(status_code=400, detail="Unsupported action")
 
     from ..db.models import User
     db_user = db.get(User, job.user_id)
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")
-
-    units = job.total_pages if job.total_pages else (job.total_files or 1)
-
-    if action == "refund":
-        period_start = job.annotate_reserved_period_start
-        subscription_service.release_usage(
-            db,
-            db_user,
-            basic_pages=0,
-            premium_pages=job.annotate_reserved_pages or units,
-            media_seconds=0,
-            period_start=period_start,
-        )
-        job.annotate_refundable = False
-        job.annotate_reserved_pages = 0
-        job.annotate_reserved_period_start = None
-        db.commit()
-        return {"refunded": True, "premium_pages": job.annotate_reserved_pages or units}
 
     # retry: 상태 초기화 후 비용 없이 task 재실행
     job.annotate_status = "processing"

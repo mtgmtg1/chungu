@@ -584,7 +584,7 @@ export default function JobResultPage() {
                 t("page:result.annotate")}
               </button>
 
-              {job?.annotate_status === "error" && job?.annotate_refundable &&
+              {job?.annotate_status === "error" &&
               <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-700 rounded-lg text-sm border border-red-200" data-oid="annotate-error">
                 <AlertTriangle size={14} data-oid="annotate-alert-icon" />
                 <span>{t("page:result.annotateFailed")}</span>
@@ -595,13 +595,6 @@ export default function JobResultPage() {
                   data-oid="annotate-retry-btn">
                   <RefreshCw size={14} data-oid="annotate-retry-icon" />
                   {t("page:result.retry")}
-                </button>
-                <button
-                  onClick={() => handleAnnotateAction("refund")}
-                  disabled={converting}
-                  className="px-2 py-1 bg-white rounded border border-red-200 hover:bg-red-100 transition-colors"
-                  data-oid="annotate-refund-btn">
-                  {t("page:result.refund")}
                 </button>
               </div>
               }

@@ -813,14 +813,14 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 - **비회원 처리**: `job.user_id`가 `None`인 경우 402 에러("구독이 필요한 기능입니다.")를 반환하고, 프론트엔드에서는 price 페이지로 리디렉트합니다.
 - **관리자 권한**: `mtgmtg@naver.com` (관리자)는 모든 기능을 무제한으로 사용할 수 있습니다. 구독 체크를 건너뛰고 바로 처리합니다.
 - **백엔드 로직** (`app/backend/api/jobs.py`의 `annotate_job` 및 `annotate_action` 엔드포인트):
-  - `job.user_id`가 `None`이면 402 에러 반환 (주석 생성뿐 아니라 재시도/환불 action 엔드포인트에서도 동일 체크)
+  - `job.user_id`가 `None`이면 402 에러 반환 (주석 생성뿐 아니라 재시도 action 엔드포인트에서도 동일 체크)
   - `db_user.is_admin`가 `True`이면 구독 체크 없이 바로 처리 (환불 불필요, 예약 페이지 수 0)
   - 일반 사용자는 `subscription_service.reserve_usage()`로 구독 한도 체크 및 차감
 - **프론트엔드 처리** (`app/frontend/src/pages/JobResultPage.jsx`의 `startAnnotate` 함수):
   - 에러 메시지에 "구독이 필요" 또는 "subscription"이 포함되면 2초 후 price 페이지로 자동 이동
   - i18n 키 `page:errors.subscriptionRequired` 사용 (ko/en/ja 모두 추가)
 - **주석 생성 비용**: 프리미엄 페이지 수(`premium_pages`)로 차감됩니다. 관리자는 차감되지 않습니다.
-- **재시도/환불 액션** (`annotate_action` 엔드포인트): 주석 생성이 `error` 상태로 실패한 경우 사용자가 재시도(retry) 또는 포인트 환불(refund)을 선택할 수 있습니다. 비회원 사용자는 이 액션 엔드포인트에서도 402 에러를 받습니다.
+- **재시도 액션** (`annotate_action` 엔드포인트): 주석 생성이 `error` 상태로 실패한 경우 사용자가 재시도(retry)할 수 있습니다. 구독제이므로 환불(refund) 기능은 제공하지 않습니다. 비회원 사용자는 이 액션 엔드포인트에서도 402 에러를 받습니다.
 
 ## Frontend Variable Naming Conventions
 

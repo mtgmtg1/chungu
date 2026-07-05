@@ -73,13 +73,16 @@ export const api = {
   downloadJob: (id, type) => request(`/api/jobs/${id}/download?type=${type}`),
   xlsxAdvancedAction: (id, action) =>
     request(`/api/jobs/${id}/xlsx-advanced-action`, { method: 'POST', body: JSON.stringify({ action }) }),
-  annotateJob: (id, { instruction, mode, commentMode }) =>
+  annotateJob: (id, { instruction, mode, commentMode, advanced }) =>
     request(`/api/jobs/${id}/annotate`, {
       method: 'POST',
-      body: JSON.stringify({ instruction, mode, comment_mode: commentMode }),
+      body: JSON.stringify({ instruction, mode, comment_mode: commentMode, advanced }),
     }),
-  annotateAction: (id, action) =>
-    request(`/api/jobs/${id}/annotate-action`, { method: 'POST', body: JSON.stringify({ action }) }),
+  annotateAction: (id, action, annotationIndex) =>
+    request(`/api/jobs/${id}/annotate-action`, {
+      method: 'POST',
+      body: JSON.stringify({ action, annotation_index: annotationIndex }),
+    }),
   saveUserAnnotations: (id, { source_index, annotations }) =>
     request(`/api/jobs/${id}/user-annotations`, {
       method: 'POST',

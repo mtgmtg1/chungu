@@ -75,6 +75,7 @@ export default function JobResultPage() {
   const [annotateInstruction, setAnnotateInstruction] = useState("");
   const [annotateMode, setAnnotateMode] = useState("both"); // highlight | margin_note | both
   const [annotateCommentMode, setAnnotateCommentMode] = useState("user_text"); // user_text | llm_summary
+  const [annotateAdvanced, setAnnotateAdvanced] = useState(false);
   const [annotatePolling, setAnnotatePolling] = useState(false);
 
   const [excelDropdownOpen, setExcelDropdownOpen] = useState(false);
@@ -127,9 +128,10 @@ export default function JobResultPage() {
       if (data.xlsx_advanced_status === "done" || data.xlsx_advanced_status === "error") {
         setXlsxAdvancedPolling(false);
       }
-      if (data.annotate_status === "done" || data.annotate_status === "error") {
-        setAnnotatePolling(false);
-      }
+      const hasProcessingAnnotations = data.annotated_pdf_files?.some(
+        (f) => f.status === "processing"
+      );
+      setAnnotatePolling(hasProcessingAnnotations);
       if (data.status === "done") {
         clearInterval(pollRef.current);
         await loadPreview();
@@ -159,9 +161,10 @@ export default function JobResultPage() {
         if (data.xlsx_advanced_status === "done" || data.xlsx_advanced_status === "error") {
           setXlsxAdvancedPolling(false);
         }
-        if (data.annotate_status === "done" || data.annotate_status === "error") {
-          setAnnotatePolling(false);
-        }
+        const hasProcessingAnnotations = data.annotated_pdf_files?.some(
+          (f) => f.status === "processing"
+        );
+        setAnnotatePolling(hasProcessingAnnotations);
         if (data.status === "done") {
           clearInterval(pollRef.current);
           await loadPreview();
@@ -318,11 +321,12 @@ export default function JobResultPage() {
         instruction: annotateInstruction.trim(),
         mode: annotateMode,
         commentMode: annotateCommentMode,
+        advanced: annotateAdvanced,
       });
       if (res.status === "processing") {
         setAnnotatePolling(true);
       }
-      setAnnotateModalOpen(false);
+      setAnnotateInstruction("");
       await loadJob();
     } catch (e) {
       const msg = e.message || t("page:errors.unknown");
@@ -337,11 +341,11 @@ export default function JobResultPage() {
     }
   }
 
-  async function handleAnnotateAction(action) {
+  async function handleAnnotateAction(action, annotationIndex) {
     setConverting(true);
     setError("");
     try {
-      await api.annotateAction(jobId, action);
+      await api.annotateAction(jobId, action, annotationIndex);
       await loadJob();
       if (action === "retry") {
         setAnnotatePolling(true);
@@ -627,7 +631,7 @@ export default function JobResultPage() {
 
               <button
                 onClick={() => setAnnotateModalOpen(true)}
-                disabled={converting || annotatePolling}
+                disabled={converting}
                 className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
                 data-oid="annotate-btn">
                 {annotatePolling ?
@@ -638,21 +642,6 @@ export default function JobResultPage() {
                 t("page:result.annotateProcessing") :
                 t("page:result.annotate")}
               </button>
-
-              {job?.annotate_status === "error" &&
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-700 rounded-lg text-sm border border-red-200" data-oid="annotate-error">
-                <AlertTriangle size={14} data-oid="annotate-alert-icon" />
-                <span>{t("page:result.annotateFailed")}</span>
-                <button
-                  onClick={() => handleAnnotateAction("retry")}
-                  disabled={converting}
-                  className="flex items-center gap-1 px-2 py-1 bg-white rounded border border-red-200 hover:bg-red-100 transition-colors"
-                  data-oid="annotate-retry-btn">
-                  <RefreshCw size={14} data-oid="annotate-retry-icon" />
-                  {t("page:result.retry")}
-                </button>
-              </div>
-              }
 
               <div
                 className="relative group"

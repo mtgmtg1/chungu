@@ -32,16 +32,20 @@ def me(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_
         "daily_quota": active_key.daily_quota if active_key else None,
         "daily_spent_points": get_daily_spent_points(active_key.id) if active_key else 0,
     }
+    # [Flow: Step 1 (CurrentUser에는 subscription_plan/status가 없으므로 DB에서 조회) -> Step 2 (없으면 기본값 폴백)]
+    db_user = db.get(User, uuid.UUID(user.user_id))
     return {
         "user_id": user.user_id,
         "email": user.email,
-        "points_balance": user.points_balance,
-        "subscription_plan": user.subscription_plan or "free",
-        "subscription_status": user.subscription_status or "inactive",
+        "points_balance": db_user.points_balance if db_user else user.points_balance,
+        "subscription_plan": db_user.subscription_plan if db_user else "free",
+        "subscription_status": db_user.subscription_status if db_user else "inactive",
         "is_admin": user.is_admin,
         "language": user.language or "en",
         **rate_limit,
     }
+
+
 @router.patch("/language")
 def update_language(
     payload: LanguageUpdate,

@@ -99,10 +99,18 @@ def _convert_to_pdf(input_path: Path, output_dir: Path) -> Path:
 
 
 def _linearize_pdf(input_path: Path, output_path: Path) -> None:
-    """PDF를 Fast Web View(linearized) 형식으로 재저장하여 첫 페이지 바이트만 받아도 렌더링 가능하게 한다."""
+    """PDF를 Fast Web View(linearized) 형식으로 재저장하여 첫 페이지 바이트만 받아도 렌더링 가능하게 한다.
+    PyMuPDF 최신 버전에서 linearization이 미지원인 경우 garbage/deflate만 적용한다."""
     doc = fitz.open(str(input_path))
     try:
-        doc.save(str(output_path), linear=True, garbage=4, deflate=True)
+        try:
+            doc.save(str(output_path), linear=True, garbage=4, deflate=True)
+        except Exception as e:
+            if "Linearisation" in str(e) or "linear" in str(e).lower():
+                logger.debug(f"[linearize] linearization 미지원, 일반 저장으로 폴백: {e}")
+                doc.save(str(output_path), garbage=4, deflate=True)
+            else:
+                raise
     finally:
         doc.close()
 
@@ -119,7 +127,14 @@ def _create_lowres_preview_pdf(input_path: Path, output_path: Path, dpi: int = _
             pix = page.get_pixmap(matrix=mat, alpha=False)
             new_page = dst.new_page(width=rect.width, height=rect.height)
             new_page.insert_image(rect, pixmap=pix)
-        dst.save(str(output_path), linear=True, garbage=4, deflate=True)
+        try:
+            dst.save(str(output_path), linear=True, garbage=4, deflate=True)
+        except Exception as e:
+            if "Linearisation" in str(e) or "linear" in str(e).lower():
+                logger.debug(f"[lowres] linearization 미지원, 일반 저장으로 폴백: {e}")
+                dst.save(str(output_path), garbage=4, deflate=True)
+            else:
+                raise
     finally:
         src.close()
         dst.close()

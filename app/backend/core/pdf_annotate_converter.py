@@ -11,6 +11,7 @@ import re
 import tempfile
 import traceback
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -19,7 +20,7 @@ from .. import settings_store
 from ..config import settings
 from ..db.models import Job
 from ..db.session import SessionLocal
-from . import ocr_client, paddleocr_client, supabase_client
+from . import cache, ocr_client, paddleocr_client, supabase_client
 from .ocr_layout import BBox, OcrRow, OcrTextBlock, parse_layout_result
 from .pdf_annotator import AnnotationTarget, annotate_pdf
 from .pdf_coords import clamp_rect_to_page, px_bbox_to_pdf_rect
@@ -51,6 +52,17 @@ def _text_block_to_text(block: OcrTextBlock) -> str:
     if len(text) > MAX_TEXT_BLOCK_CHARS:
         text = text[:MAX_TEXT_BLOCK_CHARS] + "..."
     return text
+
+
+def _annotation_display_name(job: Job, n: int) -> str:
+    """주석 PDF의 표시용 파일명을 생성한다.
+
+    원본 파일명이 있으면 확장자를 제거하고 `_annotation{N}.pdf`를 붙이고,
+    없으면 `result_annotation{N}.pdf`를 반환한다.
+    """
+    base = job.original_filename or "result"
+    stem = Path(base).stem or base
+    return f"{stem}_annotation{n}.pdf"
 
 
 @dataclass
@@ -137,21 +149,21 @@ def _select_elements_with_llm(
     elements: list[AnnotateElement],
     instruction: str,
     want_llm_comment: bool,
-    language: str,
     endpoint: str,
     model: str,
     api_key: str,
 ) -> list[dict]:
     """LLM에게 요소 텍스트만 전달해 조건에 맞는 요소 인덱스+코멘트를 받는다 (좌표 추론은 시키지 않는다).
 
-    주석 코멘트는 사용자 언어(language)로 작성되도록 프롬프트에 지시한다.
+    주석 코멘트는 사용자가 instruction에 사용한 언어로 작성되도록 프롬프트에 지시한다
+    (프롬프트가 "사용자 조건 문구와 같은 언어로 작성"하라고 LLM에 가이드한다).
     """
     if not elements:
         return []
 
     truncated = elements[:MAX_ELEMENTS_FOR_LLM]
     element_dicts = [{"kind": e.kind, "text": e.text} for e in truncated]
-    prompt = build_element_highlight_prompt(element_dicts, instruction, want_llm_comment, language=language)
+    prompt = build_element_highlight_prompt(element_dicts, instruction, want_llm_comment)
 
     content, _ = ocr_client.call_text(prompt, endpoint, model, api_key, max_tokens=4000)
     content = _strip_json_fence(content)
@@ -205,7 +217,7 @@ def run(job_id: str, instruction: str, mode: str, comment_mode: str, language: s
             if not elements:
                 raise ValueError("텍스트 요소를 인식하지 못해 하이라이트/여백 주석 대상을 찾을 수 없습니다")
 
-            matches = _select_elements_with_llm(elements, instruction, want_llm_comment, language, endpoint, model, api_key)
+            matches = _select_elements_with_llm(elements, instruction, want_llm_comment, endpoint, model, api_key)
             if not matches:
                 job.annotate_status = "done"
                 job.annotate_refundable = False
@@ -233,7 +245,10 @@ def run(job_id: str, instruction: str, mode: str, comment_mode: str, language: s
                 raise ValueError("LLM이 선택한 요소를 원본 bbox로 매핑하지 못했습니다")
 
             annotated_bytes = annotate_pdf(pdf_bytes, targets, mode)
-            storage_path = f"{job.id}/annotated.pdf"
+            annotated_files = job.annotated_pdf_files or []
+            next_index = len(annotated_files) + 1
+            storage_path = f"{job.id}/annotated_{next_index}.pdf"
+            display_name = _annotation_display_name(job, next_index)
             client = supabase_client.get_service_client()
             client.storage.from_("results").upload(
                 storage_path,
@@ -241,11 +256,21 @@ def run(job_id: str, instruction: str, mode: str, comment_mode: str, language: s
                 {"content-type": "application/pdf", "upsert": "true"},
             )
 
+            entry = {
+                "storage_path": storage_path,
+                "filename": display_name,
+                "instruction": instruction,
+                "mode": mode,
+                "comment_mode": comment_mode,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            job.annotated_pdf_files = annotated_files + [entry]
             job.result_annotated_pdf_storage_path = storage_path
             job.annotate_status = "done"
             job.annotate_refundable = False
             job.annotate_recovery_notes = [{"skipped_matches": skipped}] if skipped else []
             db.commit()
+            cache.invalidate_pattern(f"preview:{job_id}:*")
             return {"job_id": job_id, "status": "done", "matched_rows": len(targets)}
 
     except Exception as e:

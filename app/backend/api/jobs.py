@@ -973,12 +973,13 @@ def _build_source_file_item(info: dict, idx: int) -> dict | None:
     ftype = info.get("type", "")
     if ftype not in ("pdf", "image", "audio", "video", "docx", "hwp"):
         return None
+    bucket = info.get("bucket", "pdfs")
     try:
         storage_path = info["storage_path"]
         if ftype in ("pdf", "docx", "hwp"):
             # [Flow: iframe 네이티브 PDF 뷰어는 점진적 렌더링을 지원하므로 저화질 PDF 생성 불필요]
             # 원본 PDF의 서명 URL을 직접 반환 (저화질 생성은 200초+ 블로킹 발생)
-            preview_url = supabase_client.get_signed_download_url(storage_path, bucket="pdfs", expires_in=3600)
+            preview_url = supabase_client.get_signed_download_url(storage_path, bucket=bucket, expires_in=3600)
             if not preview_url:
                 return None
             item = {
@@ -993,7 +994,7 @@ def _build_source_file_item(info: dict, idx: int) -> dict | None:
             return item
         # image/audio/video는 원본 signed URL만 필요
         client = supabase_client.create_fresh_service_client()
-        url = supabase_client.get_signed_download_url_with_client(client, storage_path, bucket="pdfs", expires_in=3600)
+        url = supabase_client.get_signed_download_url_with_client(client, storage_path, bucket=bucket, expires_in=3600)
         return {
             "name": info.get("path", info.get("storage_path", "")),
             "type": ftype,
@@ -1620,7 +1621,7 @@ def annotate_job(
     db.commit()
 
     from ..workers import tasks
-    task = tasks.annotate_pdf_job.delay(job_id, instruction, mode, comment_mode, user.language)
+    task = tasks.annotate_pdf_job.delay(job_id, instruction, mode, comment_mode)
     try:
         job.annotate_job_id = task.id
         db.commit()

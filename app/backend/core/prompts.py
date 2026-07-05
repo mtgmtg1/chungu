@@ -2,20 +2,6 @@
 # [Flow: Step 1 (user columns/instruction input) -> Step 2 (vision/hybrid prompt dynamic generation)]
 # Generalized from the old 9-column fixed prompt to user-defined column-based prompts.
 
-# Maps user language codes to full language names for prompt instructions.
-# Used to tell the LLM which language to write annotation comments in.
-LANGUAGE_NAMES = {
-    "ko": "Korean",
-    "en": "English",
-    "ja": "Japanese",
-}
-
-
-def _language_name(code: str) -> str:
-    """Return the full language name for a language code, defaulting to English."""
-    return LANGUAGE_NAMES.get(code, "English")
-
-
 DEFAULT_COLUMNS = [
     "No.", "Category", "Account Number", "Date",
     "Withdrawal (KRW)", "Deposit (KRW)", "Transaction Details", "Transfer Memo", "Account",
@@ -124,7 +110,6 @@ def build_row_highlight_prompt(
     rows: list[list[str]],
     instruction: str,
     want_llm_comment: bool,
-    language: str = "en",
 ) -> str:
     """Prompt to select table rows for highlight/margin annotation based on row text only.
 
@@ -132,21 +117,26 @@ def build_row_highlight_prompt(
     determined from OCR bboxes, and the LLM performs purely text-based condition judgment
     (reflecting research showing Gemma-4's bbox grounding reliability is low).
 
+    The LLM is instructed to write comments in the same language the user used in the
+    instruction, so that users of any language (not just the app's supported ones) get
+    comments in their own language.
+
     Args:
         rows: list of cell texts in row index order (e.g. [["1", "2026-01-01", "820,000", "transfer"], ...])
         instruction: user-entered condition (e.g. "rows where 800,000 KRW or more was transferred")
         want_llm_comment: if True, the LLM generates a short justification comment for each matched row
-        language: user's language code ("ko"/"en"/"ja") — comments will be written in this language
 
     Returns:
         Prompt string to send to the LLM
     """
     rows_text = "\n".join(f"{i}: {' | '.join(cell for cell in row)}" for i, row in enumerate(rows))
-    lang_name = _language_name(language)
     comment_instr = (
-        f"For each matched row, write a short comment (about 10 characters) summarizing why it was selected, in {lang_name}."
+        "For each matched row, write a short comment (about 10 characters) summarizing why it was selected. "
+        "Write the comment in the SAME language as the user's condition text above — if the condition is in "
+        "Korean, write in Korean; if in English, write in English; if in French, write in French, and so on."
         if want_llm_comment
-        else f'Repeat the "Condition" text verbatim as the comment for every matched row (do not summarize or rephrase), in {lang_name}.'
+        else 'Repeat the "Condition" text verbatim as the comment for every matched row (do not summarize or rephrase). '
+        "Keep the original language of the condition text."
     )
     return (
         "You are an assistant reviewing tables in a document. Below is the text of a table divided row by row. "
@@ -176,7 +166,6 @@ def build_element_highlight_prompt(
     elements: list[dict],
     instruction: str,
     want_llm_comment: bool,
-    language: str = "en",
 ) -> str:
     """Prompt to select elements (table rows + text blocks) for highlight/margin annotation.
 
@@ -184,11 +173,14 @@ def build_element_highlight_prompt(
       - kind: "table_row" | "text"
       - text: for table rows, joined text in "cell1 | cell2 | ..." form; for text blocks, the block content
 
+    The LLM is instructed to write comments in the same language the user used in the
+    instruction, so that users of any language (not just the app's supported ones) get
+    comments in their own language.
+
     Args:
         elements: list of element dicts in element index order
         instruction: user-entered condition (e.g. "sections containing a person's name", "rows where 800,000 KRW or more was transferred")
         want_llm_comment: if True, the LLM generates a short justification comment for each matched element
-        language: user's language code ("ko"/"en"/"ja") — comments will be written in this language
 
     Returns:
         Prompt string to send to the LLM
@@ -201,11 +193,13 @@ def build_element_highlight_prompt(
         lines.append(f"{i}: {tag} {text}")
     elements_text = "\n".join(lines)
 
-    lang_name = _language_name(language)
     comment_instr = (
-        f"For each matched element, write a short comment (about 10 characters) summarizing why it was selected, in {lang_name}."
+        "For each matched element, write a short comment (about 10 characters) summarizing why it was selected. "
+        "Write the comment in the SAME language as the user's condition text above — if the condition is in "
+        "Korean, write in Korean; if in English, write in English; if in French, write in French, and so on."
         if want_llm_comment
-        else f'Repeat the "Condition" text verbatim as the comment for every matched element (do not summarize or rephrase), in {lang_name}.'
+        else 'Repeat the "Condition" text verbatim as the comment for every matched element (do not summarize or rephrase). '
+        "Keep the original language of the condition text."
     )
     return (
         "You are an assistant reviewing a document. Below are text elements extracted from each page of the document. "

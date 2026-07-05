@@ -5,14 +5,12 @@ import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
   ArrowLeft,
-  Check,
   Download,
   FileSpreadsheet,
   Loader2,
   PanelLeft,
   PanelLeftClose,
   RefreshCw,
-  Save,
   Trash2,
   XCircle } from
 "lucide-react";
@@ -46,9 +44,8 @@ export default function JobResultPage() {
   const [sourceUrl, setSourceUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
   const [converting, setConverting] = useState(false);
-  const [saveMessage, setSaveMessage] = useState("");
+  const [autoSaveMessage, setAutoSaveMessage] = useState("");
   const [pages, setPages] = useState([]);
   const [sourceType, setSourceType] = useState(null);
   const [imageUrls, setImageUrls] = useState([]);
@@ -61,6 +58,7 @@ export default function JobResultPage() {
   const pollRef = useRef(null);
   const editorRef = useRef(null);
   const pagedViewerRef = useRef(null);
+  const autoSaveTimerRef = useRef(null);
 
   const [previewMode, setPreviewMode] = useState("markdown"); // "markdown" | "xlsxBasic" | "xlsxAdvanced"
   const [basicUrl, setBasicUrl] = useState(null);
@@ -225,36 +223,50 @@ export default function JobResultPage() {
     }
   }
 
-  async function saveMarkdown() {
-    setSaving(true);
-    setSaveMessage("");
-    try {
-      if (pages.length > 0 && pagedViewerRef.current) {
-        // 100페이지 초과 페이징 모드: PagedResultViewer가 현재 페이지 저장
+  // [Flow: Step 1 (페이징 모드면 PagedResultViewer에 flush 요청) -> Step 2 (파일별 마크다운 모드면 선택 파일 갱신 후 API 저장) -> Step 3 (단일 마크다운 모드면 API 저장) -> Step 4 (자동 저장 완료 메시지 표시)]
+  async function autoSaveMarkdown(updated) {
+    if (pages.length > 0 && pagedViewerRef.current) {
+      try {
         await pagedViewerRef.current.save();
-      } else {
-        if (!editorRef.current) return;
-        const updated = editorRef.current.getMarkdown();
-        if (hasFileMarkdowns) {
-          const next = [...fileMarkdowns];
-          next[selectedFileIndex] = updated;
-          setFileMarkdowns(next);
-          await api.saveResultFileMarkdowns(jobId, next);
-        } else {
-          await api.saveResultMarkdown(jobId, updated);
-          setMarkdown(updated);
-        }
+      } catch (e) {
+        setError(e.message || t("page:errors.unknown"));
       }
-      setSaveMessage(t("page:result.saved"));
-      setTimeout(() => setSaveMessage(""), 2000);
+      return;
+    }
+    if (updated === undefined) {
+      if (!editorRef.current) return;
+      updated = editorRef.current.getMarkdown();
+    }
+    try {
+      if (hasFileMarkdowns) {
+        const next = [...fileMarkdowns];
+        next[selectedFileIndex] = updated;
+        setFileMarkdowns(next);
+        await api.saveResultFileMarkdowns(jobId, next);
+      } else {
+        await api.saveResultMarkdown(jobId, updated);
+        setMarkdown(updated);
+      }
+      setAutoSaveMessage(t("page:result.autoSaved"));
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = setTimeout(() => setAutoSaveMessage(""), 2000);
     } catch (e) {
       setError(e.message || t("page:errors.unknown"));
-    } finally {
-      setSaving(false);
     }
   }
 
+  const handleMarkdownChange = (updated) => {
+    autoSaveMarkdown(updated);
+  };
+
+  const handleFileSelect = async (index) => {
+    if (index === selectedFileIndex) return;
+    await autoSaveMarkdown();
+    setSelectedFileIndex(index);
+  };
+
   async function download(type) {
+    if (type === "md") await autoSaveMarkdown();
     const { download_url } = await api.downloadJob(jobId, type);
     const base = job?.filename ?
     job.filename.replace(/\.[^/.]+$/, "") :
@@ -264,6 +276,7 @@ export default function JobResultPage() {
   }
 
   async function convertAndDownload(format) {
+    await autoSaveMarkdown();
     setConverting(true);
     setError("");
     try {
@@ -283,6 +296,7 @@ export default function JobResultPage() {
 
   // [Flow: Step 1 (변환 API 호출) -> Step 2 (job 상태 갱신) -> Step 3 (다운로드 없이 프리뷰만)]
   async function convertOnly(format) {
+    await autoSaveMarkdown();
     setConverting(true);
     setError("");
     try {
@@ -296,6 +310,7 @@ export default function JobResultPage() {
   }
 
   async function startXlsxAdvanced() {
+    await autoSaveMarkdown();
     setConverting(true);
     setError("");
     try {
@@ -677,32 +692,17 @@ export default function JobResultPage() {
                   </button>
                 </div>
               </div>
-              <button
-                onClick={saveMarkdown}
-                disabled={saving}
-                className="flex items-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg font-bold hover:opacity-90 transition-colors shadow-sm disabled:opacity-50"
-                data-oid="0y62kdm">
-                {saving ?
-              <Loader2
-                size={16}
-                className="animate-spin"
-                data-oid="zubuhoj" /> :
-              <Save size={16} data-oid="9q9sxwr" />
-              }
-                {t("page:result.save")}
-              </button>
             </>
           }
         </div>
       </header>
 
-      {saveMessage &&
+      {autoSaveMessage &&
       <div
         className="bg-green-50 text-green-700 px-4 py-1.5 text-sm flex items-center gap-2 border-b border-green-200"
         data-oid="uhtevhw">
 
-          <Check size={16} data-oid="jze93xf" />
-          {saveMessage}
+          {autoSaveMessage}
         </div>
       }
 
@@ -850,7 +850,7 @@ export default function JobResultPage() {
                   imageUrls={imageUrls}
                   filename={job?.filename}
                   selectedFileIndex={selectedFileIndex}
-                  onFileSelect={setSelectedFileIndex}
+                  onFileSelect={handleFileSelect}
                   onDeleteFile={openDeleteSourceFileModal}
                   currentPage={currentPage}
                   onSaveAnnotations={handleSaveAnnotations}
@@ -872,6 +872,7 @@ export default function JobResultPage() {
                 markdown={displayMarkdown}
                 editable
                 onPageChange={setCurrentPage}
+                onChange={handleMarkdownChange}
                 data-oid="xzqyv5." />
 
                 </div>
@@ -887,6 +888,7 @@ export default function JobResultPage() {
             markdown={displayMarkdown}
             editable
             onPageChange={setCurrentPage}
+            onChange={handleMarkdownChange}
             data-oid="r9i48wh" />
 
             </div>

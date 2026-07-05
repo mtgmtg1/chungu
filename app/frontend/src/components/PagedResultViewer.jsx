@@ -22,6 +22,8 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
   const [loadingPage, setLoadingPage] = useState(false);
   const [error, setError] = useState("");
   const editorRef = useRef(null);
+  const pendingMarkdownRef = useRef(pageMarkdown);
+  const autoSaveTimerRef = useRef(null);
 
   const loadPage = useCallback(
     async (pageNum) => {
@@ -29,7 +31,9 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
       setError("");
       try {
         const preview = await api.previewJob(jobId, pageNum, pageNum);
-        setPageMarkdown(preview.markdown || "");
+        const md = preview.markdown || "";
+        setPageMarkdown(md);
+        pendingMarkdownRef.current = md;
         setCurrentPage(preview.start_page || pageNum);
       } catch (e) {
         setError(e.message || t("page:errors.loadFailed"));
@@ -44,21 +48,39 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
     loadPage(currentPage);
   }, [currentPage, loadPage]);
 
-  const saveCurrentPage = async () => {
-    if (!editorRef.current) return;
-    const updated = editorRef.current.getMarkdown();
+  // [Flow: Step 1 (페이지 마크다운 변경 시 pendingRef 갱신) -> Step 2 (1.5초 debounce 타이머 설정) -> Step 3 (타이머 완료 시 서버에 페이지 저장)]
+  const saveCurrentPage = async (updated) => {
+    const markdownToSave = updated !== undefined ? updated : pendingMarkdownRef.current;
     setError("");
     try {
-      await api.saveResultPage(jobId, currentPage, updated);
+      await api.saveResultPage(jobId, currentPage, markdownToSave);
+      pendingMarkdownRef.current = markdownToSave;
     } catch (e) {
       setError(e.message || t("page:errors.unknown"));
       throw e;
     }
   };
 
+  const handleChange = (updated) => {
+    pendingMarkdownRef.current = updated;
+    clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      saveCurrentPage(pendingMarkdownRef.current);
+    }, 1500);
+  };
+
   useImperativeHandle(ref, () => ({
-    save: saveCurrentPage
+    save: () => saveCurrentPage(pendingMarkdownRef.current)
   }));
+
+  useEffect(() => {
+    return () => {
+      clearTimeout(autoSaveTimerRef.current);
+      if (pendingMarkdownRef.current !== pageMarkdown) {
+        saveCurrentPage(pendingMarkdownRef.current);
+      }
+    };
+  }, [pageMarkdown]);
 
   const hasSourcePanel =
   sourceType === "pdf" ||
@@ -82,6 +104,7 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
         ref={editorRef}
         markdown={pageMarkdown}
         editable
+        onChange={handleChange}
       />
     );
   };

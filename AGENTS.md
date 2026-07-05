@@ -212,7 +212,7 @@ npm run start        # dev server at localhost:3000
 
 ### App Emails (Multi-language: ko/en/ja)
 
-- **완료 메일** (`build_done_email`): 사용자 프로필 언어에 따라 DOCX 다운로드 버튼 + 결과 페이지 링크(`/jobs/{jobId}`) 포함. 결과 페이지에서 엑셀 다운로드 및 고급변환 가능 안내.
+- **완료 메일** (`build_done_email`): 사용자 프로필 언어에 따라 결과 페이지 링크(`/jobs/{jobId}`) 포함.
 - **실패 메일** (`build_error_email`): 사용자 프로필 언어에 따라 에러 내용 통지.
 - 언어 조회: `tasks.py`에서 `job.user_id` → `User.language` 조회 후 `lang` 파라미터로 전달. 비회원(`user_id == None`)은 기본값 `"en"`.
 - 다운로드 링크: `/api/dl/{token}?type=docx` — auth 없이 `download_token`으로 302 redirect (이메일 버튼용). DOCX 파일이 아직 생성되지 않은 경우 on-demand 변환(`_generate_office_on_demand`) 후 redirect.
@@ -308,7 +308,13 @@ npm run start        # dev server at localhost:3000
   - `currentPdfPage` 변경 시 에디터/프리뷰에 `scrollToPage` 호출하여 원본-결과 동기 스크롤.
   - `loadPreview()`에서 `preview.last_page > PAGE_THRESHOLD` 폴백 체크: DB의 `total_pages`가 잘못되어도 마크다운의 실제 페이지 수로 페이징 모드 전환.
   - `loadPreview()` **대형 작업 최적화**: `needsPagedMode(job)`(100페이지 초과)로 미리 판단된 작업은 전체 마크다운을 받아오지 않고 `api.previewJob(jobId, 1, 1)`로 첫 페이지 메타/소스 정보만 획득. 이후 `PagedResultViewer`가 페이지별로 개별 로드하여 300페이지 이상 문서에서 스켈레톤 화면이 멈추는 문제를 방지.
-  - `saveMarkdown()`는 `pages.length > 0`으로 페이징 모드 판단 (DB 값 의존 제거).
+  - `autoSaveMarkdown()`는 `pages.length > 0`으로 페이징 모드 판단하여 PagedResultViewer에 flush를 위임하고, 단일/다중 파일 마크다운은 API로 자동 저장 (DB 값 의존 제거). 수동 저장 버튼은 제거.
+  - **Markdown Auto-save**:
+    - `SimpleEditor`에서 Tiptap `update` 이벤트를 감지, 1.5초 debounce 후 `onChange` 콜백으로 변경된 마크다운을 상위에 전달. `lastMarkdownRef`로 `setContent`에 의한 중복 저장을 방지.
+    - `JobResultPage`는 `SimpleEditor`의 `onChange`를 `autoSaveMarkdown(updated)`에 연결. 저장 완료 시 `autoSaveMessage`로 "자동 저장됨"을 표시.
+    - `PagedResultViewer`는 현재 페이지의 `SimpleEditor`에 `onChange`를 연결하여 페이지별로 자동 저장. 언마운트/페이지 전환 시 `pendingMarkdownRef`에 남은 변경분을 flush.
+    - 파일 선택 전환, MD 다운로드, Office/Excel 변환, 고급 Excel 변환 시작 전에 `autoSaveMarkdown()`으로 pending 변경분을 먼저 서버에 저장.
+    - i18n 키: `autoSaved` (ko: "자동 저장됨", en: "Auto-saved", ja: "自動保存しました").
   - `MarkdownViewToolbar`로 보기/편집 토글 UI 제공.
   - i18n 키: `editMode`, `viewMode`, `edit`, `view` (ko/en/ja).
   - **방어 로직**: 다중 파일 작업에서 `source_files[i].result_markdown`이 비어 있을 경우 전체 결합 마크다운로 폴백하여 빈 화면 방지.

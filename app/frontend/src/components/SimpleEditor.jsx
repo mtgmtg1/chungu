@@ -142,13 +142,20 @@ function ToolbarDivider() {
 }
 
 const SimpleEditor = memo(forwardRef(function SimpleEditor(
-{ markdown, editable = true, onPageChange },
+{ markdown, editable = true, onPageChange, onChange },
 ref)
 {
   const { t } = useTranslation();
   const [headingOpen, setHeadingOpen] = useState(false);
   const containerRef = useRef(null);
   const observedPageRef = useRef(null);
+  const onChangeRef = useRef(onChange);
+  const onChangeTimerRef = useRef(null);
+  const lastMarkdownRef = useRef(markdown);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   const editor = useEditor({
     extensions: [
@@ -174,8 +181,29 @@ ref)
     editable
   });
 
+  // [Flow: Step 1 (사용자 입력으로 Tiptap 업데이트 이벤트 발생) -> Step 2 (1.5초 debounce 타이머 설정) -> Step 3 (타이머 완료 시 getMarkdown으로 변환) -> Step 4 (prop 마크다운과 다를 때만 onChange 콜백 호출)]
+  useEffect(() => {
+    if (!editor) return;
+    const handleUpdate = () => {
+      if (typeof onChangeRef.current !== "function") return;
+      clearTimeout(onChangeTimerRef.current);
+      onChangeTimerRef.current = setTimeout(() => {
+        const updated = turndown.turndown(editor.getHTML());
+        if (updated === lastMarkdownRef.current) return;
+        onChangeRef.current(updated);
+      }, 1500);
+    };
+    editor.on("update", handleUpdate);
+    return () => {
+      editor.off("update", handleUpdate);
+      clearTimeout(onChangeTimerRef.current);
+    };
+  }, [editor]);
+
   useEffect(() => {
     if (!editor || !markdown) return;
+    if (markdown === lastMarkdownRef.current) return;
+    lastMarkdownRef.current = markdown;
     const htmlWithMarkers = injectPageMarkers(marked.parse(markdown));
     editor.commands.setContent(htmlWithMarkers, false);
   }, [editor, markdown]);

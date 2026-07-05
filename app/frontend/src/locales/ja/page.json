@@ -184,6 +184,7 @@
     "saveAnnotations": "注釈を保存",
     "saving": "保存中…",
     "saved": "保存しました",
+    "autoSaved": "自動保存しました",
     "download": "ダウンロード",
     "sourceDocument": "元の文書",
     "sourceImages": "元の画像",

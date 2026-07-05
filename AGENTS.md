@@ -478,21 +478,29 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
   - 여백은 **기본적으로 우측에만** 추가한다. 주석 박스가 많아져 페이지 하단을 넘어 겹치게 되면, 하단도 필요한 만큼 늘린다. PaddleOCR-VL / PDF 시각 좌표계의 원점이 좌상단이므로 우측/하단 확장은 원점을 이동시키지 않는다. 좌측/상단 여백은 건드리지 않는다.
 - 여백 코멘트 박스는 서로 겹치지 않도록 세로 위치를 순서대로 밀어내며 배치하고(`_layout_margin_notes`), 원래 요소 위치와 배치된 박스 위치가 달라지면 꺾이는 연결선(callout)으로 이어준다. **박스 높이는 텍스트 양에 따라 가변** (`_estimate_note_height`): 폰트 8pt 기준 약 22문자/줄로 줄 수를 추정해 높이를 계산, 최소 11pt(약 1줄)~최대 120pt(약 10줄) 범위에서 조절된다.
 - LLM 요소 선택 프롬프트(`build_element_highlight_prompt`)는 표 행과 텍스트 블록이 혼합된 요소 목록에서 조건에 맞는 요소를 선택한다. 표 행은 헤더 컬럼명을 정확히 매칭하도록 명시하고, 텍스트 블록은 특정 단어/이름/날짜 포함 여부로 판단한다. 완전한 정확도는 보장되지 않으므로 결과 검토가 필요하다. 텍스트 블록은 앞 200자만 LLM에 전달해 토큰 폭증을 방지한다. **주석 코멘트는 사용자가 instruction에 사용한 언어로 작성**된다 — 프롬프트에서 "write the comment in the SAME language as the user's condition text"로 지시하여, 앱 지원 언어(ko/en/ja) 외의 언어(예: 불어, 스페인어)로 조건을 입력한 사용자도 자신의 언어로 주석을 받을 수 있다. 프롬프트 자체는 모두 영어로 작성되어 있다.
-- DB 필드: `Job.annotate_instruction/annotate_mode/annotate_comment_mode/annotate_status/annotate_job_id/annotate_recovery_notes/annotate_refundable/annotate_reserved_pages/annotate_reserved_period_start`, `result_ocr_layout_storage_path`, `result_annotated_pdf_storage_path` (`020_add_pdf_annotate_fields.sql`). `annotate_job_id`/`result_xlsx_advanced_job_id`는 VARCHAR(64) (`021_widen_job_id_columns.sql`). 주석 결과 파일 목록은 `annotated_pdf_files` JSONB (`022_add_annotated_pdf_files.sql`). 고급주석(Vision LLM) 여부는 `annotate_advanced` BOOLEAN (`023_add_annotate_advanced.sql`).
+- **Fresh Air PDF JSON 주석 (신규)**: 백엔드가 생성한 주석을 PyMuPDF 직접 렌더링(PDF)과 Fresh Air PDF의 `importAnnotations()` JSON 배열 형식으로 병행 저장한다. `settings_store.use_fresh_air_annotation_json` 플래그로 활성화하며, 기본값은 `"0"` (기존 PDF-only 방식). JSON이 있으면 프론트 PdfViewer가 초기 로드 시 `importAnnotations()`로 주석을 복원하고, 사용자는 뷰어 내에서 주석을 추가/편집/삭제할 수 있다. JSON 좌표는 PyMuPDF PDF 포인트를 사용한다.
+- **사용자 주석 편집/저장 (신규)**: 프론트에서 편집이 발생하면 "주석 저장" 버튼이 활성화된다. `SourcePanel`이 `exportAnnotations()`로 현재 JSON을 받아 `POST /api/jobs/{id}/user-annotations`로 전송하면, 백엔드는 `pdf_user_annotator.py`로 PyMuPDF 주석을 다시 렌더링하여 주석 PDF를 덮어쓰고, JSON 파일도 함께 갱신한다. Storage 경로는 `annotated_pdf_files[].annotations_json_storage_path`에 기록된다. `annotated_pdf_files` JSONB 배열의 각 객체는 이제 `storage_path`, `filename`, `annotations_json_storage_path`를 포함할 수 있다.
+- **DB 필드**: `Job.annotate_instruction/annotate_mode/annotate_comment_mode/annotate_status/annotate_job_id/annotate_recovery_notes/annotate_refundable/annotate_reserved_pages/annotate_reserved_period_start`, `result_ocr_layout_storage_path`, `result_annotated_pdf_storage_path` (`020_add_pdf_annotate_fields.sql`). `annotate_job_id`/`result_xlsx_advanced_job_id`는 VARCHAR(64) (`021_widen_job_id_columns.sql`). 주석 결과 파일 목록은 `annotated_pdf_files` JSONB (`022_add_annotated_pdf_files.sql`). 고급주석(Vision LLM) 여부는 `annotate_advanced` BOOLEAN (`023_add_annotate_advanced.sql`).
 - Key files:
   - `app/backend/core/ocr_layout.py` — PaddleOCR-VL `parsing_res_list` → `PageLayout`/`OcrTable`/`OcrRow`/`OcrTextBlock` 정규화 (HTML 표 파싱 + 행 bbox 균등분할 추정, 텍스트 블록 추출)
   - `app/backend/core/pdf_coords.py` — 픽셀 bbox ↔ PDF 포인트 변환, 페이지 경계 clamp
-  - `app/backend/core/pdf_annotator.py` — `AnnotationTarget` 기반 하이라이트/여백 주석 렌더링 (회전 보정, 원본 mediabox 직접 확장으로 원점 이동 방지, 텍스트 양에 따른 가변 박스 높이, 겹침 방지 배치)
-  - `app/backend/core/pdf_annotate_converter.py` — 오케스트레이터 (`run()`): 페이지 이미지 확보 → 보정(deskew + 90° 회전) → OCR bbox 확보 → 요소 수집(표 행+텍스트 블록) → LLM 요소 선택 → 좌표 변환 → 주석 적용 → 업로드. `_images_to_pdf()`로 이미지→PDF 변환 지원.
+  - `app/backend/core/pdf_annotator.py` — `AnnotationTarget` 기반 하이라이트/여백 주석 렌더링 (회전 보정, 원본 mediabox 직접 확장으로 원점 이동 방지, 텍스트 양에 따른 가변 박스 높이, 겹침 방지 배치). `build_fresh_air_annotations()`로 Fresh Air PDF JSON 형식 변환.
+  - `app/backend/core/pdf_annotate_converter.py` — 오케스트레이터 (`run()`): 페이지 이미지 확보 → 보정(deskew + 90° 회전) → OCR bbox 확보 → 요소 수집(표 행+텍스트 블록) → LLM 요소 선택 → 좌표 변환 → 주석 적용 → 업로드. `_images_to_pdf()`로 이미지→PDF 변환 지원. 플래그 켜진 경우 PDF + `.annotations.json` 동시 업로드.
+  - `app/backend/core/pdf_user_annotator.py` — 사용자/백엔드 생성 JSON을 PyMuPDF로 렌더링 (highlight/underline/strikeout/free-text/rectangle/circle/line/arrow/ink 지원). `apply_user_annotations(pdf_bytes, annotations)`로 새 PDF 생성.
   - `app/backend/core/image_deskew.py` — 이미지 미세 기울기 보정 (`deskew` 라이브러리). 0.5° 미만은 생략, 흰색 배경으로 채움.
   - `app/backend/core/prompts.py` — `build_element_highlight_prompt()` (표 행+텍스트 블록 혼합, 사용자 조건 문구 언어로 코멘트 작성 지시), `build_row_highlight_prompt()` (레거시, 표 전용). 모든 프롬프트는 영어로 작성.
   - `app/backend/core/paddleocr_client.py` — `convert_image_with_layout()` (bbox 포함 변환, angle_code 반환), `_convert_and_poll()` 공통 폴링
   - `app/backend/paddleocr_service/main.py` — `_extract_layout_from_result()`, `ConvertResponse.layout` 필드, AI Studio `prunedResult` 전달
   - `app/backend/core/supabase_client.py` — `upload_image()` (원본 이미지를 `pdfs` 버킷에 개별 업로드). `_get_page_image_paths()`가 이 경로를 다운로드할 수 있도록 동일 버킷을 사용해야 한다.
+  - `app/backend/settings_store.py` — `use_fresh_air_annotation_json` 플래그 (기본 `"0"`).
   - `app/backend/workers/tasks.py` — `annotate_pdf_job` Celery task; 이미지 파일 처리 후 `extracted_files[i].storage_path`를 `upload_image()`로 설정
-  - `app/backend/api/jobs.py` — `POST /jobs/{id}/annotate`, `POST /jobs/{id}/annotate-action` (xlsx_advanced와 동일 패턴)
-  - `app/frontend/src/pages/JobResultPage.jsx` — 하이라이트/주석 생성 버튼 + 모달 + 상태 폴링
-  - `app/frontend/src/api.js` — `annotateJob()`, `annotateAction()`
+  - `app/backend/api/jobs.py` — `POST /jobs/{id}/annotate`, `POST /jobs/{id}/annotate-action` (xlsx_advanced와 동일 패턴), `POST /jobs/{id}/user-annotations` (사용자 주석 저장). preview/삭제 시 JSON 파일 동시 처리.
+  - `app/frontend/src/components/PdfViewer.jsx` — `FAPDFViewer` 래퍼. `forwardRef`로 `exportAnnotations()` 노출, `importAnnotations()`로 초기 주석 로드, `onAnnotationChanged` 이벤트 상위 전달.
+  - `app/frontend/src/components/SourcePanel.jsx` — `annotations_json_url` fetch, "주석 저장" 버튼, `onSaveAnnotations` 콜백.
+  - `app/frontend/src/components/PagedResultViewer.jsx` — `SourcePanel`에 `onSaveAnnotations` 전달.
+  - `app/frontend/src/pages/JobResultPage.jsx` — 하이라이트/주석 생성 버튼 + 모달 + 상태 폴링. `saveUserAnnotations()` API 호출.
+  - `app/frontend/src/api.js` — `annotateJob()`, `annotateAction()`, `saveUserAnnotations()`.
+  - `app/frontend/src/locales/{ko,en,ja}/page.json` — `saveAnnotations` i18n 키.
 
 ## OCR Progress Reporting
 

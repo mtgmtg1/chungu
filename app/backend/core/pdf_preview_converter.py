@@ -140,28 +140,6 @@ def _needs_lowres_pdf(pdf_path: Path) -> bool:
         return False
 
 
-def _page_count(pdf_path: Path) -> int:
-    """PDF 파일의 페이지 수를 반환한다. 실패하면 0을 반환한다."""
-    try:
-        doc = fitz.open(str(pdf_path))
-        try:
-            return doc.page_count
-        finally:
-            doc.close()
-    except Exception:
-        return 0
-
-
-def _build_preview_metadata(pdf_path: Path) -> dict[str, str]:
-    """미리보기 PDF에 저장할 Storage 메타데이터를 생성한다."""
-    return {
-        "file_size": str(pdf_path.stat().st_size),
-        "content_type": "application/pdf",
-        "page_count": str(_page_count(pdf_path)),
-        "needs_lowres": "true" if _needs_lowres_pdf(pdf_path) else "false",
-    }
-
-
 def _preview_pdf_path(original_path: str) -> str:
     """원본 storage_path에 대응하는 미리보기 PDF storage_path를 생성한다."""
     safe = original_path.replace("/", "__")
@@ -225,11 +203,7 @@ def get_preview_pdf_url(original_storage_path: str, expires_in: int = 3600) -> s
             client.storage.from_(_PREVIEW_PDF_BUCKET).upload(
                 preview_path,
                 linearized_path.read_bytes(),
-                {
-                    "content-type": "application/pdf",
-                    "upsert": "true",
-                    "metadata": _build_preview_metadata(linearized_path),
-                },
+                {"content-type": "application/pdf", "upsert": "true"},
             )
     except Exception as e:
         logger.warning(f"[preview-pdf] PDF 변환 실패 ({original_storage_path}): {e}")
@@ -269,14 +243,6 @@ def get_lowres_preview_pdf_url(original_storage_path: str, expires_in: int = 360
             logger.debug(f"[preview-pdf-lowres] 기존 PDF 확인 실패: {e}")
             return None
 
-    # Storage 메타데이터로 저화질 필요 여부를 먼저 확인, 불필요한 다운로드 방지
-    metadata = supabase_client.get_storage_metadata(_PREVIEW_PDF_BUCKET, highres_path)
-    if metadata:
-        needs_lowres = metadata.get("needs_lowres") == "true"
-        if not needs_lowres:
-            logger.debug(f"[preview-pdf-lowres] 메타데이터 기준 저화질 불필요, 고화질 URL 반환 ({highres_path})")
-            return supabase_client.get_signed_download_url(highres_path, bucket=_PREVIEW_PDF_BUCKET, expires_in=expires_in)
-
     # 고화질 원본/미리보기 PDF 다운로드
     try:
         highres_bytes = client.storage.from_(_PREVIEW_PDF_BUCKET).download(highres_path)
@@ -299,11 +265,7 @@ def get_lowres_preview_pdf_url(original_storage_path: str, expires_in: int = 360
             client.storage.from_(_PREVIEW_PDF_BUCKET).upload(
                 lowres_path,
                 lowres_local.read_bytes(),
-                {
-                    "content-type": "application/pdf",
-                    "upsert": "true",
-                    "metadata": _build_preview_metadata(lowres_local),
-                },
+                {"content-type": "application/pdf", "upsert": "true"},
             )
     except Exception as e:
         logger.warning(f"[preview-pdf-lowres] 저화질 PDF 생성 실패 ({original_storage_path}): {e}")

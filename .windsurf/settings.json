@@ -1,0 +1,8 @@
+{
+  "python.defaultInterpreterPath": "/Users/jun16/repo/chungu/app/backend/venv/bin/python",
+  "python.analysis.extraPaths": [
+    "/Users/jun16/repo/chungu/app/backend"
+  ],
+  "windsurfPyright.analysis.diagnosticMode": "workspace",
+  "windsurfPyright.analysis.typeCheckingMode": "standard"
+}

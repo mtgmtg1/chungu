@@ -187,7 +187,7 @@ async def upload_job(
             data = file_data[0]
             pages = len(PdfReader(BytesIO(data)).pages)
             total_files = 1
-            storage_path = supabase_client.upload_pdf(job.id, data, files[0].filename)
+            storage_path = supabase_client.upload_input(BytesIO(data), files[0].filename, job.id)
             job.pdf_storage_path = storage_path
             job.file_type = "pdf"
         else:

@@ -5,6 +5,7 @@ import logging
 import re
 import tempfile
 import traceback
+from io import BytesIO
 from pathlib import Path
 
 from .. import settings_store

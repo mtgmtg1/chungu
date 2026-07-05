@@ -231,7 +231,7 @@ export default function ApiPricingPage() {
             {t("page:price.subscriptionNotice")}
           </p>
           <Link
-            to="/price"
+            to="/plans"
             className="inline-flex items-center gap-1 text-blue-600 hover:underline font-semibold"
             data-oid="api-price-to-plans-link"
           >

@@ -308,7 +308,7 @@ async def upload_job(
             else:
                 pages = await _count_pages_with_docling(data, files[0].filename)
             total_files = 1
-            storage_path = supabase_client.upload_pdf(job.id, data, files[0].filename)
+            storage_path = supabase_client.upload_input(BytesIO(data), files[0].filename, job.id)
             job.pdf_storage_path = storage_path
             job.file_type = single_file_type
         elif is_single_file and single_file_type in media_loader.HWP_TYPES:
@@ -326,7 +326,7 @@ async def upload_job(
             finally:
                 tmp_path.unlink(missing_ok=True)
             total_files = 1
-            storage_path = supabase_client.upload_pdf(job.id, data, files[0].filename)
+            storage_path = supabase_client.upload_input(BytesIO(data), files[0].filename, job.id)
             job.pdf_storage_path = storage_path
             job.file_type = single_file_type
         else:
@@ -382,7 +382,7 @@ async def upload_job(
 
                 # Storage에는 원본 파일들을 압축하여 하나로 업로드
                 if is_single_file:
-                    storage_path = supabase_client.upload_pdf(job.id, file_data[0], files[0].filename)
+                    storage_path = supabase_client.upload_input(BytesIO(file_data[0]), files[0].filename, job.id)
                     job.pdf_storage_path = storage_path
                     job.file_type = "archive" if archive_handler.is_archive(files[0].filename) else "mixed"
                 else:
@@ -583,29 +583,18 @@ async def create_job(
             info = files_info[0]
             storage_path = info["storage_path"]
             filename = info["original_name"]
+            data = supabase_client.download_pdf(storage_path).read()
             single_file_type = media_loader.detect_file_type(Path(filename))
 
             if single_file_type in media_loader.DOCLING_TYPES:
                 if single_file_type == "pdf":
-                    # Storage 메타데이터에서 페이지 수 조회, 불필요한 다운로드 방지
-                    pages = 0
-                    metadata = supabase_client.get_storage_metadata("pdfs", storage_path)
-                    if metadata and metadata.get("page_count"):
-                        try:
-                            pages = int(metadata["page_count"])
-                        except ValueError:
-                            pages = 0
-                    if not pages:
-                        data = supabase_client.download_pdf(storage_path).read()
-                        pages = len(PdfReader(BytesIO(data)).pages)
+                    pages = len(PdfReader(BytesIO(data)).pages)
                 else:
-                    data = supabase_client.download_pdf(storage_path).read()
                     pages = await _count_pages_with_docling(data, filename)
                 total_files = 1
                 job.pdf_storage_path = storage_path
                 job.file_type = single_file_type
             elif single_file_type in media_loader.HWP_TYPES:
-                data = supabase_client.download_pdf(storage_path).read()
                 suffix = Path(filename).suffix
                 with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
                     tmp.write(data)
@@ -621,7 +610,6 @@ async def create_job(
                 job.pdf_storage_path = storage_path
                 job.file_type = single_file_type
             else:
-                data = supabase_client.download_pdf(storage_path).read()
                 with tempfile.TemporaryDirectory() as tmpdir:
                     tmp_path = Path(tmpdir)
                     file_path = tmp_path / info.get("relative_path", filename)

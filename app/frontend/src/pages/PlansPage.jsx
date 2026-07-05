@@ -9,11 +9,6 @@ import { useAuth } from "../AuthContext.jsx";
 import { SkeletonCard } from "../components/Skeleton.jsx";
 import PlanCard from "../components/PlanCard.jsx";
 
-function formatDuration(seconds) {
-  if (!seconds) return "0";
-  return Math.round(seconds / 60).toLocaleString();
-}
-
 export default function PlansPage() {
   const { user } = useAuth();
   const { t } = useTranslation();

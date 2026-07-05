@@ -141,12 +141,14 @@ npm run start        # dev server at localhost:3000
 ## Email System
 
 ### Supabase Auth Emails (English Fixed)
+
 - GoTrue는 단일 템플릿만 지원하므로 인증 메일은 **영어 고정**.
 - 템플릿 파일: `/opt/supabase-chungu/volumes/templates/confirmation.html` (서버)
 - docker-compose.yml에 `GOTRUE_MAILER_TEMPLATES_CONFIRMATION`, `GOTRUE_MAILER_SUBJECTS_CONFIRMATION` 환경변수 및 volume 마운트 추가.
 - 회원가입 시 프론트엔드(`AuthPage.jsx`)에서 스팸 폴더 확인 안내 표시 (`signupSuccessTitle`, `signupSuccessBody`, `signupSpamNotice` i18n 키).
 
 ### App Emails (Multi-language: ko/en/ja)
+
 - **완료 메일** (`build_done_email`): 사용자 프로필 언어에 따라 DOCX 다운로드 버튼 + 결과 페이지 링크(`/jobs/{jobId}`) 포함. 결과 페이지에서 엑셀 다운로드 및 고급변환 가능 안내.
 - **실패 메일** (`build_error_email`): 사용자 프로필 언어에 따라 에러 내용 통지.
 - 언어 조회: `tasks.py`에서 `job.user_id` → `User.language` 조회 후 `lang` 파라미터로 전달. 비회원(`user_id == None`)은 기본값 `"en"`.
@@ -264,6 +266,7 @@ bash deploy_a1.sh
 ```
 
 이 스크립트는 다음을 수행한다:
+
 1. LAN(a1) 또는 WAN(wan-1)으로 SSH 연결
 2. `rsync`로 로컬 `app/` 디렉토리를 서버 `~/chungu-app/`에 동기화 (`.env` 제외)
 3. 서버에서 `docker compose down && docker compose up --build -d` 실행 (이미지 빌드 + 컨테이너 재시작)
@@ -271,6 +274,7 @@ bash deploy_a1.sh
 
 서버 `.env`는 rsync로 덮어쓰지 않으므로 수동으로 관리해야 한다.
 DB 마이그레이션 SQL 파일은 배포 후 서버에서 수동으로 적용한다:
+
 ```bash
 ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu < backend/db/migrations/013_add_xlsx_conversion_fields.sql'
 ```
@@ -379,20 +383,22 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
 
 - `status == "ocr"`일 때 프론트엔드는 `job.done_pages / job.total_pages * 100`으로 퍼센트를 표시한다.
 - **시간진행바 (Time Progress Bar)**:
+
   - 실제 진행률이 늦게 보고될 때 프로그레스 바가 멈춘 것처럼 느껴지는 문제를 해결하기 위해, 경과 시간 기반 추정 진행률을 추가한다.
-  - 시작 시점은 `job.created_at`가 아닌 **UI가 작업을 처음 본 시점**이다. 이를 통해 timezone 차이나 대기 시간이 시간진행바에 영향을 주지 않는다.
-  - `timePct = min(20, round((elapsedSeconds / (totalPages * 2)) * 100))`. 전체 페이지 수의 2배 시간에 100%에 도달하므로 기존보다 2배 느리게 상승한다.
-  - 화면에 표시할 진행률은 `displayPct = max(actualPct, timePct)`이다. 시간진행바가 20%로 cap되어 있으므로, 20% 이상 구간은 자연스럽게 실제 진행률만 표시된다.
 - **Vision 파이프라인** (`pipeline_vision.py` / `run_vision`):
+
   - PDF -> PNG 렌더링과 OCR을 겹쳐 실행한다. 페이지가 렌더링되자마자 `ocr_client.render_pdf()`의 `on_page_rendered` 콜백으로 해당 페이지를 OCR executor에 즉시 제출한다.
   - 전체 작업을 2×N 단위로 보고: 각 페이지는 렌더링(1단위) + OCR(1단위). 프로그레스는 `(rendered_count + ocr_done_count) / (2 * total_pages) * 100`으로 계산한다.
   - 렌더링 워커는 `ThreadPoolExecutor`로 최대 64개까지 병렬 처리한다.
 - **PagedResultViewer** (`app/frontend/src/components/PagedResultViewer.jsx`):
+
   - 100페이지 초과 작업의 결과 보기 페이지. 페이지 목록 사이드바와 툴바 페이지네이션을 제거하고, 상단에 저장 버튼만 남긴다.
   - 소스 PDF/문서 뷰어의 내부 페이지 컨트롤만 사용하며, `SourcePanel`과 `SimpleEditor`는 좌우 패널로 유지된다.
 - **Docling 파이프라인** (`pipeline_docling.py` / `run_docling`):
+
   - Docling 서비스는 내부적으로 페이지별 진행률을 제공하지 않으므로, 경과 시간 기반 추정치(0~99%)를 사용하고 완료 시 100%로 설정한다.
 - Key files:
+
   - `app/backend/core/ocr_client.py` — `render_pdf()` 진행률 콜백, `on_page_rendered` 콜백, 64 workers
   - `app/backend/core/pipeline_vision.py` — 렌더링/OCR 스트리밍, 2×N 진행률
   - `app/backend/core/docling_client.py` — Docling 폴링 진행률 추정
@@ -401,6 +407,7 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
   - `app/frontend/src/pages/JobResultPage.jsx` — `PoetryProgress`에 시간진행바 적용, `PagedResultViewer` 호출
   - `app/frontend/src/components/PagedResultViewer.jsx` — 100페이지 초과 결과 보기 (페이지네이션 제거, 저장 버튼만 유지)
 - **PoetryProgress** (`app/frontend/src/components/PoetryProgress.jsx`):
+
   - 작업 진행 중 로딩 화면에 한국 명시를 표시하며, 30초 간격으로 랜덤하게 시가 교체됩니다.
   - 76편의 시가 수록되어 있으며 (윤동주 21편, 김소월 48편, 기존 7편), 시 데이터는 `ko/page.json`의 `poems` 배열에서 i18n으로 로드됩니다.
   - 같은 시가 연속으로 표시되지 않도록 중복 방지 로직이 포함되어 있습니다.

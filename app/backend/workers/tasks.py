@@ -7,6 +7,7 @@ import time
 import traceback
 import zipfile
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from pathlib import Path
 
 from pypdf import PdfReader
@@ -280,68 +281,33 @@ def run_job(job_id: str) -> dict:
             def on_error(page: int, msg: str) -> None:
                 errors.append(f"p{page}: {msg}")
 
-            # [Flow: Step 1 (Storage 메타데이터에서 페이지 크기/텍스트 레이어 조회) -> Step 2 (메타데이터 없으면 파일 기반 계산) -> Step 3 (전체 초과 시 스킵) -> Step 4 (기본변환: 텍스트 레이어 있음→Docling / 없음→run_vision / 고급변환: 무조건 run_vision) -> Step 5 (비-PDF: Docling)]
-            oversized, total_pages = 0, 0
-            metadata = supabase_client.get_storage_metadata("pdfs", job.pdf_storage_path) if job.pdf_storage_path else None
-            if metadata:
-                try:
-                    oversized = int(metadata.get("oversized_page_count", "0"))
-                    total_pages = int(metadata.get("page_count", "0"))
-                except ValueError:
-                    oversized, total_pages = 0, 0
-            if not total_pages:
-                oversized, total_pages = count_oversized_pages(input_path)
-
+            # [Flow: Step 1 (페이지 크기 검사) -> Step 2 (전체 초과 시 스킵) -> Step 3 (기본변환: 텍스트 레이어 있음→Docling / 없음→run_vision / 고급변환: 무조건 run_vision) -> Step 4 (비-PDF: Docling)]
+            oversized, total_pages = count_oversized_pages(input_path)
             if oversized > 0:
                 errors.append(f"{input_path.name}: {oversized}페이지가 350mm를 초과하여 파싱할 수 없습니다")
             if oversized == total_pages and total_pages > 0:
                 page_tables = []
                 fmt = "markdown"
-            elif input_path.suffix.lower() == ".pdf" and ocr_model == "basic":
-                has_text_layer = False
-                if metadata and metadata.get("has_text_layer") is not None:
-                    has_text_layer = metadata.get("has_text_layer") == "true"
-                else:
-                    has_text_layer = has_pdf_text_layer(str(input_path))
-                if has_text_layer:
-                    _set_status(db, job, "ocr")
-                    page_tables = run_docling(
-                        input_path,
-                        str(work_dir),
-                        columns,
-                        endpoint,
-                        model,
-                        api_key,
-                        extra_prompt=job.prompt,
-                        use_refinement=use_refinement,
-                        max_tokens=10000,
-                        media_endpoint=media_ep,
-                        media_model=media_mdl,
-                        media_api_key=media_key,
-                        on_progress=on_progress,
-                        on_error=on_error,
-                        ocr_engine=ocr_engine,
-                    )
-                    fmt = "markdown"
-                else:
-                    _set_status(db, job, "ocr")
-                    page_tables = run_vision(
-                        str(input_path),
-                        str(work_dir),
-                        columns,
-                        endpoint,
-                        model,
-                        api_key,
-                        extra_prompt=job.prompt,
-                        dpi=job.dpi,
-                        max_tokens=10000,
-                        media_endpoint=media_ep,
-                        media_model=media_mdl,
-                        media_api_key=media_key,
-                        on_progress=on_progress,
-                        on_error=on_error,
-                    )
-                    fmt = "markdown"
+            elif input_path.suffix.lower() == ".pdf" and ocr_model == "basic" and has_pdf_text_layer(str(input_path)):
+                _set_status(db, job, "ocr")
+                page_tables = run_docling(
+                    input_path,
+                    str(work_dir),
+                    columns,
+                    endpoint,
+                    model,
+                    api_key,
+                    extra_prompt=job.prompt,
+                    use_refinement=use_refinement,
+                    max_tokens=10000,
+                    media_endpoint=media_ep,
+                    media_model=media_mdl,
+                    media_api_key=media_key,
+                    on_progress=on_progress,
+                    on_error=on_error,
+                    ocr_engine=ocr_engine,
+                )
+                fmt = "markdown"
             elif input_path.suffix.lower() == ".pdf":
                 _set_status(db, job, "ocr")
                 page_tables = run_vision(
@@ -620,7 +586,7 @@ def run_job(job_id: str) -> dict:
                             errors.append(f"{p.name}: 이미지 업로드 실패 {e}")
                     elif ftype in media_loader.DOCLING_TYPES or ftype in media_loader.HWP_TYPES:
                         try:
-                            info["storage_path"] = supabase_client.upload_pdf(job_id, p.read_bytes(), p.name)
+                            info["storage_path"] = supabase_client.upload_input(BytesIO(p.read_bytes()), p.name, job_id)
                         except Exception as e:
                             errors.append(f"{p.name}: 문서 업로드 실패 {e}")
                     extracted_info.append(info)

@@ -41,9 +41,9 @@ def me(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_
     return {
         "user_id": user.user_id,
         "email": user.email,
-        "points_balance": user.points_balance,
-        "subscription_plan": user.subscription_plan or "free",
-        "subscription_status": user.subscription_status or "inactive",
+        "points_balance": db_user.points_balance if db_user else user.points_balance,
+        "subscription_plan": db_user.subscription_plan if db_user else "free",
+        "subscription_status": db_user.subscription_status if db_user else "inactive",
         "subscription": subscription,
         "is_admin": user.is_admin,
         "language": user.language or "en",

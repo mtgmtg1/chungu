@@ -28,13 +28,14 @@ import fitz  # PyMuPDF
 logger = logging.getLogger(__name__)
 
 MARGIN_WIDTH_PT = 190.0  # 우측 여백 주석 컬럼 너비 (포인트, 시각적 가로 방향 기준)
-MARGIN_NOTE_MIN_HEIGHT_PT = 24.0  # 코멘트 박스 최소 높이 (약 2줄)
+MARGIN_NOTE_MIN_HEIGHT_PT = 11.0  # 코멘트 박스 최소 높이 (텍스트 1줄 높이)
 MARGIN_NOTE_MAX_HEIGHT_PT = 120.0  # 코멘트 박스 최대 높이 (약 10줄)
 MARGIN_NOTE_GAP_PT = 6.0  # 세로로 쌓이는 코멘트 박스 사이 최소 간격
 MARGIN_NOTE_FONT_SIZE = 8
 MARGIN_NOTE_LINE_HEIGHT_PT = 11.0  # 줄 높이 (폰트 크기의 ~1.35배)
 MARGIN_NOTE_PADDING_PT = 8.0  # 상하 패딩 합계
 MARGIN_NOTE_INNER_WIDTH_PT = MARGIN_WIDTH_PT - 8  # 좌우 4pt씩 여백 → 실제 텍스트 영역 너비
+EXTRA_BOTTOM_SLACK_PT = 20.0  # 마지막 주석 아래 여유 공간
 DEFAULT_HIGHLIGHT_COLOR = (1.0, 0.92, 0.3)  # 형광펜 노랑
 DEFAULT_MARGIN_BORDER_COLOR = (0.85, 0.45, 0.05)
 
@@ -53,7 +54,7 @@ def _estimate_note_height(text: str) -> float:
     """텍스트 길이에 따라 코멘트 박스 높이를 추정한다 (최소/최대 한도 적용).
 
     한글/영문 혼합 기준으로 대략적인 줄 수를 계산해 높이를 결정한다.
-    텍스트가 적으면 작게, 많으면 크게 — 최소 24pt(약 2줄), 최대 120pt(약 10줄).
+    텍스트가 적으면 작게, 많으면 크게 — 최소 11pt(약 1줄), 최대 120pt(약 10줄).
     """
     if not text:
         return MARGIN_NOTE_MIN_HEIGHT_PT

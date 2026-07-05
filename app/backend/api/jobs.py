@@ -1640,6 +1640,10 @@ def annotate_action(
     if job.annotate_status != "error" or not job.annotate_refundable:
         raise HTTPException(status_code=400, detail="Not in a refundable or retryable state")
 
+    # 비회원 사용자 체크
+    if job.user_id is None:
+        raise HTTPException(status_code=402, detail="구독이 필요한 기능입니다.")
+
     action = str(payload.get("action", "")).lower()
     if action not in ("retry", "refund"):
         raise HTTPException(status_code=400, detail="Unsupported action")

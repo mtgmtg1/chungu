@@ -220,12 +220,6 @@ npm run start        # dev server at localhost:3000
   - 저화질/선형화 생성 중 오류가 발생하면 원본 PDF의 서명 URL로 폴백하여 프리뷰 패널이 blank 되지 않도록 한다.
   - `/api/jobs/{id}/preview` 응답을 Redis에 `preview:{job_id}:{start_page}:{end_page}` 키로 5분 TTL 캐싱한다. `save_result_markdown` / `save_result_page`에서 `preview:{job_id}:*` 패턴으로 캐시를 무효화한다.
   - `_source_files()`에서 `concurrent.futures.ThreadPoolExecutor(max_workers=3)`로 여러 파일의 signed URL 생성을 병렬화한다. 스레드당 `create_fresh_service_client()`로 새로운 Supabase 클라이언트를 생성하여 스레드 안전을 확보한다.
-- **Storage 메타데이터 기반 PDF 최적화** (`app/backend/core/supabase_client.py`, `app/backend/core/pdf_preview_converter.py`, `app/backend/api/jobs.py`, `app/backend/workers/tasks.py`):
-  - PDF 업로드 시 `page_count`, `has_text_layer`, `oversized_page_count`, `needs_lowres`, `file_size`, `content_type`를 Supabase Storage 객체 메타데이터(`x-metadata`)에 저장한다.
-  - 미리보기 URL 생성: `get_lowres_preview_pdf_url()`에서 메타데이터의 `needs_lowres`를 먼저 확인 → 저화질이 필요 없으면 원본/고화질 PDF 서명 URL을 바로 반환하고, 원본 파일을 Storage에서 다운로드하지 않는다.
-  - Job 생성 비용 계산: `/api/jobs/{id}/create`에서 단일 PDF의 `page_count`를 Storage 메타데이터에서 조회, 메타데이터가 없을 때만 다운로드 후 `PdfReader`로 계산한다.
-  - OCR 라우팅: `run_job()`에서 basic 모델 PDF의 `has_text_layer`와 `oversized_page_count`를 Storage 메타데이터에서 조회, 메타데이터가 없을 때만 `has_pdf_text_layer()` / `count_oversized_pages()`를 호출한다.
-  - 메타데이터는 새로 업로드된 파일에만 저장되며, 기존 파일은 fallback 정책에 따라 기존 동작(다운로드 후 계산)을 유지한다.
 - **MarkdownPreview** (`app/frontend/src/components/MarkdownPreview.jsx`):
   - 읽기 전용 마크다운 뷰어. `marked.parse`로 HTML 렌더링 후 `dangerouslySetInnerHTML` 사용 (백엔드 신뢰 출력, DOMPurify 미사용).
   - `<!-- 페이지 N -->` 마커 기준으로 마크다운을 페이지 섹션으로 분할.
@@ -242,12 +236,13 @@ npm run start        # dev server at localhost:3000
   - `React.memo` 적용.
 - **PagedResultViewer** (`app/frontend/src/components/PagedResultViewer.jsx`):
   - 100페이지 초과 작업용 페이지별 뷰어. `api.previewJob(jobId, pageNum, pageNum)`으로 단일 페이지 로드.
-  - 보기 모드(`MarkdownPreview`)와 편집 모드(`SimpleEditor`) 토글 지원.
+  - 보기 모드(`MarkdownPreview`)와 편집 모드(`SimpleEditor`) 토글 지원. **기본 모드는 편집 모드**.
   - `React.memo` 적용.
 - **JobResultPage** (`app/frontend/src/pages/JobResultPage.jsx`):
-  - `editMode` state로 보기/편집 모드 전환. 보기 모드: `MarkdownPreview`, 편집 모드: `SimpleEditor`.
+  - `editMode` state로 보기/편집 모드 전환. **초기값은 `true`로 편집 모드로 진입**. 보기 모드: `MarkdownPreview`, 편집 모드: `SimpleEditor`.
   - `currentPdfPage` 변경 시 에디터/프리뷰에 `scrollToPage` 호출하여 원본-결과 동기 스크롤.
   - `loadPreview()`에서 `preview.last_page > PAGE_THRESHOLD` 폴백 체크: DB의 `total_pages`가 잘못되어도 마크다운의 실제 페이지 수로 페이징 모드 전환.
+  - `loadPreview()` **대형 작업 최적화**: `needsPagedMode(job)`(100페이지 초과)로 미리 판단된 작업은 전체 마크다운을 받아오지 않고 `api.previewJob(jobId, 1, 1)`로 첫 페이지 메타/소스 정보만 획득. 이후 `PagedResultViewer`가 페이지별로 개별 로드하여 300페이지 이상 문서에서 스켈레톤 화면이 멈추는 문제를 방지.
   - `saveMarkdown()`는 `pages.length > 0`으로 페이징 모드 판단 (DB 값 의존 제거).
   - `MarkdownViewToolbar`로 보기/편집 토글 UI 제공.
   - i18n 키: `editMode`, `viewMode`, `edit`, `view` (ko/en/ja).

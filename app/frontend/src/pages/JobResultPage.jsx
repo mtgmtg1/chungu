@@ -415,6 +415,14 @@ export default function JobResultPage() {
         pendingDeleteFile.sourceKind,
         pendingDeleteFile.sourceIndex,
       );
+      // [Flow: Step 1 (API 삭제 성공 후 즉시 UI에서 항목 제거) -> Step 2 (모달 닫기) -> Step 3 (서버 최신 상태로 동기화)]
+      setSourceFiles((prev) =>
+        prev.filter(
+          (f) =>
+            f.source_index !== pendingDeleteFile.sourceIndex ||
+            f.source_kind !== pendingDeleteFile.sourceKind,
+        ),
+      );
       setDeleteSourceFileModal(false);
       setPendingDeleteFile(null);
       await loadJob();

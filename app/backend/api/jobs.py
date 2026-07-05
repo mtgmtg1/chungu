@@ -898,12 +898,13 @@ def delete_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: S
 def _delete_original_file(job: Job, source_index: int, db: Session) -> dict:
     """지정한 인덱스의 원본 파일을 Storage와 DB에서 삭제한다.
 
-    [Flow: Step 1 (단일 파일 업로드면 pdf_storage_path 직접 삭제) -> Step 2 (다중 파일이면 extracted_files에서 항목 제거) -> Step 3 (DB commit 후 결과 반환)]
+    [Flow: Step 1 (단일 파일 업로드면 pdf_storage_path 직접 삭제) -> Step 2 (다중 파일이면 extracted_files에서 항목 제거) -> Step 3 (preview 캐시 무효화) -> Step 4 (DB commit 후 결과 반환)]
     """
     files = job.extracted_files or []
     if not files and job.pdf_storage_path and source_index == 0:
         supabase_client.delete_storage_path("pdfs", job.pdf_storage_path)
         job.pdf_storage_path = ""
+        cache.invalidate_pattern(f"preview:{job.id}:*")
         db.commit()
         return {"deleted": True, "source_kind": "original", "source_index": 0}
     if source_index >= len(files):
@@ -917,6 +918,7 @@ def _delete_original_file(job: Job, source_index: int, db: Session) -> dict:
         supabase_client.delete_storage_path(bucket, storage_path)
     files.pop(source_index)
     job.extracted_files = files
+    cache.invalidate_pattern(f"preview:{job.id}:*")
     db.commit()
     return {"deleted": True, "source_kind": "original", "source_index": source_index}
 
@@ -924,13 +926,14 @@ def _delete_original_file(job: Job, source_index: int, db: Session) -> dict:
 def _delete_annotation_file(job: Job, source_index: int, db: Session) -> dict:
     """지정한 인덱스의 주석 PDF 파일을 Storage와 DB에서 삭제한다.
 
-    [Flow: Step 1 (하위 호환 단일 주석이면 result_annotated_pdf_storage_path 삭제) -> Step 2 (annotated_pdf_files 목록에서 항목 제거) -> Step 3 (모든 주석이 삭제되면 result_annotated_pdf_storage_path 초기화)]
+    [Flow: Step 1 (하위 호환 단일 주석이면 result_annotated_pdf_storage_path 삭제) -> Step 2 (annotated_pdf_files 목록에서 항목 제거) -> Step 3 (preview 캐시 무효화) -> Step 4 (모든 주석이 삭제되면 result_annotated_pdf_storage_path 초기화)]
     """
     entries = list(job.annotated_pdf_files or [])
     if not entries and job.result_annotated_pdf_storage_path and source_index == 0:
         supabase_client.delete_storage_path("results", job.result_annotated_pdf_storage_path)
         job.result_annotated_pdf_storage_path = ""
         job.annotated_pdf_files = []
+        cache.invalidate_pattern(f"preview:{job.id}:*")
         db.commit()
         return {"deleted": True, "source_kind": "annotation", "source_index": 0}
     if source_index >= len(entries):
@@ -943,6 +946,7 @@ def _delete_annotation_file(job: Job, source_index: int, db: Session) -> dict:
     job.annotated_pdf_files = entries
     if not entries:
         job.result_annotated_pdf_storage_path = ""
+    cache.invalidate_pattern(f"preview:{job.id}:*")
     db.commit()
     return {"deleted": True, "source_kind": "annotation", "source_index": source_index}
 

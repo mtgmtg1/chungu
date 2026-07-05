@@ -467,16 +467,16 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 - **PDF 좌표 변환 시 주의 (실측으로 발견한 함정들)**:
   - `use_doc_orientation_classify`/`use_doc_unwarping`이 켜지면 bbox가 "보정된 이미지" 기준으로 나와 원본 좌표와 어긋난다 — AI Studio 잡 제출 시(`_aistudio_submit_job`) 항상 `False`로 고정 전송.
   - `/Rotate 90/180/270`이 걸린 PDF는 OCR bbox(시각적/렌더링 좌표)와 PyMuPDF 주석 API가 기대하는 좌표계가 다르다 — `page.derotation_matrix`로 변환 필요.
-  - PyMuPDF의 주석/텍스트 삽입 좌표는 **PDF 절대좌표가 아니라 "현재 mediabox의 좌하단(x0,y0)을 원점으로 하는 로컬 좌표"**다. 여백 확보를 위해 mediabox를 리사이즈하면서 원점(x0,y0)이 이동하면(회전 각도에 따라 특정 방향 패딩만으로도 이동할 수 있음) 좌표가 어긋난다 — 원점 이동량을 기록해 모든 배치 좌표에서 보정해야 한다.
+  - PyMuPDF의 주석/텍스트 삽입 좌표는 **PDF 절대좌표가 아니라 "현재 mediabox의 좌하단(x0,y0)을 원점으로 하는 로컬 좌표"**다. 원점 (0,0)이 좌하단이므로, **우측(또는 상단) 여백만 늘리면 x0/y0가 이동하지 않아 보정이 불필요**하다. 좌측/하단 여백을 늘리면 x0/y0가 이동해 기존 좌표가 어긋나므로, 본 기능은 우측에만 여백을 추가한다 (원점 이동 보정 로직은 제거됨).
   - 텍스트 레이어 없는 스캔본에서 `add_highlight_annot()`에 raw bbox를 넣으면 MuPDF가 사각형이 아닌 타원형 브러시로 그린다 — `add_rect_annot()`(Square 주석) + 반투명 채우기로 대체.
-  - 여백은 **오른쪽에만** 추가한다 (상하좌우 전체 확장은 회전된 페이지에서 원점 이동/정렬 붕괴 사례가 실측되어 제외). 필요한 세로 길이는 쌓일 주석 개수에 따라 미리 계산해서 겹치지 않을 만큼만 확장한다.
-- 여백 코멘트 박스는 서로 겹치지 않도록 세로 위치를 순서대로 밀어내며 배치하고(`_layout_margin_notes`), 원래 요소 위치와 배치된 박스 위치가 달라지면 꺾이는 연결선(callout)으로 이어준다.
+  - 여백은 **오른쪽에만** 추가한다 (상/하/좌는 건드리지 않음). 우측에만 늘리면 mediabox 원점이 불변이므로 회전된 페이지에서도 좌표가 틀어지지 않는다. 페이지 세로 길이는 늘리지 않고, 주석이 페이지 하단을 넘어가면 하단으로 clamp한다.
+- 여백 코멘트 박스는 서로 겹치지 않도록 세로 위치를 순서대로 밀어내며 배치하고(`_layout_margin_notes`), 원래 요소 위치와 배치된 박스 위치가 달라지면 꺾이는 연결선(callout)으로 이어준다. **박스 높이는 텍스트 양에 따라 가변** (`_estimate_note_height`): 폰트 8pt 기준 약 22문자/줄로 줄 수를 추정해 높이를 계산, 최소 24pt(약 2줄)~최대 120pt(약 10줄) 범위에서 조절된다.
 - LLM 요소 선택 프롬프트(`build_element_highlight_prompt`)는 표 행과 텍스트 블록이 혼합된 요소 목록에서 조건에 맞는 요소를 선택한다. 표 행은 헤더 컬럼명을 정확히 매칭하도록 명시하고, 텍스트 블록은 특정 단어/이름/날짜 포함 여부로 판단한다. 완전한 정확도는 보장되지 않으므로 결과 검토가 필요하다. 텍스트 블록은 앞 200자만 LLM에 전달해 토큰 폭증을 방지한다.
 - DB 필드: `Job.annotate_instruction/annotate_mode/annotate_comment_mode/annotate_status/annotate_job_id/annotate_recovery_notes/annotate_refundable/annotate_reserved_pages/annotate_reserved_period_start`, `result_ocr_layout_storage_path`, `result_annotated_pdf_storage_path` (`020_add_pdf_annotate_fields.sql`). `annotate_job_id`/`result_xlsx_advanced_job_id`는 VARCHAR(64) (`021_widen_job_id_columns.sql`).
 - Key files:
   - `app/backend/core/ocr_layout.py` — PaddleOCR-VL `parsing_res_list` → `PageLayout`/`OcrTable`/`OcrRow`/`OcrTextBlock` 정규화 (HTML 표 파싱 + 행 bbox 균등분할 추정, 텍스트 블록 추출)
   - `app/backend/core/pdf_coords.py` — 픽셀 bbox ↔ PDF 포인트 변환, 페이지 경계 clamp
-  - `app/backend/core/pdf_annotator.py` — `AnnotationTarget` 기반 하이라이트/여백 주석 렌더링 (회전 보정, 원점 이동 보정, 겹침 방지 배치)
+  - `app/backend/core/pdf_annotator.py` — `AnnotationTarget` 기반 하이라이트/여백 주석 렌더링 (회전 보정, 우측 전용 여백 추가로 원점 이동 불필요, 텍스트 양에 따른 가변 박스 높이, 겹침 방지 배치)
   - `app/backend/core/pdf_annotate_converter.py` — 오케스트레이터 (`run()`): 페이지 렌더링 → OCR bbox 확보 → 요소 수집(표 행+텍스트 블록) → LLM 요소 선택 → 좌표 변환 → 주석 적용 → 업로드. `_images_to_pdf()`로 이미지→PDF 변환 지원.
   - `app/backend/core/prompts.py` — `build_element_highlight_prompt()` (표 행+텍스트 블록 혼합), `build_row_highlight_prompt()` (레거시, 표 전용)
   - `app/backend/core/paddleocr_client.py` — `convert_image_with_layout()` (bbox 포함 변환), `_convert_and_poll()` 공통 폴링

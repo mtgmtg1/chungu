@@ -345,6 +345,29 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
 - Docker Compose: `paddleocr_service` 서비스 정의, worker/beat에 `PADDLEOCR_SERVICE_URL` 환경변수 전달.
 - 환경변수: `PADDLEOCR_API_TOKEN`, `PADDLEOCR_API_URL`, `PADDLEOCR_SERVICE_URL`, `PADDLEOCR_FALLBACK_ENABLED` 등.
 
+## PaddleOCR Auto Parameter Recommendation
+
+- 사용자가 기술 용어를 몰라도, 업로드된 문서의 샘플 페이지를 Vision LLM이 보고 PaddleOCR-VL 최적 파라미터를 자동으로 결정한다.
+- 샘플링: PDF/오피스 문서의 전체 페이지 수 기준 `ceil(total_pages × 0.01)` 장, **최소 1장, 최대 3장**.
+  - 1장일 때는 중간 페이지, 2장일 때는 첫/마지막 페이지, 3장일 때는 첫/중간/마지막 페이지를 선택하여 문서 전체 구조를 대표한다.
+- Vision LLM은 문서 유형(receipt/invoice/form/paper/table_heavy/image_heavy/business_card/report/mixed)을 판단하고, 아래 파라미터를 JSON으로 추천한다:
+  - `layout_threshold`, `layout_merge_bboxes_mode` (`large`/`small`/`union`), `layout_unclip_ratio`, `layout_nms`
+  - `use_doc_orientation_classify`, `use_doc_unwarping`, `use_layout_detection`, `use_ocr_for_image_block`, `format_block_content`
+  - `use_chart_recognition`, `use_seal_recognition`
+- 추천값은 범위를 벗어나면 clamping되고, JSON 파싱/추천 실패 시 `mixed` 문서 유형 프리셋으로 안전하게 fallback한다.
+- 적용 범위:
+  - `paddleocr_service/main.py`의 로컬 PaddleOCRVL 파이프라인 (`predict()`에 동적 파라미터 전달)
+  - AI Studio API 폴백 (`/api/convert`)의 `optionalPayload`에 동일 파라미터를 camelCase로 변환하여 전달
+- 환경변수:
+  - `PADDLEOCR_AUTO_PARAMETER_ENABLED=true` — 자동 추천 On/Off
+  - `PADDLEOCR_SAMPLE_DPI=150` — 샘플 페이지 렌더링 해상도 (비용 절감)
+  - `PADDLEOCR_SAMPLE_MAX_TOKENS=2000` — 추천 LLM 응답 길이 제한
+- Key files:
+  - `app/backend/core/paddleocr_parameter_recommender.py` — 샘플 추출, LLM 추천, 파라미터 검증/프리셋
+  - `app/backend/core/prompts.py` — `build_paddleocr_parameter_recommendation_prompt()`
+  - `app/backend/paddleocr_service/main.py` — `_get_paddleocr_params()`, `_run_paddleocr()`, AI Studio API payload 변환
+  - `app/backend/paddleocr_service/Dockerfile`, `Dockerfile.pipeline` — `Pillow`/`ImageMagick` 및 `backend/core/*` 복사
+
 ## OCR Progress Reporting
 
 - `status == "ocr"`일 때 프론트엔드는 `job.done_pages / job.total_pages * 100`으로 퍼센트를 표시한다.

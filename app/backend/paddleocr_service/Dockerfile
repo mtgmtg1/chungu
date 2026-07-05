@@ -7,17 +7,22 @@ FROM python:3.11-slim
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# LibreOffice + CJK 폰트 설치 (오피스 문서 → PDF 변환용)
+# LibreOffice + CJK 폰트 + ImageMagick 설치 (오피스 문서 → PDF 변환용, 이미지 해상도 맞춤용)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-core libreoffice-writer libreoffice-impress libreoffice-calc \
     fonts-noto-cjk fonts-noto-cjk-extra \
+    imagemagick \
     && rm -rf /var/lib/apt/lists/*
 
 # FastAPI + 의존성 설치
-RUN pip install --no-cache-dir fastapi uvicorn python-multipart PyMuPDF requests
+RUN pip install --no-cache-dir fastapi uvicorn python-multipart PyMuPDF requests Pillow
 
 # 서비스 코드 복사
 COPY backend/paddleocr_service/main.py /app/main.py
+COPY backend/core/__init__.py /app/backend/core/__init__.py
+COPY backend/core/ocr_client.py /app/backend/core/ocr_client.py
+COPY backend/core/prompts.py /app/backend/core/prompts.py
+COPY backend/core/paddleocr_parameter_recommender.py /app/backend/core/paddleocr_parameter_recommender.py
 
 WORKDIR /app
 

@@ -1620,7 +1620,7 @@ def annotate_job(
     db.commit()
 
     from ..workers import tasks
-    task = tasks.annotate_pdf_job.delay(job_id, instruction, mode, comment_mode)
+    task = tasks.annotate_pdf_job.delay(job_id, instruction, mode, comment_mode, user.language)
     try:
         job.annotate_job_id = task.id
         db.commit()
@@ -1669,7 +1669,7 @@ def annotate_action(
     job.result_annotated_pdf_storage_path = ""
     db.commit()
     from ..workers import tasks
-    task = tasks.annotate_pdf_job.delay(job_id, job.annotate_instruction, job.annotate_mode, job.annotate_comment_mode)
+    task = tasks.annotate_pdf_job.delay(job_id, job.annotate_instruction, job.annotate_mode, job.annotate_comment_mode, user.language)
     job.annotate_job_id = task.id
     db.commit()
     return {"job_id": task.id, "status": "processing"}

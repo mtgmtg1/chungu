@@ -137,17 +137,21 @@ def _select_elements_with_llm(
     elements: list[AnnotateElement],
     instruction: str,
     want_llm_comment: bool,
+    language: str,
     endpoint: str,
     model: str,
     api_key: str,
 ) -> list[dict]:
-    """LLM에게 요소 텍스트만 전달해 조건에 맞는 요소 인덱스+코멘트를 받는다 (좌표 추론은 시키지 않는다)."""
+    """LLM에게 요소 텍스트만 전달해 조건에 맞는 요소 인덱스+코멘트를 받는다 (좌표 추론은 시키지 않는다).
+
+    주석 코멘트는 사용자 언어(language)로 작성되도록 프롬프트에 지시한다.
+    """
     if not elements:
         return []
 
     truncated = elements[:MAX_ELEMENTS_FOR_LLM]
     element_dicts = [{"kind": e.kind, "text": e.text} for e in truncated]
-    prompt = build_element_highlight_prompt(element_dicts, instruction, want_llm_comment)
+    prompt = build_element_highlight_prompt(element_dicts, instruction, want_llm_comment, language=language)
 
     content, _ = ocr_client.call_text(prompt, endpoint, model, api_key, max_tokens=4000)
     content = _strip_json_fence(content)
@@ -162,8 +166,16 @@ def _select_elements_with_llm(
     return [m for m in matches if isinstance(m, dict) and "element_index" in m]
 
 
-def run(job_id: str, instruction: str, mode: str, comment_mode: str) -> dict:
-    """하이라이트/여백 주석 작업을 실행하고 job 상태를 갱신한다."""
+def run(job_id: str, instruction: str, mode: str, comment_mode: str, language: str = "en") -> dict:
+    """하이라이트/여백 주석 작업을 실행하고 job 상태를 갱신한다.
+
+    Args:
+        job_id: 작업 ID
+        instruction: 사용자가 입력한 조건 문구
+        mode: "highlight" | "margin_note" | "both"
+        comment_mode: "user_text" | "llm_summary"
+        language: 사용자 언어 코드 ("ko"/"en"/"ja") — 주석 코멘트가 이 언어로 작성된다
+    """
     db = SessionLocal()
     job = db.get(Job, job_id)
     if job is None:
@@ -193,7 +205,7 @@ def run(job_id: str, instruction: str, mode: str, comment_mode: str) -> dict:
             if not elements:
                 raise ValueError("텍스트 요소를 인식하지 못해 하이라이트/여백 주석 대상을 찾을 수 없습니다")
 
-            matches = _select_elements_with_llm(elements, instruction, want_llm_comment, endpoint, model, api_key)
+            matches = _select_elements_with_llm(elements, instruction, want_llm_comment, language, endpoint, model, api_key)
             if not matches:
                 job.annotate_status = "done"
                 job.annotate_refundable = False

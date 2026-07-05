@@ -738,9 +738,12 @@ def convert_xlsx_advanced(parent_job_id: str) -> dict:
 
 
 @celery.task(name="backend.workers.tasks.annotate_pdf_job")
-def annotate_pdf_job(job_id: str, instruction: str, mode: str, comment_mode: str) -> dict:
-    """원본 스캔 PDF에 조건에 맞는 표 행을 하이라이트/여백 주석으로 표시한다."""
-    return pdf_annotate_converter.run(job_id, instruction, mode, comment_mode)
+def annotate_pdf_job(job_id: str, instruction: str, mode: str, comment_mode: str, language: str = "en") -> dict:
+    """원본 PDF/이미지에서 조건에 맞는 텍스트 요소를 하이라이트/여백 주석으로 표시한다.
+
+    주석 코멘트는 사용자 언어(language)로 작성된다.
+    """
+    return pdf_annotate_converter.run(job_id, instruction, mode, comment_mode, language=language)
 
 
 @celery.task(name="backend.workers.tasks.auto_recharge_retry")

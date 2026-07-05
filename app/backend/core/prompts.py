@@ -1,93 +1,108 @@
 #!/usr/bin/env python3
-# [Flow: Step 1 (사용자 컬럼/지시 입력) -> Step 2 (vision/hybrid 프롬프트 동적 생성)]
-# 기존 9컬럼 고정 프롬프트를 사용자 정의 컬럼 기반으로 일반화.
+# [Flow: Step 1 (user columns/instruction input) -> Step 2 (vision/hybrid prompt dynamic generation)]
+# Generalized from the old 9-column fixed prompt to user-defined column-based prompts.
+
+# Maps user language codes to full language names for prompt instructions.
+# Used to tell the LLM which language to write annotation comments in.
+LANGUAGE_NAMES = {
+    "ko": "Korean",
+    "en": "English",
+    "ja": "Japanese",
+}
+
+
+def _language_name(code: str) -> str:
+    """Return the full language name for a language code, defaulting to English."""
+    return LANGUAGE_NAMES.get(code, "English")
+
 
 DEFAULT_COLUMNS = [
-    "연번", "구분", "계좌번호", "거래일자",
-    "출금금액(원)", "입금금액(원)", "거래기록사항", "이체메모", "계정",
+    "No.", "Category", "Account Number", "Date",
+    "Withdrawal (KRW)", "Deposit (KRW)", "Transaction Details", "Transfer Memo", "Account",
 ]
 
 
 def build_vision_prompt(columns: list[str], extra: str = "") -> str:
-    """이미지를 직접 보고 레이아웃을 보존한 마크다운으로 추출하라는 프롬프트."""
+    """Prompt to extract a page as layout-preserving markdown from an image."""
     cols = ", ".join(columns)
     base = (
-        "이 페이지를 마크다운으로 변환하세요. "
-        "절대로 표 형식으로 강제하지 마세요. 원문서의 시각적 레이아웃(제목, 단락, 항목, 공백, 표 위치, 글꼴 크기, 굵기, 들여쓰기, 열 구분, 정렬)을 최대한 그대로 보존하세요. "
-        "페이지에 있는 모든 텍스트, 숫자, 날짜, 서명, 도장, 각주, 머리글, 바닥글, 페이지 번호, 로고, 배경 텍스트까지 누락 없이 추출하세요. "
-        "표가 일부 있는 경우에도 그 일부만 표로 만들고, 원문서의 레이아웃을 따르는 자연스러운 마크다운으로 출력하세요. "
-        "절대로 내용을 요약하거나 생략하지 마세요. 추론이나 해석은 추가하지 마세요. "
-        "설명, 머리말, 마무리 문구는 절대 넣지 마세요. "
-        "빈 셀은 공백으로 두고, 숫자와 콤마는 원본 그대로 쓰세요. "
-        f"아래 컬럼({cols})은 참고용이며, 필요한 경우에만 해당 구조를 활용하세요."
+        "Convert this page to markdown. "
+        "Never force the entire content into a table format. Preserve the visual layout of the original document "
+        "(headings, paragraphs, items, whitespace, table positions, font size, weight, indentation, column separation, alignment) as faithfully as possible. "
+        "Extract every piece of text, numbers, dates, signatures, seals, footnotes, headers, footers, page numbers, logos, and background text without omission. "
+        "If only part of the page is a table, render only that part as a table and keep the rest as natural markdown following the original layout. "
+        "Do not summarize or omit any content. Do not add inferences or interpretations. "
+        "Do not include any explanations, headers, or closing remarks. "
+        "Leave empty cells blank. Keep numbers and commas exactly as in the original. "
+        f"The following columns ({cols}) are for reference only; use that structure only when applicable."
     )
-    return f"{base}\n추가 지시: {extra}" if extra.strip() else base
+    return f"{base}\nAdditional instructions: {extra}" if extra.strip() else base
 
 
 def build_text_prompt(columns: list[str], ocr_text: str, extra: str = "") -> str:
-    """OCR 원문을 CSV로 구조화하라는 프롬프트."""
+    """Prompt to structure OCR raw text into CSV."""
     header = ",".join(columns)
     instr = (
-        "아래는 한 PDF 페이지의 OCR 원문입니다. "
-        f"이를 {len(columns)}개 컬럼의 CSV로 변환하세요.\n"
-        "규칙:\n"
-        f"- CSV 헤더는: {header}\n"
-        "- 설명, 마크다운, 코드 블록은 절대 출력하지 마세요. CSV 데이터만 출력하세요.\n"
-        "- 각 행은 한 줄의 CSV 레코드입니다.\n"
-        "- 금액의 콤마는 유지하세요.\n"
-        "- 빈 셀은 비워두세요.\n"
-        "- OCR 오류가 있으면 가능한 한 바로잡으세요.\n"
-        "- 데이터가 없으면 헤더만 출력하세요.\n"
+        "Below is the OCR raw text of a PDF page. "
+        f"Convert it into CSV with {len(columns)} columns.\n"
+        "Rules:\n"
+        f"- CSV header: {header}\n"
+        "- Do not output any explanations, markdown, or code blocks. Output CSV data only.\n"
+        "- Each row is a single CSV record on one line.\n"
+        "- Keep commas in monetary amounts.\n"
+        "- Leave empty cells blank.\n"
+        "- Correct OCR errors where possible.\n"
+        "- If there is no data, output the header only.\n"
     )
     if extra.strip():
-        instr += f"- 추가 지시: {extra}\n"
-    return f"{instr}\nOCR 원문:\n{ocr_text}"
+        instr += f"- Additional instructions: {extra}\n"
+    return f"{instr}\nOCR raw text:\n{ocr_text}"
 
 
 def build_media_prompt(columns: list[str], extra: str = "") -> str:
-    """이미지에서 내용을 추출하는 프롬프트."""
-    cols = ", ".join(columns) if columns else "내용"
+    """Prompt to extract content from an image."""
+    cols = ", ".join(columns) if columns else "content"
     base = (
-        "제공된 이미지를 분석하고, 원문서의 시각적 레이아웃을 최대한 그대로 보존한 마크다운으로 출력하세요. "
-        "일부가 표라면 그 부분만 표로 만들고 절대로 전체를 표 형식으로 강제하지 마세요. "
-        "이미지의 모든 텍스트, 숫자, 날짜, 서명, 도장, 각주, 머리글, 바닥글, 페이지 번호, 로고를 누락 없이 추출하세요. "
-        "절대로 내용을 요약하거나 생략하지 마세요. 추론이나 해석은 추가하지 마세요. "
-        "설명, 머리말, 마무리 문구는 절대 넣지 마세요. "
-        f"아래 컬럼({cols})은 참고용이며, 필요한 경우에만 해당 구조를 활용하세요."
+        "Analyze the provided image and output markdown that preserves the visual layout of the original document as faithfully as possible. "
+        "If only part of the image is a table, render only that part as a table and never force the entire content into a table format. "
+        "Extract every piece of text, numbers, dates, signatures, seals, footnotes, headers, footers, page numbers, and logos without omission. "
+        "Do not summarize or omit any content. Do not add inferences or interpretations. "
+        "Do not include any explanations, headers, or closing remarks. "
+        f"The following columns ({cols}) are for reference only; use that structure only when applicable."
     )
-    return f"{base}\n추가 지시: {extra}" if extra.strip() else base
+    return f"{base}\nAdditional instructions: {extra}" if extra.strip() else base
 
 
 def build_paddleocr_parameter_recommendation_prompt() -> str:
-    """PaddleOCR-VL 파라미터를 자동 추천하도록 Vision LLM에 보내는 프롬프트."""
+    """Prompt to send to the Vision LLM to auto-recommend PaddleOCR-VL parameters."""
     return (
-        "당신은 문서 OCR 레이아웃 전문가입니다. 첨부된 페이지 이미지를 보고, "
-        "해당 문서를 PaddleOCR-VL로 가장 정확하게 파싱할 수 있는 파라미터를 JSON으로 추천하세요.\n\n"
-        "먼저 문서의 전반적인 유형을 다음 중 하나로 판단하세요:\n"
-        "- receipt (영수증): 짧은 종이, 기울어짐/왜곡 가능, 작은 글씨, 항목과 금액 중심\n"
-        "- invoice (세금계산서/송장): 표 형식, 사업자번호/금액/품목 중심\n"
-        "- form (양식): 칸/박스가 많고 사용자가 기입한 필드 중심\n"
-        "- paper (논문/학술지): 단락, 제목, 섹션, 수식/도표 가능\n"
-        "- table_heavy (표가 많은 보고서): 페이지 대부분이 표 또는 표와 텍스트 혼합\n"
-        "- image_heavy (이미지/도면 중심): 텍스트보다 이미지/도표/도면이 많음\n"
-        "- business_card (명함): 작은 카드, 로고, 짧은 텍스트\n"
-        "- report (일반 보고서): 자연스러운 단락과 섹션, 가끔 표/이미지\n"
-        "- mixed (혼합): 위의 유형 중 하나로 명확히 분류되지 않음\n\n"
-        "다음 항목에 대해 true/false 또는 숫자/문자열로만 결정하세요:\n"
-        "- layout_threshold: 레이아웃 모델이 영역을 인식할 최소 신뢰도 (0.1~0.9). "
-        "  영수증/명함/작은 문서는 0.35, 양식/표 중심은 0.4~0.45, 일반 보고서/논문은 0.5를 권장합니다.\n"
-        "- layout_merge_bboxes_mode: 중첩된 레이아웃 박스를 병합하는 방식. "
-        "  'large'(가장 큰 박스만 남김), 'small'(가장 작은 박스만 남김), 'union'(모두 유지) 중 하나.\n"
-        "- use_doc_orientation_classify: 문서가 90/180/270도 기울어져 있으면 true.\n"
-        "- use_doc_unwarping: 문서가 구겨지거나 곡면(스캔/촬영)이면 true.\n"
-        "- use_layout_detection: 레이아웃 분석을 사용하려면 true (거의 항상 true).\n"
-        "- use_ocr_for_image_block: 이미지/도표 안에 숨겨진 텍스트를 추출하려면 true.\n"
-        "- format_block_content: 결과를 마크다운 형식으로 깔끔하게 정리하려면 true.\n"
-        "- layout_nms: 중첩 박스가 많아 후처리가 필요하면 true.\n"
-        "- layout_unclip_ratio: 레이아웃 박스 확장 비율 (0.5~2.0). 일반적으로 1.0.\n"
-        "- use_chart_recognition: 차트/그래프가 많고 수치 추출이 중요하면 true.\n"
-        "- use_seal_recognition: 도장 인식이 필요하면 true.\n\n"
-        "반드시 아래 JSON 형식으로만 출력하고, 설명이나 코드 블록 마커(```)는 절대 넣지 마세요.\n"
+        "You are a document OCR layout expert. Examine the attached page image and recommend, in JSON, "
+        "the parameters that would yield the most accurate parsing with PaddleOCR-VL.\n\n"
+        "First, classify the document into one of the following types:\n"
+        "- receipt: short paper, possible skew/distortion, small text, items and amounts centered\n"
+        "- invoice: tabular format, business numbers/amounts/items centered\n"
+        "- form: many boxes/fields filled in by the user\n"
+        "- paper: academic paper, paragraphs, headings, sections, possible formulas/figures\n"
+        "- table_heavy: report dominated by tables or a mix of tables and text\n"
+        "- image_heavy: more images/diagrams/blueprints than text\n"
+        "- business_card: small card, logo, short text\n"
+        "- report: general report with natural paragraphs and sections, occasional tables/images\n"
+        "- mixed: does not clearly fall into any of the above\n\n"
+        "Decide each of the following as true/false or a number/string:\n"
+        "- layout_threshold: minimum confidence for the layout model to detect a region (0.1~0.9). "
+        "  0.35 for receipts/business cards/small documents, 0.4~0.45 for forms/table-heavy, 0.5 for general reports/papers.\n"
+        "- layout_merge_bboxes_mode: how to merge nested layout boxes. "
+        "  One of 'large' (keep largest), 'small' (keep smallest), 'union' (keep all).\n"
+        "- use_doc_orientation_classify: true if the document is rotated 90/180/270 degrees.\n"
+        "- use_doc_unwarping: true if the document is crumpled or curved (scan/photo).\n"
+        "- use_layout_detection: true to use layout analysis (almost always true).\n"
+        "- use_ocr_for_image_block: true to extract hidden text inside images/diagrams.\n"
+        "- format_block_content: true to format results as clean markdown.\n"
+        "- layout_nms: true if post-processing is needed due to many overlapping boxes.\n"
+        "- layout_unclip_ratio: layout box expansion ratio (0.5~2.0), typically 1.0.\n"
+        "- use_chart_recognition: true if charts/graphs are prominent and numerical extraction matters.\n"
+        "- use_seal_recognition: true if seal/stamp recognition is needed.\n\n"
+        "Output strictly in the following JSON format. Do not include explanations or code block markers (```).\n"
         "{\n"
         '  "document_type": "report",\n'
         '  "layout_threshold": 0.5,\n'
@@ -109,42 +124,46 @@ def build_row_highlight_prompt(
     rows: list[list[str]],
     instruction: str,
     want_llm_comment: bool,
+    language: str = "en",
 ) -> str:
-    """표의 각 행 텍스트만 보고 하이라이트/여백 주석을 붙일 행을 고르는 프롬프트.
+    """Prompt to select table rows for highlight/margin annotation based on row text only.
 
-    좌표(bbox) 추론은 절대 이 프롬프트에 맡기지 않는다 — 좌표는 OCR bbox에서 이미 확정되어 있고,
-    LLM은 순수 텍스트 조건 판단만 수행한다 (Gemma-4의 bbox grounding 신뢰도가 낮다는 리서치 결과 반영).
+    Bbox (coordinate) inference is never delegated to this prompt — coordinates are already
+    determined from OCR bboxes, and the LLM performs purely text-based condition judgment
+    (reflecting research showing Gemma-4's bbox grounding reliability is low).
 
     Args:
-        rows: 행 인덱스 순서의 셀 텍스트 목록 (예: [["1", "2026-01-01", "820,000", "이체"], ...])
-        instruction: 사용자가 입력한 조건 (예: "80만원 이상 이체된 줄")
-        want_llm_comment: True면 각 매칭 행에 대해 짧은 근거 코멘트를 LLM이 직접 생성
+        rows: list of cell texts in row index order (e.g. [["1", "2026-01-01", "820,000", "transfer"], ...])
+        instruction: user-entered condition (e.g. "rows where 800,000 KRW or more was transferred")
+        want_llm_comment: if True, the LLM generates a short justification comment for each matched row
+        language: user's language code ("ko"/"en"/"ja") — comments will be written in this language
 
     Returns:
-        LLM에게 보낼 프롬프트 문자열
+        Prompt string to send to the LLM
     """
     rows_text = "\n".join(f"{i}: {' | '.join(cell for cell in row)}" for i, row in enumerate(rows))
+    lang_name = _language_name(language)
     comment_instr = (
-        "매칭된 각 행마다 왜 선택했는지 10자 내외로 짧게 요약한 comment를 작성하세요 (예: \"82만원 이체\")."
+        f"For each matched row, write a short comment (about 10 characters) summarizing why it was selected, in {lang_name}."
         if want_llm_comment
-        else '모든 매칭 행의 comment 값은 아래 "조건 문구"를 그대로 반복해서 넣으세요 (요약/가공하지 마세요).'
+        else f'Repeat the "Condition" text verbatim as the comment for every matched row (do not summarize or rephrase), in {lang_name}.'
     )
     return (
-        "당신은 문서 내 표를 검토하는 보조원입니다. 아래는 한 표를 행 단위로 나눈 텍스트입니다. "
-        "각 행은 `행번호: 셀1 | 셀2 | ...` 형식입니다. "
-        "여러 표/여러 페이지의 행이 순서대로 이어져 있을 수 있고, 각 표의 첫 행은 대개 컬럼명을 나타내는 "
-        "헤더 행입니다 (예: '연번 | 구분 | 출금금액(원) | 입금금액(원) | ...'). "
-        "셀 순서(컬럼 위치)가 표마다 다를 수 있으니, 조건을 판단하기 전에 가장 가까운 이전 헤더 행을 찾아 "
-        "그 헤더의 컬럼명과 정확히 일치하는 컬럼의 값만 비교하세요. "
-        "예를 들어 조건이 '출금금액이 X 이상'이면 헤더에서 '출금금액'이라는 이름의 컬럼만 확인하고, "
-        "'입금금액' 등 이름이 다른 컬럼 값은 절대 사용하지 마세요.\n\n"
-        f"--- 표 데이터 ---\n{rows_text}\n\n"
-        f"--- 조건 문구 ---\n{instruction}\n\n"
-        "위 조건에 해당하는 행 번호를 모두 찾으세요 (헤더 행 자체는 매칭 대상에서 제외하세요). "
-        "숫자 비교가 필요하면 콤마와 원문자를 제거하고 숫자로 변환해서 판단하세요. "
+        "You are an assistant reviewing tables in a document. Below is the text of a table divided row by row. "
+        "Each row is in the format `row_index: cell1 | cell2 | ...`. "
+        "Rows from multiple tables/pages may be concatenated, and the first row of each table is usually a header row "
+        "containing column names (e.g. 'No. | Category | Withdrawal (KRW) | Deposit (KRW) | ...'). "
+        "Column order may differ between tables, so before evaluating the condition, find the nearest preceding header row "
+        "and compare only the value in the column whose name exactly matches the condition. "
+        "For example, if the condition is 'Withdrawal >= X', check only the column named 'Withdrawal' in the header "
+        "and never use values from columns with different names such as 'Deposit'.\n\n"
+        f"--- Table data ---\n{rows_text}\n\n"
+        f"--- Condition ---\n{instruction}\n\n"
+        "Find all row numbers that match the condition above (exclude header rows themselves from matching). "
+        "If numeric comparison is needed, remove commas and currency symbols and convert to numbers before comparing. "
         f"{comment_instr}\n"
-        "조건에 맞는 행이 하나도 없으면 matches를 빈 배열로 반환하세요.\n"
-        "반드시 아래 JSON 형식으로만 출력하고, 설명이나 코드 블록 마커(```)는 절대 넣지 마세요.\n"
+        "If no rows match, return an empty matches array.\n"
+        "Output strictly in the following JSON format. Do not include explanations or code block markers (```).\n"
         "{\n"
         '  "matches": [\n'
         '    {"row_index": 0, "comment": "..."}\n'
@@ -157,49 +176,53 @@ def build_element_highlight_prompt(
     elements: list[dict],
     instruction: str,
     want_llm_comment: bool,
+    language: str = "en",
 ) -> str:
-    """표 행 + 텍스트 블록(제목/단락/각주 등)이 혼합된 요소 목록에서 주석을 붙일 요소를 고르는 프롬프트.
+    """Prompt to select elements (table rows + text blocks) for highlight/margin annotation.
 
-    각 요소는 dict 형태로 전달되며 다음 키를 가진다:
+    Each element is a dict with the following keys:
       - kind: "table_row" | "text"
-      - text: 표 행인 경우 "셀1 | 셀2 | ..." 형태의 결합 텍스트, 텍스트 블록인 경우 블록 내용
+      - text: for table rows, joined text in "cell1 | cell2 | ..." form; for text blocks, the block content
 
     Args:
-        elements: 요소 인덱스 순서의 dict 목록
-        instruction: 사용자가 입력한 조건 (예: "사람 이름이 있는 부분", "80만원 이상 이체된 줄")
-        want_llm_comment: True면 각 매칭 요소에 대해 짧은 근거 코멘트를 LLM이 직접 생성
+        elements: list of element dicts in element index order
+        instruction: user-entered condition (e.g. "sections containing a person's name", "rows where 800,000 KRW or more was transferred")
+        want_llm_comment: if True, the LLM generates a short justification comment for each matched element
+        language: user's language code ("ko"/"en"/"ja") — comments will be written in this language
 
     Returns:
-        LLM에게 보낼 프롬프트 문자열
+        Prompt string to send to the LLM
     """
     lines: list[str] = []
     for i, el in enumerate(elements):
         kind = el.get("kind", "text")
         text = el.get("text", "")
-        tag = "[표 행]" if kind == "table_row" else "[텍스트]"
+        tag = "[table row]" if kind == "table_row" else "[text]"
         lines.append(f"{i}: {tag} {text}")
     elements_text = "\n".join(lines)
 
+    lang_name = _language_name(language)
     comment_instr = (
-        "매칭된 각 요소마다 왜 선택했는지 10자 내외로 짧게 요약한 comment를 작성하세요 (예: \"82만원 이체\", \"홍길동 언급\")."
+        f"For each matched element, write a short comment (about 10 characters) summarizing why it was selected, in {lang_name}."
         if want_llm_comment
-        else '모든 매칭 요소의 comment 값은 아래 "조건 문구"를 그대로 반복해서 넣으세요 (요약/가공하지 마세요).'
+        else f'Repeat the "Condition" text verbatim as the comment for every matched element (do not summarize or rephrase), in {lang_name}.'
     )
     return (
-        "당신은 문서를 검토하는 보조원입니다. 아래는 문서의 각 페이지에서 추출한 텍스트 요소들입니다. "
-        "각 요소는 `요소번호: [종류] 내용` 형식이며, 종류는 [표 행](표의 한 행) 또는 [텍스트](제목/단락/각주/도장 내 글자 등)입니다. "
-        "표 행은 `셀1 | 셀2 | ...` 형태로 셀이 파이프(|)로 구분되어 있고, 첫 행이 헤더(컬럼명)일 수 있습니다. "
-        "텍스트 요소는 줄바꿈이 공백으로 합쳐진 단락/제목 등입니다. "
-        "여러 페이지의 요소가 순서대로 이어져 있을 수 있습니다.\n\n"
-        f"--- 요소 목록 ---\n{elements_text}\n\n"
-        f"--- 조건 문구 ---\n{instruction}\n\n"
-        "위 조건에 해당하는 요소 번호(element_index)를 모두 찾으세요. "
-        "표 행에서 숫자 비교가 필요하면 콤마와 원문자를 제거하고 숫자로 변환해서 판단하세요. "
-        "텍스트 요소는 특정 단어/이름/날짜 등이 포함되어 있는지로 판단하세요. "
-        "조건이 모호하면 문맥상 가장 관련 있는 요소를 선택하세요. "
+        "You are an assistant reviewing a document. Below are text elements extracted from each page of the document. "
+        "Each element is in the format `element_index: [kind] content`, where kind is either [table row] (a single row of a table) "
+        "or [text] (a heading/paragraph/footnote/seal text, etc.). "
+        "Table rows have cells separated by pipes (|) in the form `cell1 | cell2 | ...`, and the first row may be a header (column names). "
+        "Text elements are paragraphs/headings with newlines collapsed to spaces. "
+        "Elements from multiple pages may be concatenated in order.\n\n"
+        f"--- Element list ---\n{elements_text}\n\n"
+        f"--- Condition ---\n{instruction}\n\n"
+        "Find all element numbers (element_index) that match the condition above. "
+        "For table rows, if numeric comparison is needed, remove commas and currency symbols and convert to numbers before comparing. "
+        "For text elements, judge based on whether specific words/names/dates are present. "
+        "If the condition is ambiguous, select the elements most contextually relevant. "
         f"{comment_instr}\n"
-        "조건에 맞는 요소가 하나도 없으면 matches를 빈 배열로 반환하세요.\n"
-        "반드시 아래 JSON 형식으로만 출력하고, 설명이나 코드 블록 마커(```)는 절대 넣지 마세요.\n"
+        "If no elements match, return an empty matches array.\n"
+        "Output strictly in the following JSON format. Do not include explanations or code block markers (```).\n"
         "{\n"
         '  "matches": [\n'
         '    {"element_index": 0, "comment": "..."}\n'
@@ -209,20 +232,21 @@ def build_element_highlight_prompt(
 
 
 def build_docling_refinement_prompt(columns: list[str], docling_markdown: str, extra: str = "") -> str:
-    """Docling이 추출한 마크다운을 LLM으로 정리/재구조화하는 프롬프트."""
-    cols = ", ".join(columns) if columns else "내용"
+    """Prompt to clean up and restructure markdown extracted by Docling using an LLM."""
+    cols = ", ".join(columns) if columns else "content"
     base = (
-        "아래는 Docling으로 추출한 문서의 마크다운 원문입니다. "
-        "원문서의 시각적 레이아웃(제목, 단락, 항목, 공백, 표 위치, 글꼴 크기, 굵기, 들여쓰기, 열 구분, 정렬)을 최대한 그대로 보존하세요. "
-        "표가 있으면 마크다운 표 형식으로 정리하고, 빈 셀은 공백으로 두세요. "
-        "숫자, 날짜, 금액, 콤마는 원본 그대로 쓰세요. "
-        "내용을 요약하지 말고, 추론이나 해석은 추가하지 마세요. "
-        "설명, 머리말, 마무리 문구는 절대 넣지 마세요. "
-        f"아래 컬럼({cols})은 참고용이며, 필요한 경우에만 해당 구조를 활용하세요.\n\n"
-        "Docling 원문:\n"
+        "Below is the raw markdown of a document extracted by Docling. "
+        "Preserve the visual layout of the original document (headings, paragraphs, items, whitespace, table positions, "
+        "font size, weight, indentation, column separation, alignment) as faithfully as possible. "
+        "If there are tables, format them as markdown tables and leave empty cells blank. "
+        "Keep numbers, dates, monetary amounts, and commas exactly as in the original. "
+        "Do not summarize the content. Do not add inferences or interpretations. "
+        "Do not include any explanations, headers, or closing remarks. "
+        f"The following columns ({cols}) are for reference only; use that structure only when applicable.\n\n"
+        "Docling raw text:\n"
         f"{docling_markdown}"
     )
-    return f"{base}\n\n추가 지시: {extra}" if extra.strip() else base
+    return f"{base}\n\nAdditional instructions: {extra}" if extra.strip() else base
 
 
 def build_audio_prompt(
@@ -230,26 +254,26 @@ def build_audio_prompt(
     segment_start: float | None = None,
     segment_end: float | None = None,
 ) -> str:
-    """오디오(세그먼트)를 시간/발화자/대사 형식의 마크다운 대본으로 전사하는 프롬프트."""
+    """Prompt to transcribe audio (segment) as a markdown transcript with time/speaker/dialogue columns."""
     if segment_start is not None and segment_end is not None:
         segment_info = (
-            f"이 오디오는 원본 파일의 {_format_timestamp(segment_start)}부터 "
-            f"{_format_timestamp(segment_end)}까지 구간입니다.\n"
+            f"This audio is a segment from {_format_timestamp(segment_start)} to "
+            f"{_format_timestamp(segment_end)} of the original file.\n"
         )
     else:
         segment_info = ""
 
     base = (
-        f"{segment_info}오디오를 처음부터 끝까지 듣고, 아래 3개 컬럼으로 구성된 마크다운 표로만 대본을 출력하세요.\n"
-        "컬럼: 시간, 발화자(또는 화자 구분), 대사\n"
-        "규칙:\n"
-        "- 시간은 원본 오디오 기준 HH:MM:SS 형식입니다. 말이 시작되는 시점을 적습니다.\n"
-        "- 발화자를 알 수 없으면 '화자1', '화자2' 등으로 구분하거나 '알 수 없음'으로 표기하세요.\n"
-        "- 대사는 실제 말한 내용을 최대한 정확하게 옮기세요.\n"
-        "- 설명, 머리말, 마무리 문구, 코드 블록은 절대 넣지 마세요.\n"
-        "- 결과는 컬럼을 '|'로 구분한 마크다운 표로만 출력하세요."
+        f"{segment_info}Listen to the audio from beginning to end and output the transcript as a markdown table with the following 3 columns.\n"
+        "Columns: Time, Speaker (or speaker label), Dialogue\n"
+        "Rules:\n"
+        "- Time is in HH:MM:SS format based on the original audio. Use the timestamp when speech begins.\n"
+        "- If the speaker is unknown, label them as 'Speaker 1', 'Speaker 2', etc., or 'Unknown'.\n"
+        "- For dialogue, transcribe the actual spoken content as accurately as possible.\n"
+        "- Do not include any explanations, headers, closing remarks, or code blocks.\n"
+        "- Output only a markdown table with columns separated by '|'."
     )
-    return f"{base}\n추가 지시: {extra}" if extra.strip() else base
+    return f"{base}\nAdditional instructions: {extra}" if extra.strip() else base
 
 
 def build_video_prompt(
@@ -259,19 +283,19 @@ def build_video_prompt(
     segment_end: float | None = None,
     has_audio: bool = False,
 ) -> str:
-    """비디오(세그먼트)를 시간/행동/대사 형식의 마크다운 대본으로 전사하는 프롬프트."""
+    """Prompt to transcribe video (segment) as a markdown transcript with time/action/dialogue columns."""
     if segment_start is not None and segment_end is not None:
         segment_info = (
-            f"이 영상은 원본 비디오의 {_format_timestamp(segment_start)}부터 "
-            f"{_format_timestamp(segment_end)}까지 구간입니다.\n"
+            f"This video is a segment from {_format_timestamp(segment_start)} to "
+            f"{_format_timestamp(segment_end)} of the original video.\n"
         )
     else:
         segment_info = ""
 
     if frame_timestamps:
-        ts_lines = [f"- 프레임 {i+1}: {_format_timestamp(ts)}" for i, ts in enumerate(frame_timestamps)]
+        ts_lines = [f"- Frame {i+1}: {_format_timestamp(ts)}" for i, ts in enumerate(frame_timestamps)]
         frame_info = (
-            "아래 이미지는 해당 구간에서 추출한 대표 프레임입니다.\n"
+            "The images below are representative frames extracted from this segment.\n"
             + "\n".join(ts_lines)
             + "\n"
         )
@@ -280,32 +304,32 @@ def build_video_prompt(
 
     audio_info = ""
     if has_audio:
-        audio_info = "함께 첨부된 오디오는 같은 구간의 소리이므로, 이를 참고하여 발화나 효과음을 정확히 옮기세요.\n"
+        audio_info = "The accompanying audio is the sound from the same segment; use it to accurately transcribe speech and sound effects.\n"
 
     if frame_timestamps or has_audio:
         source_info = (
             f"{segment_info}{frame_info}{audio_info}"
-            "이 프레임과 오디오를 참고하여 해당 구간의 흐름을 유추하고, "
+            "Using these frames and audio, infer the flow of the segment and "
         )
     else:
-        source_info = "비디오를 처음부터 끝까지 시청하고, "
+        source_info = "Watch the video from beginning to end and "
 
     base = (
-        f"{source_info}아래 4개 컬럼으로 구성된 마크다운 표로만 출력하세요.\n"
-        "컬럼: 시간, 장면/행동 묘사, 발화자(또는 화자 구분), 대사/소리\n"
-        "규칙:\n"
-        "- 시간은 원본 비디오 기준 HH:MM:SS 형식입니다. 이벤트가 시작되는 시점을 적습니다.\n"
-        "- 장면/행동 묘사: 화면에서 보이는 사람/동물/물체의 동작, 표정, 움직임, 장면 전환 등을 간결히 묘사하세요.\n"
-        "- 발화자를 알 수 없으면 '화자1', '화자2' 등으로 구분하거나 '알 수 없음'으로 표기하세요.\n"
-        "- 대사/소리: 실제 말한 내용이나 효과음, 배경음을 최대한 정확하게 옮기세요.\n"
-        "- 설명, 머리말, 마무리 문구, 코드 블록은 절대 넣지 마세요.\n"
-        "- 결과는 컬럼을 '|'로 구분한 마크다운 표로만 출력하세요."
+        f"{source_info}output only a markdown table with the following 4 columns.\n"
+        "Columns: Time, Scene/Action description, Speaker (or speaker label), Dialogue/Sound\n"
+        "Rules:\n"
+        "- Time is in HH:MM:SS format based on the original video. Use the timestamp when the event begins.\n"
+        "- Scene/Action description: concisely describe the actions, expressions, movements, and scene transitions of people/animals/objects visible on screen.\n"
+        "- If the speaker is unknown, label them as 'Speaker 1', 'Speaker 2', etc., or 'Unknown'.\n"
+        "- Dialogue/Sound: transcribe the actual spoken content, sound effects, and background audio as accurately as possible.\n"
+        "- Do not include any explanations, headers, closing remarks, or code blocks.\n"
+        "- Output only a markdown table with columns separated by '|'."
     )
-    return f"{base}\n추가 지시: {extra}" if extra.strip() else base
+    return f"{base}\nAdditional instructions: {extra}" if extra.strip() else base
 
 
 def _format_timestamp(seconds: float) -> str:
-    """초를 HH:MM:SS 또는 MM:SS 형식으로 변환한다."""
+    """Convert seconds to HH:MM:SS or MM:SS format."""
     m, s = divmod(int(seconds), 60)
     h, m = divmod(m, 60)
     if h:

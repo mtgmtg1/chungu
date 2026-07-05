@@ -220,6 +220,12 @@ npm run start        # dev server at localhost:3000
   - 저화질/선형화 생성 중 오류가 발생하면 원본 PDF의 서명 URL로 폴백하여 프리뷰 패널이 blank 되지 않도록 한다.
   - `/api/jobs/{id}/preview` 응답을 Redis에 `preview:{job_id}:{start_page}:{end_page}` 키로 5분 TTL 캐싱한다. `save_result_markdown` / `save_result_page`에서 `preview:{job_id}:*` 패턴으로 캐시를 무효화한다.
   - `_source_files()`에서 `concurrent.futures.ThreadPoolExecutor(max_workers=3)`로 여러 파일의 signed URL 생성을 병렬화한다. 스레드당 `create_fresh_service_client()`로 새로운 Supabase 클라이언트를 생성하여 스레드 안전을 확보한다.
+- **Storage 메타데이터 기반 PDF 최적화** (`app/backend/core/supabase_client.py`, `app/backend/core/pdf_preview_converter.py`, `app/backend/api/jobs.py`, `app/backend/workers/tasks.py`):
+  - PDF 업로드 시 `page_count`, `has_text_layer`, `oversized_page_count`, `needs_lowres`, `file_size`, `content_type`를 Supabase Storage 객체 메타데이터(`x-metadata`)에 저장한다.
+  - 미리보기 URL 생성: `get_lowres_preview_pdf_url()`에서 메타데이터의 `needs_lowres`를 먼저 확인 → 저화질이 필요 없으면 원본/고화질 PDF 서명 URL을 바로 반환하고, 원본 파일을 Storage에서 다운로드하지 않는다.
+  - Job 생성 비용 계산: `/api/jobs/{id}/create`에서 단일 PDF의 `page_count`를 Storage 메타데이터에서 조회, 메타데이터가 없을 때만 다운로드 후 `PdfReader`로 계산한다.
+  - OCR 라우팅: `run_job()`에서 basic 모델 PDF의 `has_text_layer`와 `oversized_page_count`를 Storage 메타데이터에서 조회, 메타데이터가 없을 때만 `has_pdf_text_layer()` / `count_oversized_pages()`를 호출한다.
+  - 메타데이터는 새로 업로드된 파일에만 저장되며, 기존 파일은 fallback 정책에 따라 기존 동작(다운로드 후 계산)을 유지한다.
 - **MarkdownPreview** (`app/frontend/src/components/MarkdownPreview.jsx`):
   - 읽기 전용 마크다운 뷰어. `marked.parse`로 HTML 렌더링 후 `dangerouslySetInnerHTML` 사용 (백엔드 신뢰 출력, DOMPurify 미사용).
   - `<!-- 페이지 N -->` 마커 기준으로 마크다운을 페이지 섹션으로 분할.

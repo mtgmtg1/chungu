@@ -11,6 +11,13 @@ from unidecode import unidecode
 
 from ..config import settings
 
+# PDF 메타데이터 추출에 사용할 임계값
+_MAX_PAGE_SIDE_MM = 350
+_MM_PER_PT = 0.3528
+_LOWRES_THRESHOLD_BYTES = 10 * 1024 * 1024
+_LOWRES_THRESHOLD_PAGES = 50
+_TEXT_LAYER_MIN_CHARS = 50
+
 
 def create_fresh_service_client() -> Client:
     """스레드 안전을 위해 캐싱되지 않은 새로운 서비스 롤 클라이언트를 생성한다."""
@@ -63,15 +70,89 @@ def _safe_job_path(filename: str, job_id: str | None = None) -> str:
     return safe
 
 
+def _extract_pdf_metadata(data: bytes) -> dict[str, str]:
+    """PDF 바이트에서 페이지 수, 텍스트 레이어, 초과 페이지 수, 저화질 필요 여부를 추출한다.
+
+    반환값:
+        page_count, oversized_page_count, has_text_layer, needs_lowres, file_size, content_type
+        값은 모두 문자열로 변환되어 Storage 메타데이터에 저장된다.
+    """
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(BytesIO(data))
+        page_count = len(reader.pages)
+        oversized_count = 0
+        total_chars = 0
+        for page in reader.pages:
+            width_mm = float(page.mediabox.width) * _MM_PER_PT
+            height_mm = float(page.mediabox.height) * _MM_PER_PT
+            if width_mm > _MAX_PAGE_SIDE_MM or height_mm > _MAX_PAGE_SIDE_MM:
+                oversized_count += 1
+            try:
+                text = page.extract_text() or ""
+                total_chars += len(text)
+            except Exception:
+                pass
+        needs_lowres = len(data) >= _LOWRES_THRESHOLD_BYTES or page_count >= _LOWRES_THRESHOLD_PAGES
+        return {
+            "page_count": str(page_count),
+            "oversized_page_count": str(oversized_count),
+            "has_text_layer": "true" if total_chars >= _TEXT_LAYER_MIN_CHARS else "false",
+            "needs_lowres": "true" if needs_lowres else "false",
+            "file_size": str(len(data)),
+            "content_type": "application/pdf",
+        }
+    except Exception:
+        return {}
+
+
+def get_storage_metadata(bucket: str, path: str) -> dict[str, str] | None:
+    """지정한 Storage 경로의 메타데이터를 조회한다. 실패하면 None을 반환한다."""
+    if not path:
+        return None
+    try:
+        client = get_service_client()
+        info = client.storage.from_(bucket).info(path)
+        return info.get("metadata") or {}
+    except Exception:
+        return None
+
+
 def upload_input(file: BytesIO, filename: str, job_id: str) -> str:
-    """업로드된 입력 파일을 pdfs 버킷에 저장하고 storage_path를 반환한다."""
+    """업로드된 입력 파일을 pdfs 버킷에 저장하고 storage_path를 반환한다.
+
+    PDF 파일인 경우 페이지 수, 텍스트 레이어 등의 메타데이터를 Storage에 저장한다.
+    """
     client = get_service_client()
     storage_path = _safe_job_path(filename, job_id)
     content = file.read()
+    content_type = "application/octet-stream"
+    metadata: dict[str, str] = {"file_size": str(len(content)), "content_type": content_type}
+    if Path(filename).suffix.lower() == ".pdf":
+        metadata.update(_extract_pdf_metadata(content))
     client.storage.from_("pdfs").upload(
         storage_path,
         content,
-        {"content-type": "application/octet-stream", "upsert": "true"},
+        {"content-type": content_type, "upsert": "true", "metadata": metadata},
+    )
+    return storage_path
+
+
+def upload_pdf(job_id: str, data: bytes, filename: str) -> str:
+    """업로드된 PDF/문서 파일을 pdfs 버킷에 저장하고 storage_path를 반환한다.
+
+    PDF 파일인 경우 페이지 수, 텍스트 레이어 등의 메타데이터를 Storage에 저장한다.
+    """
+    client = get_service_client()
+    storage_path = _safe_job_path(filename, job_id)
+    content_type = "application/pdf" if Path(filename).suffix.lower() == ".pdf" else "application/octet-stream"
+    metadata: dict[str, str] = {"file_size": str(len(data)), "content_type": content_type}
+    if Path(filename).suffix.lower() == ".pdf":
+        metadata.update(_extract_pdf_metadata(data))
+    client.storage.from_("pdfs").upload(
+        storage_path,
+        data,
+        {"content-type": content_type, "upsert": "true", "metadata": metadata},
     )
     return storage_path
 
@@ -172,6 +253,38 @@ def get_signed_download_url(storage_path: str, bucket: str = "results", expires_
     """결과 파일의 서명된 다운로드 URL을 생성합니다. 외부 노출 URL로 재작성합니다."""
     client = get_service_client()
     return get_signed_download_url_with_client(client, storage_path, bucket, expires_in)
+
+
+def download_pdf(storage_path: str) -> BytesIO:
+    """pdfs 버킷에서 지정한 storage_path의 파일을 다운로드하여 BytesIO로 반환합니다."""
+    client = get_service_client()
+    data = client.storage.from_("pdfs").download(storage_path)
+    return BytesIO(data)
+
+
+def upload_office_result(job_id: str, local_path: Path, ext: str) -> str:
+    """XLSX/CSV 등 Office 변환 결과를 results 버킷에 업로드하고 storage_path를 반환합니다."""
+    client = get_service_client()
+    storage_path = f"{job_id}/result.{ext}"
+    client.storage.from_("results").upload(
+        storage_path,
+        local_path.read_bytes(),
+        {"content-type": "application/octet-stream", "upsert": "true"},
+    )
+    return storage_path
+
+
+def upload_edited_xlsx(job_id: str, data: bytes, filename: str) -> str:
+    """사용자가 편집한 XLSX 파일을 results 버킷에 업로드하고 storage_path를 반환합니다."""
+    client = get_service_client()
+    safe_name = _sanitize_storage_filename(filename)
+    storage_path = f"{job_id}/edited/{safe_name}"
+    client.storage.from_("results").upload(
+        storage_path,
+        data,
+        {"content-type": "application/octet-stream", "upsert": "true"},
+    )
+    return storage_path
 
 
 def _delete_storage_path(bucket: str, path: str) -> None:

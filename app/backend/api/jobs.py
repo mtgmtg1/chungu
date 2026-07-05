@@ -1010,16 +1010,58 @@ def _build_source_file_item(info: dict, idx: int) -> dict | None:
 def _source_files(job: Job) -> list[dict]:
     """extracted_files에서 미리보기 가능한 파일 목록과 파일별 파싱 결과를 반환한다.
 
+    단일 PDF/DOCX/HWP 업로드는 extracted_files가 비어 있을 수 있으므로 원본을
+    합성 항목으로 추가한다. 생성된 주석 PDF는 results 버킷에서 가져와 파일 탭에
+    마지막에 추가한다.
+
     병렬 처리로 signed URL 생성 시간을 줄인다. max_workers=3으로 제한하여
     Supabase Storage rate limit과 스레드 안전 문제를 완화한다.
     """
     files = job.extracted_files or []
-    if not files:
-        return []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        futures = [executor.submit(_build_source_file_item, info, idx) for idx, info in enumerate(files)]
-        results = [f.result() for f in futures]
-    return [item for item in results if item is not None]
+    source_files: list[dict] = []
+    if not files and job.pdf_storage_path and job.file_type in ("pdf", "docx", "hwp"):
+        # 단일 파일 업로드: extracted_files가 없으므로 원본 파일을 직접 표시
+        original_item = _build_source_file_item(
+            {
+                "path": job.original_filename or Path(job.pdf_storage_path).name,
+                "storage_path": job.pdf_storage_path,
+                "type": job.file_type,
+            },
+            0,
+        )
+        if original_item:
+            source_files.append(original_item)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [executor.submit(_build_source_file_item, info, idx) for idx, info in enumerate(files)]
+            results = [f.result() for f in futures]
+        source_files = [item for item in results if item is not None]
+
+    # 주석 PDF 추가
+    annotated_entries = list(job.annotated_pdf_files or [])
+    if not annotated_entries and job.annotate_status == "done" and job.result_annotated_pdf_storage_path:
+        # 하위 호환: 목록 컬럼 추가 전에 생성된 단일 주석 PDF
+        stem = Path(job.original_filename).stem if job.original_filename else "result"
+        annotated_entries = [
+            {
+                "storage_path": job.result_annotated_pdf_storage_path,
+                "filename": f"{stem}_annotation1.pdf",
+            }
+        ]
+    start_idx = len(source_files)
+    for idx, entry in enumerate(annotated_entries, start=start_idx):
+        item = _build_source_file_item(
+            {
+                "path": entry.get("filename", ""),
+                "storage_path": entry.get("storage_path", ""),
+                "type": "pdf",
+                "bucket": "results",
+            },
+            idx,
+        )
+        if item:
+            source_files.append(item)
+    return source_files
 
 
 def _detect_source_type(job: Job) -> str | None:
@@ -1567,10 +1609,26 @@ def annotate_job(
     if comment_mode not in ("user_text", "llm_summary"):
         raise HTTPException(status_code=400, detail="Unsupported comment_mode")
 
-    if job.result_annotated_pdf_storage_path and job.annotate_instruction == instruction and job.annotate_mode == mode:
+    # 동일한 instruction/mode/comment_mode로 이미 생성된 주석이 있으면 재사용
+    existing = next(
+        (
+            e
+            for e in (job.annotated_pdf_files or [])
+            if e.get("instruction") == instruction and e.get("mode") == mode and e.get("comment_mode") == comment_mode
+        ),
+        None,
+    )
+    if not existing and job.result_annotated_pdf_storage_path and job.annotate_instruction == instruction and job.annotate_mode == mode and job.annotate_comment_mode == comment_mode:
+        # 하위 호환: 목록 컬럼 추가 전에 생성된 단일 주석 PDF
+        stem = Path(job.original_filename).stem if job.original_filename else "result"
+        existing = {
+            "storage_path": job.result_annotated_pdf_storage_path,
+            "filename": f"{stem}_annotation1.pdf",
+        }
+    if existing:
         try:
-            url = supabase_client.get_signed_download_url(job.result_annotated_pdf_storage_path, bucket="results", expires_in=3600)
-            return {"download_url": url, "status": "done", "storage_path": job.result_annotated_pdf_storage_path}
+            url = supabase_client.get_signed_download_url(existing["storage_path"], bucket="results", expires_in=3600)
+            return {"download_url": url, "status": "done", "storage_path": existing["storage_path"], "filename": existing.get("filename")}
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {e}")
     if job.annotate_status == "processing":
@@ -1664,13 +1722,17 @@ def annotate_action(
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # retry: 상태 초기화 후 비용 없이 task 재실행
+    # retry: 실패한 마지막 주석 항목을 제거하고 상태 초기화 후 비용 없이 task 재실행
+    old_path = job.result_annotated_pdf_storage_path
+    annotated_files = job.annotated_pdf_files or []
+    if annotated_files and annotated_files[-1].get("storage_path") == old_path:
+        job.annotated_pdf_files = annotated_files[:-1]
     job.annotate_status = "processing"
     job.annotate_refundable = False
     job.result_annotated_pdf_storage_path = ""
     db.commit()
     from ..workers import tasks
-    task = tasks.annotate_pdf_job.delay(job_id, job.annotate_instruction, job.annotate_mode, job.annotate_comment_mode, user.language)
+    task = tasks.annotate_pdf_job.delay(job_id, job.annotate_instruction, job.annotate_mode, job.annotate_comment_mode)
     job.annotate_job_id = task.id
     db.commit()
     return {"job_id": task.id, "status": "processing"}
@@ -1784,6 +1846,7 @@ def _job_summary(job: Job) -> dict:
         "refundable": job.refundable,
         "retry_count": job.retry_count,
         "annotated_pdf": bool(job.result_annotated_pdf_storage_path),
+        "annotated_pdf_files": job.annotated_pdf_files or [],
         "annotate_status": job.annotate_status,
         "annotate_job_id": job.annotate_job_id,
         "annotate_refundable": job.annotate_refundable,

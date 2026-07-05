@@ -1,6 +1,6 @@
 // [Flow: Step 1 (job ID로 진입) -> Step 2 (작업 상태 폴링) -> Step 3 (완료 시 preview API 호출) -> Step 4 (100페이지 초과 시 페이지 단위 뷰어, 이하 시 전체 에디터) -> Step 5 (마크다운/Office/CSV 다운로드)]
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
@@ -37,6 +37,7 @@ function downloadByUrl(url, filename) {
 
 export default function JobResultPage() {
   const { jobId } = useParams();
+  const nav = useNavigate();
   const { t } = useTranslation();
   const statusLabel = (status) => t(`common:status.${status}`) || status;
   const [job, setJob] = useState(null);
@@ -72,7 +73,6 @@ export default function JobResultPage() {
   const [annotateMode, setAnnotateMode] = useState("both"); // highlight | margin_note | both
   const [annotateCommentMode, setAnnotateCommentMode] = useState("user_text"); // user_text | llm_summary
   const [annotatePolling, setAnnotatePolling] = useState(false);
-  const [annotateUrl, setAnnotateUrl] = useState(null);
 
   const [excelDropdownOpen, setExcelDropdownOpen] = useState(false);
   const [officeDropdownOpen, setOfficeDropdownOpen] = useState(false);
@@ -187,14 +187,6 @@ export default function JobResultPage() {
     }, 5000);
     return () => clearInterval(interval);
   }, [annotatePolling, jobId]);
-
-  useEffect(() => {
-    if (job?.annotate_status === "done" && job?.annotated_pdf && !annotateUrl) {
-      api.downloadJob(jobId, "annotated_pdf")
-        .then((res) => setAnnotateUrl(res.download_url))
-        .catch((e) => setError(e.message || t("page:errors.unknown")));
-    }
-  }, [job?.annotate_status, job?.annotated_pdf, annotateUrl, jobId]);
 
   async function loadPreview() {
     try {
@@ -319,7 +311,6 @@ export default function JobResultPage() {
     setConverting(true);
     setError("");
     try {
-      setAnnotateUrl(null);
       const res = await api.annotateJob(jobId, {
         instruction: annotateInstruction.trim(),
         mode: annotateMode,
@@ -327,8 +318,6 @@ export default function JobResultPage() {
       });
       if (res.status === "processing") {
         setAnnotatePolling(true);
-      } else if (res.download_url) {
-        setAnnotateUrl(res.download_url);
       }
       setAnnotateModalOpen(false);
       await loadJob();
@@ -579,8 +568,6 @@ export default function JobResultPage() {
                 }
                 {annotatePolling ?
                 t("page:result.annotateProcessing") :
-                annotateUrl ?
-                t("page:result.annotateDownload") :
                 t("page:result.annotate")}
               </button>
 
@@ -597,16 +584,6 @@ export default function JobResultPage() {
                   {t("page:result.retry")}
                 </button>
               </div>
-              }
-
-              {annotateUrl &&
-              <button
-                onClick={() => downloadByUrl(annotateUrl, `${job?.original_filename || "result"}_annotated.pdf`)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-primary text-white rounded-lg font-medium hover:opacity-90 transition-colors"
-                data-oid="annotate-download-btn">
-                <Download size={16} data-oid="annotate-download-icon" />
-                {t("page:result.annotateDownload")}
-              </button>
               }
 
               <div

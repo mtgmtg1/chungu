@@ -472,7 +472,7 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
   - 여백은 **오른쪽에만** 추가한다 (상/하/좌는 건드리지 않음). 우측에만 늘리면 mediabox 원점이 불변이므로 회전된 페이지에서도 좌표가 틀어지지 않는다. 페이지 세로 길이는 늘리지 않고, 주석이 페이지 하단을 넘어가면 하단으로 clamp한다.
 - 여백 코멘트 박스는 서로 겹치지 않도록 세로 위치를 순서대로 밀어내며 배치하고(`_layout_margin_notes`), 원래 요소 위치와 배치된 박스 위치가 달라지면 꺾이는 연결선(callout)으로 이어준다. **박스 높이는 텍스트 양에 따라 가변** (`_estimate_note_height`): 폰트 8pt 기준 약 22문자/줄로 줄 수를 추정해 높이를 계산, 최소 24pt(약 2줄)~최대 120pt(약 10줄) 범위에서 조절된다.
 - LLM 요소 선택 프롬프트(`build_element_highlight_prompt`)는 표 행과 텍스트 블록이 혼합된 요소 목록에서 조건에 맞는 요소를 선택한다. 표 행은 헤더 컬럼명을 정확히 매칭하도록 명시하고, 텍스트 블록은 특정 단어/이름/날짜 포함 여부로 판단한다. 완전한 정확도는 보장되지 않으므로 결과 검토가 필요하다. 텍스트 블록은 앞 200자만 LLM에 전달해 토큰 폭증을 방지한다. **주석 코멘트는 사용자가 instruction에 사용한 언어로 작성**된다 — 프롬프트에서 "write the comment in the SAME language as the user's condition text"로 지시하여, 앱 지원 언어(ko/en/ja) 외의 언어(예: 불어, 스페인어)로 조건을 입력한 사용자도 자신의 언어로 주석을 받을 수 있다. 프롬프트 자체는 모두 영어로 작성되어 있다.
-- DB 필드: `Job.annotate_instruction/annotate_mode/annotate_comment_mode/annotate_status/annotate_job_id/annotate_recovery_notes/annotate_refundable/annotate_reserved_pages/annotate_reserved_period_start`, `result_ocr_layout_storage_path`, `result_annotated_pdf_storage_path` (`020_add_pdf_annotate_fields.sql`). `annotate_job_id`/`result_xlsx_advanced_job_id`는 VARCHAR(64) (`021_widen_job_id_columns.sql`).
+- DB 필드: `Job.annotate_instruction/annotate_mode/annotate_comment_mode/annotate_status/annotate_job_id/annotate_recovery_notes/annotate_refundable/annotate_reserved_pages/annotate_reserved_period_start`, `result_ocr_layout_storage_path`, `result_annotated_pdf_storage_path` (`020_add_pdf_annotate_fields.sql`). `annotate_job_id`/`result_xlsx_advanced_job_id`는 VARCHAR(64) (`021_widen_job_id_columns.sql`). 주석 결과 파일 목록은 `annotated_pdf_files` JSONB (`022_add_annotated_pdf_files.sql`).
 - Key files:
   - `app/backend/core/ocr_layout.py` — PaddleOCR-VL `parsing_res_list` → `PageLayout`/`OcrTable`/`OcrRow`/`OcrTextBlock` 정규화 (HTML 표 파싱 + 행 bbox 균등분할 추정, 텍스트 블록 추출)
   - `app/backend/core/pdf_coords.py` — 픽셀 bbox ↔ PDF 포인트 변환, 페이지 경계 clamp
@@ -824,6 +824,8 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
   - i18n 키 `page:errors.subscriptionRequired` 사용 (ko/en/ja 모두 추가)
 - **주석 생성 비용**: 프리미엄 페이지 수(`premium_pages`)로 차감됩니다. 관리자는 차감되지 않습니다.
 - **재시도 액션** (`annotate_action` 엔드포인트): 주석 생성이 `error` 상태로 실패한 경우 사용자가 재시도(retry)할 수 있습니다. 구독제이므로 환불(refund) 기능은 제공하지 않습니다. 비회원 사용자는 이 액션 엔드포인트에서도 402 에러를 받습니다.
+- **결과 파일 노출**: 주석 생성이 완료되면 `JobResultPage.jsx`의 파일 탭에 `<원본파일명>_annotation1.pdf`, `_annotation2.pdf` … 형식으로 누적 추가됩니다. 별도의 ‘주석 PDF 다운로드’ 버튼은 생성되지 않으며, 주석 버튼은 계속 ‘주석’ 생성 트리거로 유지됩니다.
+- **결과 저장**: `app/backend/core/pdf_annotate_converter.py`는 각 주석을 `results/{job_id}/annotated_{N}.pdf`로 저장하고, `Job.annotated_pdf_files` JSONB 목록에 `storage_path`, `filename`, `instruction`, `mode`, `comment_mode`, `created_at`을 기록합니다. 동일한 `(instruction, mode, comment_mode)`로 재요청하면 기존 파일을 반환합니다.
 
 ## Frontend Variable Naming Conventions
 

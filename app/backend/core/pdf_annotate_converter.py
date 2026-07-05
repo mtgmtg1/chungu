@@ -194,6 +194,20 @@ def run(job_id: str, instruction: str, mode: str, comment_mode: str, language: s
         db.close()
         return {"error": "job not found"}
 
+    # 하위 호환: 목록 컬럼 추가 전에 생성된 단일 주석 PDF를 목록으로 마이그레이션
+    if job.result_annotated_pdf_storage_path and not (job.annotated_pdf_files or []):
+        job.annotated_pdf_files = [
+            {
+                "storage_path": job.result_annotated_pdf_storage_path,
+                "filename": _annotation_display_name(job, 1),
+                "instruction": job.annotate_instruction,
+                "mode": job.annotate_mode,
+                "comment_mode": job.annotate_comment_mode,
+                "created_at": job.finished_at.isoformat() if job.finished_at else datetime.now(timezone.utc).isoformat(),
+            }
+        ]
+        db.commit()
+
     endpoint = job.endpoint or settings_store.get_setting(db, "llm_endpoint") or settings.default_llm_endpoint
     model = job.model or settings_store.get_setting(db, "llm_model") or settings.default_llm_model
     api_key = settings_store.get_setting(db, "llm_api_key") or ""

@@ -196,7 +196,11 @@ export default function JobResultPage() {
 
   async function loadPreview() {
     try {
-      const preview = await api.previewJob(jobId);
+      // [Flow: Step 1 (DB의 total_pages/total_files로 페이징 모드 여부를 먼저 판단) -> Step 2 (페이징 모드면 첫 페이지만 로드하여 소스/메타정보 획득) -> Step 3 (비페이징 모드면 전체 마크다운 로드)]
+      const usePaged = needsPagedMode(job);
+      const preview = usePaged
+        ? await api.previewJob(jobId, 1, 1)
+        : await api.previewJob(jobId);
       setSourceUrl(preview.source_url);
       setSourceType(preview.source_type);
       setImageUrls(preview.image_urls || []);
@@ -205,8 +209,8 @@ export default function JobResultPage() {
       setFileMarkdowns(fms);
       setSelectedFileIndex(0);
       // [Flow: Step 1 (DB의 total_pages/total_files 확인) -> Step 2 (폴백: 마크다운의 last_page 확인) -> Step 3 (둘 중 하나라도 임계값 초과 시 페이징 모드)]
-      const usePaged = needsPagedMode(job) || (preview.last_page || 0) > PAGE_THRESHOLD;
-      if (usePaged) {
+      const finalUsePaged = usePaged || (preview.last_page || 0) > PAGE_THRESHOLD;
+      if (finalUsePaged) {
         const meta = await api.previewJobPages(jobId);
         setPages(meta.pages || []);
         setMarkdown("");

@@ -36,8 +36,8 @@ rsync -avz --delete \
   $TARGET:~/chungu-app/app/
 
 # 3. 이미지 재빌드 및 재시작
-ssh $TARGET 'cd ~/chungu-app/app && docker compose down && docker compose up --build -d'
+ssh $TARGET 'cd ~/chungu-app/app && COMPOSE_PROJECT_NAME=chungu-app docker compose down && COMPOSE_PROJECT_NAME=chungu-app docker compose up --build -d'
 
 # 4. 상태 확인
 sleep 5
-ssh $TARGET 'cd ~/chungu-app/app && docker compose ps'
+ssh $TARGET 'cd ~/chungu-app/app && COMPOSE_PROJECT_NAME=chungu-app docker compose ps'

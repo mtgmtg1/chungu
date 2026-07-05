@@ -153,24 +153,27 @@ def _extend_mediabox_for_visual_margins(
     right_margin: float,
     bottom_margin: float,
 ) -> fitz.Rect:
-    """시각적 우측/하단 여백을 추가하되 원점이 이동하지 않도록 원본 mediabox의 해당 변만 확장한다.
+    """시각적 우측/하단에 여백을 추가한다. PDF 좌표계 원점이 좌하단임을 고려해
+    시각적 아래쪽에 해당하는 PDF 변을 바깥으로 확장한다.
 
-    PyMuPDF의 page.rotation은 시계 방향 회전 각도이다. 시각적 좌표계와 원본 mediabox 변의
-    대응 관계를 고려해, 실제로 우측에 해당하는 변과 하단에 해당하는 변만 확장한다.
+    PyMuPDF의 page.rotation은 시계 방향 회전 각도이다.
+    PDF 좌표계: 원점이 좌하단, y는 위로 증가.
+    시각적 좌표계(렌더링 결과): 원점이 좌상단, y는 아래로 증가.
+    따라서 시각적 "아래쪽" 여백 = PDF 좌표계에서 "아래쪽" 변을 바깥으로 밀어내야 한다.
+    회전 각도에 따라 시각적 우측/하단이 PDF mediabox의 어느 변에 해당하는지가 달라진다.
     """
     x0, y0, x1, y1 = raw.x0, raw.y0, raw.x1, raw.y1
-    # rotation: 시각적 우측=원본 어떤 변, 시각적 하단=원본 어떤 변
     if rotation == 90:
-        # 시각적 우측=원본 상단(y0), 시각적 하단=원본 우측(x1)
-        return fitz.Rect(x0, y0 - right_margin, x1 + bottom_margin, y1)
+        # 시각적 우측=PDF 상단(y1), 시각적 하단=PDF 우측(x1)
+        return fitz.Rect(x0, y0, x1 + bottom_margin, y1 + right_margin)
     if rotation == 180:
-        # 시각적 우측=원본 좌측(x0), 시각적 하단=원본 상단(y0)
-        return fitz.Rect(x0 - right_margin, y0 - bottom_margin, x1, y1)
+        # 시각적 우측=PDF 좌측(x0), 시각적 하단=PDF 상단(y1)
+        return fitz.Rect(x0 - right_margin, y0, x1, y1 + bottom_margin)
     if rotation == 270:
-        # 시각적 우측=원본 하단(y1), 시각적 하단=원본 좌측(x0)
-        return fitz.Rect(x0 - bottom_margin, y0, x1, y1 + right_margin)
-    # rotation 0: 시각적 우측=원본 우측(x1), 시각적 하단=원본 하단(y1)
-    return fitz.Rect(x0, y0, x1 + right_margin, y1 + bottom_margin)
+        # 시각적 우측=PDF 하단(y0), 시각적 하단=PDF 좌측(x0)
+        return fitz.Rect(x0 - bottom_margin, y0 - right_margin, x1, y1)
+    # rotation 0: 시각적 우측=PDF 우측(x1), 시각적 하단=PDF 하단(y0)
+    return fitz.Rect(x0, y0 - bottom_margin, x1 + right_margin, y1)
 
 
 def _layout_margin_notes(

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import fitz  # PyMuPDF
+from sqlalchemy import update
 
 from .. import settings_store
 from ..config import settings
@@ -498,6 +499,27 @@ def run(
         ]
         db.commit()
 
+    # 원자적으로 다음 인덱스를 할당한다. 동시에 여러 주석 작업이 실행되더라도
+    # 각각 고유한 파일명을 가지므로 덮어쓰기가 발생하지 않는다.
+    next_index = None
+    try:
+        result = db.execute(
+            update(Job)
+            .where(Job.id == job_id)
+            .values(annotated_pdf_next_index=Job.annotated_pdf_next_index + 1)
+            .returning(Job.annotated_pdf_next_index)
+        )
+        db.commit()
+        next_index = result.scalar()
+    except Exception as e:
+        db.rollback()
+        logger.exception(f"[pdf_annotate_converter] {job_id} 인덱스 할당 실패: {e}")
+        db.close()
+        return {"error": f"인덱스 할당 실패: {e}"}
+    if not next_index:
+        db.close()
+        return {"error": "인덱스 할당 실패"}
+
     endpoint = job.endpoint or settings_store.get_setting(db, "llm_endpoint") or settings.default_llm_endpoint
     model = job.model or settings_store.get_setting(db, "llm_model") or settings.default_llm_model
     api_key = settings_store.get_setting(db, "llm_api_key") or ""
@@ -556,7 +578,6 @@ def run(
             annotated_bytes = annotate_pdf(pdf_bytes, targets, mode)
             embedpdf_annotations = build_embedpdf_annotations(pdf_bytes, targets, mode)
             annotated_files = job.annotated_pdf_files or []
-            next_index = len(annotated_files) + 1
             storage_path = f"{job.id}/annotated_{next_index}.pdf"
             annotations_json_storage_path = f"{job.id}/annotated_{next_index}.annotations.json"
             display_name = _annotation_display_name(job, next_index)
@@ -573,6 +594,7 @@ def run(
             )
 
             entry = {
+                "index": next_index,
                 "storage_path": storage_path,
                 "annotations_json_storage_path": annotations_json_storage_path,
                 "filename": display_name,

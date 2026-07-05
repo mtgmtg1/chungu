@@ -1132,10 +1132,12 @@ def _source_files(job: Job) -> list[dict]:
         stem = Path(job.original_filename).stem if job.original_filename else "result"
         annotated_entries = [
             {
+                "index": 1,
                 "storage_path": job.result_annotated_pdf_storage_path,
                 "filename": f"{stem}_annotation1.pdf",
             }
         ]
+    annotated_entries = sorted(annotated_entries, key=lambda e: e.get("index", 0))
     start_idx = len(source_files)
     for idx, entry in enumerate(annotated_entries, start=start_idx):
         storage_path = entry.get("storage_path", "")

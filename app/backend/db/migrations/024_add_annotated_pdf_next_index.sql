@@ -1,0 +1,1 @@
+ALTER TABLE jobs ADD COLUMN annotated_pdf_next_index INTEGER NOT NULL DEFAULT 0;

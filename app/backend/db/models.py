@@ -107,6 +107,7 @@ class Job(Base):
     result_ocr_layout_storage_path: Mapped[str] = mapped_column(String(1024), default="")
     result_annotated_pdf_storage_path: Mapped[str] = mapped_column(String(1024), default="")
     annotated_pdf_files: Mapped[list] = mapped_column(JSON, default=list)
+    annotated_pdf_next_index: Mapped[int] = mapped_column(Integer, default=0)
 
     # Supabase Storage 경로 (로컬 경로 대체)
     pdf_storage_path: Mapped[str] = mapped_column(String(1024), default="")

@@ -136,7 +136,7 @@ export default function DashboardPage() {
             {profile?.subscription_plan ? profile.subscription_plan.toUpperCase() : "FREE"}
           </p>
           <Link
-            to="/plans"
+            to="/price"
             className="mt-3 inline-flex items-center gap-1 text-primary text-sm font-medium hover:underline"
             data-oid="_78h3f4">
 

@@ -677,3 +677,13 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
 - **Creating catalog**: run `PADDLE_API_KEY=... DATABASE_URL=... python scripts/create_paddle_subscription_catalog.py`. This creates products and monthly/yearly prices for Free/Pro/Max and saves the resulting `price_id`s into `app_settings`.
 - **Webhooks**: Paddle dashboard must send `subscription.created`, `subscription.updated`, `subscription.canceled`, and `transaction.completed` to `https://proof.teamcat.app/api/payments/paddle/webhook`.
 - **Free $0 note**: if Paddle does not allow a $0 recurring checkout, the Free tier can stay internal-only (no Paddle subscription) and only Pro/Max use Paddle checkout. The backend treats `subscription_plan == "free"` as always active.
+
+## Frontend Dropdown Hover UX
+
+- CSS-only `group-hover` dropdowns (e.g. Excel/Office buttons in `JobResultPage.jsx`) can disappear when the cursor crosses the small gap between the trigger button and the dropdown panel.
+- Use React state + `useRef` timer instead:
+  - `onMouseEnter`: clear any pending close timer and open the dropdown.
+  - `onMouseLeave`: start a short timeout (e.g. 150ms) before closing the dropdown.
+  - Apply the handlers to both the trigger button wrapper and the dropdown panel itself so moving the mouse between them keeps the dropdown open.
+- Replace `hidden group-hover:flex` with conditional classes driven by the open state: `${open ? "flex" : "hidden"}`.
+- Key files: `app/frontend/src/pages/JobResultPage.jsx` (Excel/Office dropdowns).

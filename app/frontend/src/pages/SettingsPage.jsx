@@ -357,7 +357,7 @@ export default function SettingsPage() {
             </p>
           </div>
           <button
-          onClick={() => navigate("/plans")}
+          onClick={() => navigate("/price")}
           className="bg-primary text-on-primary px-6 py-3 rounded-xl font-body-md hover:bg-primary/90 transition-all" data-oid="q8zcvdg">
 
             {t("page:settings.changePlan")}

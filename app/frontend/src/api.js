@@ -93,7 +93,6 @@ export const api = {
   updateAutoRechargeSettings: (payload) => request('/api/payments/auto-recharge/settings', { method: 'POST', body: JSON.stringify(payload) }),
   getPaymentMethods: () => request('/api/payments/paddle/payment-methods'),
   // 구독 요금제
-  getSubscriptionPlans: () => request('/api/subscriptions/plans'),
   getMySubscription: () => request('/api/subscriptions/me'),
   createSubscriptionCheckout: (payload) => request('/api/subscriptions/checkout', { method: 'POST', body: JSON.stringify(payload) }),
   cancelSubscription: () => request('/api/subscriptions/cancel', { method: 'POST' }),

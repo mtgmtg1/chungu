@@ -1,4 +1,4 @@
-// [Flow: Step 1 (헤더 렌더링) -> Step 2 (구독 요금제 플랜 로드) -> Step 3 (월간/연간 토글) -> Step 4 (구독 요금제 카드 렌더링) -> Step 5 (API 가격 페이지 링크 안내)]
+// [Flow: Step 1 (헤더 렌더링) -> Step 2 (정적 플랜 데이터 설정) -> Step 3 (월간/연간 토글) -> Step 4 (구독 요금제 카드 렌더링) -> Step 5 (API 가격 페이지 링크 안내)]
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -8,6 +8,31 @@ import GlobalFooter from "../components/GlobalFooter.jsx";
 import { useAuth } from "../AuthContext.jsx";
 import { SkeletonCard } from "../components/Skeleton.jsx";
 import PlanCard from "../components/PlanCard.jsx";
+
+/** UI에 표시할 구독 요금제 정적 데이터 (/api/subscriptions/plans 제거 대체) */
+const STATIC_PLANS = [
+  {
+    key: "free",
+    name: "Free",
+    monthly_usd: 0,
+    yearly_usd: 0,
+    limits: { basic_pages: 1000, premium_pages: 500, media_seconds: 9000 },
+  },
+  {
+    key: "pro",
+    name: "Pro",
+    monthly_usd: 20,
+    yearly_usd: 200,
+    limits: { basic_pages: 10000, premium_pages: 5000, media_seconds: 90000 },
+  },
+  {
+    key: "max",
+    name: "Max",
+    monthly_usd: 100,
+    yearly_usd: 1000,
+    limits: { basic_pages: 60000, premium_pages: 30000, media_seconds: 540000 },
+  },
+];
 
 /**
  * 가격 정책 페이지를 렌더링합니다.
@@ -38,8 +63,7 @@ export default function PricePage() {
 
   async function load() {
     try {
-      const plansData = await api.getSubscriptionPlans();
-      setPlans(plansData.plans || []);
+      setPlans(STATIC_PLANS);
       if (user) {
         const sub = await api.getMySubscription();
         setMySubscription(sub);

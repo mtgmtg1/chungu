@@ -7,8 +7,8 @@ export default defineConfig({
   envDir: '..',
   server: {
     proxy: {
-      '/api': 'http://localhost:28181',
-      '/supabase': 'http://localhost:28181',
+      '/api': 'http://192.168.1.50:28181',
+      '/supabase': 'http://192.168.1.50:28181',
     },
   },
   build: {

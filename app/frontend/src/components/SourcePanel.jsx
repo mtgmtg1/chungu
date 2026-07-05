@@ -66,7 +66,6 @@ export default function SourcePanel({
   imageUrls,
   filename,
   currentPage,
-  onPageChange,
   selectedFileIndex,
   onFileSelect,
 }) {
@@ -84,7 +83,6 @@ export default function SourcePanel({
         <PdfViewer
           url={file.url}
           page={currentPage}
-          onPageChange={onPageChange}
         />
       );
     }
@@ -132,7 +130,6 @@ export default function SourcePanel({
                 <PdfViewer
                   url={selected.preview_url || selected.url}
                   page={currentPage}
-                  onPageChange={onPageChange}
                 />
               ) : (
                 <SingleFilePreview file={selected} filename={selected.name} />
@@ -145,7 +142,7 @@ export default function SourcePanel({
   }
 
   if ((sourceType === "pdf" || sourceType === "docx" || sourceType === "hwp") && sourceUrl) {
-    return <PdfViewer url={sourceUrl} page={currentPage} onPageChange={onPageChange} />;
+    return <PdfViewer url={sourceUrl} page={currentPage} />;
   }
   if (sourceType === "images" && imageUrls?.length) {
     return <ImageList urls={imageUrls} t={t} />;

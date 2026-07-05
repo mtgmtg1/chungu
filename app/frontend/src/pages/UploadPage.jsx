@@ -198,7 +198,7 @@ export default function UploadPage() {
                   {t("page:upload.myJobs")}
                 </Link>
                 <Link
-                to="/plans"
+                to="/price"
                 className="text-body-md flex items-center gap-1 text-primary hover:underline font-medium" data-oid="j8k1rq5">
                   {profile?.subscription?.plan?.toUpperCase() ?? "Free"}{" "}
                   {t("page:upload.plan")}

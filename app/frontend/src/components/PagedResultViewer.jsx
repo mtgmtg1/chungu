@@ -1,4 +1,4 @@
-// [Flow: Step 1 (페이지 메타데이터 로드) -> Step 2 (현재 페이지 markdown/이미지/PDF 동기 로드) -> Step 3 (기본 보기 모드: MarkdownPreview) -> Step 4 (편집 모드: SimpleEditor) -> Step 5 (저장만 노출, 페이지네이션은 소스 뷰어에 위임)]
+// [Flow: Step 1 (페이지 메타데이터 로드) -> Step 2 (현재 페이지 markdown/이미지/PDF 동기 로드) -> Step 3 (편집 모드: SimpleEditor) -> Step 4 (저장만 노출, 페이지네이션은 소스 뷰어에 위임)]
 import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle, memo } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { useTranslation } from "react-i18next";
@@ -6,27 +6,6 @@ import { Loader2 } from "lucide-react";
 import { api } from "../api.js";
 import SourcePanel from "./SourcePanel.jsx";
 import SimpleEditor from "./SimpleEditor.jsx";
-import MarkdownPreview from "./MarkdownPreview.jsx";
-
-const MarkdownViewToolbar = memo(function MarkdownViewToolbar({ editMode, onToggle, t }) {
-  return (
-    <div className="flex items-center justify-end px-4 py-2 border-b border-outline-variant bg-surface flex-shrink-0 gap-2">
-      <span className="text-xs text-on-surface-variant">
-        {editMode ? t("page:result.editMode") : t("page:result.viewMode")}
-      </span>
-      <button
-        onClick={onToggle}
-        className={`text-xs px-3 py-1.5 rounded font-medium border transition-colors ${
-          editMode
-            ? "bg-primary text-white border-primary"
-            : "bg-surface text-on-surface border-outline-variant hover:bg-surface-container-high"
-        }`}
-      >
-        {editMode ? t("page:result.view") : t("page:result.edit")}
-      </button>
-    </div>
-  );
-});
 
 const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
   jobId,
@@ -41,7 +20,6 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
   const [pageMarkdown, setPageMarkdown] = useState("");
   const [loadingPage, setLoadingPage] = useState(false);
   const [error, setError] = useState("");
-  const [editMode, setEditMode] = useState(true);
   const editorRef = useRef(null);
 
   const loadPage = useCallback(
@@ -99,18 +77,11 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
       );
     }
     return (
-      <>
-        <MarkdownViewToolbar editMode={editMode} onToggle={() => setEditMode((v) => !v)} t={t} />
-        {editMode ? (
-          <SimpleEditor
-            ref={editorRef}
-            markdown={pageMarkdown}
-            editable
-          />
-        ) : (
-          <MarkdownPreview markdown={pageMarkdown} />
-        )}
-      </>
+      <SimpleEditor
+        ref={editorRef}
+        markdown={pageMarkdown}
+        editable
+      />
     );
   };
 
@@ -144,7 +115,6 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
               sourceType={sourceType}
               imageUrls={imageUrls}
               currentPage={currentPage}
-              onPageChange={setCurrentPage}
               data-oid="8kmamif" />
 
           </Panel>

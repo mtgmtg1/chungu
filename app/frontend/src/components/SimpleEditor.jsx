@@ -142,12 +142,13 @@ function ToolbarDivider() {
 }
 
 const SimpleEditor = memo(forwardRef(function SimpleEditor(
-{ markdown, editable = true },
+{ markdown, editable = true, onPageChange },
 ref)
 {
   const { t } = useTranslation();
   const [headingOpen, setHeadingOpen] = useState(false);
   const containerRef = useRef(null);
+  const observedPageRef = useRef(null);
 
   const editor = useEditor({
     extensions: [
@@ -178,6 +179,56 @@ ref)
     const htmlWithMarkers = injectPageMarkers(marked.parse(markdown));
     editor.commands.setContent(htmlWithMarkers, false);
   }, [editor, markdown]);
+
+  // [Flow: Step 1 (마크다운이 변경되면 현재 페이지 추적 초기화) -> Step 2 (DOM paint 이후 스크롤 컨테이너 내 페이지 마커 탐색) -> Step 3 (IntersectionObserver로 뷰포트 진입 마커 감시) -> Step 4 (가장 위쪽 마커 페이지를 onPageChange로 전달)]
+  useEffect(() => {
+    observedPageRef.current = null;
+    if (!editor || !markdown || !onPageChange) return;
+
+    let rafId;
+    let observer = null;
+
+    const setupObserver = () => {
+      const container = containerRef.current?.querySelector(".overflow-y-auto");
+      if (!container) return;
+
+      const markers = container.querySelectorAll("[data-page-marker]");
+      if (markers.length === 0) return;
+
+      observer = new IntersectionObserver(
+        (entries) => {
+          const visible = entries
+            .filter((entry) => entry.isIntersecting)
+            .map((entry) => ({
+              pageNum: Number(entry.target.getAttribute("data-page-marker")),
+              top: entry.boundingClientRect.top
+            }))
+            .sort((a, b) => a.top - b.top);
+
+          if (visible.length === 0) return;
+
+          const topPage = visible[0].pageNum;
+          if (topPage !== observedPageRef.current) {
+            observedPageRef.current = topPage;
+            onPageChange(topPage);
+          }
+        },
+        { root: container, threshold: 0, rootMargin: "0px" }
+      );
+
+      markers.forEach((marker) => observer.observe(marker));
+    };
+
+    // setContent 이후 DOM이 반영된 다음 paint에서 observer를 설정한다.
+    rafId = requestAnimationFrame(() => {
+      rafId = requestAnimationFrame(setupObserver);
+    });
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      if (observer) observer.disconnect();
+    };
+  }, [editor, markdown, onPageChange]);
 
   useImperativeHandle(
     ref,

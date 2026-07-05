@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# [Flow: Step 1 (플랜 목록 공개) -> Step 2 (내 구독 상태 조회) -> Step 3 (Paddle Checkout 생성) -> Step 4 (구독 취소/업데이트)]
+# [Flow: Step 1 (내 구독 상태 조회) -> Step 2 (Paddle Checkout 생성) -> Step 3 (구독 취소/업데이트)]
 import logging
 import uuid
 
@@ -15,29 +15,6 @@ from ..db.session import get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/subscriptions", tags=["subscriptions"])
-
-# 플랜 정보 (UI 표시용)
-PLAN_METADATA = {
-    "free": {
-        "name": "Free",
-        "monthly_usd": 0,
-        "yearly_usd": 0,
-        "limits": subscription_service.PLAN_LIMITS["free"],
-    },
-    "pro": {
-        "name": "Pro",
-        "monthly_usd": 20,
-        "yearly_usd": 200,
-        "limits": subscription_service.PLAN_LIMITS["pro"],
-    },
-    "max": {
-        "name": "Max",
-        "monthly_usd": 100,
-        "yearly_usd": 1000,
-        "limits": subscription_service.PLAN_LIMITS["max"],
-    },
-}
-
 
 def _paddle_api_headers(db: Session) -> dict:
     """Paddle API 인증 헤더를 반환한다."""
@@ -65,36 +42,6 @@ def _get_or_create_paddle_customer(db: Session, db_user: User, api_headers: dict
         return customer_id
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=f"Failed to create Paddle customer: {e}") from e
-
-
-@router.get("/plans")
-def list_plans(db: Session = Depends(get_db)):
-    """공개: 구독 요금제 목록과 Paddle price_id를 반환한다."""
-    price_keys = {
-        "free_monthly": "paddle_subscription_price_id_free_monthly",
-        "free_yearly": "paddle_subscription_price_id_free_yearly",
-        "pro_monthly": "paddle_subscription_price_id_pro_monthly",
-        "pro_yearly": "paddle_subscription_price_id_pro_yearly",
-        "max_monthly": "paddle_subscription_price_id_max_monthly",
-        "max_yearly": "paddle_subscription_price_id_max_yearly",
-    }
-    price_ids = {k: settings_store.get_setting(db, v) for k, v in price_keys.items()}
-    return {
-        "plans": [
-            {
-                "key": plan_key,
-                "name": meta["name"],
-                "monthly_usd": meta["monthly_usd"],
-                "yearly_usd": meta["yearly_usd"],
-                "limits": meta["limits"],
-                "price_ids": {
-                    "monthly": price_ids.get(f"{plan_key}_monthly"),
-                    "yearly": price_ids.get(f"{plan_key}_yearly"),
-                },
-            }
-            for plan_key, meta in PLAN_METADATA.items()
-        ],
-    }
 
 
 @router.get("/me")
@@ -148,7 +95,7 @@ def create_subscription_checkout(
                     }
                 ],
                 "customer_id": customer_id,
-                "checkout": {"url": "https://proof.teamcat.app/plans"},
+                "checkout": {"url": "https://proof.teamcat.app/price"},
                 "custom_data": {
                     "user_id": user.user_id,
                     "plan": plan,

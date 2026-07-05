@@ -42,7 +42,7 @@ export default function JobConfirmPage() {
       nav(`/jobs/${jobId}`);
     } catch (e) {
       setError(e.message || t("page:errors.unknown"));
-      if (e.message && (e.message.includes("한도") || e.message.includes("구독"))) nav("/plans");
+      if (e.message && (e.message.includes("한도") || e.message.includes("구독"))) nav("/price");
     } finally {
       setSubmitting(false);
     }
@@ -275,7 +275,7 @@ export default function JobConfirmPage() {
                 {reason || t("page:confirm.insufficient")}
               </p>
               <Link
-                to="/plans"
+                to="/price"
                 className="inline-flex items-center gap-1 underline"
                 data-oid="ziafjhh">
                 <CreditCard size={14} data-oid="nmf-rh4" />{" "}

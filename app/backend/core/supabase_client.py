@@ -225,16 +225,22 @@ def download_pdf(storage_path: str) -> BytesIO:
     return BytesIO(data)
 
 
-def _delete_storage_path(bucket: str, path: str) -> None:
-    """단일 Storage 경로를 삭제합니다. 경로가 비어있거나 없으면 무시합니다."""
+def delete_storage_path(bucket: str, path: str) -> None:
+    """단일 Storage 경로를 삭제합니다. 경로가 비어있거나 없으면 무시합니다.
+
+    [Flow: Step 1 (bucket과 path 유효성 검사) -> Step 2 (Supabase Storage 삭제 API 호출) -> Step 3 (예외 발생 시 조용히 무시)]
+    """
     if not path:
         return
-    client = get_service_client()
     try:
-        client.storage.from_(bucket).remove([path])
+        get_service_client().storage.from_(bucket).remove([path])
     except Exception:
-        # 이미 삭제되었거나 존재하지 않는 파일은 무시
         pass
+
+
+def _delete_storage_path(bucket: str, path: str) -> None:
+    """단일 Storage 경로를 삭제합니다. 경로가 비어있거나 없으면 무시합니다. (하위 호환)"""
+    delete_storage_path(bucket, path)
 
 
 def delete_source_files(job) -> None:

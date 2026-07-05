@@ -895,6 +895,82 @@ def delete_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: S
     return {"deleted": True}
 
 
+def _delete_original_file(job: Job, source_index: int, db: Session) -> dict:
+    """지정한 인덱스의 원본 파일을 Storage와 DB에서 삭제한다.
+
+    [Flow: Step 1 (단일 파일 업로드면 pdf_storage_path 직접 삭제) -> Step 2 (다중 파일이면 extracted_files에서 항목 제거) -> Step 3 (DB commit 후 결과 반환)]
+    """
+    files = job.extracted_files or []
+    if not files and job.pdf_storage_path and source_index == 0:
+        supabase_client.delete_storage_path("pdfs", job.pdf_storage_path)
+        job.pdf_storage_path = ""
+        db.commit()
+        return {"deleted": True, "source_kind": "original", "source_index": 0}
+    if source_index >= len(files):
+        raise HTTPException(status_code=404, detail="Source file not found")
+    info = files[source_index]
+    if not isinstance(info, dict):
+        raise HTTPException(status_code=500, detail="Invalid source file metadata")
+    bucket = info.get("bucket", "pdfs")
+    storage_path = info.get("storage_path")
+    if storage_path:
+        supabase_client.delete_storage_path(bucket, storage_path)
+    files.pop(source_index)
+    job.extracted_files = files
+    db.commit()
+    return {"deleted": True, "source_kind": "original", "source_index": source_index}
+
+
+def _delete_annotation_file(job: Job, source_index: int, db: Session) -> dict:
+    """지정한 인덱스의 주석 PDF 파일을 Storage와 DB에서 삭제한다.
+
+    [Flow: Step 1 (하위 호환 단일 주석이면 result_annotated_pdf_storage_path 삭제) -> Step 2 (annotated_pdf_files 목록에서 항목 제거) -> Step 3 (모든 주석이 삭제되면 result_annotated_pdf_storage_path 초기화)]
+    """
+    entries = list(job.annotated_pdf_files or [])
+    if not entries and job.result_annotated_pdf_storage_path and source_index == 0:
+        supabase_client.delete_storage_path("results", job.result_annotated_pdf_storage_path)
+        job.result_annotated_pdf_storage_path = ""
+        job.annotated_pdf_files = []
+        db.commit()
+        return {"deleted": True, "source_kind": "annotation", "source_index": 0}
+    if source_index >= len(entries):
+        raise HTTPException(status_code=404, detail="Annotation file not found")
+    entry = entries[source_index]
+    storage_path = entry.get("storage_path") if isinstance(entry, dict) else None
+    if storage_path:
+        supabase_client.delete_storage_path("results", storage_path)
+    entries.pop(source_index)
+    job.annotated_pdf_files = entries
+    if not entries:
+        job.result_annotated_pdf_storage_path = ""
+    db.commit()
+    return {"deleted": True, "source_kind": "annotation", "source_index": source_index}
+
+
+@router.delete("/jobs/{job_id}/source-files/{source_kind}/{source_index}")
+def delete_source_file(
+    job_id: str,
+    source_kind: str,
+    source_index: int,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """결과 페이지의 원본 파일 목록에서 선택한 파일만 Storage와 DB에서 삭제한다.
+
+    [Flow: Step 1 (job 접근 권한 및 만료 상태 검증) -> Step 2 (source_kind 유효성 검사) -> Step 3 (원본/주석 각각의 삭제 헬퍼 호출)]
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+    if source_kind not in ("original", "annotation"):
+        raise HTTPException(status_code=400, detail="Invalid source kind")
+    if source_index < 0:
+        raise HTTPException(status_code=400, detail="Invalid source index")
+    if source_kind == "original":
+        return _delete_original_file(job, source_index, db)
+    return _delete_annotation_file(job, source_index, db)
+
+
 def _convert_format_alias(fmt: str) -> str:
     """구형 'xlsx'/'csv' 요청을 새 기본 변환 포맷으로 매핑한다."""
     return {"xlsx": "xlsx_basic", "csv": "csv_basic"}.get(fmt, fmt)
@@ -966,8 +1042,11 @@ def _image_files(job: Job) -> list[tuple[int, dict]]:
     return images
 
 
-def _build_source_file_item(info: dict, idx: int) -> dict | None:
-    """단일 파일에 대한 source_files 항목을 생성한다."""
+def _build_source_file_item(info: dict, idx: int, source_kind: str = "original") -> dict | None:
+    """단일 파일에 대한 source_files 항목을 생성한다.
+
+    [Flow: Step 1 (metadata 유효성 검사) -> Step 2 (signed URL 생성) -> Step 3 (source_files 항목 반환, source_kind/source_index 포함)]
+    """
     if not isinstance(info, dict) or not info.get("storage_path"):
         return None
     ftype = info.get("type", "")
@@ -990,6 +1069,8 @@ def _build_source_file_item(info: dict, idx: int) -> dict | None:
                 "page_num": idx + 1,
                 "result_markdown": info.get("result_markdown", ""),
                 "preview_url": preview_url,
+                "source_index": idx,
+                "source_kind": source_kind,
             }
             return item
         # image/audio/video는 원본 signed URL만 필요
@@ -1002,6 +1083,8 @@ def _build_source_file_item(info: dict, idx: int) -> dict | None:
             "storage_path": storage_path,
             "page_num": idx + 1,
             "result_markdown": info.get("result_markdown", ""),
+            "source_index": idx,
+            "source_kind": source_kind,
         }
     except Exception:
         return None
@@ -1028,12 +1111,13 @@ def _source_files(job: Job) -> list[dict]:
                 "type": job.file_type,
             },
             0,
+            source_kind="original",
         )
         if original_item:
             source_files.append(original_item)
     else:
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            futures = [executor.submit(_build_source_file_item, info, idx) for idx, info in enumerate(files)]
+            futures = [executor.submit(_build_source_file_item, info, idx, "original") for idx, info in enumerate(files)]
             results = [f.result() for f in futures]
         source_files = [item for item in results if item is not None]
 
@@ -1057,7 +1141,8 @@ def _source_files(job: Job) -> list[dict]:
                 "type": "pdf",
                 "bucket": "results",
             },
-            idx,
+            idx - start_idx,
+            source_kind="annotation",
         )
         if item:
             source_files.append(item)

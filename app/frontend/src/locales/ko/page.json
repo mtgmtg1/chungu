@@ -183,6 +183,8 @@
     "sourceImages": "원본 이미지",
     "sourceFile": "원본 파일",
     "sourceFiles": "원본 파일 목록",
+    "deleteSourceFileTitle": "원본 파일 삭제",
+    "deleteSourceFileDesc": "{{filename}} 파일을 삭제하면 복구할 수 없습니다. 변환 결과는 그대로 유지됩니다.",
     "editMode": "편집 모드",
     "viewMode": "보기 모드",
     "edit": "편집",

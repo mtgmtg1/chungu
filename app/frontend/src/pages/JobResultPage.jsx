@@ -13,6 +13,7 @@ import {
   PanelLeftClose,
   RefreshCw,
   Save,
+  Trash2,
   XCircle } from
 "lucide-react";
 import SourcePanel from "../components/SourcePanel.jsx";
@@ -66,6 +67,8 @@ export default function JobResultPage() {
   const [advancedUrl, setAdvancedUrl] = useState(null);
   const [xlsxAdvancedPolling, setXlsxAdvancedPolling] = useState(false);
   const [jobActionModal, setJobActionModal] = useState(false);
+  const [deleteSourceFileModal, setDeleteSourceFileModal] = useState(false);
+  const [pendingDeleteFile, setPendingDeleteFile] = useState(null);
 
   // PDF 하이라이트/여백 주석 (원본 스캔 PDF에 형광펜 + 여백 코멘트 생성)
   const [annotateModalOpen, setAnnotateModalOpen] = useState(false);
@@ -377,6 +380,44 @@ export default function JobResultPage() {
       if (action === "retry") {
         startPolling();
       }
+    } catch (e) {
+      setError(e.message || t("page:errors.unknown"));
+    } finally {
+      setConverting(false);
+    }
+  }
+
+  // [Flow: Step 1 (삭제할 파일의 source_index/source_kind 선택) -> Step 2 (파일명과 함께 확인 모달 열기) -> Step 3 (사용자 확인 후 API 호출) -> Step 4 (목록 갱신)]
+  function openDeleteSourceFileModal(sourceIndex, sourceKind) {
+    const file = sourceFiles.find(
+      (f) => f.source_index === sourceIndex && f.source_kind === sourceKind,
+    );
+    setPendingDeleteFile({
+      sourceIndex,
+      sourceKind,
+      name: file?.name || "",
+    });
+    setDeleteSourceFileModal(true);
+  }
+
+  function closeDeleteSourceFileModal() {
+    setDeleteSourceFileModal(false);
+    setPendingDeleteFile(null);
+  }
+
+  async function confirmDeleteSourceFile() {
+    if (!pendingDeleteFile) return;
+    setConverting(true);
+    setError("");
+    try {
+      await api.deleteSourceFile(
+        jobId,
+        pendingDeleteFile.sourceKind,
+        pendingDeleteFile.sourceIndex,
+      );
+      setDeleteSourceFileModal(false);
+      setPendingDeleteFile(null);
+      await loadJob();
     } catch (e) {
       setError(e.message || t("page:errors.unknown"));
     } finally {
@@ -791,6 +832,7 @@ export default function JobResultPage() {
                   filename={job?.filename}
                   selectedFileIndex={selectedFileIndex}
                   onFileSelect={setSelectedFileIndex}
+                  onDeleteFile={openDeleteSourceFileModal}
                   currentPage={currentPage}
                   data-oid="rp.07za" />
 
@@ -876,6 +918,38 @@ export default function JobResultPage() {
               <Loader2 size={16} className="animate-spin" data-oid="job-modal-spinner" /> :
               <RefreshCw size={16} data-oid="job-modal-retry-icon" />}
               {t("page:result.retry")}
+            </button>
+          </div>
+        </div>
+      </div>
+      }
+
+      {deleteSourceFileModal &&
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-oid="delete-source-modal-overlay">
+        <div className="bg-white rounded-lg shadow-lg border border-outline-variant p-6 w-full max-w-sm" data-oid="delete-source-modal">
+          <h3 className="font-headline-md text-headline-md font-bold text-on-surface mb-2" data-oid="delete-source-modal-title">
+            {t("page:result.deleteSourceFileTitle")}
+          </h3>
+          <p className="text-sm text-on-surface-variant mb-6" data-oid="delete-source-modal-desc">
+            {t("page:result.deleteSourceFileDesc", { filename: pendingDeleteFile?.name || "" })}
+          </p>
+          <div className="flex justify-end gap-2" data-oid="delete-source-modal-actions">
+            <button
+              onClick={closeDeleteSourceFileModal}
+              disabled={converting}
+              className="px-4 py-2 rounded-lg border border-outline-variant text-on-surface hover:bg-surface-container-high transition-colors"
+              data-oid="delete-source-modal-cancel">
+              {t("common:actions.cancel")}
+            </button>
+            <button
+              onClick={confirmDeleteSourceFile}
+              disabled={converting}
+              className="flex items-center gap-1 px-4 py-2 rounded-lg bg-error text-white hover:opacity-90 transition-colors"
+              data-oid="delete-source-modal-confirm">
+              {converting ?
+              <Loader2 size={16} className="animate-spin" data-oid="delete-source-modal-spinner" /> :
+              <Trash2 size={16} data-oid="delete-source-modal-icon" />}
+              {t("common:delete")}
             </button>
           </div>
         </div>

@@ -183,6 +183,8 @@
     "sourceImages": "Source Images",
     "sourceFile": "Source File",
     "sourceFiles": "Source Files",
+    "deleteSourceFileTitle": "Delete source file?",
+    "deleteSourceFileDesc": "Deleting {{filename}} cannot be undone. The converted result will remain unchanged.",
     "editMode": "Edit Mode",
     "viewMode": "View Mode",
     "edit": "Edit",

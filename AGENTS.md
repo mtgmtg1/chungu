@@ -660,7 +660,14 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 
 - Uploading multiple files creates one job; each file's parsing result is stored separately in `extracted_files[].result_markdown`.
 - The combined markdown uses file markers (`<!-- 파일 N -->`) via `converter.build_combined_file_markdowns()`.
-- `/api/jobs/{id}/preview` returns `source_files` (name, type, url, storage_path, page_num, result_markdown) for each original file. PDF 원본은 signed URL로 브라우저 네이티브 뷰어에 표시된다.
+- `/api/jobs/{id}/preview` returns `source_files` (name, type, url, storage_path, page_num, result_markdown, source_index, source_kind) for each original file. PDF 원본은 signed URL로 브라우저 네이티브 뷰어에 표시된다.
+- **원본 파일 삭제**: 결과 페이지의 `SourcePanel` 파일 목록 각 항목에 휴지통 아이콘을 표시한다. 클릭 시 확인 모달을 띄우고, 확인하면 `DELETE /api/jobs/{id}/source-files/{source_kind}/{source_index}`를 호출한다.
+  - `source_kind`는 `original` (원본 파일) 또는 `annotation` (주석 PDF)이다.
+  - 백엔드는 Supabase Storage에서 실제 파일을 삭제하고, DB의 `extracted_files` 또는 `annotated_pdf_files`에서도 항목을 제거한다.
+  - 단일 PDF/DOCX/HWP 업로드의 경우 `pdf_storage_path`를 직접 삭제한다.
+  - 이미 생성된 변환 결과물(마크다운, XLSX, DOCX 등)은 재생성하지 않고 그대로 유지한다.
+  - i18n 키: `page:result.deleteSourceFileTitle`, `page:result.deleteSourceFileDesc` (ko/en/ja).
+  - Key files: `app/backend/api/jobs.py` (`delete_source_file`, `_delete_original_file`, `_delete_annotation_file`), `app/frontend/src/components/SourcePanel.jsx`, `app/frontend/src/pages/JobResultPage.jsx`.
 - PDF preview uses an iframe with the browser's native PDF viewer (`PdfViewer`). The toolbar with page navigation is at the top of the preview panel. The preview panel scrolls independently and the page is aligned to the top.
 - `SourcePanel` renders a single source when only one exists, and a file list + selected preview when multiple sources exist.
 - `SourcePanel` supports controlled selection via `selectedFileIndex` / `onFileSelect` props.

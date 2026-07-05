@@ -90,6 +90,8 @@ export const api = {
   editedXlsxUrl: (id) => request(`/api/jobs/${id}/edited-xlsx-url`),
   downloadUrl: (id, type) => `/api/jobs/${id}/download?type=${type}`,
   deleteJob: (id) => request(`/api/jobs/${id}`, { method: 'DELETE' }),
+  deleteSourceFile: (id, kind, index) =>
+    request(`/api/jobs/${id}/source-files/${kind}/${index}`, { method: 'DELETE' }),
 
   // 결제
   getPackages: () => request('/api/payments/packages'),

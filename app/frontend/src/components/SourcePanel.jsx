@@ -1,7 +1,7 @@
 // [Flow: Step 1 (sourceFiles/sourceUrl/sourceType/imageUrls/jobId 수신) -> Step 2 (단일/다중 파일에 따라 PdfViewer에 URL 전달) -> Step 3 (pdf/docx/hwp가 아니면 기존 미디어/이미지 프리뷰)]
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { FileText, ImageIcon, Volume2, Film } from "lucide-react";
+import { FileText, ImageIcon, Volume2, Film, Trash2 } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer from "./PdfViewer.jsx";
 import MediaPlayer from "./MediaPlayer.jsx";
@@ -69,6 +69,7 @@ export default function SourcePanel({
   currentPage,
   selectedFileIndex,
   onFileSelect,
+  onDeleteFile,
 }) {
   const { t } = useTranslation();
   const files = sourceFiles && sourceFiles.length > 0 ? sourceFiles : [];
@@ -112,18 +113,35 @@ export default function SourcePanel({
             >
               <div className="overflow-y-auto custom-scrollbar p-2 space-y-1 h-full">
                 {files.map((f, idx) => (
-                  <button
+                  <div
                     key={idx}
-                    onClick={() => setSelectedIndex(idx)}
-                    className={`w-full flex items-center gap-2 text-left p-2 rounded text-xs transition-colors ${
+                    className={`w-full flex items-center justify-between gap-2 p-2 rounded text-xs transition-colors group ${
                       selectedIndex === idx
                         ? "bg-primary-container/20 text-primary font-bold"
                         : "text-on-surface hover:bg-surface-container-high"
                     }`}
                   >
-                    <SourceIcon type={f.type} />
-                    <span className="truncate">{f.name}</span>
-                  </button>
+                    <button
+                      onClick={() => setSelectedIndex(idx)}
+                      className="flex items-center gap-2 text-left flex-1 min-w-0"
+                    >
+                      <SourceIcon type={f.type} />
+                      <span className="truncate">{f.name}</span>
+                    </button>
+                    {onDeleteFile && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteFile(f.source_index, f.source_kind);
+                        }}
+                        className="flex-shrink-0 p-1 rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors"
+                        title={t("common:delete")}
+                        aria-label={t("common:delete")}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
                 ))}
               </div>
             </Panel>

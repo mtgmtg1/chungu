@@ -183,6 +183,8 @@
     "sourceImages": "元の画像",
     "sourceFile": "元のファイル",
     "sourceFiles": "元ファイル一覧",
+    "deleteSourceFileTitle": "元ファイルを削除しますか？",
+    "deleteSourceFileDesc": "{{filename}} を削除すると元に戻せません。変換結果はそのまま残ります。",
     "editMode": "編集モード",
     "viewMode": "閲覧モード",
     "edit": "編集",

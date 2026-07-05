@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     paddleocr_fallback_failure_window_seconds: int = 60
     paddleocr_fallback_open_seconds: int = 600
 
+    # PaddleOCR 자동 파라미터 추천 (Vision LLM 샘플 기반)
+    paddleocr_auto_parameter_enabled: bool = True
+    paddleocr_sample_dpi: int = 150
+    paddleocr_sample_max_tokens: int = 2000
+
     # Cloudflare Turnstile (CAPTCHA)
     turnstile_site_key: str = ""
     turnstile_worker_url: str = ""

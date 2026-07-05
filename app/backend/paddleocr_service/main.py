@@ -9,12 +9,16 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any
+
+# 로컬 개발 및 Docker 모두에서 backend.core 패키지를 찾을 수 있도록 상위 경로 추가
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import fitz  # PyMuPDF
 import requests
@@ -28,9 +32,15 @@ logging.basicConfig(level=logging.INFO)
 app = FastAPI(title="PROOF PaddleOCR-VL Service")
 
 VLLM_SERVER_URL = os.environ.get("VLLM_SERVER_URL", "http://vllm:8080/v1")
+VLLM_MODEL_NAME = os.environ.get("VLLM_MODEL_NAME", "PaddleOCR-VL-0.9B")
 PIPELINE_VERSION = os.environ.get("PADDLEOCR_PIPELINE_VERSION", "v1.6")
 DATA_DIR = Path("/data")
 IMAGE_BASE_DIR = DATA_DIR / "paddleocr_images"
+
+# PaddleOCR 자동 파라미터 추천 설정 (Vision LLM 샘플 기반)
+AUTO_PARAMETER_ENABLED = os.environ.get("PADDLEOCR_AUTO_PARAMETER_ENABLED", "true").lower() == "true"
+SAMPLE_DPI = int(os.environ.get("PADDLEOCR_SAMPLE_DPI", "150"))
+SAMPLE_MAX_TOKENS = int(os.environ.get("PADDLEOCR_SAMPLE_MAX_TOKENS", "2000"))
 
 # AI Studio API 설정 (폴백용)
 AISTUDIO_API_URL = os.environ.get("PADDLEOCR_API_URL", "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs")
@@ -174,15 +184,60 @@ def _extract_embedded_images(pdf_path: Path, request_id: str) -> list[str]:
     return relative_paths
 
 
-def _run_paddleocr(image_paths: list[Path]) -> dict[str, Any]:
-    # [Flow: Step 1 (PaddleOCR pipeline 가져오기) -> Step 2 (각 이미지 추론) -> Step 3 (결과 병합)]
+def _get_paddleocr_params(pdf_path: Path | None, work_dir: Path) -> dict[str, Any]:
+    """PDF/오피스 문서에 대해 자동 파라미터 추천을 수행한다.
+
+    [Flow: Step 1 (자동 추천 활성화 여부 확인) -> Step 2 (PDF 경로 확인) -> Step 3 (샘플 추출 및 LLM 추천) -> Step 4 (파라미터 반환)]
+
+    Args:
+        pdf_path: 샘플을 추출할 PDF 경로 (이미지 파일인 경우 None)
+        work_dir: 샘플 이미지를 저장할 작업 디렉터리
+
+    Returns:
+        PaddleOCRVL.predict()에 전달할 파라미터 딕셔너리. 비활성화 또는 이미지 파일이면 빈 dict
+    """
+    if not AUTO_PARAMETER_ENABLED:
+        return {}
+    if pdf_path is None or not pdf_path.exists():
+        return {}
+
+    try:
+        from backend.core.paddleocr_parameter_recommender import decide_parameters
+    except ImportError:
+        try:
+            from core.paddleocr_parameter_recommender import decide_parameters
+        except ImportError:
+            logger.warning("[paddleocr] 파라미터 추천 모듈 import 실패, 기본값 사용")
+            return {}
+
+    sample_dir = work_dir / "samples"
+    try:
+        params = decide_parameters(
+            pdf_path=pdf_path,
+            sample_dir=sample_dir,
+            endpoint=VLLM_SERVER_URL,
+            model=VLLM_MODEL_NAME,
+            api_key="",
+            dpi=SAMPLE_DPI,
+            max_tokens=SAMPLE_MAX_TOKENS,
+        )
+        logger.info(f"[paddleocr] 자동 추천 파라미터 적용: {params}")
+        return params
+    except Exception as e:
+        logger.warning(f"[paddleocr] 파라미터 추천 실패, 기본값 사용: {e}")
+        return {}
+
+
+def _run_paddleocr(image_paths: list[Path], params: dict[str, Any] | None = None) -> dict[str, Any]:
+    # [Flow: Step 1 (PaddleOCR pipeline 가져오기) -> Step 2 (파라미터 병합) -> Step 3 (각 이미지 추론) -> Step 4 (결과 병합)]
     pipeline = get_pipeline()
     all_markdown_parts: list[str] = []
     total_pages = 0
+    predict_params = params or {}
 
     for idx, img_path in enumerate(image_paths):
         try:
-            output = pipeline.predict(str(img_path))
+            output = pipeline.predict(str(img_path), **predict_params)
             for res in output:
                 page_md = _extract_markdown_from_result(res)
                 if page_md:
@@ -247,10 +302,11 @@ async def health() -> dict[str, str]:
 
 
 def _do_convert(task_id: str, input_path: Path, filename: str) -> None:
-    # [Flow: Step 1 (파일 타입 확인) -> Step 2 (PDF→이미지 or 단일 이미지) -> Step 3 (PaddleOCR 추론) -> Step 4 (결과 저장)]
+    # [Flow: Step 1 (파일 타입 확인) -> Step 2 (PDF→이미지 or 단일 이미지) -> Step 3 (자동 파라미터 추천) -> Step 4 (PaddleOCR 추론) -> Step 5 (결과 저장)]
     try:
         file_type = _detect_file_type(filename)
         request_id = uuid.uuid4().hex
+        pdf_path: Path | None = None
 
         if file_type == "office":
             pdf_path = _convert_office_to_pdf(input_path, input_path.parent)
@@ -260,6 +316,7 @@ def _do_convert(task_id: str, input_path: Path, filename: str) -> None:
             embedded_images = _extract_embedded_images(pdf_path, request_id)
             file_type = "pdf"
         elif file_type == "pdf":
+            pdf_path = input_path
             image_paths = _pdf_to_images(input_path)
             if not image_paths:
                 raise RuntimeError("Failed to extract page images from PDF")
@@ -270,7 +327,8 @@ def _do_convert(task_id: str, input_path: Path, filename: str) -> None:
         else:
             raise RuntimeError(f"Unsupported file type: {filename}")
 
-        ocr_result = _run_paddleocr(image_paths)
+        params = _get_paddleocr_params(pdf_path, input_path.parent)
+        ocr_result = _run_paddleocr(image_paths, params)
 
         convert_result = ConvertResponse(
             markdown=ocr_result["markdown"],
@@ -357,6 +415,7 @@ async def convert_file(file: UploadFile = File(...)) -> ConvertResponse:
 
         file_type = _detect_file_type(file.filename)
         request_id = uuid.uuid4().hex
+        pdf_path: Path | None = None
 
         if file_type == "office":
             pdf_path = _convert_office_to_pdf(input_path, tmp_path)
@@ -366,6 +425,7 @@ async def convert_file(file: UploadFile = File(...)) -> ConvertResponse:
             embedded_images = _extract_embedded_images(pdf_path, request_id)
             file_type = "pdf"
         elif file_type == "pdf":
+            pdf_path = input_path
             image_paths = _pdf_to_images(input_path)
             if not image_paths:
                 raise HTTPException(status_code=500, detail="Failed to extract page images from PDF")
@@ -377,7 +437,8 @@ async def convert_file(file: UploadFile = File(...)) -> ConvertResponse:
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.filename}")
 
         try:
-            ocr_result = _run_paddleocr(image_paths)
+            params = _get_paddleocr_params(pdf_path, tmp_path)
+            ocr_result = _run_paddleocr(image_paths, params)
         except Exception as e:
             logger.exception(f"[paddleocr-convert] {file.filename} 추론 실패: {e}")
             raise HTTPException(status_code=500, detail=f"PaddleOCR inference failed: {e}")
@@ -403,10 +464,35 @@ async def get_image(image_path: str) -> FileResponse:
 
 # ─── AI Studio API 연동 (폴백용 /api/convert 엔드포인트) ───
 
-def _aistudio_submit_job(file_path: Path) -> str:
+def _snake_to_camel(snake: str) -> str:
+    """snake_case 문자열을 camelCase로 변환한다.
+
+    Args:
+        snake: snake_case 형식 문자열
+
+    Returns:
+        camelCase 형식 문자열
+    """
+    parts = snake.split("_")
+    return parts[0] + "".join(part.capitalize() for part in parts[1:])
+
+
+def _convert_params_to_camel_case(params: dict[str, Any]) -> dict[str, Any]:
+    """PaddleOCRVL 파라미터를 AI Studio API optionalPayload camelCase 키로 변환한다.
+
+    Args:
+        params: snake_case 키의 파라미터 딕셔너리
+
+    Returns:
+        camelCase 키의 파라미터 딕셔너리
+    """
+    return {_snake_to_camel(k): v for k, v in params.items()}
+
+
+def _aistudio_submit_job(file_path: Path, params: dict[str, Any] | None = None) -> str:
     """AI Studio API에 OCR job을 제출하고 jobId를 반환한다.
 
-    [Flow: Step 1 (파일 업로드 + 모델 선택) -> Step 2 (API POST) -> Step 3 (jobId 추출)]
+    [Flow: Step 1 (파라미터 camelCase 변환) -> Step 2 (파일 업로드 + 모델 선택) -> Step 3 (API POST) -> Step 4 (jobId 추출)]
     """
     if not AISTUDIO_API_TOKEN:
         raise RuntimeError("PADDLEOCR_API_TOKEN is not configured")
@@ -417,6 +503,8 @@ def _aistudio_submit_job(file_path: Path) -> str:
         "useDocUnwarping": False,
         "useChartRecognition": False,
     }
+    if params:
+        optional_payload.update(_convert_params_to_camel_case(params))
     data = {"model": AISTUDIO_MODEL, "optionalPayload": json.dumps(optional_payload)}
 
     with open(file_path, "rb") as f:
@@ -434,7 +522,7 @@ def _aistudio_submit_job(file_path: Path) -> str:
     if not job_id:
         raise RuntimeError(f"AI Studio API missing jobId: {resp.text[:300]}")
 
-    logger.info(f"[aistudio] job 제출 완료: jobId={job_id}, file={file_path.name}")
+    logger.info(f"[aistudio] job 제출 완료: jobId={job_id}, file={file_path.name}, params={optional_payload}")
     return job_id
 
 

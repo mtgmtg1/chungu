@@ -58,6 +58,53 @@ def build_media_prompt(columns: list[str], extra: str = "") -> str:
     return f"{base}\n추가 지시: {extra}" if extra.strip() else base
 
 
+def build_paddleocr_parameter_recommendation_prompt() -> str:
+    """PaddleOCR-VL 파라미터를 자동 추천하도록 Vision LLM에 보내는 프롬프트."""
+    return (
+        "당신은 문서 OCR 레이아웃 전문가입니다. 첨부된 페이지 이미지를 보고, "
+        "해당 문서를 PaddleOCR-VL로 가장 정확하게 파싱할 수 있는 파라미터를 JSON으로 추천하세요.\n\n"
+        "먼저 문서의 전반적인 유형을 다음 중 하나로 판단하세요:\n"
+        "- receipt (영수증): 짧은 종이, 기울어짐/왜곡 가능, 작은 글씨, 항목과 금액 중심\n"
+        "- invoice (세금계산서/송장): 표 형식, 사업자번호/금액/품목 중심\n"
+        "- form (양식): 칸/박스가 많고 사용자가 기입한 필드 중심\n"
+        "- paper (논문/학술지): 단락, 제목, 섹션, 수식/도표 가능\n"
+        "- table_heavy (표가 많은 보고서): 페이지 대부분이 표 또는 표와 텍스트 혼합\n"
+        "- image_heavy (이미지/도면 중심): 텍스트보다 이미지/도표/도면이 많음\n"
+        "- business_card (명함): 작은 카드, 로고, 짧은 텍스트\n"
+        "- report (일반 보고서): 자연스러운 단락과 섹션, 가끔 표/이미지\n"
+        "- mixed (혼합): 위의 유형 중 하나로 명확히 분류되지 않음\n\n"
+        "다음 항목에 대해 true/false 또는 숫자/문자열로만 결정하세요:\n"
+        "- layout_threshold: 레이아웃 모델이 영역을 인식할 최소 신뢰도 (0.1~0.9). "
+        "  영수증/명함/작은 문서는 0.35, 양식/표 중심은 0.4~0.45, 일반 보고서/논문은 0.5를 권장합니다.\n"
+        "- layout_merge_bboxes_mode: 중첩된 레이아웃 박스를 병합하는 방식. "
+        "  'large'(가장 큰 박스만 남김), 'small'(가장 작은 박스만 남김), 'union'(모두 유지) 중 하나.\n"
+        "- use_doc_orientation_classify: 문서가 90/180/270도 기울어져 있으면 true.\n"
+        "- use_doc_unwarping: 문서가 구겨지거나 곡면(스캔/촬영)이면 true.\n"
+        "- use_layout_detection: 레이아웃 분석을 사용하려면 true (거의 항상 true).\n"
+        "- use_ocr_for_image_block: 이미지/도표 안에 숨겨진 텍스트를 추출하려면 true.\n"
+        "- format_block_content: 결과를 마크다운 형식으로 깔끔하게 정리하려면 true.\n"
+        "- layout_nms: 중첩 박스가 많아 후처리가 필요하면 true.\n"
+        "- layout_unclip_ratio: 레이아웃 박스 확장 비율 (0.5~2.0). 일반적으로 1.0.\n"
+        "- use_chart_recognition: 차트/그래프가 많고 수치 추출이 중요하면 true.\n"
+        "- use_seal_recognition: 도장 인식이 필요하면 true.\n\n"
+        "반드시 아래 JSON 형식으로만 출력하고, 설명이나 코드 블록 마커(```)는 절대 넣지 마세요.\n"
+        "{\n"
+        '  "document_type": "report",\n'
+        '  "layout_threshold": 0.5,\n'
+        '  "layout_merge_bboxes_mode": "large",\n'
+        '  "use_doc_orientation_classify": false,\n'
+        '  "use_doc_unwarping": false,\n'
+        '  "use_layout_detection": true,\n'
+        '  "use_ocr_for_image_block": true,\n'
+        '  "format_block_content": true,\n'
+        '  "layout_nms": true,\n'
+        '  "layout_unclip_ratio": 1.0,\n'
+        '  "use_chart_recognition": false,\n'
+        '  "use_seal_recognition": false\n'
+        "}\n"
+    )
+
+
 def build_docling_refinement_prompt(columns: list[str], docling_markdown: str, extra: str = "") -> str:
     """Docling이 추출한 마크다운을 LLM으로 정리/재구조화하는 프롬프트."""
     cols = ", ".join(columns) if columns else "내용"
@@ -155,8 +202,9 @@ def build_video_prompt(
 
 
 def _format_timestamp(seconds: float) -> str:
-    """초를 HH:MM:SS 형식으로 변환한다."""
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    return f"{h:02d}:{m:02d}:{s:02d}"
+    """초를 HH:MM:SS 또는 MM:SS 형식으로 변환한다."""
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"

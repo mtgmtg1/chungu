@@ -149,17 +149,18 @@ def annotate_pdf(pdf_bytes: bytes, targets: list[AnnotationTarget], mode: str) -
     return doc.tobytes()
 
 
-def build_fresh_air_annotations(
+def build_embedpdf_annotations(
     pdf_bytes: bytes,
     targets: list[AnnotationTarget],
     mode: str,
 ) -> list[dict]:
     """[Flow: Step 1 (AnnotationTarget 목록과 PDF 수신) -> Step 2 (페이지별 시각적 크기/회전 캡처)
-          -> Step 3 (여백 주석 레이아웃 계산) -> Step 4 (Fresh Air PDF JSON 배열 생성)
-          -> Step 5 (하이라이트는 quad, 여백 코멘트는 free-text로 변환)]
+          -> Step 3 (여백 주석 레이아웃 계산) -> Step 4 (EmbedPDF AnnotationTransferItem[] 배열 생성)
+          -> Step 5 (하이라이트는 HIGHLIGHT, 여백 코멘트는 FREETEXT로 변환)]
 
-    백엔드에서 생성한 주석을 Fresh Air PDF의 importAnnotations()로 바로 로드할 수 있는
-    annotation 객체 배열로 변환한다. 이 형식으로 프론트에서 사용자가 직접 수정/저장할 수 있다.
+    백엔드에서 생성한 주석을 EmbedPDF의 importAnnotations()로 바로 로드할 수 있는
+    AnnotationTransferItem[] 형식으로 변환한다. 이 형식은 PDF 좌표계를 그대로 사용하며
+    프론트에서 사용자가 직접 수정/저장할 수 있다.
 
     Args:
         pdf_bytes: 원본 PDF 바이트 (페이지 시각적 크기 계산용)
@@ -167,7 +168,7 @@ def build_fresh_air_annotations(
         mode: "highlight" | "margin_note" | "both"
 
     Returns:
-        Fresh Air PDF importAnnotations()가 기대하는 annotation 객체 배열
+        EmbedPDF importAnnotations()가 기대하는 AnnotationTransferItem[] 형식
     """
     if mode not in ("highlight", "margin_note", "both"):
         raise ValueError(f"Unsupported annotate mode: {mode}")
@@ -196,8 +197,15 @@ def build_fresh_air_annotations(
             note_layouts = _layout_margin_notes(page_targets, page_top=visual.y0)
             note_layouts_by_page[page.number] = note_layouts
 
+    # EmbedPDF PdfAnnotationSubtype enum 값 (숫자 상수)
+    # HIGHLIGHT = 9, FREETEXT = 3
+    HIGHLIGHT_TYPE = 9
+    FREETEXT_TYPE = 3
+    HELVETICA_FONT = 4  # PdfStandardFont.Helvetica
+    LEFT_ALIGN = 0  # PdfTextAlignment.Left
+    TOP_ALIGN = 0  # PdfVerticalAlignment.Top
+
     annotations: list[dict] = []
-    now = datetime.now(timezone.utc).isoformat()
 
     for page_no, page_targets in by_page.items():
         if page_no < 1 or page_no > doc.page_count:
@@ -212,15 +220,17 @@ def build_fresh_air_annotations(
 
             if enable_highlight:
                 annotations.append({
-                    "id": f"{base_id}-highlight",
-                    "type": "highlight",
-                    "pageNumber": page_no,
-                    "color": _rgb_to_hex(t.color),
-                    "opacity": 0.45,
-                    "quads": [_rect_to_quad(x0, y0, x1, y1)],
-                    "text": t.comment,
-                    "createdAt": now,
-                    "modifiedAt": now,
+                    "annotation": {
+                        "id": f"{base_id}-highlight",
+                        "type": HIGHLIGHT_TYPE,
+                        "pageIndex": page_no - 1,
+                        "rect": _rect_to_embedpdf_rect(x0, y0, x1, y1),
+                        "segmentRects": [_rect_to_embedpdf_rect(x0, y0, x1, y1)],
+                        "strokeColor": _rgb_to_hex(t.color),
+                        "color": _rgb_to_hex(t.color),
+                        "opacity": 0.45,
+                        "contents": t.comment,
+                    }
                 })
 
             if needs_margin:
@@ -230,23 +240,19 @@ def build_fresh_air_annotations(
                     margin_x0 = visual.x1 + 4
                     margin_x1 = visual.x1 + MARGIN_WIDTH_PT - 4
                     annotations.append({
-                        "id": f"{base_id}-note",
-                        "type": "free-text",
-                        "pageNumber": page_no,
-                        "color": _rgb_to_hex(DEFAULT_MARGIN_BORDER_COLOR),
-                        "opacity": 1.0,
-                        "rect": {
-                            "x": margin_x0,
-                            "y": note_top,
-                            "width": margin_x1 - margin_x0,
-                            "height": note_height,
-                        },
-                        "content": t.comment,
-                        "fontSize": MARGIN_NOTE_FONT_SIZE,
-                        "fontFamily": "Helvetica",
-                        "textAlign": "left",
-                        "createdAt": now,
-                        "modifiedAt": now,
+                        "annotation": {
+                            "id": f"{base_id}-note",
+                            "type": FREETEXT_TYPE,
+                            "pageIndex": page_no - 1,
+                            "rect": _rect_to_embedpdf_rect(margin_x0, note_top, margin_x1, note_top + note_height),
+                            "contents": t.comment,
+                            "fontFamily": HELVETICA_FONT,
+                            "fontSize": MARGIN_NOTE_FONT_SIZE,
+                            "fontColor": _rgb_to_hex(DEFAULT_MARGIN_BORDER_COLOR),
+                            "textAlign": LEFT_ALIGN,
+                            "verticalAlign": TOP_ALIGN,
+                            "opacity": 1.0,
+                        }
                     })
 
     return annotations
@@ -259,14 +265,16 @@ def _rgb_to_hex(rgb: tuple[float, float, float]) -> str:
     return f"#{int(round(r * 255)):02X}{int(round(g * 255)):02X}{int(round(b * 255)):02X}"
 
 
-def _rect_to_quad(x0: float, y0: float, x1: float, y1: float) -> dict:
-    """[Flow: Step 1 (사각형 좌표 수신) -> Step 2 (PDF 좌표계에 맞게 4개 꼭지점 생성)
-          -> Step 3 (Fresh Air PDF Quad 객체 형식 반환)]"""
+def _rect_to_embedpdf_rect(x0: float, y0: float, x1: float, y1: float) -> dict:
+    """[Flow: Step 1 (PyMuPDF 좌표 수신) -> Step 2 (EmbedPDF Rect 형식으로 변환)
+          -> Step 3 (origin=좌상단, size=width/height 반환)]
+
+    PDF 좌표계에서 원점은 좌하단, y는 위로 증가한다. EmbedPDF Rect의 origin은 좌상단이므로
+    origin.y에 y1(상단)을 사용한다.
+    """
     return {
-        "topLeft": {"x": x0, "y": y1},
-        "topRight": {"x": x1, "y": y1},
-        "bottomLeft": {"x": x0, "y": y0},
-        "bottomRight": {"x": x1, "y": y0},
+        "origin": {"x": x0, "y": y1},
+        "size": {"width": max(0.0, x1 - x0), "height": max(0.0, y1 - y0)},
     }
 
 

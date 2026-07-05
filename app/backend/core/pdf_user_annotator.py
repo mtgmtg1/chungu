@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-# [Flow: Step 1 (PDF bytes와 Fresh Air PDF annotation 배열 수신)
-#       -> Step 2 (페이지별 주석 그룹화)
-#       -> Step 3 (색상/좌표 변환)
-#       -> Step 4 (PyMuPDF 주석 추가)
-#       -> Step 5 (주석이 추가된 PDF bytes 반환)]
+# [Flow: Step 1 (PDF bytes와 EmbedPDF annotation 배열 수신)
+#       -> Step 2 (각 항목에서 annotation 객체 추출)
+#       -> Step 3 (페이지별 주석 그룹화)
+#       -> Step 4 (색상/좌표 변환)
+#       -> Step 5 (PyMuPDF 주석 추가)
+#       -> Step 6 (주석이 추가된 PDF bytes 반환)]
 from __future__ import annotations
 
 import logging
@@ -13,31 +14,51 @@ import fitz  # PyMuPDF
 
 logger = logging.getLogger(__name__)
 
+# EmbedPDF PdfAnnotationSubtype enum 값 (숫자 상수)
+# 참고: https://cdn.jsdelivr.net/npm/@embedpdf/models/dist/pdf.d.ts
+FREETEXT = 3
+LINE = 4
+SQUARE = 5
+CIRCLE = 6
+HIGHLIGHT = 9
+UNDERLINE = 10
+SQUIGGLY = 11
+STRIKEOUT = 12
+STAMP = 13
+INK = 15
+
 
 def apply_user_annotations(pdf_bytes: bytes, annotations: list[dict]) -> bytes:
-    """[Flow: Step 1 (PDF 열기) -> Step 2 (페이지별 주석 그룹화)
-          -> Step 3 (각 주석을 PyMuPDF로 적용) -> Step 4 (새 PDF bytes 반환)]
+    """[Flow: Step 1 (PDF 열기) -> Step 2 (각 항목에서 annotation 객체 추출)
+          -> Step 3 (페이지별 주석 그룹화) -> Step 4 (각 주석을 PyMuPDF로 적용)
+          -> Step 5 (새 PDF bytes 반환)]
 
-    원본 PDF에 사용자가 편집한 Fresh Air PDF 형식의 주석을 추가한다.
+    원본 PDF에 사용자가 편집한 EmbedPDF 형식의 주석을 추가한다.
+    입력은 EmbedPDF exportAnnotations()가 반환하는 AnnotationTransferItem[] 형식이며,
+    하위 호환을 위해 annotation 객체 배열도 수용한다.
 
     Args:
         pdf_bytes: 원본 PDF 바이트
-        annotations: Fresh Air PDF importAnnotations/exportAnnotations 형식의 annotation 객체 배열
+        annotations: EmbedPDF AnnotationTransferItem[] 또는 annotation 객체 배열
 
     Returns:
         주석이 추가된 PDF bytes
     """
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     by_page: dict[int, list[dict]] = {}
-    for a in annotations:
-        page_number = a.get("pageNumber")
-        if not isinstance(page_number, int) or page_number < 1:
+    for item in annotations:
+        a = _extract_annotation(item)
+        if not a:
             continue
+        page_index = a.get("pageIndex")
+        if not isinstance(page_index, int) or page_index < 0:
+            continue
+        page_number = page_index + 1  # EmbedPDF는 0-based, PyMuPDF는 0-based이나 로직상 1-based로 처리
         by_page.setdefault(page_number, []).append(a)
 
     for page_no, page_annotations in by_page.items():
         if page_no > doc.page_count:
-            logger.warning(f"[pdf_user_annotator] 잘못된 pageNumber {page_no} (총 {doc.page_count}페이지), 건너뜀")
+            logger.warning(f"[pdf_user_annotator] 잘못된 pageIndex {page_no - 1} (총 {doc.page_count}페이지), 건너뜀")
             continue
         page = doc[page_no - 1]
         for a in page_annotations:
@@ -49,80 +70,104 @@ def apply_user_annotations(pdf_bytes: bytes, annotations: list[dict]) -> bytes:
     return doc.tobytes()
 
 
+def _extract_annotation(item: Any) -> dict | None:
+    """[Flow: Step 1 (item이 dict인지 확인) -> Step 2 (annotation 필드가 있으면 추출)
+          -> Step 3 (annotation 객체 반환)]"""
+    if not isinstance(item, dict):
+        return None
+    if "annotation" in item and isinstance(item["annotation"], dict):
+        return item["annotation"]
+    return item
+
+
 def _apply_annotation(page: fitz.Page, a: dict) -> None:
-    """[Flow: Step 1 (주석 유형 분기) -> Step 2 (좌표/색상 변환) -> Step 3 (PyMuPDF 주석 추가)]"""
-    atype = a.get("type", "")
-    color = _hex_to_rgb(a.get("color", "#000000"))
+    """[Flow: Step 1 (주석 유형 숫자 분기) -> Step 2 (좌표/색상 변환) -> Step 3 (PyMuPDF 주석 추가)]"""
+    atype = a.get("type")
+    color = _hex_to_rgb(a.get("strokeColor") or a.get("color"))
     opacity = a.get("opacity", 1.0)
 
-    if atype == "highlight":
-        rect = _quad_to_rect(a.get("quads"))
+    if atype == HIGHLIGHT:
+        rect = _segment_rects_to_rect(a.get("segmentRects")) or _parse_rect(a.get("rect"))
         if rect:
             annot = page.add_highlight_annot(rect)
             _style_annot(annot, color, opacity)
         return
 
-    if atype == "underline":
-        rect = _quad_to_rect(a.get("quads"))
+    if atype == UNDERLINE:
+        rect = _segment_rects_to_rect(a.get("segmentRects")) or _parse_rect(a.get("rect"))
         if rect:
             annot = page.add_underline_annot(rect)
             _style_annot(annot, color, opacity)
         return
 
-    if atype == "strikeout":
-        rect = _quad_to_rect(a.get("quads"))
+    if atype == SQUIGGLY:
+        rect = _segment_rects_to_rect(a.get("segmentRects")) or _parse_rect(a.get("rect"))
+        if rect:
+            annot = page.add_squiggly_annot(rect)
+            _style_annot(annot, color, opacity)
+        return
+
+    if atype == STRIKEOUT:
+        rect = _segment_rects_to_rect(a.get("segmentRects")) or _parse_rect(a.get("rect"))
         if rect:
             annot = page.add_strikeout_annot(rect)
             _style_annot(annot, color, opacity)
         return
 
-    if atype == "free-text":
+    if atype == FREETEXT:
         rect = _parse_rect(a.get("rect"))
         if rect:
-            text = a.get("content", "")
+            text = a.get("contents", "")
             font_size = a.get("fontSize", 14)
+            font_color = _hex_to_rgb(a.get("fontColor")) if a.get("fontColor") else (0.0, 0.0, 0.0)
             annot = page.add_freetext_annot(
                 rect,
                 text,
                 fontsize=font_size,
-                text_color=color,
+                text_color=font_color,
                 rotate=page.rotation,
             )
             annot.set_opacity(opacity)
             annot.update()
         return
 
-    if atype == "rectangle":
+    if atype == SQUARE:
         rect = _parse_rect(a.get("rect"))
         if rect:
             annot = page.add_rect_annot(rect)
-            fill_color = _hex_to_rgb(a.get("fillColor")) if a.get("fillColor") else None
+            fill_color = _hex_to_rgb(a.get("color")) if a.get("color") else None
             _style_annot(annot, color, opacity, fill_color=fill_color)
         return
 
-    if atype == "circle":
+    if atype == CIRCLE:
         rect = _parse_rect(a.get("rect"))
         if rect:
             annot = page.add_circle_annot(rect)
-            fill_color = _hex_to_rgb(a.get("fillColor")) if a.get("fillColor") else None
+            fill_color = _hex_to_rgb(a.get("color")) if a.get("color") else None
             _style_annot(annot, color, opacity, fill_color=fill_color)
         return
 
-    if atype in ("line", "arrow"):
+    if atype == LINE:
         start = _parse_point(a.get("start"))
         end = _parse_point(a.get("end"))
         if start and end:
             annot = page.add_line_annot(start, end)
-            _style_annot(annot, color, opacity, width=a.get("width", 1.0))
+            _style_annot(annot, color, opacity, width=a.get("strokeWidth", 1.0))
         return
 
-    if atype == "ink":
-        paths = _parse_paths(a.get("paths"))
+    if atype == INK:
+        paths = _parse_ink_list(a.get("inkList")) or _parse_paths(a.get("paths"))
         if paths:
             annot = page.add_ink_annot(paths)
-            _style_annot(annot, color, opacity, width=a.get("width", 1.0))
+            _style_annot(annot, color, opacity, width=a.get("strokeWidth", 1.0))
         return
 
+    if atype == STAMP:
+        rect = _parse_rect(a.get("rect"))
+        if rect:
+            annot = page.add_stamp_annot(rect, stamp=0)
+            _style_annot(annot, color, opacity)
+        return
 
 
 def _style_annot(
@@ -163,16 +208,38 @@ def _hex_to_rgb(hex_color: str | None) -> tuple[float, float, float]:
 
 
 def _parse_rect(rect: Any) -> fitz.Rect | None:
-    """[Flow: Step 1 (dict 형태 확인) -> Step 2 (x/y/width/height 추출) -> Step 3 (fitz.Rect 반환)]"""
+    """[Flow: Step 1 (EmbedPDF rect 형태 확인) -> Step 2 (origin/size 추출) -> Step 3 (fitz.Rect 반환)]"""
     if not isinstance(rect, dict):
         return None
-    x = rect.get("x", 0)
-    y = rect.get("y", 0)
-    w = rect.get("width", 0)
-    h = rect.get("height", 0)
+    origin = rect.get("origin")
+    size = rect.get("size")
+    if not isinstance(origin, dict) or not isinstance(size, dict):
+        # 하위 호환: x/y/width/height 형태도 지원
+        x = rect.get("x", 0)
+        y = rect.get("y", 0)
+        w = rect.get("width", 0)
+        h = rect.get("height", 0)
+        if w <= 0 or h <= 0:
+            return None
+        return fitz.Rect(x, y, x + w, y + h)
+    x = origin.get("x", 0)
+    y = origin.get("y", 0)
+    w = size.get("width", 0)
+    h = size.get("height", 0)
     if w <= 0 or h <= 0:
         return None
-    return fitz.Rect(x, y, x + w, y + h)
+    # EmbedPDF Rect는 origin이 좌상단, PDF 좌표계는 y가 위로 증가하므로
+    # fitz.Rect(x0, y0, x1, y1)에서 y0 = origin.y - height, y1 = origin.y
+    return fitz.Rect(x, y - h, x + w, y)
+
+
+def _segment_rects_to_rect(segment_rects: Any) -> fitz.Rect | None:
+    """[Flow: Step 1 (segmentRects 배열 확인) -> Step 2 (첫 번째 rect를 fitz.Rect로 변환)
+          -> Step 3 (하나라도 실패하면 None 반환)]"""
+    if not isinstance(segment_rects, list) or not segment_rects:
+        return None
+    first = segment_rects[0]
+    return _parse_rect(first)
 
 
 def _parse_point(point: Any) -> fitz.Point | None:
@@ -197,21 +264,17 @@ def _parse_paths(paths: Any) -> list[list[fitz.Point]] | None:
     return strokes if strokes else None
 
 
-def _quad_to_rect(quads: Any) -> fitz.Rect | None:
-    """[Flow: Step 1 (quads 배열 확인) -> Step 2 (Quad 객체 또는 8숫자 배열 파싱)
-          -> Step 3 (fitz.Rect 반환)]"""
-    if not isinstance(quads, list) or not quads:
+def _parse_ink_list(ink_list: Any) -> list[list[fitz.Point]] | None:
+    """[Flow: Step 1 (inkList 형태 확인) -> Step 2 (ink 항목별 points 변환)
+          -> Step 3 (2점 이상 stroke만 반환)]"""
+    if not isinstance(ink_list, list):
         return None
-    first = quads[0]
-    # Quad 객체 형식: {topLeft, topRight, bottomLeft, bottomRight}
-    if isinstance(first, dict):
-        tl = _parse_point(first.get("topLeft"))
-        br = _parse_point(first.get("bottomRight"))
-        if tl and br:
-            return fitz.Rect(tl, br)
-    # 8개 숫자 배열 형식: [x1,y1,x2,y2,x3,y3,x4,y4]
-    if isinstance(first, list) and len(first) == 8:
-        xs = first[0::2]
-        ys = first[1::2]
-        return fitz.Rect(min(xs), min(ys), max(xs), max(ys))
-    return None
+    strokes: list[list[fitz.Point]] = []
+    for ink in ink_list:
+        if not isinstance(ink, dict):
+            continue
+        points = [_parse_point(p) for p in ink.get("points", [])]
+        points = [p for p in points if p]
+        if len(points) >= 2:
+            strokes.append(points)
+    return strokes if strokes else None

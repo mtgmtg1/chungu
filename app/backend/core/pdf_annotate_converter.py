@@ -23,7 +23,7 @@ from ..db.session import SessionLocal
 from . import cache, ocr_client, paddleocr_client, supabase_client
 from .image_deskew import deskew_image
 from .ocr_layout import BBox, OcrRow, OcrTextBlock, parse_layout_result
-from .pdf_annotator import AnnotationTarget, annotate_pdf, build_fresh_air_annotations
+from .pdf_annotator import AnnotationTarget, annotate_pdf, build_embedpdf_annotations
 from .pdf_coords import clamp_rect_to_page, px_bbox_to_pdf_rect
 from .prompts import build_element_highlight_prompt, build_vision_bbox_highlight_prompt
 from .xlsx_advanced_converter import _get_page_image_paths
@@ -554,9 +554,11 @@ def run(
                 raise ValueError("LLM이 선택한 요소를 원본 bbox로 매핑하지 못했습니다")
 
             annotated_bytes = annotate_pdf(pdf_bytes, targets, mode)
+            embedpdf_annotations = build_embedpdf_annotations(pdf_bytes, targets, mode)
             annotated_files = job.annotated_pdf_files or []
             next_index = len(annotated_files) + 1
             storage_path = f"{job.id}/annotated_{next_index}.pdf"
+            annotations_json_storage_path = f"{job.id}/annotated_{next_index}.annotations.json"
             display_name = _annotation_display_name(job, next_index)
             client = supabase_client.get_service_client()
             client.storage.from_("results").upload(
@@ -564,21 +566,11 @@ def run(
                 annotated_bytes,
                 {"content-type": "application/pdf", "upsert": "true"},
             )
-
-            # Fresh Air PDF 형식의 주석 JSON도 병행 생성/저장 (플래그 on 시)
-            use_fresh_air = settings_store.get_setting(db, "use_fresh_air_annotation_json") == "1"
-            annotations_json_storage_path = None
-            if use_fresh_air:
-                annotations_json = build_fresh_air_annotations(pdf_bytes, targets, mode)
-                annotations_json_bytes = json.dumps(
-                    annotations_json, ensure_ascii=False, default=str
-                ).encode("utf-8")
-                annotations_json_storage_path = f"{job.id}/annotated_{next_index}.annotations.json"
-                client.storage.from_("results").upload(
-                    annotations_json_storage_path,
-                    annotations_json_bytes,
-                    {"content-type": "application/json", "upsert": "true"},
-                )
+            client.storage.from_("results").upload(
+                annotations_json_storage_path,
+                json.dumps(embedpdf_annotations, ensure_ascii=False).encode("utf-8"),
+                {"content-type": "application/json", "upsert": "true"},
+            )
 
             entry = {
                 "storage_path": storage_path,

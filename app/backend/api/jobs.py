@@ -22,20 +22,7 @@ from sqlalchemy.orm import Session
 
 from .. import settings_store
 from ..auth.supabase_auth import CurrentUser, get_current_admin, get_current_user
-from ..core import (
-    archive_handler,
-    cache,
-    converter,
-    docling_client,
-    hwp_converter,
-    media_loader,
-    office_converter,
-    pdf_preview_converter,
-    pdf_user_annotator,
-    points_service,
-    subscription_service,
-    supabase_client,
-)
+from ..core import archive_handler, cache, converter, docling_client, hwp_converter, media_loader, office_converter, pdf_preview_converter, pdf_user_annotator, points_service, subscription_service, supabase_client
 
 
 logger = logging.getLogger(__name__)
@@ -955,9 +942,6 @@ def _delete_annotation_file(job: Job, source_index: int, db: Session) -> dict:
     storage_path = entry.get("storage_path") if isinstance(entry, dict) else None
     if storage_path:
         supabase_client.delete_storage_path("results", storage_path)
-    annotations_json_storage_path = entry.get("annotations_json_storage_path") if isinstance(entry, dict) else None
-    if annotations_json_storage_path:
-        supabase_client.delete_storage_path("results", annotations_json_storage_path)
     entries.pop(source_index)
     job.annotated_pdf_files = entries
     if not entries:
@@ -1081,12 +1065,6 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
             preview_url = supabase_client.get_signed_download_url(storage_path, bucket=bucket, expires_in=3600)
             if not preview_url:
                 return None
-            annotations_json_storage_path = info.get("annotations_json_storage_path")
-            annotations_json_url = None
-            if annotations_json_storage_path:
-                annotations_json_url = supabase_client.get_signed_download_url(
-                    annotations_json_storage_path, bucket="results", expires_in=3600
-                )
             item = {
                 "name": info.get("path", info.get("storage_path", "")),
                 "type": ftype,
@@ -1095,8 +1073,6 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
                 "page_num": idx + 1,
                 "result_markdown": info.get("result_markdown", ""),
                 "preview_url": preview_url,
-                "annotations_json_url": annotations_json_url,
-                "annotations_json_storage_path": annotations_json_storage_path,
                 "source_index": idx,
                 "source_kind": source_kind,
             }
@@ -1162,11 +1138,12 @@ def _source_files(job: Job) -> list[dict]:
         ]
     start_idx = len(source_files)
     for idx, entry in enumerate(annotated_entries, start=start_idx):
+        storage_path = entry.get("storage_path", "")
+        annotations_json_storage_path = entry.get("annotations_json_storage_path")
         item = _build_source_file_item(
             {
                 "path": entry.get("filename", ""),
-                "storage_path": entry.get("storage_path", ""),
-                "annotations_json_storage_path": entry.get("annotations_json_storage_path"),
+                "storage_path": storage_path,
                 "type": "pdf",
                 "bucket": "results",
             },
@@ -1174,6 +1151,13 @@ def _source_files(job: Job) -> list[dict]:
             source_kind="annotation",
         )
         if item:
+            if annotations_json_storage_path:
+                try:
+                    item["annotations_json_url"] = supabase_client.get_signed_download_url(
+                        annotations_json_storage_path, bucket="results", expires_in=3600
+                    )
+                except Exception:
+                    item["annotations_json_url"] = None
             source_files.append(item)
     return source_files
 
@@ -1871,12 +1855,11 @@ def save_user_annotations(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """[Flow: Step 1 (job 접근 권한 확인) -> Step 2 (source_index로 주석 PDF entry 조회)
-          -> Step 3 (원본 주석 PDF 다운로드) -> Step 4 (사용자 주석 JSON을 PyMuPDF로 적용)
-          -> Step 5 (새 PDF + JSON 업로드) -> Step 6 (entry 갱신 및 캐시 무효화)]
+    """[Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (source_index에 해당하는 주석 PDF 항목 찾기)
+          -> Step 3 (Storage에서 PDF 다운로드) -> Step 4 (사용자 주석을 PyMuPDF로 적용)
+          -> Step 5 (새 PDF 및 annotations.json 업로드) -> Step 6 (preview 캐시 무효화 후 OK 반환)]
 
-    프론트에서 편집한 Fresh Air PDF 형식의 주석을 받아서, 기존 주석 PDF에 덮어쓴 후
-    새로운 주석 JSON도 함께 저장한다.
+    사용자가 EmbedPDF 뷰어에서 추가/편집한 주석을 받아 기존 annotation PDF에 병합한다.
     """
     job = db.get(Job, job_id)
     _require_job_access(job, user)
@@ -1884,68 +1867,63 @@ def save_user_annotations(
 
     source_index = payload.get("source_index")
     annotations = payload.get("annotations")
-    if not isinstance(source_index, int) or source_index < 0:
-        raise HTTPException(status_code=400, detail="Invalid source_index")
-    if not isinstance(annotations, list):
-        raise HTTPException(status_code=400, detail="annotations must be a list")
+    if not isinstance(source_index, int) or not isinstance(annotations, list):
+        raise HTTPException(status_code=400, detail="Invalid source_index or annotations")
 
     entries = list(job.annotated_pdf_files or [])
-    if source_index >= len(entries):
-        raise HTTPException(status_code=404, detail="Annotation file not found")
-    entry = entries[source_index]
+    if not entries:
+        # 하위 호환: 목록 컬럼 추가 전에 생성된 단일 주석 PDF
+        if job.result_annotated_pdf_storage_path and source_index == 0:
+            stem = Path(job.original_filename).stem if job.original_filename else "result"
+            entries = [
+                {
+                    "storage_path": job.result_annotated_pdf_storage_path,
+                    "annotations_json_storage_path": None,
+                    "filename": f"{stem}_annotation1.pdf",
+                }
+            ]
+        else:
+            raise HTTPException(status_code=404, detail="Annotation file not found")
 
+    if source_index < 0 or source_index >= len(entries):
+        raise HTTPException(status_code=404, detail="Annotation file not found")
+
+    entry = entries[source_index]
     storage_path = entry.get("storage_path")
     if not storage_path:
-        raise HTTPException(status_code=404, detail="Annotation PDF not found")
-
-    pdf_bytes = supabase_client.download_file("results", storage_path)
-    if not pdf_bytes:
-        raise HTTPException(status_code=502, detail="Failed to download annotation PDF")
-
-    new_pdf_bytes = pdf_user_annotator.apply_user_annotations(pdf_bytes, annotations)
-    new_json_bytes = json.dumps(annotations, ensure_ascii=False, default=str).encode("utf-8")
-
-    client = supabase_client.get_service_client()
-    client.storage.from_("results").upload(
-        storage_path,
-        new_pdf_bytes,
-        {"content-type": "application/pdf", "upsert": "true"},
-    )
+        raise HTTPException(status_code=404, detail="Annotation file not found")
 
     annotations_json_storage_path = entry.get("annotations_json_storage_path")
-    if annotations_json_storage_path:
+    if not annotations_json_storage_path:
+        annotations_json_storage_path = f"{job_id}/annotated_{source_index + 1}.annotations.json"
+
+    try:
+        client = supabase_client.get_service_client()
+        pdf_bytes = client.storage.from_("results").download(storage_path)
+        new_pdf_bytes = pdf_user_annotator.apply_user_annotations(pdf_bytes, annotations)
+        client.storage.from_("results").upload(
+            storage_path,
+            new_pdf_bytes,
+            {"content-type": "application/pdf", "upsert": "true"},
+        )
         client.storage.from_("results").upload(
             annotations_json_storage_path,
-            new_json_bytes,
+            json.dumps(annotations, ensure_ascii=False).encode("utf-8"),
             {"content-type": "application/json", "upsert": "true"},
         )
-    else:
-        annotations_json_storage_path = f"{job.id}/annotated_{source_index + 1}.annotations.json"
-        client.storage.from_("results").upload(
-            annotations_json_storage_path,
-            new_json_bytes,
-            {"content-type": "application/json", "upsert": "true"},
-        )
-        entry["annotations_json_storage_path"] = annotations_json_storage_path
-
-    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
-    job.annotated_pdf_files = entries
-    db.commit()
-    cache.invalidate_pattern(f"preview:{job_id}:*")
-
-    download_url = supabase_client.get_signed_download_url(storage_path, bucket="results", expires_in=3600)
-    annotations_json_url = None
-    if annotations_json_storage_path:
-        annotations_json_url = supabase_client.get_signed_download_url(
-            annotations_json_storage_path, bucket="results", expires_in=3600
-        )
-
-    return {
-        "storage_path": storage_path,
-        "annotations_json_storage_path": annotations_json_storage_path,
-        "download_url": download_url,
-        "annotations_json_url": annotations_json_url,
-    }
+        if entry.get("annotations_json_storage_path") != annotations_json_storage_path:
+            entry["annotations_json_storage_path"] = annotations_json_storage_path
+            job.annotated_pdf_files = entries
+            db.commit()
+        cache.invalidate_pattern(f"preview:{job_id}:*")
+        return {
+            "ok": True,
+            "storage_path": storage_path,
+            "annotations_json_storage_path": annotations_json_storage_path,
+        }
+    except Exception as e:
+        logger.exception(f"[save_user_annotations] {job_id} source_index={source_index} 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"주석 저장 실패: {e}")
 
 
 @router.post("/jobs/{job_id}/action")

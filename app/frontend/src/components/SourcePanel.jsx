@@ -143,7 +143,7 @@ export default function SourcePanel({
   };
 
   const showSaveButton =
-    onSaveAnnotations && selectedFile?.source_kind === "annotation" && selectedAnnotationsJson !== null;
+    onSaveAnnotations && selectedFile?.source_kind === "annotation" && (selectedAnnotationsJson !== null || hasAnnotationChanges);
 
   if (files.length === 1) {
     const file = files[0];

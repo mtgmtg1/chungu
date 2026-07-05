@@ -61,8 +61,6 @@ SETTING_DEFS: dict[str, tuple[str, bool]] = {
     "api_key_default_rate_limit_rpm": ("60", False),
     "api_key_default_daily_quota": ("", False),
     "api_max_concurrent_jobs": ("5", False),
-    # 주석 기능: Fresh Air PDF JSON 형식으로 백엔드 주석 생성 (회귀 가능)
-    "use_fresh_air_annotation_json": ("0", False),
 }
 
 SENSITIVE_KEYS = {k for k, (_, enc) in SETTING_DEFS.items() if enc}

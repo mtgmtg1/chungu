@@ -718,3 +718,10 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
   - Apply the handlers to both the trigger button wrapper and the dropdown panel itself so moving the mouse between them keeps the dropdown open.
 - Replace `hidden group-hover:flex` with conditional classes driven by the open state: `${open ? "flex" : "hidden"}`.
 - Key files: `app/frontend/src/pages/JobResultPage.jsx` (Excel/Office dropdowns).
+
+## Frontend Variable Naming Conventions
+
+- **JobResultPage.jsx**: XLSX 변환 비용 표시 시 `xlsxBasicCost`/`xlsxAdvancedCost` 대신 `xlsxBasicUnits`/`xlsxAdvancedUnits`를 사용해야 합니다.
+- 이 두 변수는 이미 409-410번 라인에서 정의되어 있으며: `job.total_pages || job.total_files || 1` 값으로 계산됩니다.
+- 구독제에서는 실제 달러 비용이 아니라 구독 월간 페이지 한도를 차감하므로 "units"라는 명칭이 더 정확합니다.
+- i18n 키 `page:result.xlsxBasic`과 `page:result.xlsxAdvanced`는 `cost` 파라미터를 받아 표시합니다.

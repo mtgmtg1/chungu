@@ -523,7 +523,7 @@ export default function JobResultPage() {
 
                     {job.xlsx_basic_converted ?
                   t("page:result.xlsxBasicDownload") :
-                  t("page:result.xlsxBasic", { cost: xlsxBasicCost.toLocaleString() })}
+                  t("page:result.xlsxBasic", { cost: xlsxBasicUnits.toLocaleString() })}
                   </button>
                   <button
                   onClick={() => startXlsxAdvanced()}
@@ -535,7 +535,7 @@ export default function JobResultPage() {
                   t("page:result.xlsxAdvancedProcessing") :
                   job.xlsx_advanced_converted ?
                   t("page:result.xlsxAdvancedDownload") :
-                  t("page:result.xlsxAdvanced", { cost: xlsxAdvancedCost.toLocaleString() })}
+                  t("page:result.xlsxAdvanced", { cost: xlsxAdvancedUnits.toLocaleString() })}
                   </button>
                 </div>
               </div>

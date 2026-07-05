@@ -107,8 +107,10 @@ def annotate_pdf(pdf_bytes: bytes, targets: list[AnnotationTarget], mode: str) -
             visual = visual_rects[page.number]
             note_layouts = _layout_margin_notes(page_targets, page_bottom=visual.y1)
             note_layouts_by_page[page.number] = note_layouts
-            # 우측에만 여백 추가 (상/하/좌는 유지 → 원점 불변)
-            new_visual = fitz.Rect(visual.x0, visual.y0, visual.x1 + MARGIN_WIDTH_PT, visual.y1)
+            # 우측은 항상 여백 추가. 주석이 페이지 하단을 넘어가면 하단도 늘림.
+            # PaddleOCR-VL / PDF 시각 좌표계의 원점은 좌상단이므로 우측/하단 확장은 원점 이동을 유발하지 않는다.
+            required_bottom = max([visual.y1] + [top + height for top, height in note_layouts.values()])
+            new_visual = fitz.Rect(visual.x0, visual.y0, visual.x1 + MARGIN_WIDTH_PT, required_bottom + EXTRA_BOTTOM_SLACK_PT)
             new_raw_mediabox = new_visual * derotation_matrices[page.number]
             page.set_mediabox(new_raw_mediabox)
 
@@ -138,7 +140,7 @@ def _layout_margin_notes(
 
     각 코멘트 박스는 원래 자기 행의 y중심에 배치하되, 이전 박스의 아래쪽 경계보다 위로는
     올라가지 못하게 밀어낸다. 텍스트 양에 따라 박스 높이가 가변된다.
-    페이지 하단을 넘어가면 하단으로 clamp한다 (페이지를 늘리지 않음).
+    페이지 하단을 넘어가면 하단으로 밀려나는 것을 허용한다 (필요 시 페이지 하단이 확장됨).
 
     Returns:
         id(target) -> (top_y, height) 매핑
@@ -150,9 +152,6 @@ def _layout_margin_notes(
         _, y0, _, y1 = t.bbox_pdf
         desired_top = (y0 + y1) / 2 - height / 2
         actual_top = max(desired_top, next_available_top)
-        # 페이지 하단을 넘어가면 하단으로 clamp (페이지를 늘리지 않음)
-        if actual_top + height > page_bottom:
-            actual_top = max(0, page_bottom - height)
         layouts[id(t)] = (actual_top, height)
         next_available_top = actual_top + height + MARGIN_NOTE_GAP_PT
     return layouts

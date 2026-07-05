@@ -153,6 +153,61 @@ def build_row_highlight_prompt(
     )
 
 
+def build_element_highlight_prompt(
+    elements: list[dict],
+    instruction: str,
+    want_llm_comment: bool,
+) -> str:
+    """표 행 + 텍스트 블록(제목/단락/각주 등)이 혼합된 요소 목록에서 주석을 붙일 요소를 고르는 프롬프트.
+
+    각 요소는 dict 형태로 전달되며 다음 키를 가진다:
+      - kind: "table_row" | "text"
+      - text: 표 행인 경우 "셀1 | 셀2 | ..." 형태의 결합 텍스트, 텍스트 블록인 경우 블록 내용
+
+    Args:
+        elements: 요소 인덱스 순서의 dict 목록
+        instruction: 사용자가 입력한 조건 (예: "사람 이름이 있는 부분", "80만원 이상 이체된 줄")
+        want_llm_comment: True면 각 매칭 요소에 대해 짧은 근거 코멘트를 LLM이 직접 생성
+
+    Returns:
+        LLM에게 보낼 프롬프트 문자열
+    """
+    lines: list[str] = []
+    for i, el in enumerate(elements):
+        kind = el.get("kind", "text")
+        text = el.get("text", "")
+        tag = "[표 행]" if kind == "table_row" else "[텍스트]"
+        lines.append(f"{i}: {tag} {text}")
+    elements_text = "\n".join(lines)
+
+    comment_instr = (
+        "매칭된 각 요소마다 왜 선택했는지 10자 내외로 짧게 요약한 comment를 작성하세요 (예: \"82만원 이체\", \"홍길동 언급\")."
+        if want_llm_comment
+        else '모든 매칭 요소의 comment 값은 아래 "조건 문구"를 그대로 반복해서 넣으세요 (요약/가공하지 마세요).'
+    )
+    return (
+        "당신은 문서를 검토하는 보조원입니다. 아래는 문서의 각 페이지에서 추출한 텍스트 요소들입니다. "
+        "각 요소는 `요소번호: [종류] 내용` 형식이며, 종류는 [표 행](표의 한 행) 또는 [텍스트](제목/단락/각주/도장 내 글자 등)입니다. "
+        "표 행은 `셀1 | 셀2 | ...` 형태로 셀이 파이프(|)로 구분되어 있고, 첫 행이 헤더(컬럼명)일 수 있습니다. "
+        "텍스트 요소는 줄바꿈이 공백으로 합쳐진 단락/제목 등입니다. "
+        "여러 페이지의 요소가 순서대로 이어져 있을 수 있습니다.\n\n"
+        f"--- 요소 목록 ---\n{elements_text}\n\n"
+        f"--- 조건 문구 ---\n{instruction}\n\n"
+        "위 조건에 해당하는 요소 번호(element_index)를 모두 찾으세요. "
+        "표 행에서 숫자 비교가 필요하면 콤마와 원문자를 제거하고 숫자로 변환해서 판단하세요. "
+        "텍스트 요소는 특정 단어/이름/날짜 등이 포함되어 있는지로 판단하세요. "
+        "조건이 모호하면 문맥상 가장 관련 있는 요소를 선택하세요. "
+        f"{comment_instr}\n"
+        "조건에 맞는 요소가 하나도 없으면 matches를 빈 배열로 반환하세요.\n"
+        "반드시 아래 JSON 형식으로만 출력하고, 설명이나 코드 블록 마커(```)는 절대 넣지 마세요.\n"
+        "{\n"
+        '  "matches": [\n'
+        '    {"element_index": 0, "comment": "..."}\n'
+        "  ]\n"
+        "}\n"
+    )
+
+
 def build_docling_refinement_prompt(columns: list[str], docling_markdown: str, extra: str = "") -> str:
     """Docling이 추출한 마크다운을 LLM으로 정리/재구조화하는 프롬프트."""
     cols = ", ".join(columns) if columns else "내용"

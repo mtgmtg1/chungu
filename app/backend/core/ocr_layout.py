@@ -57,9 +57,19 @@ class OcrTable:
 
 
 @dataclass
+class OcrTextBlock:
+    """표가 아닌 텍스트 블록(제목/단락/각주/도장 내 글자 등). bbox_px는 블록 전체 bbox."""
+
+    text: str
+    bbox_px: BBox
+    block_label: str  # "text" | "title" | "figure_title" | "seal" | ...
+
+
+@dataclass
 class PageLayout:
     page_no: int  # 1-based
     tables: list[OcrTable] = field(default_factory=list)
+    text_blocks: list[OcrTextBlock] = field(default_factory=list)
 
 
 def _parse_html_table_rows(html_fragment: str) -> list[list[str]]:
@@ -111,20 +121,57 @@ def _parse_table_block(block: dict) -> OcrTable | None:
     return OcrTable(rows=rows, block_bbox=block_bbox)
 
 
+# 텍스트가 포함될 수 있는 block_label 집합. image/figure 등은 텍스트가 없으므로 제외.
+TEXT_BLOCK_LABELS = {"text", "title", "figure_title", "seal", "header", "footer", "reference", "formula"}
+
+
+def _parse_text_block(block: dict) -> OcrTextBlock | None:
+    """표가 아닌 블록에서 텍스트를 추출해 OcrTextBlock으로 반환한다."""
+    bbox = block.get("block_bbox")
+    if not bbox or len(bbox) < 4:
+        return None
+    content = block.get("block_content", "")
+    if not isinstance(content, str):
+        content = str(content) if content else ""
+    text = content.strip()
+    if not text:
+        return None
+    block_bbox: BBox = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+    return OcrTextBlock(text=text, bbox_px=block_bbox, block_label=block.get("block_label", "text"))
+
+
 def parse_layout_result(raw: dict, page_no: int = 1) -> PageLayout:
-    """AI Studio prunedResult 또는 로컬 res.json 딕셔너리 하나를 PageLayout으로 정규화한다."""
+    """AI Studio prunedResult 또는 로컬 res.json 딕셔너리 하나를 PageLayout으로 정규화한다.
+
+    표(table) 블록은 행 단위로 파싱해 tables에 추가하고, 텍스트 블록(title/text/seal 등)은
+    text_blocks에 추가한다. image/figure 등 텍스트가 없는 블록은 무시한다.
+    """
     if not raw:
         return PageLayout(page_no=page_no)
     try:
         blocks = raw.get("parsing_res_list") or []
         tables: list[OcrTable] = []
+        text_blocks: list[OcrTextBlock] = []
         for block in blocks:
-            if not isinstance(block, dict) or block.get("block_label") != "table":
+            if not isinstance(block, dict):
                 continue
-            table = _parse_table_block(block)
-            if table is not None:
-                tables.append(table)
-        return PageLayout(page_no=page_no, tables=tables)
+            label = block.get("block_label", "")
+            if label == "table":
+                table = _parse_table_block(block)
+                if table is not None:
+                    tables.append(table)
+            elif label in TEXT_BLOCK_LABELS:
+                tb = _parse_text_block(block)
+                if tb is not None:
+                    text_blocks.append(tb)
+            else:
+                # 알 수 없는 라벨이라도 텍스트가 있으면 포함 (보수적)
+                content = block.get("block_content", "")
+                if isinstance(content, str) and content.strip():
+                    tb = _parse_text_block(block)
+                    if tb is not None:
+                        text_blocks.append(tb)
+        return PageLayout(page_no=page_no, tables=tables, text_blocks=text_blocks)
     except Exception as e:
         logger.warning(f"[ocr_layout] 페이지 {page_no} 레이아웃 파싱 실패: {e}")
         return PageLayout(page_no=page_no)

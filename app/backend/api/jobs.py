@@ -1549,7 +1549,7 @@ def annotate_job(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """원본 스캔 PDF에 조건에 맞는 표 행을 하이라이트/여백 주석으로 표시한다 (xlsx_advanced와 동일한 과금/큐잉 패턴)."""
+    """원본 PDF/이미지에서 조건에 맞는 텍스트 요소(표 행, 단락, 제목 등)를 하이라이트/여백 주석으로 표시한다 (xlsx_advanced와 동일한 과금/큐잉 패턴)."""
     job = db.get(Job, job_id)
     _require_job_access(job, user)
     _require_job_not_expired(job)

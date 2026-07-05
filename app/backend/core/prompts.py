@@ -322,6 +322,61 @@ def build_video_prompt(
     return f"{base}\nAdditional instructions: {extra}" if extra.strip() else base
 
 
+def build_vision_bbox_highlight_prompt(
+    instruction: str,
+    image_width: int,
+    image_height: int,
+    want_llm_comment: bool,
+) -> str:
+    """Prompt to ask the Vision LLM to directly detect bounding boxes of matching elements in an image.
+
+    Unlike build_element_highlight_prompt which relies on PaddleOCR for bbox detection and only asks
+    the LLM to do text-based selection, this prompt asks the Vision LLM to look at the image and
+    directly output pixel-coordinate bounding boxes of elements matching the user's condition.
+
+    The LLM is told the exact image dimensions so it can produce precise pixel coordinates.
+
+    Args:
+        instruction: user-entered condition (e.g. "100만원이 넘는 거래에 하이라이트하고 주석으로 내용을 달아줘")
+        image_width: image width in pixels
+        image_height: image height in pixels
+        want_llm_comment: if True, the LLM generates a short justification comment for each match
+
+    Returns:
+        Prompt string to send to the Vision LLM (along with the image)
+    """
+    comment_instr = (
+        "For each matched element, write a short comment (about 10-20 characters) summarizing its content. "
+        "Write the comment in the SAME language as the user's condition text above — if the condition is in "
+        "Korean, write in Korean; if in English, write in English; if in French, write in French, and so on."
+        if want_llm_comment
+        else 'Repeat the "Condition" text verbatim as the comment for every matched element (do not summarize or rephrase). '
+        "Keep the original language of the condition text."
+    )
+    return (
+        "You are a document annotation assistant. Examine the provided document image carefully. "
+        f"The image is {image_width} pixels wide and {image_height} pixels tall. "
+        "The coordinate origin (0,0) is the top-left corner. "
+        "All bounding box coordinates are in pixels relative to this image.\n\n"
+        f"--- Condition ---\n{instruction}\n\n"
+        "Find ALL elements in the image that match the condition above. "
+        "Each element is a row of a table, a paragraph, a heading, or any other text region. "
+        "For each matching element, output its bounding box as [x_min, y_min, x_max, y_max] in pixels, "
+        "where (x_min, y_min) is the top-left corner and (x_max, y_max) is the bottom-right corner. "
+        "Be as precise as possible — the bounding box should tightly enclose the text of the matching element. "
+        "For table rows, include the entire row from the leftmost to the rightmost cell. "
+        "If numeric comparison is needed, remove commas and currency symbols and convert to numbers. "
+        f"{comment_instr}\n"
+        "If no elements match, return an empty matches array.\n"
+        "Output strictly in the following JSON format. Do not include explanations or code block markers (```).\n"
+        "{\n"
+        '  "matches": [\n'
+        '    {"bbox": [x_min, y_min, x_max, y_max], "comment": "..."}\n'
+        "  ]\n"
+        "}\n"
+    )
+
+
 def _format_timestamp(seconds: float) -> str:
     """Convert seconds to HH:MM:SS or MM:SS format."""
     m, s = divmod(int(seconds), 60)

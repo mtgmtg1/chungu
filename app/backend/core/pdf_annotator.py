@@ -83,13 +83,19 @@ def annotate_pdf(pdf_bytes: bytes, targets: list[AnnotationTarget], mode: str) -
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     needs_margin = mode in ("margin_note", "both")
 
-    # Step 1: 리사이즈 전에 페이지별 "회전 보정 행렬"과 "원본 시각적 크기"를 캡처.
-    # mediabox를 바꾸면 이 값들이 달라지므로, 항상 원본 상태 기준(=OCR bbox가 측정된 기준)을 써야 한다.
+    # Step 1: 페이지별 "원본 시각적 크기"와 "원본 mediabox"를 캡처.
+    # - original_visual_rects: 주석 배치 기준이 되는 원본 콘텐츠 영역 (여백 확장 후에도不变)
+    # - raw_mediaboxes/rotations: 여백 확장 시 원점 이동 없이 우측/하단만 늘리기 위해 사용
+    # - derotation_matrices: 여백 확장 후 갱신된 값을 사용 (회전 페이지에서 mediabox 변경 시 행렬이 바뀜)
+    original_visual_rects: dict[int, fitz.Rect] = {}
     derotation_matrices: dict[int, fitz.Matrix] = {}
-    visual_rects: dict[int, fitz.Rect] = {}
+    raw_mediaboxes: dict[int, fitz.Rect] = {}
+    rotations: dict[int, int] = {}
     for page in doc:
+        original_visual_rects[page.number] = page.rect
         derotation_matrices[page.number] = page.derotation_matrix
-        visual_rects[page.number] = page.rect
+        raw_mediaboxes[page.number] = page.mediabox
+        rotations[page.number] = page.rotation
 
     by_page: dict[int, list[AnnotationTarget]] = {}
     for t in targets:
@@ -97,23 +103,31 @@ def annotate_pdf(pdf_bytes: bytes, targets: list[AnnotationTarget], mode: str) -
     for page_targets in by_page.values():
         page_targets.sort(key=lambda t: t.bbox_pdf[1])
 
-    # Step 2: 여백 주석이 필요하면 각 페이지의 "시각적 우측"에만 여백 컬럼을 추가한다.
-    # 상/하/좌는 건드리지 않으므로 mediabox 원점 (x0,y0)이 이동하지 않아 보정이 불필요하다.
+    # Step 2: 여백 주석이 필요하면 각 페이지의 "시각적 우측"과 "시각적 하단"에 여백을 추가한다.
+    # 회전된 페이지에서도 시각적 우측/하단이 실제로 PDF의 어떤 변이 되는지 계산해
+    # mediabox를 원점 이동 없이 확장한다 (기존 y0/x0 유지 → 콘텐츠 이동 없음).
     note_layouts_by_page: dict[int, dict[int, tuple[float, float]]] = {}  # id(t) -> (top, height)
     if needs_margin:
         for page_no, page_targets in by_page.items():
             if page_no < 1 or page_no > doc.page_count:
                 continue
             page = doc[page_no - 1]
-            visual = visual_rects[page.number]
-            note_layouts = _layout_margin_notes(page_targets, page_bottom=visual.y1)
+            visual = original_visual_rects[page.number]
+            note_layouts = _layout_margin_notes(page_targets, page_top=visual.y0)
             note_layouts_by_page[page.number] = note_layouts
             # 우측은 항상 여백 추가. 주석이 페이지 하단을 넘어가면 하단도 늘림.
-            # PaddleOCR-VL / PDF 시각 좌표계의 원점은 좌상단이므로 우측/하단 확장은 원점 이동을 유발하지 않는다.
             required_bottom = max([visual.y1] + [top + height for top, height in note_layouts.values()])
-            new_visual = fitz.Rect(visual.x0, visual.y0, visual.x1 + MARGIN_WIDTH_PT, required_bottom + EXTRA_BOTTOM_SLACK_PT)
-            new_raw_mediabox = new_visual * derotation_matrices[page.number]
+            bottom_margin = max(0.0, required_bottom - visual.y1) + EXTRA_BOTTOM_SLACK_PT
+            new_raw_mediabox = _extend_mediabox_for_visual_margins(
+                raw_mediaboxes[page.number],
+                rotations[page.number],
+                right_margin=MARGIN_WIDTH_PT,
+                bottom_margin=bottom_margin,
+            )
             page.set_mediabox(new_raw_mediabox)
+            # 회전된 페이지에서 mediabox 변경 시 derotation_matrix가 갱신되므로 다시 읽는다.
+            # original_visual_rects는 원본 콘텐츠 영역 기준을 유지 (주석 배치 기준).
+            derotation_matrices[page.number] = page.derotation_matrix
 
     # Step 3: 페이지별로 하이라이트/여백 주석 적용
     for page_no, page_targets in by_page.items():
@@ -122,7 +136,7 @@ def annotate_pdf(pdf_bytes: bytes, targets: list[AnnotationTarget], mode: str) -
             continue
         page = doc[page_no - 1]
         matrix = derotation_matrices[page.number]
-        visual = visual_rects[page.number]
+        visual = original_visual_rects[page.number]
         note_layouts = note_layouts_by_page.get(page.number, {})
 
         for t in page_targets:
@@ -133,14 +147,40 @@ def annotate_pdf(pdf_bytes: bytes, targets: list[AnnotationTarget], mode: str) -
     return doc.tobytes()
 
 
+def _extend_mediabox_for_visual_margins(
+    raw: fitz.Rect,
+    rotation: int,
+    right_margin: float,
+    bottom_margin: float,
+) -> fitz.Rect:
+    """시각적 우측/하단 여백을 추가하되 원점이 이동하지 않도록 원본 mediabox의 해당 변만 확장한다.
+
+    PyMuPDF의 page.rotation은 시계 방향 회전 각도이다. 시각적 좌표계와 원본 mediabox 변의
+    대응 관계를 고려해, 실제로 우측에 해당하는 변과 하단에 해당하는 변만 확장한다.
+    """
+    x0, y0, x1, y1 = raw.x0, raw.y0, raw.x1, raw.y1
+    # rotation: 시각적 우측=원본 어떤 변, 시각적 하단=원본 어떤 변
+    if rotation == 90:
+        # 시각적 우측=원본 상단(y0), 시각적 하단=원본 우측(x1)
+        return fitz.Rect(x0, y0 - right_margin, x1 + bottom_margin, y1)
+    if rotation == 180:
+        # 시각적 우측=원본 좌측(x0), 시각적 하단=원본 상단(y0)
+        return fitz.Rect(x0 - right_margin, y0 - bottom_margin, x1, y1)
+    if rotation == 270:
+        # 시각적 우측=원본 하단(y1), 시각적 하단=원본 좌측(x0)
+        return fitz.Rect(x0 - bottom_margin, y0, x1, y1 + right_margin)
+    # rotation 0: 시각적 우측=원본 우측(x1), 시각적 하단=원본 하단(y1)
+    return fitz.Rect(x0, y0, x1 + right_margin, y1 + bottom_margin)
+
+
 def _layout_margin_notes(
     page_targets: list[AnnotationTarget],
-    page_bottom: float,
+    page_top: float,
 ) -> dict[int, tuple[float, float]]:
     """같은 페이지의 코멘트 박스들이 서로 겹치지 않도록 세로 위치(top)와 높이(height)를 배정한다.
 
-    각 코멘트 박스는 원래 자기 행의 y중심에 배치하되, 이전 박스의 아래쪽 경계보다 위로는
-    올라가지 못하게 밀어낸다. 텍스트 양에 따라 박스 높이가 가변된다.
+    각 코멘트 박스는 대상 행의 상단(y0)에 맞춰 배치한다. 이전 박스의 아래쪽 경계보다 위로는
+    올라가지 못하게 밀어내며, 텍스트 양에 따라 박스 높이가 가변된다.
     페이지 하단을 넘어가면 하단으로 밀려나는 것을 허용한다 (필요 시 페이지 하단이 확장됨).
 
     Returns:
@@ -151,7 +191,8 @@ def _layout_margin_notes(
     for t in page_targets:
         height = _estimate_note_height(t.comment)
         _, y0, _, y1 = t.bbox_pdf
-        desired_top = (y0 + y1) / 2 - height / 2
+        # 코멘트 박스가 대상 상단보다 위로 튀어나가지 않도록 상단을 맞춘다.
+        desired_top = max(y0, page_top)
         actual_top = max(desired_top, next_available_top)
         layouts[id(t)] = (actual_top, height)
         next_available_top = actual_top + height + MARGIN_NOTE_GAP_PT

@@ -468,6 +468,7 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
   - `use_doc_orientation_classify`/`use_doc_unwarping`이 켜지면 bbox가 "보정된 이미지" 기준으로 나와 원본 좌표와 어긋난다 — AI Studio 잡 제출 시(`_aistudio_submit_job`) 항상 `False`로 고정 전송.
   - `/Rotate 90/180/270`이 걸린 PDF는 OCR bbox(시각적/렌더링 좌표)와 PyMuPDF 주석 API가 기대하는 좌표계가 다르다 — `page.derotation_matrix`로 변환 필요.
   - PyMuPDF의 주석/텍스트 삽입 좌표는 **PDF 절대좌표가 아니라 "현재 mediabox의 좌상단(x0,y0)을 원점으로 하는 로컬 좌표"**다. PaddleOCR-VL 1.6의 원점도 좌상단이며, **우측/하단 여백을 늘리면 x0/y0가 이동하지 않아 보정이 불필요**하다. 좌측/상단 여백을 늘리면 x0/y0가 이동해 기존 좌표가 어긋나므로, 본 기능은 우측/하단 여백만 추가한다. 기본적으로는 우측에만 여백을 추가하고, 주석 박스가 페이지 하단을 넘어 겹칠 경우에만 하단을 필요한 만큼 늘린다 (원점 이동 보정 로직은 제거됨).
+  - **mediabox 원점 보존 (실측으로 발견한 함정)**: `page.rect`는 PyMuPDF가 **y0를 항상 0으로 정규화**한 시각적 사각형이다. 원본 mediabox가 `(0, 50, 400, 350)`처럼 y0≠0인 페이지에서 `page.rect` 기반으로 새 mediabox를 계산하면 y0가 0으로 덮어씌워져 **페이지 콘텐츠 전체가 위로 밀려 잘못된 위쪽 여백**이 생긴다. 따라서 여백 확장은 `page.rect`가 아닌 **원본 `page.mediabox`를 직접 확장**해야 한다 (`_extend_mediabox_for_visual_margins()`). 회전된 페이지(90/180/270)에서는 시각적 우측/하단이 raw mediabox의 어느 변에 해당하는지 회전 각도에 따라 계산한다.
   - 텍스트 레이어 없는 스캔본에서 `add_highlight_annot()`에 raw bbox를 넣으면 MuPDF가 사각형이 아닌 타원형 브러시로 그린다 — `add_rect_annot()`(Square 주석) + 반투명 채우기로 대체.
   - 여백은 **기본적으로 우측에만** 추가한다. 주석 박스가 많아져 페이지 하단을 넘어 겹치게 되면, 하단도 필요한 만큼 늘린다. PaddleOCR-VL / PDF 시각 좌표계의 원점이 좌상단이므로 우측/하단 확장은 원점을 이동시키지 않는다. 좌측/상단 여백은 건드리지 않는다.
 - 여백 코멘트 박스는 서로 겹치지 않도록 세로 위치를 순서대로 밀어내며 배치하고(`_layout_margin_notes`), 원래 요소 위치와 배치된 박스 위치가 달라지면 꺾이는 연결선(callout)으로 이어준다. **박스 높이는 텍스트 양에 따라 가변** (`_estimate_note_height`): 폰트 8pt 기준 약 22문자/줄로 줄 수를 추정해 높이를 계산, 최소 11pt(약 1줄)~최대 120pt(약 10줄) 범위에서 조절된다.
@@ -476,7 +477,7 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 - Key files:
   - `app/backend/core/ocr_layout.py` — PaddleOCR-VL `parsing_res_list` → `PageLayout`/`OcrTable`/`OcrRow`/`OcrTextBlock` 정규화 (HTML 표 파싱 + 행 bbox 균등분할 추정, 텍스트 블록 추출)
   - `app/backend/core/pdf_coords.py` — 픽셀 bbox ↔ PDF 포인트 변환, 페이지 경계 clamp
-  - `app/backend/core/pdf_annotator.py` — `AnnotationTarget` 기반 하이라이트/여백 주석 렌더링 (회전 보정, 우측 전용 여백 추가로 원점 이동 불필요, 텍스트 양에 따른 가변 박스 높이, 겹침 방지 배치)
+  - `app/backend/core/pdf_annotator.py` — `AnnotationTarget` 기반 하이라이트/여백 주석 렌더링 (회전 보정, 원본 mediabox 직접 확장으로 원점 이동 방지, 텍스트 양에 따른 가변 박스 높이, 겹침 방지 배치)
   - `app/backend/core/pdf_annotate_converter.py` — 오케스트레이터 (`run()`): 페이지 렌더링 → OCR bbox 확보 → 요소 수집(표 행+텍스트 블록) → LLM 요소 선택 → 좌표 변환 → 주석 적용 → 업로드. `_images_to_pdf()`로 이미지→PDF 변환 지원.
   - `app/backend/core/prompts.py` — `build_element_highlight_prompt()` (표 행+텍스트 블록 혼합, 사용자 조건 문구 언어로 코멘트 작성 지시), `build_row_highlight_prompt()` (레거시, 표 전용). 모든 프롬프트는 영어로 작성.
   - `app/backend/core/paddleocr_client.py` — `convert_image_with_layout()` (bbox 포함 변환), `_convert_and_poll()` 공통 폴링

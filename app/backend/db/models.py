@@ -119,7 +119,7 @@ class Job(Base):
     # 엑셀 기본/고급 변환 결과 (기존 xlsx는 기본 변환으로 통합)
     result_xlsx_basic_storage_path: Mapped[str] = mapped_column(String(1024), default="")
     result_xlsx_advanced_storage_path: Mapped[str] = mapped_column(String(1024), default="")
-    result_xlsx_advanced_job_id: Mapped[str] = mapped_column(String(32), default="")
+    result_xlsx_advanced_job_id: Mapped[str] = mapped_column(String(64), default="")
     xlsx_basic_converted: Mapped[bool] = mapped_column(Boolean, default=False)
     xlsx_advanced_converted: Mapped[bool] = mapped_column(Boolean, default=False)
     xlsx_advanced_status: Mapped[str] = mapped_column(String(20), default="")

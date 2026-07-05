@@ -1621,8 +1621,18 @@ def annotate_job(
 
     from ..workers import tasks
     task = tasks.annotate_pdf_job.delay(job_id, instruction, mode, comment_mode)
-    job.annotate_job_id = task.id
-    db.commit()
+    try:
+        job.annotate_job_id = task.id
+        db.commit()
+    except Exception:
+        # task ID 저장 실패 시 상태를 되돌려 사용자가 재시도할 수 있도록 한다
+        db.rollback()
+        job = db.get(Job, job_id)
+        job.annotate_status = "error"
+        job.annotate_refundable = False
+        job.annotate_recovery_notes = [{"reason": "작업 큐잉 실패: task ID 저장 에러"}]
+        db.commit()
+        raise HTTPException(status_code=500, detail="주석 작업 큐잉에 실패했습니다. 다시 시도해주세요.")
     return {"job_id": task.id, "status": "processing"}
 
 

@@ -20,22 +20,23 @@ else
   fi
 fi
 
-# 2. 동기화: 로컬 app -> 타겟 chungu-app (env 파일 제외)
+# 2. 동기화: 로컬 app -> 타겟 chungu-app/app (env 파일 제외)
+# a1의 chungu-app/은 repo root이며, 실제 앱 코드는 chungu-app/app/ 아래에 있다.
 rsync -avz --delete \
   --exclude='.env' \
   --exclude='node_modules' \
   --exclude='__pycache__' \
-  --exclude='.pyc' \
+  --exclude='*.pyc' \
   --exclude='dist' \
   --exclude='.vite' \
   --exclude='docs/build' \
   --exclude='docs/.docusaurus' \
   /Users/jun16/repo/chungu/app/ \
-  $TARGET:~/chungu-app/
+  $TARGET:~/chungu-app/app/
 
 # 3. 이미지 재빌드 및 재시작
-ssh $TARGET 'cd ~/chungu-app && docker compose down && docker compose up --build -d'
+ssh $TARGET 'cd ~/chungu-app/app && docker compose down && docker compose up --build -d'
 
 # 4. 상태 확인
 sleep 5
-ssh $TARGET 'cd ~/chungu-app && docker compose ps'
+ssh $TARGET 'cd ~/chungu-app/app && docker compose ps'

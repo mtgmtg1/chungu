@@ -333,7 +333,13 @@ export default function JobResultPage() {
       setAnnotateModalOpen(false);
       await loadJob();
     } catch (e) {
-      setError(e.message || t("page:errors.unknown"));
+      const msg = e.message || t("page:errors.unknown");
+      if (msg.includes("구독이 필요") || msg.includes("subscription")) {
+        setError(t("page:errors.subscriptionRequired"));
+        setTimeout(() => nav("/price"), 2000);
+      } else {
+        setError(msg);
+      }
     } finally {
       setConverting(false);
     }

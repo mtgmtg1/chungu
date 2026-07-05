@@ -22,8 +22,22 @@ app/
     api/v1/         Public API v1 (jobs, account, keys)
     auth/           JWT auth, API key auth
     core/           OCR pipeline, media loader, rate limit
+      docling_client.py           Docling 서비스 클라이언트
+      paddleocr_client.py         PaddleOCR 클라이언트
+      paddleocr_fallback.py       PaddleOCR 폴백 제어 (회로 차단기)
+      paddleocr_parameter_recommender.py  Vision LLM 샘플 기반 파라미터 추천
+      pdf_annotate_converter.py   PDF 하이라이트/여백 주석 오케스트레이터
+      pdf_annotator.py            PDF 주석 적용
+      pdf_coords.py               좌표 변환
+      ocr_layout.py               OCR 레이아웃 파싱
+      xlsx_advanced_converter.py  마크다운에서 고급 XLSX 변환
+      pipeline_docling.py         Docling 파이프라인
+      pipeline_vision.py          Vision 파이프라인
+      pipeline_media.py           Media 파이프라인
+      pipeline_hybrid.py          Hybrid 파이프라인 (사용하지 않음)
     db/             SQLAlchemy models and migrations
     workers/        Celery tasks
+    docling_service/ Docling 서비스 (별도 Docker 컨테이너)
   frontend/         React SPA
     src/locales/   i18n translation files (en/ko/ja × common/page)
     src/i18n.js     i18next configuration
@@ -59,6 +73,8 @@ Copy `app/.env.example` to `app/.env` and fill in:
 - `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH`
 - Turnstile: `TURNSTILE_SITE_KEY`, `TURNSTILE_WORKER_URL`, `VITE_TURNSTILE_SITE_KEY`, `VITE_TURNSTILE_WORKER_URL`
 - Toss/Paddle keys for payments
+- PaddleOCR: `PADDLEOCR_SERVICE_URL`, `PADDLEOCR_API_TOKEN`, `PADDLEOCR_API_URL`, `PADDLEOCR_FALLBACK_ENABLED`
+- Docling: `DOCLING_ENABLED`, `DOCLING_SERVICE_URL`, `DOCLING_REFINEMENT_ENABLED`
 
 ## Local Development
 
@@ -100,8 +116,35 @@ npm run start        # dev server at localhost:3000
 - E4B has 4 parallel slots (`--parallel 4`) — **현재 다운, 비활성화**
 - vLLM is optimized for high-batch throughput
 - Celery worker concurrency: 8 (prefork)
-- Thread limits per job: `llm_max_workers=64` (vLLM), `media_max_workers=8` (E4B), `ocr_max_workers=8` (Tesseract)
+- Thread limits per job: `llm_max_workers=64` (vLLM), `media_max_workers=8` (E4B), `ocr_max_workers=8` (Tesseract), `docling_max_workers=16` (Docling)
 - `max_pages=10000` per file (configurable via settings_store)
+
+## PaddleOCR Fallback System
+
+- **회로 차단기 (Circuit Breaker) 패턴**: `paddleocr_fallback.py`에서 Redis 기반 상태 관리, Redis 불가 시 in-memory fallback
+- **상태 전환**: 1분 내 3회 이상 실패 시 OPEN → 600초 후 HALF_OPEN → 성공 시 CLOSED 복귀
+- **임시 정책**: `is_fallback_preferred()`가 항상 `True`를 반환하여 PaddleOCR을 우선 사용 (vLLM/Docling 서버 개선 전까지)
+- **폴백 제어**: `fallback_controller.can_use_fallback()`로 폴백 가능 여부 판단, `consume_fallback()`로 사용 기록
+- **설정 옵션**:
+  - `paddleocr_fallback_enabled`: 폴백 시스템 활성화/비활성화
+  - `paddleocr_fallback_failure_threshold`: 회로 차단기 임계값 (기본값 3)
+  - `paddleocr_fallback_open_seconds`: OPEN 상태 지속 시간 (기본값 600초)
+- **Key files**: `app/backend/core/paddleocr_fallback.py`, `app/backend/core/paddleocr_client.py`, `app/backend/core/paddleocr_parameter_recommender.py`
+
+## XLSX Advanced Converter
+
+- **기능 개요**: 마크다운 결과에서 고급 XLSX 변환 — 페이지별 표 정리/재구성 후 통합 XLSX 저장
+- **처리 흐름**:
+  1. 원본 job 마크다운 로드 (편집된 마크다운 우선)
+  2. `<!-- 페이지 N -->` 마커 기준 페이지 분할
+  3. 첫 페이지에서 컬럼 구조 추출 (Vision LLM 또는 텍스트 LLM)
+  4. 페이지별 표 정리/재구성 (컬럼 구조 기반)
+  5. openpyxl로 XLSX 통합 저장 (스타일 적용)
+  6. 원래 job 업데이트 (결과 파일 경로, 상태)
+- **컬럼 추출**: Vision LLM (`call_vision`) 우선, 실패 시 텍스트 LLM (`call_text`) 폴백
+- **스타일링**: openpyxl로 헤더 폰트, 정렬, 배경색 적용
+- **오류 처리**: 실패 시 job 상태를 `error`로 변경하고 `refundable=True` 설정
+- **Key files**: `app/backend/core/xlsx_advanced_converter.py`
 
 ## Large Image Tiling (Whiteboard/Planner)
 
@@ -113,6 +156,26 @@ npm run start        # dev server at localhost:3000
 - Tiles are generated in left-to-right, top-to-bottom reading order.
 - No additional billing: tiling is an internal processing detail; the user is charged per original image, not per tile.
 - Key files: `app/backend/core/ocr_client.py` (`tile_large_image`, `fit_image_to_gemma4_resolution`), `app/backend/core/pipeline_media.py` (`_process_file`).
+
+## Docling Service
+
+- **기능 개요**: Docling 전처리 서비스 (a1 CPU 서버) — PDF/이미지/HWP를 마크다운으로 변환, 선택적 LLM 후처리
+- **서비스 URL**: `http://docling:28182` (Docker compose 내부 서비스 이름)
+- **동적 타임아웃**: 파일 크기(MB) 기반 최소 24시간, `max(86400, file_size_mb * 60)` 초
+- **Health check**: `/health` 엔드포인트로 서비스 상태 확인
+- **폴링**: 30초 간격으로 `/convert/async` 결과 폴링, `processing` + health OK 시 타임아웃 연장
+- **LLM Refinement**: Docling 마크다운를 LLM에 전송해 후처리 (선택적)
+  - 최대 20개 이미지를 LLM에 전송 (`docling_max_images_per_doc`)
+  - 이미지 최대 긴 변 1920px (`docling_image_max_size`)
+  - `build_docling_refinement_prompt`로 프롬프트 생성
+- **OCR 백엔드 선택**: `ocr_backend` 설정으로 `docling` 또는 `paddleocr` 선택
+- **설정 옵션**:
+  - `docling_enabled`: Docling 서비스 활성화/비활성화
+  - `docling_service_url`: Docling 서비스 URL
+  - `docling_refinement_enabled`: LLM 후처리 기본 활성화
+  - `docling_max_images_per_doc`: 문서당 LLM 전송 이미지 상한
+  - `docling_image_max_size`: 추출 이미지 최대 긴 변 (px)
+- **Key files**: `app/backend/core/docling_client.py`, `app/backend/core/pipeline_docling.py`
 
 ## Supabase Proxy
 
@@ -295,29 +358,28 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
   - `app/frontend/src/pages/JobsPage.jsx` — 남은 시간 표시
   - `app/docker-compose.yml` — `beat` 서비스
 
-## Docling Preprocessing Pipeline
+## Docling Service Details
 
-- Phase 1 routes PDF/DOCX/PPTX/XLSX/HTML through a dedicated Docling path (`run_docling` in `tasks.py`).
-- Phase 2 adds HWP/HWPX support: `run_hwp` first converts the file to ODT via `pyhwp`'s `hwp5odt` (LibreOffice alone cannot read many HWP files), then converts ODT to DOCX via LibreOffice headless, and finally sends the DOCX to the Docling service. This avoids `pyhwp2md`/`hwp5odt` extracting only the first page of some multi-page HWP files. If LibreOffice or Docling fails, it falls back to the original pyhwp-based converter.
-- The Docling service runs on a Xeon Scalable CPU server (not a1 GPU), using CPU PyTorch + Intel Extension for PyTorch (IPEX) for VNNI/OneDNN acceleration.
-- OCR engine selection: set `OCR_ENGINE=tesseract` (default) or `OCR_ENGINE=easyocr` in `.env`. `OCR_LANG=ko+en+ja` controls Tesseract language packs.
-- Tesseract 5.5.1 is the default for speed on Xeon 6230 dual-socket. The container uses the `ppa:alex-p/tesseract-ocr5` PPA; verify with `tesseract -v` inside the container — look for `Found AVX512VNNI`, `Found AVX512F`, `Found AVX2`, and `Found OpenMP`.
-- EasyOCR handles rotated/noisy scans better but is slower; Tesseract works best on clean, deskewed scans.
-- Key files:
-  - `app/backend/docling_service/main.py` — FastAPI service with CPU accelerator, model quantization, and IPEX warm-up.
-  - `app/backend/docling_service/Dockerfile` — Ubuntu 22.04 + CPU PyTorch + IPEX + Tesseract language packs.
-  - `app/backend/docling_service/requirements.txt` — Docling/FastAPI deps (no torch GPU). Includes `openvino>=2024.0` and `nncf>=3.0`.
-  - `app/backend/docling_service/benchmark_ocr.py` — EasyOCR vs Tesseract A/B benchmark tool.
-  - `app/docker-compose.docling.yml` — Compose without GPU reservations.
-  - `app/backend/core/docling_client.py` — a1 backend client for the Docling service.
-  - `app/backend/core/pipeline_docling.py` — Docling markdown + optional LLM refinement.
-  - `app/backend/core/hwp_converter.py` — pyhwp-based HWP/HWPX text/image/page extraction.
-- Threading: `torch.set_num_threads(2)` (2 threads per request), `AcceleratorOptions(num_threads=80)` (total 80 threads = 40 concurrent requests on Xeon 6230 dual-socket). OpenVINO `INFERENCE_NUM_THREADS=2`.
-- Celery worker concurrency: 16 (prefork).
-- Backend `docling_max_workers`: 16 concurrent Docling requests.
-- NUMA binding: use `numactl --cpunodebind=0 --membind=0` when launching the container. For dual-socket 6230, run two independent workers bound to each NUMA node for maximum throughput.
-- Model quantization (applied in `_apply_ipex` after warm-up):
-  - **RTDetrV2 (layout)**: OpenVINO NNCF INT8 quantization with `torch.jit.trace` → `ov.convert_model` → `nncf.quantize`. Cached on disk at `/data/ov_cache/`. Compiled with `INFERENCE_NUM_THREADS=2`.
+- **서버 환경**: Xeon Scalable CPU 서버 (a1 GPU 아님), CPU PyTorch + Intel Extension for PyTorch (IPEX) for VNNI/OneDNN acceleration
+- **OCR 엔진 선택**: `OCR_ENGINE=tesseract` (기본값) 또는 `OCR_ENGINE=easyocr` 설정. `OCR_LANG=ko+en+ja`로 Tesseract 언어 팩 제어
+- **Tesseract 5.5.1**: Xeon 6230 듀얼 소켓 속도 최적화. `ppa:alex-p/tesseract-ocr5` PPA 사용. 컨테이너 내 `tesseract -v`로 `Found AVX512VNNI`, `Found AVX512F`, `Found AVX2`, `Found OpenMP` 확인
+- **EasyOCR**: 회전/노이즈 스캔에 더 좋지만 느림. Tesseract는 깨끗한 deskewed 스캔에 최적
+- **HWP/HWPX 지원**: `run_hwp`가 pyhwp의 `hwp5odt`로 ODT 변환 → LibreOffice headless로 DOCX 변환 → Docling 서비스 전송. pyhwp2md/hwp5odt가 일부 다중 페이지 HWP 파일의 첫 페이지만 추출하는 문제 회피. LibreOffice 또는 Docling 실패 시 기존 pyhwp 기반 변환기로 폴백
+- **Threading**: `torch.set_num_threads(2)` (요청당 2 스레드), `AcceleratorOptions(num_threads=80)` (총 80 스레드 = Xeon 6230 듀얼 소켓에서 40 동시 요청). OpenVINO `INFERENCE_NUM_THREADS=2`
+- **Celery worker concurrency**: 16 (prefork)
+- **Backend `docling_max_workers`**: 16 동시 Docling 요청
+- **NUMA binding**: 컨테이너 시작 시 `numactl --cpunodebind=0 --membind=0` 사용. 듀얼 소켓 6230의 경우 최대 처리량을 위해 각 NUMA 노드에 바인딩된 두 개의 독립 worker 실행
+- **Model quantization** (`_apply_ipex` warm-up 후 적용):
+  - **RTDetrV2 (layout)**: OpenVINO NNCF INT8 quantization with `torch.jit.trace` → `ov.convert_model` → `nncf.quantize`. 디스크 캐시 `/data/ov_cache/`. `INFERENCE_NUM_THREADS=2`로 컴파일
+- **Key files**:
+  - `app/backend/docling_service/main.py` — CPU accelerator, model quantization, IPEX warm-up이 있는 FastAPI 서비스
+  - `app/backend/docling_service/Dockerfile` — Ubuntu 22.04 + CPU PyTorch + IPEX + Tesseract language packs
+  - `app/backend/docling_service/requirements.txt` — Docling/FastAPI deps (torch GPU 없음). `openvino>=2024.0` 및 `nncf>=3.0` 포함
+  - `app/backend/docling_service/benchmark_ocr.py` — EasyOCR vs Tesseract A/B benchmark 도구
+  - `app/docker-compose.docling.yml` — GPU 예약 없는 Compose
+  - `app/backend/core/docling_client.py` — Docling 서비스용 a1 backend 클라이언트
+  - `app/backend/core/pipeline_docling.py` — Docling markdown + 선택적 LLM refinement
+  - `app/backend/core/hwp_converter.py` — pyhwp 기반 HWP/HWPX text/image/page extraction
   - **EfficientViT (detection)**: `torch.quantization.quantize_dynamic` (Linear INT8). OpenVINO conversion hangs due to dynamic control flow in forward.
   - **TableModel04_rs (table structure)**: `torch.quantization.quantize_dynamic` (Linear INT8). Discovered via `table_model.tf_predictor._model`.
   - **OCR model**: kept in FP32 to preserve recognition quality.
@@ -335,7 +397,7 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
   - **Media 파이프라인** (`pipeline_media.py`): 이미지 파일만 폴백 (비디오/오디오 제외).
   - **Docling 파이프라인** (`pipeline_docling.py`): 폴백 안 함 (이미지가 아닌 문서).
 - 폴백 우선 조건 (`paddleocr_fallback.py:is_fallback_preferred()`):
-  - `paddleocr_fallback_enabled == True`이면 항상 `True` 반환 — 모든 변환 요청이 PaddleOCR을 우선 사용.
+  - `paddleocr_fallback_enabled == True`이면 항상 `True` 반환 — 모든 변환 요청이 PaddleOCR을 우선 사용 (임시 정책)
 - 회로 차단기 (Circuit Breaker):
   - 60초 내 3회 실패 → OPEN (600초)
   - OPEN 경과 후 → HALF_OPEN → 성공 시 CLOSED 복귀
@@ -354,7 +416,7 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
   - `app/backend/core/ocr_client.py` — `has_pdf_text_layer()` PDF 텍스트 레이어 검사
   - `app/backend/workers/tasks.py` — PDF 라우팅 분기 (기본변환: 텍스트 레이어 → Docling / 스캔 → run_vision / 고급변환: 무조건 run_vision)
 - Docker Compose: `paddleocr_service` 서비스 정의, worker/beat에 `PADDLEOCR_SERVICE_URL` 환경변수 전달.
-- 환경변수: `PADDLEOCR_API_TOKEN`, `PADDLEOCR_API_URL`, `PADDLEOCR_SERVICE_URL`, `PADDLEOCR_FALLBACK_ENABLED` 등.
+- 환경변수: `PADDLEOCR_API_TOKEN`, `PADDLEOCR_API_URL`, `PADDLEOCR_SERVICE_URL`, `PADDLEOCR_FALLBACK_ENABLED`, `PADDLEOCR_FALLBACK_FAILURE_THRESHOLD`, `PADDLEOCR_FALLBACK_OPEN_SECONDS` 등.
 
 ## PaddleOCR Auto Parameter Recommendation
 
@@ -369,6 +431,11 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 - 적용 범위:
   - `paddleocr_service/main.py`의 로컬 PaddleOCRVL 파이프라인 (`predict()`에 동적 파라미터 전달)
   - AI Studio API 폴백 (`/api/convert`)의 `optionalPayload`에 동일 파라미터를 camelCase로 변환하여 전달
+- 설정 옵션:
+  - `paddleocr_auto_parameter_enabled`: 자동 파라미터 추천 활성화/비활성화
+  - `paddleocr_sample_dpi`: 샘플링 DPI (기본값 150)
+  - `paddleocr_sample_max_tokens`: 샘플링 최대 토큰 (기본값 2000)
+- Key files: `app/backend/core/paddleocr_parameter_recommender.py`
 - 환경변수:
   - `PADDLEOCR_AUTO_PARAMETER_ENABLED=true` — 자동 추천 On/Off
   - `PADDLEOCR_SAMPLE_DPI=150` — 샘플 페이지 렌더링 해상도 (비용 절감)
@@ -381,9 +448,15 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 
 ## PDF Highlight & Margin Annotation (하이라이트/여백 주석)
 
-- 원본 스캔 PDF의 표에서 자연어 조건(예: "80만원 이상 이체된 줄")에 맞는 행을 찾아 **형광펜 하이라이트**와/또는 **여백 코멘트 주석**을 추가해 다운로드할 수 있는 기능. 변호사 등 법률 실무에서 스캔 문서를 그대로 제출용으로 표시해야 하는 요구에서 시작됨.
-- 결과 페이지(JobResultPage)의 "PDF 하이라이트/주석" 버튼 → 지시문 입력(예: "출금금액이 1000만원 이상인 거래 행") + 표시방식(`highlight`/`margin_note`/`both`) + 여백 코멘트 방식(`user_text`/`llm_summary`) 선택 → Celery 비동기 처리 (xlsx_advanced와 동일한 구독 사용량 예약/환불/재시도 패턴).
-- **파이프라인**: 원본 PDF를 DPI 200으로 재렌더링 → PaddleOCR-VL(AI Studio 유료 API, 현재 사용 중)로 페이지별 bbox 원본(layout) 확보 → 표의 행을 텍스트로만 LLM(vLLM Gemma-4)에 전달해 조건에 맞는 행 선택(좌표 추론은 LLM에 절대 맡기지 않음 — grounding 신뢰도가 낮다는 리서치 결과 반영) → 선택된 행의 bbox를 PDF 좌표로 변환 → PyMuPDF로 원본 PDF에 주석 적용 → Storage 업로드.
+- **기능 개요**: 원본 스캔 PDF의 표에서 자연어 조건(예: "80만원 이상 이체된 줄")에 맞는 행을 찾아 **형광펜 하이라이트**와/또는 **여백 코멘트 주석**을 추가해 다운로드할 수 있는 기능. 변호사 등 법률 실무에서 스캔 문서를 그대로 제출용으로 표시해야 하는 요구에서 시작됨.
+- **처리 흐름**:
+  1. 원본 PDF를 DPI 200으로 재렌더링
+  2. PaddleOCR-VL(AI Studio 유료 API, 현재 사용 중)로 페이지별 bbox 원본(layout) 확보
+  3. 표의 행을 텍스트로만 LLM(vLLM Gemma-4)에 전달해 조건에 맞는 행 선택 (좌표 추론은 LLM에 절대 맡기지 않음 — grounding 신뢰도가 낮다는 리서치 결과 반영)
+  4. 선택된 행의 bbox를 PDF 좌표로 변환
+  5. PyMuPDF로 원본 PDF에 주석 적용
+  6. Storage 업로드
+- **사용자 인터페이스**: 결과 페이지(JobResultPage)의 "PDF 하이라이트/주석" 버튼 → 지시문 입력(예: "출금금액이 1000만원 이상인 거래 행") + 표시방식(`highlight`/`margin_note`/`both`) + 여백 코멘트 방식(`user_text`/`llm_summary`) 선택 → Celery 비동기 처리 (xlsx_advanced와 동일한 구독 사용량 예약/환불/재시도 패턴)
 - **PaddleOCR-VL 1.6 실제 원본 스키마** (a1 프로덕션에서 실측, 사전 조사했던 PP-StructureV3 계열 `table_res_list`/`cell_box_list` 스키마와는 다름에 주의):
   - `{"width": px, "height": px, "layout_det_res": {...}, "parsing_res_list": [{"block_label": "table"|"text"|"title"|"seal"|..., "block_content": "<table>...</table>" (표는 HTML 문자열), "block_bbox": [xmin,ymin,xmax,ymax], ...}]}`
   - 표는 **블록 전체 bbox만 있고 행/셀 단위 bbox가 없다** — `core/ocr_layout.py`가 `block_content`의 HTML을 `lxml`로 파싱하고, `block_bbox`를 `<tr>` 개수만큼 세로로 균등 분할해 각 행의 근사 bbox를 만든다.
@@ -464,6 +537,21 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 - Docusaurus docs are served at `/docs/` by FastAPI (`main.py` mounts `docs/build/` as static files)
 - Admin pages (`AdminDashboard.jsx`, `AdminLogin.jsx`) are not yet internationalized
 - When adding new UI strings, add keys to all three languages and use `t('namespace:key')`
+
+## Subscription Service
+
+- **기능 개요**: 구독 기반 사용량 관리 — 플랜별 월간 한도, 기간별 사용량 추적, 예약/차감/환불
+- **플랜별 한도**:
+  - `free`: basic_pages=1000, premium_pages=500, media_seconds=150분
+  - `pro`: basic_pages=10000, premium_pages=5000, media_seconds=1500분
+  - `max`: basic_pages=60000, premium_pages=30000, media_seconds=9000분
+- **기간 계산**: 사용자의 `subscription_period_start` 기준 월간 기간, 없으면 달력월 시작일 사용
+- **사용량 관리**:
+  - `reserve_usage()`: 작업 시작 전 사용량 예약
+  - `consume_usage()`: 작업 완료 후 실제 사용량 차감
+  - `release_usage()`: 작업 실패 시 예약된 사용량 환불
+- **구독 상태**: `is_subscription_active()`로 활성 여부 확인
+- **Key files**: `app/backend/core/subscription_service.py`
 
 ## API Notes
 
@@ -718,6 +806,20 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
   - Apply the handlers to both the trigger button wrapper and the dropdown panel itself so moving the mouse between them keeps the dropdown open.
 - Replace `hidden group-hover:flex` with conditional classes driven by the open state: `${open ? "flex" : "hidden"}`.
 - Key files: `app/frontend/src/pages/JobResultPage.jsx` (Excel/Office dropdowns).
+
+## PDF Annotation (PDF 하이라이트/여백 주석)
+
+- **구독 기능**: PDF 주석 생성은 구독 기반의 프리미엄 기능입니다. 비회원 사용자는 사용할 수 없습니다.
+- **비회원 처리**: `job.user_id`가 `None`인 경우 402 에러("구독이 필요한 기능입니다.")를 반환하고, 프론트엔드에서는 price 페이지로 리디렉트합니다.
+- **관리자 권한**: `mtgmtg@naver.com` (관리자)는 모든 기능을 무제한으로 사용할 수 있습니다. 구독 체크를 건너뛰고 바로 처리합니다.
+- **백엔드 로직** (`app/backend/api/jobs.py`의 `annotate_job` 엔드포인트):
+  - `job.user_id`가 `None`이면 402 에러 반환
+  - `db_user.is_admin`가 `True`이면 구독 체크 없이 바로 처리 (환불 불필요, 예약 페이지 수 0)
+  - 일반 사용자는 `subscription_service.reserve_usage()`로 구독 한도 체크 및 차감
+- **프론트엔드 처리** (`app/frontend/src/pages/JobResultPage.jsx`의 `startAnnotate` 함수):
+  - 에러 메시지에 "구독이 필요" 또는 "subscription"이 포함되면 2초 후 price 페이지로 자동 이동
+  - i18n 키 `page:errors.subscriptionRequired` 사용 (ko/en/ja 모두 추가)
+- **주석 생성 비용**: 프리미엄 페이지 수(`premium_pages`)로 차감됩니다. 관리자는 차감되지 않습니다.
 
 ## Frontend Variable Naming Conventions
 

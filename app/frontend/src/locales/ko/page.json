@@ -1694,7 +1694,8 @@
     "sessionExpired": "세션이 만료되었습니다. 다시 로그인해주세요.",
     "requestFailed": "요청 실패 ({{status}})",
     "unknown": "알 수 없는 오류가 발생했습니다",
-    "jobExpired": "이 작업은 보관 기간이 만료되어 접근할 수 없습니다. 삭제된 데이터는 복구할 수 없습니다."
+    "jobExpired": "이 작업은 보관 기간이 만료되어 접근할 수 없습니다. 삭제된 데이터는 복구할 수 없습니다.",
+    "subscriptionRequired": "구독이 필요한 기능입니다. 요금제 페이지로 이동합니다..."
   },
   "components": {
     "editorPlaceholder": "내용을 입력하세요…",

@@ -1575,30 +1575,47 @@ def annotate_job(
     if job.annotate_status == "processing":
         raise HTTPException(status_code=409, detail="Annotation already in progress")
 
+    # 비회원 사용자 체크
+    if job.user_id is None:
+        raise HTTPException(status_code=402, detail="구독이 필요한 기능입니다.")
+
     from ..db.models import User
     db_user = db.get(User, job.user_id)
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    units = job.total_pages if job.total_pages else (job.total_files or 1)
-    try:
-        result = subscription_service.reserve_usage(
-            db,
-            db_user,
-            basic_pages=0,
-            premium_pages=units,
-            media_seconds=0,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=402, detail=str(e))
+    # 관리자 체크 (무제한 사용)
+    if db_user.is_admin:
+        # 관리자는 구독 체크 없이 바로 처리
+        units = job.total_pages if job.total_pages else (job.total_files or 1)
+        job.annotate_instruction = instruction
+        job.annotate_mode = mode
+        job.annotate_comment_mode = comment_mode
+        job.annotate_status = "processing"
+        job.annotate_refundable = False  # 관리자는 환불 불필요
+        job.annotate_reserved_pages = 0  # 관리자는 예약 불필요
+        job.annotate_reserved_period_start = None
+    else:
+        # 일반 사용자는 구독 체크
+        units = job.total_pages if job.total_pages else (job.total_files or 1)
+        try:
+            result = subscription_service.reserve_usage(
+                db,
+                db_user,
+                basic_pages=0,
+                premium_pages=units,
+                media_seconds=0,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=402, detail=str(e))
 
-    job.annotate_instruction = instruction
-    job.annotate_mode = mode
-    job.annotate_comment_mode = comment_mode
-    job.annotate_status = "processing"
-    job.annotate_refundable = True
-    job.annotate_reserved_pages = units
-    job.annotate_reserved_period_start = datetime.fromisoformat(result["period_start"])
+        job.annotate_instruction = instruction
+        job.annotate_mode = mode
+        job.annotate_comment_mode = comment_mode
+        job.annotate_status = "processing"
+        job.annotate_refundable = True
+        job.annotate_reserved_pages = units
+        job.annotate_reserved_period_start = datetime.fromisoformat(result["period_start"])
     job.result_annotated_pdf_storage_path = ""
     db.commit()
 

@@ -580,7 +580,8 @@
     "sessionExpired": "Session expired. Please log in again.",
     "requestFailed": "Request failed ({{status}})",
     "unknown": "An unknown error occurred",
-    "jobExpired": "This job has expired and is no longer accessible. Deleted data cannot be recovered."
+    "jobExpired": "This job has expired and is no longer accessible. Deleted data cannot be recovered.",
+    "subscriptionRequired": "This feature requires a subscription. Redirecting to pricing page..."
   },
   "components": {
     "editorPlaceholder": "Enter content…",

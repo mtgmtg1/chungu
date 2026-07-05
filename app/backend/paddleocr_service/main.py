@@ -228,12 +228,23 @@ def _get_paddleocr_params(pdf_path: Path | None, work_dir: Path) -> dict[str, An
         return {}
 
 
-def _run_paddleocr(image_paths: list[Path], params: dict[str, Any] | None = None) -> dict[str, Any]:
-    # [Flow: Step 1 (PaddleOCR pipeline 가져오기) -> Step 2 (파라미터 병합) -> Step 3 (각 이미지 추론) -> Step 4 (결과 병합)]
+def _run_paddleocr(
+    image_paths: list[Path],
+    params: dict[str, Any] | None = None,
+    capture_layout: bool = False,
+    force_no_geometric_correction: bool = False,
+) -> dict[str, Any]:
+    # [Flow: Step 1 (PaddleOCR pipeline 가져오기) -> Step 2 (파라미터 병합) -> Step 3 (각 이미지 추론) -> Step 4 (결과 병합, 필요 시 layout bbox 수집)]
     pipeline = get_pipeline()
     all_markdown_parts: list[str] = []
+    layout_pages: list[dict] = []
     total_pages = 0
-    predict_params = params or {}
+    predict_params = dict(params or {})
+    if force_no_geometric_correction:
+        # PDF 하이라이트/여백 주석 기능: use_doc_unwarping/orientation_classify가 켜지면
+        # bbox 좌표가 "보정된 이미지" 기준으로 나와 원본 페이지 좌표와 어긋나므로 강제로 끈다.
+        predict_params["use_doc_orientation_classify"] = False
+        predict_params["use_doc_unwarping"] = False
 
     for idx, img_path in enumerate(image_paths):
         try:
@@ -243,12 +254,34 @@ def _run_paddleocr(image_paths: list[Path], params: dict[str, Any] | None = None
                 if page_md:
                     all_markdown_parts.append(f"<!-- Page {idx + 1} -->\n{page_md}")
                     total_pages += 1
+                if capture_layout:
+                    layout_pages.append(_extract_layout_from_result(res))
         except Exception as e:
             logger.error(f"[paddleocr] 페이지 {idx + 1} 추론 실패: {e}")
             all_markdown_parts.append(f"<!-- Page {idx + 1} (OCR 실패) -->\n")
+            if capture_layout:
+                layout_pages.append({})
 
     markdown = "\n\n".join(all_markdown_parts)
-    return {"markdown": markdown, "page_count": total_pages}
+    return {"markdown": markdown, "page_count": total_pages, "layout": layout_pages}
+
+
+def _extract_layout_from_result(res: Any) -> dict:
+    """PaddleOCR 결과 객체에서 bbox가 포함된 원본 레이아웃(res.json)을 추출한다.
+
+    layout_det_res.boxes[].coordinate, overall_ocr_res.{rec_polys,rec_texts,rec_boxes},
+    table_res_list[].{cell_box_list,pred_html,table_ocr_pred} 등을 그대로 담고 있다.
+    AI Studio API의 prunedResult와 동일한 스키마(input_path/page_index 제외)이므로
+    core/ocr_layout.py의 파서가 두 소스를 동일하게 처리할 수 있다.
+    """
+    try:
+        if hasattr(res, "json"):
+            raw = res.json
+            return raw.get("res", raw) if isinstance(raw, dict) else {}
+        return {}
+    except Exception as e:
+        logger.warning(f"[paddleocr] 레이아웃(bbox) 추출 실패: {e}")
+        return {}
 
 
 def _extract_markdown_from_result(res: Any) -> str:
@@ -275,6 +308,9 @@ class ConvertResponse(BaseModel):
     page_count: int
     file_type: str
     error: str | None = None
+    # PDF 하이라이트/여백 주석 기능용 원본 레이아웃(bbox) — 페이지 순서대로 res.json/prunedResult 그대로 저장
+    # (하위 호환: 기존 소비자는 이 필드를 무시하면 되므로 기본값 빈 리스트)
+    layout: list[dict] = []
 
 
 class AsyncConvertResponse(BaseModel):
@@ -335,6 +371,7 @@ def _do_convert(task_id: str, input_path: Path, filename: str) -> None:
             images=embedded_images,
             page_count=ocr_result["page_count"],
             file_type=file_type,
+            layout=ocr_result.get("layout", []),
         )
 
         with _tasks_lock:
@@ -589,6 +626,7 @@ def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, A
 
     all_page_markdowns: list[str] = []
     downloaded_images: list[str] = []
+    layout_pages: list[dict] = []
     page_num = 0
 
     for line in lines:
@@ -603,6 +641,9 @@ def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, A
             md = lpr.get("markdown", {})
             md_text = md.get("text", "") if isinstance(md, dict) else ""
             md_images = md.get("images", {}) if isinstance(md, dict) else {}
+            # prunedResult == 로컬 파이프라인 res.json에서 input_path/page_index만 제거한 것과 동일 스키마.
+            # PDF 하이라이트/여백 주석 기능의 bbox 소스로 그대로 사용한다 (core/ocr_layout.py에서 파싱).
+            layout_pages.append(lpr.get("prunedResult", {}) or {})
 
             # 이미지 다운로드 및 base64 data URI로 markdown에 직접 삽입
             for img_rel_path, img_url in md_images.items():
@@ -631,6 +672,7 @@ def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, A
         "markdown": markdown,
         "images": downloaded_images,
         "page_count": page_num,
+        "layout": layout_pages,
     }
 
 
@@ -650,6 +692,7 @@ def _do_aistudio_convert(task_id: str, input_path: Path, filename: str) -> None:
             images=ocr_result["images"],
             page_count=ocr_result["page_count"],
             file_type=_detect_file_type(filename),
+            layout=ocr_result.get("layout", []),
         )
 
         with _tasks_lock:

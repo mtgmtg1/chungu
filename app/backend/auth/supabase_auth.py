@@ -16,15 +16,16 @@ from ..db.session import get_db
 class CurrentUser:
     """인증된 사용자 정보."""
 
-    def __init__(self, user_id: str, email: str, is_admin: bool, points_balance: int, language: str = "en"):
+    def __init__(self, user_id: str, email: str, is_admin: bool, points_balance: int, language: str = "en", is_dev_bypass: bool = False):
         self.user_id = user_id
         self.email = email
         self.is_admin = is_admin
         self.points_balance = points_balance
         self.language = language
+        self.is_dev_bypass = is_dev_bypass
 
     def __repr__(self) -> str:
-        return f"CurrentUser({self.email}, admin={self.is_admin})"
+        return f"CurrentUser({self.email}, admin={self.is_admin}, dev_bypass={self.is_dev_bypass})"
 
 
 SUPPORTED_LANGUAGES = {"en", "ko", "ja"}
@@ -76,7 +77,10 @@ def get_current_user(
         db.execute(select(AdminUser).where(AdminUser.email == user.email)).scalar_one_or_none() is not None
     )
 
-    return CurrentUser(str(user.id), user.email, is_admin, user.points_balance, user.language or "en")
+    # 개발 bypass 사용자는 모든 리소스에 접근할 수 있음 (로컬 개발 전용)
+    is_dev_bypass = settings.dev_bypass_auth and str(user.id) == settings.dev_bypass_user_id
+
+    return CurrentUser(str(user.id), user.email, is_admin, user.points_balance, user.language or "en", is_dev_bypass)
 
 
 def get_current_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:

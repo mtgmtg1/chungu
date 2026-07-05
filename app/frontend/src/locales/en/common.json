@@ -86,10 +86,7 @@
     "logoutSuccess": "Logged out successfully"
   },
   "points": {
-    "balance": "Credit Balance",
-    "point": "$",
-    "cost": "Cost",
-    "total": "Total"
+    "point": "$"
   },
   "date": {
     "justNow": "Just now",

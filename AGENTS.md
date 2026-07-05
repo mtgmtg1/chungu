@@ -273,10 +273,10 @@ bash deploy_a1.sh
 4. 컨테이너 상태 확인
 
 서버 `.env`는 rsync로 덮어쓰지 않으므로 수동으로 관리해야 한다.
-DB 마이그레이션 SQL 파일은 배포 후 서버에서 수동으로 적용한다:
+DB 마이그레이션 SQL 파일은 배포 후 서버에서 수동으로 적용한다 (실제 DB 컨테이너명은 `supabase-chungu-db`, DB명은 `postgres`):
 
 ```bash
-ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu < backend/db/migrations/013_add_xlsx_conversion_fields.sql'
+cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker exec -i supabase-chungu-db psql -U postgres -d postgres'
 ```
 
 ## Storage Retention & Source Cleanup
@@ -378,6 +378,37 @@ ssh a1 'cd ~/chungu-app && docker exec -i chungu-db psql -U postgres -d chungu <
   - `app/backend/core/prompts.py` — `build_paddleocr_parameter_recommendation_prompt()`
   - `app/backend/paddleocr_service/main.py` — `_get_paddleocr_params()`, `_run_paddleocr()`, AI Studio API payload 변환
   - `app/backend/paddleocr_service/Dockerfile`, `Dockerfile.pipeline` — `Pillow`/`ImageMagick` 및 `backend/core/*` 복사
+
+## PDF Highlight & Margin Annotation (하이라이트/여백 주석)
+
+- 원본 스캔 PDF의 표에서 자연어 조건(예: "80만원 이상 이체된 줄")에 맞는 행을 찾아 **형광펜 하이라이트**와/또는 **여백 코멘트 주석**을 추가해 다운로드할 수 있는 기능. 변호사 등 법률 실무에서 스캔 문서를 그대로 제출용으로 표시해야 하는 요구에서 시작됨.
+- 결과 페이지(JobResultPage)의 "PDF 하이라이트/주석" 버튼 → 지시문 입력(예: "출금금액이 1000만원 이상인 거래 행") + 표시방식(`highlight`/`margin_note`/`both`) + 여백 코멘트 방식(`user_text`/`llm_summary`) 선택 → Celery 비동기 처리 (xlsx_advanced와 동일한 구독 사용량 예약/환불/재시도 패턴).
+- **파이프라인**: 원본 PDF를 DPI 200으로 재렌더링 → PaddleOCR-VL(AI Studio 유료 API, 현재 사용 중)로 페이지별 bbox 원본(layout) 확보 → 표의 행을 텍스트로만 LLM(vLLM Gemma-4)에 전달해 조건에 맞는 행 선택(좌표 추론은 LLM에 절대 맡기지 않음 — grounding 신뢰도가 낮다는 리서치 결과 반영) → 선택된 행의 bbox를 PDF 좌표로 변환 → PyMuPDF로 원본 PDF에 주석 적용 → Storage 업로드.
+- **PaddleOCR-VL 1.6 실제 원본 스키마** (a1 프로덕션에서 실측, 사전 조사했던 PP-StructureV3 계열 `table_res_list`/`cell_box_list` 스키마와는 다름에 주의):
+  - `{"width": px, "height": px, "layout_det_res": {...}, "parsing_res_list": [{"block_label": "table"|"text"|"title"|"seal"|..., "block_content": "<table>...</table>" (표는 HTML 문자열), "block_bbox": [xmin,ymin,xmax,ymax], ...}]}`
+  - 표는 **블록 전체 bbox만 있고 행/셀 단위 bbox가 없다** — `core/ocr_layout.py`가 `block_content`의 HTML을 `lxml`로 파싱하고, `block_bbox`를 `<tr>` 개수만큼 세로로 균등 분할해 각 행의 근사 bbox를 만든다.
+  - AI Studio API(`layoutParsingResults[].prunedResult`)와 로컬 PaddleOCR-VL 파이프라인(`res.json`)은 `input_path`/`page_index` 차이만 있고 스키마가 동일하므로, 로컬 서버로 전환해도 `core/ocr_layout.py`는 수정할 필요가 없다 — `core/paddleocr_client.py`의 `convert_image_with_layout()` 내부 호출 엔드포인트만 교체하면 됨.
+- **PDF 좌표 변환 시 주의 (실측으로 발견한 함정들)**:
+  - `use_doc_orientation_classify`/`use_doc_unwarping`이 켜지면 bbox가 "보정된 이미지" 기준으로 나와 원본 좌표와 어긋난다 — AI Studio 잡 제출 시(`_aistudio_submit_job`) 항상 `False`로 고정 전송.
+  - `/Rotate 90/180/270`이 걸린 PDF는 OCR bbox(시각적/렌더링 좌표)와 PyMuPDF 주석 API가 기대하는 좌표계가 다르다 — `page.derotation_matrix`로 변환 필요.
+  - PyMuPDF의 주석/텍스트 삽입 좌표는 **PDF 절대좌표가 아니라 "현재 mediabox의 좌하단(x0,y0)을 원점으로 하는 로컬 좌표"**다. 여백 확보를 위해 mediabox를 리사이즈하면서 원점(x0,y0)이 이동하면(회전 각도에 따라 특정 방향 패딩만으로도 이동할 수 있음) 좌표가 어긋난다 — 원점 이동량을 기록해 모든 배치 좌표에서 보정해야 한다.
+  - 텍스트 레이어 없는 스캔본에서 `add_highlight_annot()`에 raw bbox를 넣으면 MuPDF가 사각형이 아닌 타원형 브러시로 그린다 — `add_rect_annot()`(Square 주석) + 반투명 채우기로 대체.
+  - 여백은 **오른쪽에만** 추가한다 (상하좌우 전체 확장은 회전된 페이지에서 원점 이동/정렬 붕괴 사례가 실측되어 제외). 필요한 세로 길이는 쌓일 주석 개수에 따라 미리 계산해서 겹치지 않을 만큼만 확장한다.
+- 여백 코멘트 박스는 서로 겹치지 않도록 세로 위치를 순서대로 밀어내며 배치하고(`_layout_margin_notes`), 원래 행 위치와 배치된 박스 위치가 달라지면 꺾이는 연결선(callout)으로 이어준다.
+- LLM 행 선택 프롬프트(`build_row_highlight_prompt`)는 여러 표/페이지의 헤더 컬럼명을 정확히 매칭하도록 명시 — 실측 중 "출금금액" 조건인데 "입금금액" 컬럼 값을 잘못 매칭하는 오탐이 발견되어 보강함. 완전한 정확도는 보장되지 않으므로 결과 검토가 필요하다.
+- DB 필드: `Job.annotate_instruction/annotate_mode/annotate_comment_mode/annotate_status/annotate_job_id/annotate_recovery_notes/annotate_refundable/annotate_reserved_pages/annotate_reserved_period_start`, `result_ocr_layout_storage_path`, `result_annotated_pdf_storage_path` (`020_add_pdf_annotate_fields.sql`).
+- Key files:
+  - `app/backend/core/ocr_layout.py` — PaddleOCR-VL `parsing_res_list` → `PageLayout`/`OcrTable`/`OcrRow` 정규화 (HTML 표 파싱 + 행 bbox 균등분할 추정)
+  - `app/backend/core/pdf_coords.py` — 픽셀 bbox ↔ PDF 포인트 변환, 페이지 경계 clamp
+  - `app/backend/core/pdf_annotator.py` — `AnnotationTarget` 기반 하이라이트/여백 주석 렌더링 (회전 보정, 원점 이동 보정, 겹침 방지 배치)
+  - `app/backend/core/pdf_annotate_converter.py` — 오케스트레이터 (`run()`): 페이지 렌더링 → OCR bbox 확보 → LLM 행 선택 → 좌표 변환 → 주석 적용 → 업로드
+  - `app/backend/core/prompts.py` — `build_row_highlight_prompt()`
+  - `app/backend/core/paddleocr_client.py` — `convert_image_with_layout()` (bbox 포함 변환), `_convert_and_poll()` 공통 폴링
+  - `app/backend/paddleocr_service/main.py` — `_extract_layout_from_result()`, `ConvertResponse.layout` 필드, AI Studio `prunedResult` 전달
+  - `app/backend/workers/tasks.py` — `annotate_pdf_job` Celery task
+  - `app/backend/api/jobs.py` — `POST /jobs/{id}/annotate`, `POST /jobs/{id}/annotate-action` (xlsx_advanced와 동일 패턴)
+  - `app/frontend/src/pages/JobResultPage.jsx` — 하이라이트/주석 생성 버튼 + 모달 + 상태 폴링
+  - `app/frontend/src/api.js` — `annotateJob()`, `annotateAction()`
 
 ## OCR Progress Reporting
 

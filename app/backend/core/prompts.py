@@ -105,6 +105,54 @@ def build_paddleocr_parameter_recommendation_prompt() -> str:
     )
 
 
+def build_row_highlight_prompt(
+    rows: list[list[str]],
+    instruction: str,
+    want_llm_comment: bool,
+) -> str:
+    """표의 각 행 텍스트만 보고 하이라이트/여백 주석을 붙일 행을 고르는 프롬프트.
+
+    좌표(bbox) 추론은 절대 이 프롬프트에 맡기지 않는다 — 좌표는 OCR bbox에서 이미 확정되어 있고,
+    LLM은 순수 텍스트 조건 판단만 수행한다 (Gemma-4의 bbox grounding 신뢰도가 낮다는 리서치 결과 반영).
+
+    Args:
+        rows: 행 인덱스 순서의 셀 텍스트 목록 (예: [["1", "2026-01-01", "820,000", "이체"], ...])
+        instruction: 사용자가 입력한 조건 (예: "80만원 이상 이체된 줄")
+        want_llm_comment: True면 각 매칭 행에 대해 짧은 근거 코멘트를 LLM이 직접 생성
+
+    Returns:
+        LLM에게 보낼 프롬프트 문자열
+    """
+    rows_text = "\n".join(f"{i}: {' | '.join(cell for cell in row)}" for i, row in enumerate(rows))
+    comment_instr = (
+        "매칭된 각 행마다 왜 선택했는지 10자 내외로 짧게 요약한 comment를 작성하세요 (예: \"82만원 이체\")."
+        if want_llm_comment
+        else '모든 매칭 행의 comment 값은 아래 "조건 문구"를 그대로 반복해서 넣으세요 (요약/가공하지 마세요).'
+    )
+    return (
+        "당신은 문서 내 표를 검토하는 보조원입니다. 아래는 한 표를 행 단위로 나눈 텍스트입니다. "
+        "각 행은 `행번호: 셀1 | 셀2 | ...` 형식입니다. "
+        "여러 표/여러 페이지의 행이 순서대로 이어져 있을 수 있고, 각 표의 첫 행은 대개 컬럼명을 나타내는 "
+        "헤더 행입니다 (예: '연번 | 구분 | 출금금액(원) | 입금금액(원) | ...'). "
+        "셀 순서(컬럼 위치)가 표마다 다를 수 있으니, 조건을 판단하기 전에 가장 가까운 이전 헤더 행을 찾아 "
+        "그 헤더의 컬럼명과 정확히 일치하는 컬럼의 값만 비교하세요. "
+        "예를 들어 조건이 '출금금액이 X 이상'이면 헤더에서 '출금금액'이라는 이름의 컬럼만 확인하고, "
+        "'입금금액' 등 이름이 다른 컬럼 값은 절대 사용하지 마세요.\n\n"
+        f"--- 표 데이터 ---\n{rows_text}\n\n"
+        f"--- 조건 문구 ---\n{instruction}\n\n"
+        "위 조건에 해당하는 행 번호를 모두 찾으세요 (헤더 행 자체는 매칭 대상에서 제외하세요). "
+        "숫자 비교가 필요하면 콤마와 원문자를 제거하고 숫자로 변환해서 판단하세요. "
+        f"{comment_instr}\n"
+        "조건에 맞는 행이 하나도 없으면 matches를 빈 배열로 반환하세요.\n"
+        "반드시 아래 JSON 형식으로만 출력하고, 설명이나 코드 블록 마커(```)는 절대 넣지 마세요.\n"
+        "{\n"
+        '  "matches": [\n'
+        '    {"row_index": 0, "comment": "..."}\n'
+        "  ]\n"
+        "}\n"
+    )
+
+
 def build_docling_refinement_prompt(columns: list[str], docling_markdown: str, extra: str = "") -> str:
     """Docling이 추출한 마크다운을 LLM으로 정리/재구조화하는 프롬프트."""
     cols = ", ".join(columns) if columns else "내용"

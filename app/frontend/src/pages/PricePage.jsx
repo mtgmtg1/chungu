@@ -1,8 +1,8 @@
-// [Flow: Step 1 (헤더 렌더링) -> Step 2 (정적 플랜 데이터 설정) -> Step 3 (월간/연간 토글) -> Step 4 (구독 요금제 카드 렌더링) -> Step 5 (API 가격 페이지 링크 안내)]
+// [Flow: Step 1 (헤더 렌더링) -> Step 2 (정적 플랜 데이터 설정) -> Step 3 (월간/연간 토글) -> Step 4 (구독 요금제 카드 렌더링) -> Step 5 (모든 요금제 공통 혜택 안내) -> Step 6 (API 가격 페이지 링크 안내) -> Step 7 (푸터)]
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, FileSpreadsheet, Mail, Shield, FileUp } from "lucide-react";
 import { api } from "../api.js";
 import GlobalFooter from "../components/GlobalFooter.jsx";
 import { useAuth } from "../AuthContext.jsx";
@@ -32,6 +32,14 @@ const STATIC_PLANS = [
     yearly_usd: 1000,
     limits: { basic_pages: 60000, premium_pages: 30000, media_seconds: 540000 },
   },
+];
+
+/** 모든 요금제에 포함된 공통 혜택 아이콘 매핑 */
+const INCLUDED_FEATURES = [
+  { icon: FileSpreadsheet, key: "includedFeature1" },
+  { icon: FileUp, key: "includedFeature2" },
+  { icon: Mail, key: "includedFeature3" },
+  { icon: Shield, key: "includedFeature4" },
 ];
 
 /**
@@ -107,58 +115,41 @@ export default function PricePage() {
   }
 
   return (
-    <div
-      className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/60 to-rose-50/40"
-      data-oid="price-page"
-    >
-      <header
-        className="border-b bg-white/80 backdrop-blur"
-        data-oid="price-header"
-      >
-        <div
-          className="max-w-5xl mx-auto px-6 py-4 flex items-center gap-2"
-          data-oid="price-header-inner"
-        >
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-blue-50/30 to-white" data-oid="price-page">
+      <header className="border-b border-slate-200/80 bg-white/80 backdrop-blur" data-oid="price-header">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center gap-3" data-oid="price-header-inner">
           <button
             onClick={() => nav(-1)}
-            className="text-slate-500 hover:text-slate-800"
+            className="p-2 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
             data-oid="price-back"
           >
             <ArrowLeft size={20} />
           </button>
-          <h1 className="text-xl font-bold" data-oid="price-title">
+          <h1 className="text-xl font-bold text-slate-900" data-oid="price-title">
             {t("page:price.title")}
           </h1>
         </div>
       </header>
 
-      <main
-        className="max-w-5xl mx-auto px-6 py-10"
-        data-oid="price-main"
-      >
-        <div className="text-center mb-8" data-oid="price-hero">
+      <main className="max-w-6xl mx-auto px-6 py-16" data-oid="price-main">
+        <div className="text-center mb-10" data-oid="price-hero">
           <h2
-            className="text-3xl font-bold text-slate-900 mb-3"
+            className="text-4xl md:text-5xl font-bold text-slate-900 mb-4 tracking-tight"
             data-oid="price-hero-title"
           >
-            {t("page:price.subscriptionHeroTitle")}
+            {t("page:plans.heroTitle")}
           </h2>
-          <p
-            className="text-lg text-slate-600 max-w-2xl mx-auto"
-            data-oid="price-hero-desc"
-          >
-            {t("page:price.subscriptionHeroDesc")}
+          <p className="text-lg md:text-xl text-slate-600 max-w-2xl mx-auto leading-relaxed" data-oid="price-hero-desc">
+            {t("page:plans.heroDesc")}
           </p>
         </div>
 
-        <div className="flex justify-center mb-10">
-          <div className="inline-flex bg-white rounded-full p-1 border border-slate-200 shadow-sm">
+        <div className="flex justify-center mb-12">
+          <div className="inline-flex bg-white rounded-full p-1.5 border border-slate-200 shadow-sm">
             <button
               onClick={() => setCycle("monthly")}
-              className={`px-5 py-2 rounded-full text-sm font-medium transition-all ${
-                cycle === "monthly"
-                  ? "bg-blue-600 text-white"
-                  : "text-slate-600 hover:text-slate-900"
+              className={`px-6 py-2.5 rounded-full text-sm font-semibold transition-all ${
+                cycle === "monthly" ? "bg-blue-600 text-white shadow-md" : "text-slate-600 hover:text-slate-900"
               }`}
               data-oid="price-cycle-monthly"
             >
@@ -166,10 +157,8 @@ export default function PricePage() {
             </button>
             <button
               onClick={() => setCycle("yearly")}
-              className={`px-5 py-2 rounded-full text-sm font-medium transition-all ${
-                cycle === "yearly"
-                  ? "bg-blue-600 text-white"
-                  : "text-slate-600 hover:text-slate-900"
+              className={`px-6 py-2.5 rounded-full text-sm font-semibold transition-all ${
+                cycle === "yearly" ? "bg-blue-600 text-white shadow-md" : "text-slate-600 hover:text-slate-900"
               }`}
               data-oid="price-cycle-yearly"
             >
@@ -178,51 +167,62 @@ export default function PricePage() {
           </div>
         </div>
 
-        {error && (
-          <p className="text-center text-red-600 text-sm mb-6">{error}</p>
-        )}
-        {success && (
-          <p className="text-center text-blue-600 text-sm mb-6">{success}</p>
-        )}
+        {error && <p className="text-center text-red-600 text-sm mb-6">{error}</p>}
+        {success && <p className="text-center text-blue-600 text-sm mb-6">{success}</p>}
 
         {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-16">
             <SkeletonCard rows={5} />
             <SkeletonCard rows={5} />
             <SkeletonCard rows={5} />
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-              {plans.map((plan) => {
-                const isCurrent = mySubscription?.plan === plan.key;
-                return (
-                  <PlanCard
-                    key={plan.key}
-                    plan={plan}
-                    cycle={cycle}
-                    selected={isCurrent}
-                    onSelect={handleSelect}
-                    disabled={checkingOut}
-                    dataOid={`price-card-${plan.key}`}
-                  />
-                );
-              })}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch mb-16">
+              {plans.map((plan) => (
+                <PlanCard
+                  key={plan.key}
+                  plan={plan}
+                  cycle={cycle}
+                  selected={mySubscription?.plan === plan.key}
+                  recommended={plan.key === "pro"}
+                  onSelect={handleSelect}
+                  disabled={checkingOut}
+                  dataOid={`price-card-${plan.key}`}
+                />
+              ))}
             </div>
 
             <div
-              className="bg-blue-50 border border-blue-100 rounded-2xl p-5 text-center"
+              className="bg-white border border-slate-200 rounded-3xl p-8 md:p-10 shadow-lg mb-12"
+              data-oid="price-included"
+            >
+              <h3 className="text-center text-2xl font-bold text-slate-900 mb-8">
+                {t("page:plans.includedInAllPlans")}
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
+                {INCLUDED_FEATURES.map(({ icon: Icon, key }) => (
+                  <div key={key} className="flex flex-col items-center text-center gap-3">
+                    <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center">
+                      <Icon className="text-blue-600" size={24} />
+                    </div>
+                    <p className="text-sm font-medium text-slate-700">{t(`page:plans.${key}`)}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div
+              className="bg-gradient-to-br from-blue-50 to-blue-100/50 border border-blue-100 rounded-2xl p-6 md:p-8 text-center"
               data-oid="price-api-notice"
             >
-              <p className="text-blue-800 text-sm font-medium mb-2">
-                {t("page:price.developerNotice")}
-              </p>
+              <p className="text-blue-900 text-base font-medium mb-3">{t("page:plans.apiPricingNotice")}</p>
               <Link
                 to="/api-pricing"
-                className="inline-flex items-center gap-1 text-blue-600 hover:underline font-semibold"
+                className="inline-flex items-center gap-1 text-blue-700 hover:text-blue-800 font-semibold hover:underline"
                 data-oid="price-to-api-link"
               >
-                {t("page:price.apiPricingLink")}
+                {t("page:plans.apiPricingLink")}
               </Link>
             </div>
           </>

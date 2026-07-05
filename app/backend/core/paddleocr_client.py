@@ -31,27 +31,15 @@ def _is_enabled() -> bool:
     return settings.paddleocr_fallback_enabled
 
 
-def convert_file(
+def _convert_and_poll(
     path: Path,
-    timeout: int = MAX_POLL_DURATION,
-    on_progress: Callable[[int, int], None] | None = None,
-) -> tuple[str, list[Path]]:
-    """이미지 파일을 PaddleOCR 서비스(AI Studio API)로 전송하여 markdown과 이미지 경로를 받는다.
+    timeout: int,
+    on_progress: Callable[[int, int], None] | None,
+) -> dict:
+    """이미지를 PaddleOCR 서비스(/api/convert)로 전송하고 완료될 때까지 폴링하여 결과 dict를 반환한다.
 
-    AI Studio API는 이미지만 지원하므로 PDF/오피스 문서는 거부한다.
-    docling_client.convert_file()과 동일한 시그니처로 기존 파이프라인에 삽입 가능하다.
-    비동기 폴링 방식:
-    1. /api/convert로 이미지 업로드 → task_id 즉시 반환
-    2. 5초 간격으로 /api/convert/status/{task_id} 폴링
-    3. status == done → (markdown, image_paths) 반환, status == error → 예외 발생
-
-    Args:
-        path: 변환할 이미지 파일 경로 (png/jpg/bmp/tiff/webp)
-        timeout: 최대 대기 시간 (초)
-        on_progress: 진행률 콜백 (done, total) 형태
-
-    Returns:
-        (markdown_text, image_paths) 튜플
+    반환 dict 키: markdown, images(상대경로 리스트), layout(페이지별 bbox 원본 리스트, 보통 1개).
+    convert_file()/convert_image_with_layout() 등 공개 함수들이 이 내부 함수를 공유한다.
     """
     if not _is_enabled():
         raise RuntimeError("PaddleOCR fallback service is disabled")
@@ -111,13 +99,13 @@ def convert_file(
             result = data.get("result")
             if result is None:
                 raise RuntimeError(f"PaddleOCR conversion completed but no result: {path.name}")
-            markdown = result.get("markdown", "")
-            relative_images = result.get("images", [])
-            image_paths = [Path(img) for img in relative_images]
-            logger.info(f"[paddleocr-client] {path.name} 변환 완료 ({elapsed:.0f}s, images={len(image_paths)})")
+            logger.info(
+                f"[paddleocr-client] {path.name} 변환 완료 "
+                f"({elapsed:.0f}s, images={len(result.get('images', []))})"
+            )
             if on_progress:
                 on_progress(100, 100)
-            return markdown, image_paths
+            return result
 
         if status == "error":
             error_msg = data.get("error", "Unknown error")
@@ -130,6 +118,54 @@ def convert_file(
                 on_progress(est_pct, 100)
 
         time.sleep(POLL_INTERVAL)
+
+
+def convert_file(
+    path: Path,
+    timeout: int = MAX_POLL_DURATION,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> tuple[str, list[Path]]:
+    """이미지 파일을 PaddleOCR 서비스(AI Studio API)로 전송하여 markdown과 이미지 경로를 받는다.
+
+    AI Studio API는 이미지만 지원하므로 PDF/오피스 문서는 거부한다.
+    docling_client.convert_file()과 동일한 시그니처로 기존 파이프라인에 삽입 가능하다.
+
+    Returns:
+        (markdown_text, image_paths) 튜플
+    """
+    result = _convert_and_poll(path, timeout, on_progress)
+    markdown = result.get("markdown", "")
+    image_paths = [Path(img) for img in result.get("images", [])]
+    return markdown, image_paths
+
+
+def convert_image_with_layout(
+    image_path: Path,
+    timeout: int = 600,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> tuple[str, dict]:
+    """PDF 하이라이트/여백 주석 기능용: 이미지 한 장을 변환하고 bbox 원본(layout)까지 반환한다.
+
+    PaddleOCR 서비스는 요청마다 useDocOrientationClassify/useDocUnwarping을 False로 고정 전송하므로
+    (paddleocr_service/main.py `_aistudio_submit_job` 참고) 반환되는 bbox는 항상 원본 이미지 좌표 기준이다.
+
+    로컬 PaddleOCR-VL 1.6 서버로 전환할 때는 이 함수 내부에서 호출하는 엔드포인트만
+    (`base_url/api/convert` → `base_url/convert/layout` 등) 교체하면 되고, 반환 스키마는 동일하게 유지된다.
+
+    Args:
+        image_path: 변환할 페이지 이미지 경로 (렌더링 DPI를 호출자가 알고 있어야 좌표 역변환 가능)
+        timeout: 최대 대기 시간 (초)
+        on_progress: 진행률 콜백
+
+    Returns:
+        (markdown_text, layout_dict) — layout_dict는 res.json과 동일 스키마의 단일 페이지 원본 딕셔너리
+        (layout_det_res/overall_ocr_res/table_res_list 등). 실패 시 빈 dict.
+    """
+    result = _convert_and_poll(image_path, timeout, on_progress)
+    markdown = result.get("markdown", "")
+    layout_pages = result.get("layout", [])
+    layout = layout_pages[0] if layout_pages else {}
+    return markdown, layout
 
 
 def convert_image(image_path: Path, timeout: int = 600) -> str:

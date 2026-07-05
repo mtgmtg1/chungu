@@ -86,10 +86,7 @@
     "logoutSuccess": "로그아웃되었습니다"
   },
   "points": {
-    "balance": "크레딧 잔액",
-    "point": "$",
-    "cost": "비용",
-    "total": "합계"
+    "point": "$"
   },
   "date": {
     "justNow": "방금",

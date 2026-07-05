@@ -86,10 +86,7 @@
     "logoutSuccess": "ログアウトしました"
   },
   "points": {
-    "balance": "クレジット残高",
-    "point": "$",
-    "cost": "費用",
-    "total": "合計"
+    "point": "$"
   },
   "date": {
     "justNow": "たった今",

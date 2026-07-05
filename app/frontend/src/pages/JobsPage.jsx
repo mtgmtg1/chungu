@@ -19,7 +19,7 @@ import { SkeletonTable } from "../components/Skeleton.jsx";
 import { AnimatedRow } from "../components/AnimatedList.jsx";
 import { getDisplayProgress } from "../utils/progress.js";
 
-function DownloadMenu({ job, fileTypeLabel, download, convertAndDownload, converting, xlsxBasicCost, xlsxAdvancedCost, onMenuItemClick, children }) {
+function DownloadMenu({ job, fileTypeLabel, download, convertAndDownload, converting, xlsxBasicPages, xlsxAdvancedPages, onMenuItemClick, children }) {
   // [Flow: Step 1 (버튼 위치 추적) -> Step 2 (호버 상태) -> Step 3 (document.body에 Portal로 메뉴 렌더링) -> Step 4 (위치 계산)]
   const { t } = useTranslation();
   const btnRef = useRef(null);
@@ -76,7 +76,7 @@ function DownloadMenu({ job, fileTypeLabel, download, convertAndDownload, conver
         disabled={converting[job.job_id]}
         className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
       >
-        {job.xlsx_basic_converted ? t("page:jobs.xlsxBasicDownload") : t("page:jobs.xlsxBasicCost", { cost: xlsxBasicCost(job).toLocaleString() })}
+        {job.xlsx_basic_converted ? t("page:jobs.xlsxBasicDownload") : t("page:jobs.xlsxBasicPages", { pages: xlsxBasicPages(job).toLocaleString() })}
       </button>
       <button
         onClick={() => { convertAndDownload(job.job_id, "xlsx_advanced"); onMenuItemClick?.(); }}
@@ -85,7 +85,7 @@ function DownloadMenu({ job, fileTypeLabel, download, convertAndDownload, conver
       >
         {advancedProcessing ? t("page:jobs.xlsxAdvancedProcessing") :
           advancedDone ? t("page:jobs.xlsxAdvancedDownload") :
-          t("page:jobs.xlsxAdvancedCost", { cost: xlsxAdvancedCost(job).toLocaleString() })}
+          t("page:jobs.xlsxAdvancedPages", { pages: xlsxAdvancedPages(job).toLocaleString() })}
       </button>
       <button
         onClick={() => { convertAndDownload(job.job_id, "docx"); onMenuItemClick?.(); }}
@@ -344,12 +344,13 @@ export default function JobsPage() {
     }
   }
 
-  function xlsxBasicCost(job) {
-    return (job.total_pages || job.total_files || 1) * 1;
+  // 구독제: Excel 생성 시 실제로 차감되는 것은 달러가 아니라 구독 월간 페이지 한도(기본/프리미엄)이다.
+  function xlsxBasicPages(job) {
+    return job.total_pages || job.total_files || 1;
   }
 
-  function xlsxAdvancedCost(job) {
-    return (job.total_pages || job.total_files || 1) * 3;
+  function xlsxAdvancedPages(job) {
+    return job.total_pages || job.total_files || 1;
   }
 
   const activeCount = useMemo(
@@ -799,8 +800,8 @@ export default function JobsPage() {
                                   download={download}
                                   convertAndDownload={convertAndDownload}
                                   converting={converting}
-                                  xlsxBasicCost={xlsxBasicCost}
-                                  xlsxAdvancedCost={xlsxAdvancedCost}
+                                  xlsxBasicPages={xlsxBasicPages}
+                                  xlsxAdvancedPages={xlsxAdvancedPages}
                                   onMenuItemClick={() => {}}
                                 >
                                   <Download size={18} data-oid="x4fihqx" />
@@ -909,8 +910,8 @@ export default function JobsPage() {
                               download={download}
                               convertAndDownload={convertAndDownload}
                               converting={converting}
-                              xlsxBasicCost={xlsxBasicCost}
-                              xlsxAdvancedCost={xlsxAdvancedCost}
+                              xlsxBasicPages={xlsxBasicPages}
+                              xlsxAdvancedPages={xlsxAdvancedPages}
                               onMenuItemClick={() => {}}
                             >
                               <Download size={18} />

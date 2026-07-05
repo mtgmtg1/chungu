@@ -93,6 +93,19 @@ class Job(Base):
     xlsx_advanced_reserved_pages: Mapped[int] = mapped_column(Integer, default=0)
     xlsx_advanced_reserved_period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # PDF 하이라이트/여백 주석 (원본 스캔 PDF에 형광펜 + 여백 코멘트 생성)
+    annotate_instruction: Mapped[str] = mapped_column(Text, default="")
+    annotate_mode: Mapped[str] = mapped_column(String(20), default="highlight")  # highlight | margin_note | both
+    annotate_comment_mode: Mapped[str] = mapped_column(String(20), default="user_text")  # user_text | llm_summary
+    annotate_status: Mapped[str] = mapped_column(String(20), default="")  # "" | processing | done | error
+    annotate_job_id: Mapped[str] = mapped_column(String(32), default="")
+    annotate_recovery_notes: Mapped[list] = mapped_column(JSON, default=list)
+    annotate_refundable: Mapped[bool] = mapped_column(Boolean, default=False)
+    annotate_reserved_pages: Mapped[int] = mapped_column(Integer, default=0)
+    annotate_reserved_period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    result_ocr_layout_storage_path: Mapped[str] = mapped_column(String(1024), default="")
+    result_annotated_pdf_storage_path: Mapped[str] = mapped_column(String(1024), default="")
+
     # Supabase Storage 경로 (로컬 경로 대체)
     pdf_storage_path: Mapped[str] = mapped_column(String(1024), default="")
     result_csv_storage_path: Mapped[str] = mapped_column(String(1024), default="")

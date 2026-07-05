@@ -66,6 +66,14 @@ export default function JobResultPage() {
   const [xlsxAdvancedPolling, setXlsxAdvancedPolling] = useState(false);
   const [jobActionModal, setJobActionModal] = useState(false);
 
+  // PDF 하이라이트/여백 주석 (원본 스캔 PDF에 형광펜 + 여백 코멘트 생성)
+  const [annotateModalOpen, setAnnotateModalOpen] = useState(false);
+  const [annotateInstruction, setAnnotateInstruction] = useState("");
+  const [annotateMode, setAnnotateMode] = useState("both"); // highlight | margin_note | both
+  const [annotateCommentMode, setAnnotateCommentMode] = useState("user_text"); // user_text | llm_summary
+  const [annotatePolling, setAnnotatePolling] = useState(false);
+  const [annotateUrl, setAnnotateUrl] = useState(null);
+
   const [excelDropdownOpen, setExcelDropdownOpen] = useState(false);
   const [officeDropdownOpen, setOfficeDropdownOpen] = useState(false);
   const excelDropdownTimerRef = useRef(null);
@@ -116,6 +124,9 @@ export default function JobResultPage() {
       if (data.xlsx_advanced_status === "done" || data.xlsx_advanced_status === "error") {
         setXlsxAdvancedPolling(false);
       }
+      if (data.annotate_status === "done" || data.annotate_status === "error") {
+        setAnnotatePolling(false);
+      }
       if (data.status === "done") {
         clearInterval(pollRef.current);
         await loadPreview();
@@ -145,6 +156,9 @@ export default function JobResultPage() {
         if (data.xlsx_advanced_status === "done" || data.xlsx_advanced_status === "error") {
           setXlsxAdvancedPolling(false);
         }
+        if (data.annotate_status === "done" || data.annotate_status === "error") {
+          setAnnotatePolling(false);
+        }
         if (data.status === "done") {
           clearInterval(pollRef.current);
           await loadPreview();
@@ -165,6 +179,22 @@ export default function JobResultPage() {
     }, 5000);
     return () => clearInterval(interval);
   }, [xlsxAdvancedPolling, jobId]);
+
+  useEffect(() => {
+    if (!annotatePolling) return;
+    const interval = setInterval(() => {
+      loadJob();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [annotatePolling, jobId]);
+
+  useEffect(() => {
+    if (job?.annotate_status === "done" && job?.annotated_pdf && !annotateUrl) {
+      api.downloadJob(jobId, "annotated_pdf")
+        .then((res) => setAnnotateUrl(res.download_url))
+        .catch((e) => setError(e.message || t("page:errors.unknown")));
+    }
+  }, [job?.annotate_status, job?.annotated_pdf, annotateUrl, jobId]);
 
   async function loadPreview() {
     try {
@@ -284,6 +314,47 @@ export default function JobResultPage() {
     }
   }
 
+  async function startAnnotate() {
+    if (!annotateInstruction.trim()) return;
+    setConverting(true);
+    setError("");
+    try {
+      setAnnotateUrl(null);
+      const res = await api.annotateJob(jobId, {
+        instruction: annotateInstruction.trim(),
+        mode: annotateMode,
+        commentMode: annotateCommentMode,
+      });
+      if (res.status === "processing") {
+        setAnnotatePolling(true);
+      } else if (res.download_url) {
+        setAnnotateUrl(res.download_url);
+      }
+      setAnnotateModalOpen(false);
+      await loadJob();
+    } catch (e) {
+      setError(e.message || t("page:errors.unknown"));
+    } finally {
+      setConverting(false);
+    }
+  }
+
+  async function handleAnnotateAction(action) {
+    setConverting(true);
+    setError("");
+    try {
+      await api.annotateAction(jobId, action);
+      await loadJob();
+      if (action === "retry") {
+        setAnnotatePolling(true);
+      }
+    } catch (e) {
+      setError(e.message || t("page:errors.unknown"));
+    } finally {
+      setConverting(false);
+    }
+  }
+
   async function handleXlsxAdvancedAction(action) {
     setConverting(true);
     setError("");
@@ -334,8 +405,9 @@ export default function JobResultPage() {
     }
   }, [previewMode, job?.xlsx_advanced_converted, advancedUrl, jobId]);
 
-  const xlsxBasicCost = job ? (job.total_pages || job.total_files || 1) * 1 : 0;
-  const xlsxAdvancedCost = job ? (job.total_pages || job.total_files || 1) * 3 : 0;
+  // 구독제: Excel 생성 시 실제로 차감되는 것은 달러가 아니라 구독 월간 페이지 한도(기본/프리미엄)이다.
+  const xlsxBasicUnits = job ? (job.total_pages || job.total_files || 1) : 0;
+  const xlsxAdvancedUnits = job ? (job.total_pages || job.total_files || 1) : 0;
 
   // [Flow: Step 1 (마크다운 텍스트 확인) -> Step 2 (테이블 구분선 패턴 검색) -> Step 3 (표 존재 여부 반환)]
   function hasMarkdownTable(text) {
@@ -488,6 +560,54 @@ export default function JobResultPage() {
                   {t("page:result.refund")}
                 </button>
               </div>
+              }
+
+              <button
+                onClick={() => setAnnotateModalOpen(true)}
+                disabled={converting || annotatePolling}
+                className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
+                data-oid="annotate-btn">
+                {annotatePolling ?
+                <Loader2 className="animate-spin" size={16} data-oid="annotate-spinner" /> :
+                <AlertTriangle size={16} data-oid="annotate-icon" />
+                }
+                {annotatePolling ?
+                t("page:result.annotateProcessing") :
+                annotateUrl ?
+                t("page:result.annotateDownload") :
+                t("page:result.annotate")}
+              </button>
+
+              {job?.annotate_status === "error" && job?.annotate_refundable &&
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-700 rounded-lg text-sm border border-red-200" data-oid="annotate-error">
+                <AlertTriangle size={14} data-oid="annotate-alert-icon" />
+                <span>{t("page:result.annotateFailed")}</span>
+                <button
+                  onClick={() => handleAnnotateAction("retry")}
+                  disabled={converting}
+                  className="flex items-center gap-1 px-2 py-1 bg-white rounded border border-red-200 hover:bg-red-100 transition-colors"
+                  data-oid="annotate-retry-btn">
+                  <RefreshCw size={14} data-oid="annotate-retry-icon" />
+                  {t("page:result.retry")}
+                </button>
+                <button
+                  onClick={() => handleAnnotateAction("refund")}
+                  disabled={converting}
+                  className="px-2 py-1 bg-white rounded border border-red-200 hover:bg-red-100 transition-colors"
+                  data-oid="annotate-refund-btn">
+                  {t("page:result.refund")}
+                </button>
+              </div>
+              }
+
+              {annotateUrl &&
+              <button
+                onClick={() => downloadByUrl(annotateUrl, `${job?.original_filename || "result"}_annotated.pdf`)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-primary text-white rounded-lg font-medium hover:opacity-90 transition-colors"
+                data-oid="annotate-download-btn">
+                <Download size={16} data-oid="annotate-download-icon" />
+                {t("page:result.annotateDownload")}
+              </button>
               }
 
               <div
@@ -684,7 +804,7 @@ export default function JobResultPage() {
             defaultSize={30}
             minSize={20}
             maxSize={60}
-            className="flex flex-col min-h-0 overflow-hidden"
+            className="flex flex-col h-full min-h-0 overflow-hidden"
             data-oid="8gj26he">
 
                 <SourcePanel
@@ -704,7 +824,7 @@ export default function JobResultPage() {
             data-oid="j-sm.n3" />
 
 
-              <Panel className="flex flex-col min-h-0" data-oid="2xixpf2">
+              <Panel className="flex flex-col h-full min-h-0" data-oid="2xixpf2">
                 <div
               className="flex flex-col h-full bg-white overflow-hidden"
               data-oid="1pwia81">
@@ -780,6 +900,85 @@ export default function JobResultPage() {
               <Loader2 size={16} className="animate-spin" data-oid="job-modal-spinner" /> :
               <RefreshCw size={16} data-oid="job-modal-retry-icon" />}
               {t("page:result.retry")}
+            </button>
+          </div>
+        </div>
+      </div>
+      }
+
+      {annotateModalOpen &&
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-oid="annotate-modal-overlay">
+        <div className="bg-white rounded-lg shadow-lg border border-outline-variant p-6 w-full max-w-lg" data-oid="annotate-modal">
+          <h3 className="font-headline-md text-headline-md font-bold text-on-surface mb-2" data-oid="annotate-modal-title">
+            {t("page:result.annotateTitle")}
+          </h3>
+          <p className="text-sm text-on-surface-variant mb-3" data-oid="annotate-modal-desc">
+            {t("page:result.annotateDesc")}
+          </p>
+          <textarea
+            value={annotateInstruction}
+            onChange={(e) => setAnnotateInstruction(e.target.value)}
+            placeholder={t("page:result.annotateInstructionPlaceholder")}
+            rows={3}
+            className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-primary/40"
+            data-oid="annotate-instruction-input" />
+
+          <div className="mb-4" data-oid="annotate-mode-group">
+            <div className="text-xs font-bold text-on-surface-variant mb-1">{t("page:result.annotateModeLabel")}</div>
+            <div className="flex gap-2">
+              {[
+              { value: "highlight", label: t("page:result.annotateModeHighlight") },
+              { value: "margin_note", label: t("page:result.annotateModeMarginNote") },
+              { value: "both", label: t("page:result.annotateModeBoth") }].
+              map((opt) =>
+              <button
+                key={opt.value}
+                onClick={() => setAnnotateMode(opt.value)}
+                className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${annotateMode === opt.value ? "bg-primary text-white border-primary" : "border-outline-variant text-on-surface hover:bg-surface-container-high"}`}
+                data-oid={`annotate-mode-${opt.value}`}>
+                  {opt.label}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {annotateMode !== "highlight" &&
+          <div className="mb-6" data-oid="annotate-comment-group">
+            <div className="text-xs font-bold text-on-surface-variant mb-1">{t("page:result.annotateCommentLabel")}</div>
+            <div className="flex gap-2">
+              {[
+              { value: "user_text", label: t("page:result.annotateCommentUserText") },
+              { value: "llm_summary", label: t("page:result.annotateCommentLlmSummary") }].
+              map((opt) =>
+              <button
+                key={opt.value}
+                onClick={() => setAnnotateCommentMode(opt.value)}
+                className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${annotateCommentMode === opt.value ? "bg-primary text-white border-primary" : "border-outline-variant text-on-surface hover:bg-surface-container-high"}`}
+                data-oid={`annotate-comment-${opt.value}`}>
+                  {opt.label}
+                </button>
+              )}
+            </div>
+          </div>
+          }
+
+          <div className="flex justify-end gap-2" data-oid="annotate-modal-actions">
+            <button
+              onClick={() => setAnnotateModalOpen(false)}
+              disabled={converting}
+              className="px-4 py-2 rounded-lg border border-outline-variant text-on-surface hover:bg-surface-container-high transition-colors"
+              data-oid="annotate-modal-cancel">
+              {t("common:actions.cancel")}
+            </button>
+            <button
+              onClick={() => startAnnotate()}
+              disabled={converting || !annotateInstruction.trim()}
+              className="flex items-center gap-1 px-4 py-2 rounded-lg bg-primary text-white hover:opacity-90 transition-colors disabled:opacity-50"
+              data-oid="annotate-modal-submit">
+              {converting ?
+              <Loader2 size={16} className="animate-spin" data-oid="annotate-modal-spinner" /> :
+              <Check size={16} data-oid="annotate-modal-check" />}
+              {t("page:result.annotateSubmit")}
             </button>
           </div>
         </div>

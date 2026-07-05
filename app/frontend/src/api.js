@@ -73,6 +73,13 @@ export const api = {
   downloadJob: (id, type) => request(`/api/jobs/${id}/download?type=${type}`),
   xlsxAdvancedAction: (id, action) =>
     request(`/api/jobs/${id}/xlsx-advanced-action`, { method: 'POST', body: JSON.stringify({ action }) }),
+  annotateJob: (id, { instruction, mode, commentMode }) =>
+    request(`/api/jobs/${id}/annotate`, {
+      method: 'POST',
+      body: JSON.stringify({ instruction, mode, comment_mode: commentMode }),
+    }),
+  annotateAction: (id, action) =>
+    request(`/api/jobs/${id}/annotate-action`, { method: 'POST', body: JSON.stringify({ action }) }),
   jobAction: (id, action) =>
     request(`/api/jobs/${id}/action`, { method: 'POST', body: JSON.stringify({ action }) }),
   saveEditedXlsx: (id, blob, filename = 'result_edited.xlsx') => {

@@ -16,7 +16,7 @@ from sqlalchemy import text as sql_text
 from ..celery_app import celery
 from celery.signals import worker_ready
 from ..config import settings
-from ..core import archive_handler, converter, excel_writer, media_loader, merge, subscription_service, supabase_client, xlsx_advanced_converter
+from ..core import archive_handler, converter, excel_writer, media_loader, merge, pdf_annotate_converter, subscription_service, supabase_client, xlsx_advanced_converter
 from ..core.ocr_client import has_pdf_text_layer
 from ..core.pipeline_docling import run_docling, run_hwp
 from ..core.pipeline_hybrid import run_hybrid
@@ -735,6 +735,12 @@ def cleanup_expired_uploads() -> dict:
 def convert_xlsx_advanced(parent_job_id: str) -> dict:
     """마크다운 결과를 LLM 기반 고급 변환으로 xlsx로 변환한다."""
     return xlsx_advanced_converter.run(parent_job_id)
+
+
+@celery.task(name="backend.workers.tasks.annotate_pdf_job")
+def annotate_pdf_job(job_id: str, instruction: str, mode: str, comment_mode: str) -> dict:
+    """원본 스캔 PDF에 조건에 맞는 표 행을 하이라이트/여백 주석으로 표시한다."""
+    return pdf_annotate_converter.run(job_id, instruction, mode, comment_mode)
 
 
 @celery.task(name="backend.workers.tasks.auto_recharge_retry")

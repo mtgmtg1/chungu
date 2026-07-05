@@ -17,12 +17,14 @@ function SourceIcon({ type }) {
 }
 
 function SingleFilePreview({ file, filename }) {
-  if (file.type === "pdf") return <PdfViewer url={file.url} />;
-  if (file.type === "docx" || file.type === "hwp") {
-    return file.preview_url ? <PdfViewer url={file.preview_url} /> : null;
-  }
-  if (file.type === "image") {
-    return (
+  // [Flow: Step 1 (파일 타입에 따라 콘텐츠 선택) -> Step 2 (항상 동일한 높이 컨테이너로 감싸서 반환)]
+  let content = null;
+  if (file.type === "pdf") {
+    content = <PdfViewer url={file.url} />;
+  } else if (file.type === "docx" || file.type === "hwp") {
+    content = file.preview_url ? <PdfViewer url={file.preview_url} /> : null;
+  } else if (file.type === "image") {
+    content = (
       <div className="flex-1 overflow-auto custom-scrollbar p-4 flex items-center justify-center">
         <img
           src={file.url}
@@ -31,11 +33,10 @@ function SingleFilePreview({ file, filename }) {
         />
       </div>
     );
+  } else if (file.type === "audio" || file.type === "video") {
+    content = <MediaPlayer sourceType={file.type} url={file.url} filename={filename || file.name} />;
   }
-  if (file.type === "audio" || file.type === "video") {
-    return <MediaPlayer sourceType={file.type} url={file.url} filename={filename || file.name} />;
-  }
-  return null;
+  return <div className="flex flex-col h-full w-full min-h-0 overflow-hidden">{content}</div>;
 }
 
 function ImageList({ urls, t }) {
@@ -80,10 +81,12 @@ export default function SourcePanel({
     const file = files[0];
     if (file.type === "pdf") {
       return (
-        <PdfViewer
-          url={file.url}
-          page={currentPage}
-        />
+        <div className="flex flex-col h-full w-full min-h-0 overflow-hidden">
+          <PdfViewer
+            url={file.url}
+            page={currentPage}
+          />
+        </div>
       );
     }
     return <SingleFilePreview file={file} filename={filename || file.name} />;
@@ -142,7 +145,11 @@ export default function SourcePanel({
   }
 
   if ((sourceType === "pdf" || sourceType === "docx" || sourceType === "hwp") && sourceUrl) {
-    return <PdfViewer url={sourceUrl} page={currentPage} />;
+    return (
+      <div className="flex flex-col h-full w-full min-h-0 overflow-hidden">
+        <PdfViewer url={sourceUrl} page={currentPage} />
+      </div>
+    );
   }
   if (sourceType === "images" && imageUrls?.length) {
     return <ImageList urls={imageUrls} t={t} />;
@@ -151,7 +158,7 @@ export default function SourcePanel({
     return <MediaPlayer sourceType={sourceType} url={sourceUrl} filename={filename} />;
   }
   return (
-    <div className="flex-1 flex items-center justify-center text-on-surface-variant text-sm p-4">
+    <div className="flex-1 flex items-center justify-center h-full w-full text-on-surface-variant text-sm p-4">
       {t("page:components.cannotDisplaySource")}
     </div>
   );

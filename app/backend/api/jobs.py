@@ -560,8 +560,7 @@ async def create_job(
 ):
     """TUS 업로드 완료 후 Storage의 파일을 분석하여 비용을 계산한다."""
     job = db.get(Job, job_id)
-    if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_access(job, user)
     if job.status != "uploading":
         raise HTTPException(status_code=400, detail="Only uploading jobs can be processed")
 
@@ -748,8 +747,7 @@ def update_job(
     db: Session = Depends(get_db),
 ):
     job = db.get(Job, job_id)
-    if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_access(job, user)
     if job.status != "pending":
         raise HTTPException(status_code=400, detail="Only pending jobs can be modified")
 
@@ -780,8 +778,7 @@ def confirm_job(
     db: Session = Depends(get_db),
 ):
     job = db.get(Job, job_id)
-    if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_access(job, user)
     if job.status != "pending":
         raise HTTPException(status_code=400, detail="Job already processed or cancelled")
 
@@ -822,17 +819,18 @@ def list_jobs(
     db: Session = Depends(get_db),
     limit: int = 100,
 ):
-    rows = db.execute(
-        select(Job).where(Job.user_id == uuid.UUID(user.user_id)).order_by(Job.created_at.desc()).limit(limit)
-    ).scalars().all()
+    # [Flow: Step 1 (개발 bypass 사용자면 전체 작업 조회) -> Step 2 (일반 사용자면 본인 작업만 필터) -> Step 3 (요약 목록 반환)]
+    query = select(Job).order_by(Job.created_at.desc()).limit(limit)
+    if not user.is_dev_bypass:
+        query = query.where(Job.user_id == uuid.UUID(user.user_id))
+    rows = db.execute(query).scalars().all()
     return [_job_summary(j) for j in rows]
 
 
 @router.get("/jobs/{job_id}")
 def get_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     job = db.get(Job, job_id)
-    if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_access(job, user)
     _require_job_not_expired(job)
     summary = _job_summary(job)
     if job.status == "pending":
@@ -887,8 +885,7 @@ def get_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: Sess
 @router.delete("/jobs/{job_id}")
 def delete_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     job = db.get(Job, job_id)
-    if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_access(job, user)
     try:
         supabase_client.delete_source_files(job)
     except Exception as e:
@@ -911,8 +908,7 @@ def download_job(
     db: Session = Depends(get_db),
 ):
     job = db.get(Job, job_id)
-    if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_access(job, user)
     _require_job_not_expired(job)
     if job.status != "done":
         raise HTTPException(status_code=400, detail="Only completed jobs can be downloaded")
@@ -930,6 +926,7 @@ def download_job(
         "xlsx_advanced": job.result_xlsx_advanced_storage_path,
         "docx": job.result_docx_storage_path,
         "pptx": job.result_pptx_storage_path,
+        "annotated_pdf": job.result_annotated_pdf_storage_path,
     }
     path = path_map.get(type)
     if not path:
@@ -1046,6 +1043,18 @@ def _detect_source_type(job: Job) -> str | None:
     return "pdf"
 
 
+def _require_job_access(job: Job | None, user: CurrentUser) -> None:
+    """[Flow: Step 1 (job 존재 여부 확인) -> Step 2 (개발 bypass 사용자면 통과) -> Step 3 (소유자 불일치 시 404)]
+    작업 접근 권한을 검증한다. 개발 bypass 사용자는 소유자와 관계없이 모든 작업에 접근 가능하다.
+    """
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if user.is_dev_bypass:
+        return
+    if str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+
 def _split_markdown_by_pages(markdown: str) -> list[tuple[int, str]]:
     """페이지 마커를 기준으로 마크다운을 분할한다."""
     matches = list(_PAGE_MARKER_RE.finditer(markdown))
@@ -1117,8 +1126,7 @@ def preview_job(
 ):
     """완료된 작업의 마크다운 결과를 페이지 단위로 조회한다."""
     job = db.get(Job, job_id)
-    if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_access(job, user)
     _require_job_not_expired(job)
     if not job.result_md_storage_path and not job.result_edited_md_storage_path:
         detail = f"Result file not ready (status={job.status}, md_path={job.result_md_storage_path or '-'}, edited_path={job.result_edited_md_storage_path or '-'}, error_log={job.error_log or '-'}"
@@ -1191,8 +1199,7 @@ def preview_job_pages(
 ):
     """완료된 작업의 페이지 목록 메타데이터를 반환한다."""
     job = db.get(Job, job_id)
-    if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_access(job, user)
     _require_job_not_expired(job)
     if not job.result_md_storage_path and not job.result_edited_md_storage_path:
         detail = f"Result file not ready (status={job.status}, md_path={job.result_md_storage_path or '-'}, edited_path={job.result_edited_md_storage_path or '-'}, error_log={job.error_log or '-'}"
@@ -1232,8 +1239,7 @@ def save_result_markdown(
     db: Session = Depends(get_db),
 ):
     job = db.get(Job, job_id)
-    if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_access(job, user)
     _require_job_not_expired(job)
     if job.status != "done":
         raise HTTPException(status_code=400, detail="Only completed jobs can be edited")
@@ -1277,8 +1283,7 @@ def save_result_page(
 ):
     """특정 페이지의 마크다운만 갱신하고 전체 편집 마크다운을 다시 저장한다."""
     job = db.get(Job, job_id)
-    if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_access(job, user)
     _require_job_not_expired(job)
     if job.status != "done":
         raise HTTPException(status_code=400, detail="Only completed jobs can be edited")
@@ -1323,8 +1328,7 @@ def convert_job(
     db: Session = Depends(get_db),
 ):
     job = db.get(Job, job_id)
-    if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_access(job, user)
     _require_job_not_expired(job)
     if job.status != "done":
         raise HTTPException(status_code=400, detail="Only completed jobs can be converted")
@@ -1444,8 +1448,7 @@ async def save_edited_xlsx(
 ):
     """사용자가 편집한 xlsx 파일을 업로드하고 Storage 경로를 저장한다."""
     job = db.get(Job, job_id)
-    if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_access(job, user)
     _require_job_not_expired(job)
     if job.status != "done":
         raise HTTPException(status_code=400, detail="Only completed jobs can be edited")
@@ -1474,8 +1477,7 @@ def get_edited_xlsx_url(
 ):
     """저장된 편집 xlsx의 signed download URL을 반환한다."""
     job = db.get(Job, job_id)
-    if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_access(job, user)
     _require_job_not_expired(job)
     if not job.result_edited_xlsx_storage_path:
         raise HTTPException(status_code=404, detail="No saved edited file")
@@ -1495,8 +1497,7 @@ def xlsx_advanced_action(
 ):
     """Excel 고급 변환 완전 실패 시 재시도 또는 포인트 환불을 처리한다."""
     job = db.get(Job, job_id)
-    if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_access(job, user)
     _require_job_not_expired(job)
     if job.xlsx_advanced_status != "error" or not job.xlsx_advanced_refundable:
         raise HTTPException(status_code=400, detail="Not in a refundable or retryable state")
@@ -1541,6 +1542,126 @@ def xlsx_advanced_action(
     return {"job_id": task.id, "status": "processing"}
 
 
+@router.post("/jobs/{job_id}/annotate")
+def annotate_job(
+    job_id: str,
+    payload: dict = Body(...),
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """원본 스캔 PDF에 조건에 맞는 표 행을 하이라이트/여백 주석으로 표시한다 (xlsx_advanced와 동일한 과금/큐잉 패턴)."""
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+    if job.status != "done":
+        raise HTTPException(status_code=400, detail="Only completed jobs can be annotated")
+
+    instruction = str(payload.get("instruction", "")).strip()
+    if not instruction:
+        raise HTTPException(status_code=400, detail="instruction is required")
+    mode = str(payload.get("mode", "highlight")).lower()
+    if mode not in ("highlight", "margin_note", "both"):
+        raise HTTPException(status_code=400, detail="Unsupported mode")
+    comment_mode = str(payload.get("comment_mode", "user_text")).lower()
+    if comment_mode not in ("user_text", "llm_summary"):
+        raise HTTPException(status_code=400, detail="Unsupported comment_mode")
+
+    if job.result_annotated_pdf_storage_path and job.annotate_instruction == instruction and job.annotate_mode == mode:
+        try:
+            url = supabase_client.get_signed_download_url(job.result_annotated_pdf_storage_path, bucket="results", expires_in=3600)
+            return {"download_url": url, "status": "done", "storage_path": job.result_annotated_pdf_storage_path}
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {e}")
+    if job.annotate_status == "processing":
+        raise HTTPException(status_code=409, detail="Annotation already in progress")
+
+    from ..db.models import User
+    db_user = db.get(User, job.user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    units = job.total_pages if job.total_pages else (job.total_files or 1)
+    try:
+        result = subscription_service.reserve_usage(
+            db,
+            db_user,
+            basic_pages=0,
+            premium_pages=units,
+            media_seconds=0,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=402, detail=str(e))
+
+    job.annotate_instruction = instruction
+    job.annotate_mode = mode
+    job.annotate_comment_mode = comment_mode
+    job.annotate_status = "processing"
+    job.annotate_refundable = True
+    job.annotate_reserved_pages = units
+    job.annotate_reserved_period_start = datetime.fromisoformat(result["period_start"])
+    job.result_annotated_pdf_storage_path = ""
+    db.commit()
+
+    from ..workers import tasks
+    task = tasks.annotate_pdf_job.delay(job_id, instruction, mode, comment_mode)
+    job.annotate_job_id = task.id
+    db.commit()
+    return {"job_id": task.id, "status": "processing"}
+
+
+@router.post("/jobs/{job_id}/annotate-action")
+def annotate_action(
+    job_id: str,
+    payload: dict = Body(...),
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """PDF 주석 생성 완전 실패 시 재시도 또는 포인트 환불을 처리한다 (xlsx_advanced_action과 동일 패턴)."""
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+    if job.annotate_status != "error" or not job.annotate_refundable:
+        raise HTTPException(status_code=400, detail="Not in a refundable or retryable state")
+
+    action = str(payload.get("action", "")).lower()
+    if action not in ("retry", "refund"):
+        raise HTTPException(status_code=400, detail="Unsupported action")
+
+    from ..db.models import User
+    db_user = db.get(User, job.user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    units = job.total_pages if job.total_pages else (job.total_files or 1)
+
+    if action == "refund":
+        period_start = job.annotate_reserved_period_start
+        subscription_service.release_usage(
+            db,
+            db_user,
+            basic_pages=0,
+            premium_pages=job.annotate_reserved_pages or units,
+            media_seconds=0,
+            period_start=period_start,
+        )
+        job.annotate_refundable = False
+        job.annotate_reserved_pages = 0
+        job.annotate_reserved_period_start = None
+        db.commit()
+        return {"refunded": True, "premium_pages": job.annotate_reserved_pages or units}
+
+    # retry: 상태 초기화 후 비용 없이 task 재실행
+    job.annotate_status = "processing"
+    job.annotate_refundable = False
+    job.result_annotated_pdf_storage_path = ""
+    db.commit()
+    from ..workers import tasks
+    task = tasks.annotate_pdf_job.delay(job_id, job.annotate_instruction, job.annotate_mode, job.annotate_comment_mode)
+    job.annotate_job_id = task.id
+    db.commit()
+    return {"job_id": task.id, "status": "processing"}
+
+
 @router.post("/jobs/{job_id}/action")
 def job_action(
     job_id: str,
@@ -1550,8 +1671,7 @@ def job_action(
 ):
     """문서 파싱 최종 실패 시 재시도 또는 포인트 환불을 처리한다."""
     job = db.get(Job, job_id)
-    if job is None or str(job.user_id) != user.user_id:
-        raise HTTPException(status_code=404, detail="Job not found")
+    _require_job_access(job, user)
     _require_job_not_expired(job)
     if job.status != "error" or not job.refundable:
         raise HTTPException(status_code=400, detail="Not in a refundable or retryable state")
@@ -1649,6 +1769,14 @@ def _job_summary(job: Job) -> dict:
         "xlsx_advanced_recovery_notes": job.xlsx_advanced_recovery_notes,
         "refundable": job.refundable,
         "retry_count": job.retry_count,
+        "annotated_pdf": bool(job.result_annotated_pdf_storage_path),
+        "annotate_status": job.annotate_status,
+        "annotate_job_id": job.annotate_job_id,
+        "annotate_refundable": job.annotate_refundable,
+        "annotate_recovery_notes": job.annotate_recovery_notes,
+        "annotate_instruction": job.annotate_instruction,
+        "annotate_mode": job.annotate_mode,
+        "annotate_comment_mode": job.annotate_comment_mode,
     }
 
 

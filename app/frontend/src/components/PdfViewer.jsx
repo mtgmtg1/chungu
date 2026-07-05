@@ -42,7 +42,7 @@ function PdfViewer({ url, page = 1 }) {
 
   if (!url) {
     return (
-      <div className="flex-1 flex items-center justify-center text-on-surface-variant text-sm" data-oid="pdf-empty">
+      <div className="flex-1 flex items-center justify-center h-full w-full min-h-0 text-on-surface-variant text-sm" data-oid="pdf-empty">
         {t("page:errors.loadFailed")}
       </div>
     );
@@ -51,7 +51,7 @@ function PdfViewer({ url, page = 1 }) {
   const iframeSrc = hasBeenVisible ? `${url}#page=${currentPage}` : "";
 
   return (
-    <div ref={containerRef} className="flex-1 flex flex-col overflow-hidden bg-surface-container-low" data-oid="pdf-viewer">
+    <div ref={containerRef} className="flex-1 flex flex-col h-full w-full min-h-0 overflow-hidden bg-surface-container-low" data-oid="pdf-viewer">
       <div className="flex-1 overflow-hidden min-h-0 relative" data-oid="pdf-iframe-wrap">
         {hasBeenVisible ? (
           <iframe

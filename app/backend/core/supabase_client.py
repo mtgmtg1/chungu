@@ -2,6 +2,7 @@
 # [Flow: Step 1 (설정에서 URL/키 로드) -> Step 2 (Supabase 클라이언트 싱글턴) -> Step 3 (Storage/Auth 헬퍼)]
 import hashlib
 import re
+import uuid
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
@@ -110,6 +111,49 @@ def upload_result(
     _upload(docx_path, "docx", "docx")
     _upload(pptx_path, "pptx", "pptx")
     return paths
+
+
+_OFFICE_CONTENT_TYPES = {
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "csv": "text/csv",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+
+
+def upload_office_result(job_id: str, local_path: Path, ext: str) -> str:
+    """오피스 문서 결과 파일(xlsx/csv/docx/pptx)을 results 버킷에 업로드하고 storage_path를 반환한다.
+
+    (기존에 호출부(api/jobs.py, xlsx_advanced_converter.py 등)만 있고 정의가 누락되어 있던 함수 —
+    호출 시마다 고유 경로를 사용해, 같은 job에 대한 여러 변환(예: xlsx 기본/고급)이 서로 다른
+    DB 컬럼에 기록되더라도 Storage 상에서 서로 덮어쓰지 않도록 한다.)
+    """
+    client = get_service_client()
+    unique = uuid.uuid4().hex[:12]
+    storage_path = f"{job_id}/office_{unique}.{ext}"
+    content_type = _OFFICE_CONTENT_TYPES.get(ext, "application/octet-stream")
+    client.storage.from_("results").upload(
+        storage_path,
+        local_path.read_bytes(),
+        {"content-type": content_type, "upsert": "true"},
+    )
+    return storage_path
+
+
+def upload_edited_xlsx(job_id: str, data: bytes, filename: str) -> str:
+    """사용자가 편집한 xlsx 파일을 results 버킷에 업로드하고 storage_path를 반환한다.
+
+    (upload_office_result와 마찬가지로 정의가 누락되어 있던 함수.)
+    """
+    client = get_service_client()
+    unique = uuid.uuid4().hex[:12]
+    storage_path = f"{job_id}/edited_{unique}.xlsx"
+    client.storage.from_("results").upload(
+        storage_path,
+        data,
+        {"content-type": _OFFICE_CONTENT_TYPES["xlsx"], "upsert": "true"},
+    )
+    return storage_path
 
 
 def _get_content_type(filename: str) -> str:

@@ -214,6 +214,12 @@ npm run start        # dev server at localhost:3000
   - 툴바에서 이전/다음 페이지, 페이지 번호 직접 입력으로 이동할 수 있다. 입력한 페이지 번호는 `#page` URL 프래그먼트로 iframe에 전달된다.
   - Markdown 미리보기와의 동기화는 **툴바로 페이지 이동할 때만** `onPageChange` 콜백을 통해 이루어진다. iframe 내부에서 사용자가 스크롤하거나 네이티브 뷰어의 페이지 컨트롤을 사용하면 부모에게 이벤트가 전달되지 않아 양방향 동기화는 불가능하다.
   - PDF.js, 캔버스 렌더링, 썸네일 패널은 사용하지 않는다.
+- **Preview Backend Optimization** (`app/backend/core/pdf_preview_converter.py`, `app/backend/api/jobs.py`, `app/backend/core/supabase_client.py`):
+  - DOCX/HWP 미리보기 PDF를 생성할 때 PyMuPDF로 `linear=True` 선형화를 적용하여 브라우저가 첫 페이지 바이트만 받아도 렌더링할 수 있게 한다.
+  - 10MB 이상 또는 50페이지 이상인 PDF/DOCX/HWP에 대해 `preview_pdfs_lowres/` 아래에 100 DPI 저해상도 미리보기 PDF를 별도 생성한다. 용량은 줄지만 텍스트 레이어는 사라진다.
+  - 저화질/선형화 생성 중 오류가 발생하면 원본 PDF의 서명 URL로 폴백하여 프리뷰 패널이 blank 되지 않도록 한다.
+  - `/api/jobs/{id}/preview` 응답을 Redis에 `preview:{job_id}:{start_page}:{end_page}` 키로 5분 TTL 캐싱한다. `save_result_markdown` / `save_result_page`에서 `preview:{job_id}:*` 패턴으로 캐시를 무효화한다.
+  - `_source_files()`에서 `concurrent.futures.ThreadPoolExecutor(max_workers=3)`로 여러 파일의 signed URL 생성을 병렬화한다. 스레드당 `create_fresh_service_client()`로 새로운 Supabase 클라이언트를 생성하여 스레드 안전을 확보한다.
 - **MarkdownPreview** (`app/frontend/src/components/MarkdownPreview.jsx`):
   - 읽기 전용 마크다운 뷰어. `marked.parse`로 HTML 렌더링 후 `dangerouslySetInnerHTML` 사용 (백엔드 신뢰 출력, DOMPurify 미사용).
   - `<!-- 페이지 N -->` 마커 기준으로 마크다운을 페이지 섹션으로 분할.

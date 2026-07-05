@@ -981,6 +981,9 @@ def _build_source_file_item(info: dict, idx: int) -> dict | None:
         if ftype in ("pdf", "docx", "hwp"):
             preview_url = pdf_preview_converter.get_lowres_preview_pdf_url(storage_path, expires_in=3600)
             if not preview_url:
+                # 저화질 생성 실패 시 원본 서명 URL로 폴백
+                preview_url = supabase_client.get_signed_download_url(storage_path, bucket="pdfs", expires_in=3600)
+            if not preview_url:
                 return None
             item = {
                 "name": info.get("path", info.get("storage_path", "")),
@@ -1149,6 +1152,8 @@ def preview_job(
         try:
             source_type = _detect_source_type(job)
             source_url = pdf_preview_converter.get_lowres_preview_pdf_url(job.pdf_storage_path, expires_in=3600)
+            if not source_url:
+                source_url = supabase_client.get_signed_download_url(job.pdf_storage_path, bucket="pdfs", expires_in=3600)
         except Exception:
             pass
 

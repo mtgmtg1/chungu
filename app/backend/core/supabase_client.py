@@ -203,6 +203,27 @@ def upload_page_image(local_path: Path, job_id: str, page_num: int) -> str:
     return storage_path
 
 
+def upload_image(job_id: str, local_path: Path, filename: str) -> str:
+    """개별 원본 이미지 파일을 pdfs 버킷에 업로드하고 storage_path를 반환한다.
+
+    workers/tasks.py에서 추출된 이미지를 Storage에 개별 보관할 때 사용하며,
+    pdf_annotate_converter의 _get_page_image_paths가 pdfs 버킷에서 다운로드할 수 있도록
+    동일한 버킷에 저장한다.
+    """
+    client = get_service_client()
+    ext = Path(filename).suffix.lower()
+    safe_stem = re.sub(r"[^\w\-.]", "", unidecode(Path(filename).stem)) or "image"
+    unique = hashlib.md5(filename.encode("utf-8")).hexdigest()[:8]
+    storage_path = f"{job_id}/images/{safe_stem}_{unique}{ext}"
+    content_type = _get_content_type(filename)
+    client.storage.from_("pdfs").upload(
+        storage_path,
+        local_path.read_bytes(),
+        {"content-type": content_type, "upsert": "true"},
+    )
+    return storage_path
+
+
 def get_signed_download_url_with_client(client: Client, storage_path: str, bucket: str = "results", expires_in: int = 3600) -> str:
     """지정한 Supabase 클라이언트로 서명된 다운로드 URL을 생성합니다. 외부 노출 URL로 재작성합니다."""
     url = client.storage.from_(bucket).create_signed_url(storage_path, expires_in).get("signedURL", "")

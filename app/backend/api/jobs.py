@@ -1697,13 +1697,17 @@ def annotate_job(
     comment_mode = str(payload.get("comment_mode", "user_text")).lower()
     if comment_mode not in ("user_text", "llm_summary"):
         raise HTTPException(status_code=400, detail="Unsupported comment_mode")
+    advanced = bool(payload.get("advanced", False))
 
-    # 동일한 instruction/mode/comment_mode로 이미 생성된 주석이 있으면 재사용
+    # 동일한 instruction/mode/comment_mode/advanced로 이미 생성된 주석이 있으면 재사용
     existing = next(
         (
             e
             for e in (job.annotated_pdf_files or [])
-            if e.get("instruction") == instruction and e.get("mode") == mode and e.get("comment_mode") == comment_mode
+            if e.get("instruction") == instruction
+            and e.get("mode") == mode
+            and e.get("comment_mode") == comment_mode
+            and bool(e.get("advanced", False)) == advanced
         ),
         None,
     )
@@ -1739,6 +1743,7 @@ def annotate_job(
         job.annotate_instruction = instruction
         job.annotate_mode = mode
         job.annotate_comment_mode = comment_mode
+        job.annotate_advanced = advanced
         job.annotate_status = "processing"
         job.annotate_refundable = False  # 관리자는 환불 불필요
         job.annotate_reserved_pages = 0  # 관리자는 예약 불필요
@@ -1746,6 +1751,9 @@ def annotate_job(
     else:
         # 일반 사용자는 구독 체크
         units = job.total_pages if job.total_pages else (job.total_files or 1)
+        # 고급주석은 페이지당 Vision LLM 호출 → 일반 주석보다 비용이 높음. credits를 2배로 사용.
+        if advanced:
+            units *= 2
         try:
             result = subscription_service.reserve_usage(
                 db,
@@ -1760,6 +1768,7 @@ def annotate_job(
         job.annotate_instruction = instruction
         job.annotate_mode = mode
         job.annotate_comment_mode = comment_mode
+        job.annotate_advanced = advanced
         job.annotate_status = "processing"
         job.annotate_refundable = True
         job.annotate_reserved_pages = units
@@ -1768,7 +1777,7 @@ def annotate_job(
     db.commit()
 
     from ..workers import tasks
-    task = tasks.annotate_pdf_job.delay(job_id, instruction, mode, comment_mode)
+    task = tasks.annotate_pdf_job.delay(job_id, instruction, mode, comment_mode, advanced=advanced)
     try:
         job.annotate_job_id = task.id
         db.commit()
@@ -1821,7 +1830,10 @@ def annotate_action(
     job.result_annotated_pdf_storage_path = ""
     db.commit()
     from ..workers import tasks
-    task = tasks.annotate_pdf_job.delay(job_id, job.annotate_instruction, job.annotate_mode, job.annotate_comment_mode)
+    task = tasks.annotate_pdf_job.delay(
+        job_id, job.annotate_instruction, job.annotate_mode, job.annotate_comment_mode,
+        advanced=bool(job.annotate_advanced),
+    )
     job.annotate_job_id = task.id
     db.commit()
     return {"job_id": task.id, "status": "processing"}
@@ -1943,6 +1955,7 @@ def _job_summary(job: Job) -> dict:
         "annotate_instruction": job.annotate_instruction,
         "annotate_mode": job.annotate_mode,
         "annotate_comment_mode": job.annotate_comment_mode,
+        "annotate_advanced": bool(job.annotate_advanced),
     }
 
 

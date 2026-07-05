@@ -28,3 +28,5 @@ pyhwp2md>=0.1.3
 lxml>=4.9.0
 opencv-python-headless>=4.8.0
 PyMuPDF>=1.24.0
+deskew>=1.5.0
+numpy>=1.24.0

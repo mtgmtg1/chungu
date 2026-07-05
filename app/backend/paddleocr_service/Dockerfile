@@ -14,8 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     imagemagick \
     && rm -rf /var/lib/apt/lists/*
 
-# FastAPI + 의존성 설치
-RUN pip install --no-cache-dir fastapi uvicorn python-multipart PyMuPDF requests Pillow
+# FastAPI + 의존성 설치 (deskew: 미세 회전 보정, opencv/numpy: 이미지 회전 처리)
+RUN pip install --no-cache-dir fastapi uvicorn python-multipart PyMuPDF requests Pillow \
+    deskew>=1.5.0 opencv-python-headless>=4.8.0 numpy>=1.24.0
 
 # 서비스 코드 복사
 COPY backend/paddleocr_service/main.py /app/main.py
@@ -23,6 +24,7 @@ COPY backend/core/__init__.py /app/backend/core/__init__.py
 COPY backend/core/ocr_client.py /app/backend/core/ocr_client.py
 COPY backend/core/prompts.py /app/backend/core/prompts.py
 COPY backend/core/paddleocr_parameter_recommender.py /app/backend/core/paddleocr_parameter_recommender.py
+COPY backend/core/image_deskew.py /app/backend/core/image_deskew.py
 
 WORKDIR /app
 

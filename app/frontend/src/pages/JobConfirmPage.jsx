@@ -84,9 +84,11 @@ export default function JobConfirmPage() {
   const mediaSeconds = job.media_duration_seconds || 0;
   const wouldExceed = effectiveModel === "basic" ? subscription.would_exceed_basic : subscription.would_exceed_premium;
   const reason = effectiveModel === "basic" ? subscription.reason_basic : subscription.reason_premium;
-  const insufficientBasic = basicPages > (remaining.basic_pages ?? 0);
-  const insufficientPremium = premiumPages > (remaining.premium_pages ?? 0);
-  const insufficientMedia = mediaSeconds > (remaining.media_seconds ?? 0);
+  // -1 센티넬값은 관리자 무제한을 의미한다.
+  const isUnlimited = (v) => v === -1;
+  const insufficientBasic = !isUnlimited(remaining.basic_pages) && basicPages > (remaining.basic_pages ?? 0);
+  const insufficientPremium = !isUnlimited(remaining.premium_pages) && premiumPages > (remaining.premium_pages ?? 0);
+  const insufficientMedia = !isUnlimited(remaining.media_seconds) && mediaSeconds > (remaining.media_seconds ?? 0);
   const insufficient = !subscription.active || wouldExceed || insufficientBasic || insufficientPremium || insufficientMedia;
 
   return (
@@ -252,19 +254,25 @@ export default function JobConfirmPage() {
             <div className="flex justify-between text-body-md">
               <span className="text-on-surface-variant">{t("page:confirm.basicPagesRemaining")}</span>
               <span className="font-medium text-on-surface">
-                {remaining.basic_pages ?? 0} / {limits.basic_pages ?? 0}
+                {isUnlimited(remaining.basic_pages) || isUnlimited(limits.basic_pages)
+                  ? t("page:confirm.unlimited")
+                  : `${remaining.basic_pages ?? 0} / ${limits.basic_pages ?? 0}`}
               </span>
             </div>
             <div className="flex justify-between text-body-md">
               <span className="text-on-surface-variant">{t("page:confirm.premiumPagesRemaining")}</span>
               <span className="font-medium text-on-surface">
-                {remaining.premium_pages ?? 0} / {limits.premium_pages ?? 0}
+                {isUnlimited(remaining.premium_pages) || isUnlimited(limits.premium_pages)
+                  ? t("page:confirm.unlimited")
+                  : `${remaining.premium_pages ?? 0} / ${limits.premium_pages ?? 0}`}
               </span>
             </div>
             <div className="flex justify-between text-body-md">
               <span className="text-on-surface-variant">{t("page:confirm.mediaMinutesRemaining")}</span>
               <span className="font-medium text-on-surface">
-                {Math.floor((remaining.media_seconds ?? 0) / 60)} / {Math.floor((limits.media_seconds ?? 0) / 60)}
+                {isUnlimited(remaining.media_seconds) || isUnlimited(limits.media_seconds)
+                  ? t("page:confirm.unlimited")
+                  : `${Math.floor((remaining.media_seconds ?? 0) / 60)} / ${Math.floor((limits.media_seconds ?? 0) / 60)}`}
               </span>
             </div>
           </div>

@@ -311,6 +311,10 @@ class ConvertResponse(BaseModel):
     # PDF 하이라이트/여백 주석 기능용 원본 레이아웃(bbox) — 페이지 순서대로 res.json/prunedResult 그대로 저장
     # (하위 호환: 기존 소비자는 이 필드를 무시하면 되므로 기본값 빈 리스트)
     layout: list[dict] = []
+    # 페이지별 90° 단위 회전 각도 코드 (0/1/2/3 = 0°/90°/180°/270°, -1 = 미적용)
+    # useDocOrientationClassify=True일 때 AI Studio가 보정한 각도. 주석 PDF 생성 시 클라이언트가
+    # 원본 이미지를 같은 각도로 회전시켜 보정 결과를 재현하기 위해 사용.
+    page_angles: list[int] = []
 
 
 class AsyncConvertResponse(BaseModel):
@@ -372,6 +376,7 @@ def _do_convert(task_id: str, input_path: Path, filename: str) -> None:
             page_count=ocr_result["page_count"],
             file_type=file_type,
             layout=ocr_result.get("layout", []),
+            page_angles=ocr_result.get("page_angles", []),
         )
 
         with _tasks_lock:
@@ -485,6 +490,7 @@ async def convert_file(file: UploadFile = File(...)) -> ConvertResponse:
             images=embedded_images,
             page_count=ocr_result["page_count"],
             file_type=file_type,
+            page_angles=ocr_result.get("page_angles", []),
         )
 
 
@@ -535,8 +541,14 @@ def _aistudio_submit_job(file_path: Path, params: dict[str, Any] | None = None) 
         raise RuntimeError("PADDLEOCR_API_TOKEN is not configured")
 
     headers = {"Authorization": f"bearer {AISTUDIO_API_TOKEN}"}
+    # [Flow: 대회전(90/180/270°) 자동 보정 활성화]
+    # useDocOrientationClassify=True → AI Studio가 문서 방향을 0/1/2/3(0°/90°/180°/270°)으로
+    # 분류하고 보정한 이미지 기준으로 bbox를 반환. 보정된 페이지 이미지 자체는 반환하지 않으므로
+    # 클라이언트가 주석 PDF 생성 시 응답의 doc_preprocessor_res.angle을 참조해 90° 회전을 재현해야 한다.
+    # useDocUnwarping=False 유지: 왜곡 보정은 변환 행렬을 응답에 노출하지 않아 bbox 역매핑이 불가하므로
+    # 주석 기능에 해로움.
     optional_payload = {
-        "useDocOrientationClassify": False,
+        "useDocOrientationClassify": True,
         "useDocUnwarping": False,
         "useChartRecognition": False,
     }
@@ -627,6 +639,9 @@ def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, A
     all_page_markdowns: list[str] = []
     downloaded_images: list[str] = []
     layout_pages: list[dict] = []
+    # 페이지별 90° 단위 회전 각도 (0/90/180/270). 주석 PDF 생성 시 클라이언트가 이미지를
+    # 같은 각도로 회전시켜 AI Studio 보정 결과를 재현하기 위해 사용.
+    page_angles: list[int] = []
     page_num = 0
 
     for line in lines:
@@ -643,7 +658,12 @@ def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, A
             md_images = md.get("images", {}) if isinstance(md, dict) else {}
             # prunedResult == 로컬 파이프라인 res.json에서 input_path/page_index만 제거한 것과 동일 스키마.
             # PDF 하이라이트/여백 주석 기능의 bbox 소스로 그대로 사용한다 (core/ocr_layout.py에서 파싱).
-            layout_pages.append(lpr.get("prunedResult", {}) or {})
+            pruned = lpr.get("prunedResult", {}) or {}
+            layout_pages.append(pruned)
+            # doc_preprocessor_res.angle 추출 (0/1/2/3 = 0°/90°/180°/270°, -1 = 미적용)
+            doc_pre = pruned.get("doc_preprocessor_res", {}) if isinstance(pruned, dict) else {}
+            angle_code = doc_pre.get("angle", -1) if isinstance(doc_pre, dict) else -1
+            page_angles.append(int(angle_code) if isinstance(angle_code, (int, float)) else -1)
 
             # 이미지 다운로드 및 base64 data URI로 markdown에 직접 삽입
             for img_rel_path, img_url in md_images.items():
@@ -673,6 +693,7 @@ def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, A
         "images": downloaded_images,
         "page_count": page_num,
         "layout": layout_pages,
+        "page_angles": page_angles,
     }
 
 
@@ -693,6 +714,7 @@ def _do_aistudio_convert(task_id: str, input_path: Path, filename: str) -> None:
             page_count=ocr_result["page_count"],
             file_type=_detect_file_type(filename),
             layout=ocr_result.get("layout", []),
+            page_angles=ocr_result.get("page_angles", []),
         )
 
         with _tasks_lock:

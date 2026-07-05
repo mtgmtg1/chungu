@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # [Flow: Step 1 (AI Studio/로컬 PaddleOCR-VL 1.6 원본 JSON 수신) -> Step 2 (parsing_res_list에서 table 블록 추출)
 #       -> Step 3 (block_content의 HTML 표를 행 단위로 파싱) -> Step 4 (행 bbox는 테이블 block_bbox를
-#       행 개수만큼 세로로 균등 분할해 추정) -> Step 5 (PageLayout 반환)]
+#       행 개수만큼 세로로 균등 분할해 추정) -> Step 5 (overall_ocr_res에서 단어/줄 단위 bbox 추출)
+#       -> Step 6 (table_res_list에서 셀 단위 bbox 추출) -> Step 7 (PageLayout 반환)]
 # PaddleOCR-VL 1.6 원본 결과(res.json / AI Studio prunedResult)를 하이라이트/여백 주석 기능에서
 # 공통으로 쓸 수 있는 형태로 정규화한다.
 #
@@ -15,11 +16,15 @@
 #        "block_id": int, "block_order": int, "group_id": int,
 #        "block_polygon_points": [[x,y], ...]},
 #       ...
-#     ]}
+#     ],
+#     "overall_ocr_res": {"rec_boxes": [[x0,y0,x1,y1], ...], "rec_texts": ["...", ...]},
+#     "table_res_list": [{"cell_box_list": [[x0,y0,x1,y1], ...], "pred_html": "..."}, ...]
+#   }
 #
 # PP-StructureV3 계열 문서에 흔한 table_res_list/cell_box_list 스키마와는 다르다 (VLM 통합 파싱 결과라
 # 표는 block 하나 + HTML 문자열로만 내려온다). 행 단위 bbox가 없으므로, 표 block_bbox의 세로 범위를
 # HTML의 <tr> 개수만큼 균등 분할해 각 행의 근사 bbox로 사용한다 (표 전체 폭 x 균등 분할 높이).
+# 셀/단어 단위 bbox가 제공되지 않으면 "full" scope로만 하이라이트가 가능하다.
 from __future__ import annotations
 
 import logging
@@ -63,6 +68,15 @@ class OcrTextBlock:
     text: str
     bbox_px: BBox
     block_label: str  # "text" | "title" | "figure_title" | "seal" | ...
+    word_bboxes: list[BBox] = field(default_factory=list)  # 단어/줄 단위 bbox
+
+
+@dataclass
+class WordBox:
+    """OCR로 검출된 단어/줄 하나의 텍스트와 bbox."""
+
+    text: str
+    bbox: BBox
 
 
 @dataclass
@@ -125,8 +139,17 @@ def _parse_table_block(block: dict) -> OcrTable | None:
 TEXT_BLOCK_LABELS = {"text", "title", "figure_title", "seal", "header", "footer", "reference", "formula"}
 
 
-def _parse_text_block(block: dict) -> OcrTextBlock | None:
-    """표가 아닌 블록에서 텍스트를 추출해 OcrTextBlock으로 반환한다."""
+def _parse_text_block(block: dict, word_boxes: list[WordBox] | None = None) -> OcrTextBlock | None:
+    """표가 아닌 블록에서 텍스트를 추출해 OcrTextBlock으로 반환한다.
+
+    Args:
+        block: parsing_res_list의 개별 블록 딕셔너리
+        word_boxes: overall_ocr_res에서 추출한 단어/줄 bbox 목록. 제공되면 블록 영역에 포함된
+            단어 bbox를 OcrTextBlock.word_bboxes에 연결한다.
+
+    Returns:
+        OcrTextBlock 또는 None
+    """
     bbox = block.get("block_bbox")
     if not bbox or len(bbox) < 4:
         return None
@@ -137,11 +160,63 @@ def _parse_text_block(block: dict) -> OcrTextBlock | None:
     if not text:
         return None
     block_bbox: BBox = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
-    return OcrTextBlock(text=text, bbox_px=block_bbox, block_label=block.get("block_label", "text"))
+    words = _collect_words_in_block(word_boxes or [], block_bbox)
+    return OcrTextBlock(
+        text=text,
+        bbox_px=block_bbox,
+        block_label=block.get("block_label", "text"),
+        word_bboxes=[w.bbox for w in words],
+    )
+
+
+def _parse_word_boxes(raw: dict) -> list[WordBox]:
+    """overall_ocr_res에서 단어/줄 단위 텍스트와 bbox를 추출한다.
+
+    [Flow: Step 1 (overall_ocr_res 확인) -> Step 2 (rec_texts와 rec_boxes 병렬 순회)
+          -> Step 3 (길이/타입 검증 후 WordBox 목록 반환)]
+
+    Returns:
+        WordBox 목록. overall_ocr_res가 없거나 형식이 맞지 않으면 빈 리스트.
+    """
+    ocr_res = raw.get("overall_ocr_res") or {}
+    if not isinstance(ocr_res, dict):
+        return []
+    texts = ocr_res.get("rec_texts") or []
+    boxes = ocr_res.get("rec_boxes") or []
+    if not isinstance(texts, list) or not isinstance(boxes, list):
+        return []
+
+    words: list[WordBox] = []
+    for text, box in zip(texts, boxes):
+        if not isinstance(box, (list, tuple)) or len(box) < 4:
+            continue
+        try:
+            bbox: BBox = (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
+        except (ValueError, TypeError):
+            continue
+        words.append(WordBox(text=str(text) if text else "", bbox=bbox))
+    return words
+
+
+def _collect_words_in_block(word_boxes: list[WordBox], block_bbox: BBox) -> list[WordBox]:
+    """주어진 블록 bbox 안에 포함된 WordBox들만 반환한다 (IoU 기반)."""
+    bx0, by0, bx1, by1 = block_bbox
+    result: list[WordBox] = []
+    for w in word_boxes:
+        wx0, wy0, wx1, wy1 = w.bbox
+        # 중심점이 블록 안에 있거나, 상당 부분이 겹치는 단어만 포함
+        cx = (wx0 + wx1) / 2.0
+        cy = (wy0 + wy1) / 2.0
+        if bx0 <= cx <= bx1 and by0 <= cy <= by1:
+            result.append(w)
+    return result
 
 
 def parse_layout_result(raw: dict, page_no: int = 1) -> PageLayout:
     """AI Studio prunedResult 또는 로컬 res.json 딕셔너리 하나를 PageLayout으로 정규화한다.
+
+    [Flow: Step 1 (parsing_res_list → 블록 추출) -> Step 2 (overall_ocr_res → 단어 bbox 추출)
+          -> Step 3 (텍스트 블록에 단어 bbox 연결)]
 
     표(table) 블록은 행 단위로 파싱해 tables에 추가하고, 텍스트 블록(title/text/seal 등)은
     text_blocks에 추가한다. image/figure 등 텍스트가 없는 블록은 무시한다.
@@ -149,6 +224,7 @@ def parse_layout_result(raw: dict, page_no: int = 1) -> PageLayout:
     if not raw:
         return PageLayout(page_no=page_no)
     try:
+        word_boxes = _parse_word_boxes(raw)
         blocks = raw.get("parsing_res_list") or []
         tables: list[OcrTable] = []
         text_blocks: list[OcrTextBlock] = []
@@ -161,14 +237,14 @@ def parse_layout_result(raw: dict, page_no: int = 1) -> PageLayout:
                 if table is not None:
                     tables.append(table)
             elif label in TEXT_BLOCK_LABELS:
-                tb = _parse_text_block(block)
+                tb = _parse_text_block(block, word_boxes)
                 if tb is not None:
                     text_blocks.append(tb)
             else:
                 # 알 수 없는 라벨이라도 텍스트가 있으면 포함 (보수적)
                 content = block.get("block_content", "")
                 if isinstance(content, str) and content.strip():
-                    tb = _parse_text_block(block)
+                    tb = _parse_text_block(block, word_boxes)
                     if tb is not None:
                         text_blocks.append(tb)
         return PageLayout(page_no=page_no, tables=tables, text_blocks=text_blocks)

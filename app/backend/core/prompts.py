@@ -214,12 +214,21 @@ def build_element_highlight_prompt(
         "For table rows, if numeric comparison is needed, remove commas and currency symbols and convert to numbers before comparing. "
         "For text elements, judge based on whether specific words/names/dates are present. "
         "If the condition is ambiguous, select the elements most contextually relevant. "
+        "\n"
+        "When the user asks to highlight only a specific part of an element (for example, a particular column of a table row, "
+        "a cell containing an amount, a person's name, or a specific keyword), specify the exact highlight scope. "
+        "Use one of the following scope values, or describe the exact column name/keyword in Korean/English: "
+        "'full' (entire element), 'first_column', 'last_column', 'amount_cell', 'name_cell', 'date_cell', or 'keyword: <word>'. "
+        "If the user does not specify a part, default to 'full'. "
+        "When the user asks for a specific highlight color (e.g., red, yellow, green, blue), use the corresponding color name. "
+        "Available colors: red, yellow, green, blue, orange, purple, pink, gray. If no color is implied, default to yellow. "
+        "\n"
         f"{comment_instr}\n"
         "If no elements match, return an empty matches array.\n"
         "Output strictly in the following JSON format. Do not include explanations or code block markers (```).\n"
         "{\n"
         '  "matches": [\n'
-        '    {"element_index": 0, "comment": "..."}\n'
+        '    {"element_index": 0, "comment": "...", "highlight_scope": "full", "color": "yellow"}\n'
         "  ]\n"
         "}\n"
     )
@@ -364,14 +373,16 @@ def build_vision_bbox_highlight_prompt(
         "For each matching element, output its bounding box as [x_min, y_min, x_max, y_max] in pixels, "
         "where (x_min, y_min) is the top-left corner and (x_max, y_max) is the bottom-right corner. "
         "Be as precise as possible — the bounding box should tightly enclose the text of the matching element. "
-        "For table rows, include the entire row from the leftmost to the rightmost cell. "
+        "For table rows, include only the cells that match the user's request, not necessarily the entire row. "
         "If numeric comparison is needed, remove commas and currency symbols and convert to numbers. "
+        "When the user asks for a specific highlight color, use one of the following colors: "
+        "red, yellow, green, blue, orange, purple, pink, gray. If no color is implied, default to yellow. "
         f"{comment_instr}\n"
         "If no elements match, return an empty matches array.\n"
         "Output strictly in the following JSON format. Do not include explanations or code block markers (```).\n"
         "{\n"
         '  "matches": [\n'
-        '    {"bbox": [x_min, y_min, x_max, y_max], "comment": "..."}\n'
+        '    {"bbox": [x_min, y_min, x_max, y_max], "comment": "...", "color": "yellow"}\n'
         "  ]\n"
         "}\n"
     )

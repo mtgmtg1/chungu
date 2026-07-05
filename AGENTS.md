@@ -450,14 +450,19 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 
 - **기능 개요**: 원본 PDF/이미지에서 자연어 조건(예: "80만원 이상 이체된 줄", "사람 이름이 있는 부분")에 맞는 텍스트 요소를 찾아 **형광펜 하이라이트**와/또는 **여백 코멘트 주석**을 추가해 다운로드할 수 있는 기능. 변호사 등 법률 실무에서 스캔 문서를 그대로 제출용으로 표시해야 하는 요구에서 시작됨.
 - **주석 대상**: 표의 행(table_row)뿐 아니라 제목/단락/각주/도장 내 글자 등 모든 텍스트 블록(text)이 주석 대상이 된다. PaddleOCR-VL의 `parsing_res_list`에서 `block_label`이 `table`인 블록은 행 단위로, 그 외 텍스트가 포함된 블록(`text`/`title`/`figure_title`/`seal` 등)은 블록 전체를 하나의 요소로 취급한다. `image`/`figure` 등 텍스트가 없는 블록은 제외.
-- **이미지 파일 지원**: 원본 PDF가 없는 경우(zip 속 이미지 파일 등), 이미지들을 PyMuPDF로 PDF로 변환한 후 주석을 적용한다. `_images_to_pdf()`가 각 이미지를 RENDER_DPI 기준 포인트 크기의 페이지로 삽입해 단일 PDF를 생성한다.
+- **이미지 파일 지원**: 원본 PDF가 없는 경우(zip 속 이미지 파일 등), 이미지들을 PyMuPDF로 PDF로 변환한 후 주석을 적용한다. `_images_to_pdf()`가 각 이미지를 RENDER_DPI 기준 포인트 크기의 페이지로 삽입해 단일 PDF를 생성한다. 이미지 파일은 주석 생성 직전에 `pdfs` 버킷에 개별 업로드되어야 하며, `supabase_client.upload_image()`가 담당한다.
+- **이미지 전처리 (보정)**: OCR bbox와 주석 PDF의 좌표를 정확히 맞추기 위해 이미지 페이지를 보정한다.
+  1. `image_deskew.deskew_image()`로 미세 기울기(수평에서 몇 도 벗어난 스캔/사진)를 보정한다. `deskew>=1.5.0` 패키지를 사용하며, |각도| < 0.5°면 보정을 생략한다.
+  2. PaddleOCR-VL(AI Studio)의 `doc_preprocessor_res.angle` 코드(0/1/2/3)를 기반으로 90°/180°/270° 단위 대회전을 `_rotate_image_90()`로 적용한다. AI Studio의 `useDocOrientationClassify` 결과를 클라이언트 측에서 재현하는 것이다.
+  3. 보정이 완료된 이미지를 기준으로 bbox를 수집하고, 동일한 보정 이미지로 주석 PDF를 생성한다. 원본 PDF 벡터 정보는 포기하고 시각적 정확도를 우선한다.
 - **처리 흐름**:
-  1. 원본 PDF를 DPI 200으로 재렌더링 (이미지 파일인 경우 이미지를 PDF로 변환)
-  2. PaddleOCR-VL(AI Studio 유료 API, 현재 사용 중)로 페이지별 bbox 원본(layout) 확보
-  3. 모든 텍스트 요소(표 행 + 텍스트 블록)를 텍스트로만 LLM(vLLM Gemma-4)에 전달해 조건에 맞는 요소 선택 (좌표 추론은 LLM에 절대 맡기지 않음 — grounding 신뢰도가 낮다는 리서치 결과 반영)
-  4. 선택된 요소의 bbox를 PDF 좌표로 변환
-  5. PyMuPDF로 원본 PDF에 주석 적용
-  6. Storage 업로드
+  1. `_get_page_image_paths()`로 원본 PDF/이미지에서 페이지 이미지 확보 (PDF는 DPI 200 재렌더링, 이미지는 `pdfs` 버킷에서 다운로드)
+  2. `deskew_image()` + `_rotate_image_90()`로 페이지 이미지 보정
+  3. PaddleOCR-VL(AI Studio 유료 API, 현재 사용 중)로 페이지별 bbox 원본(layout) 확보
+  4. 모든 텍스트 요소(표 행 + 텍스트 블록)를 텍스트로만 LLM(vLLM Gemma-4)에 전달해 조건에 맞는 요소 선택 (좌표 추론은 LLM에 절대 맡기지 않음 — grounding 신뢰도가 낮다는 리서치 결과 반영)
+  5. 선택된 요소의 bbox를 PDF 좌표로 변환
+  6. PyMuPDF로 보정된 이미지 기반 PDF에 주석 적용
+  7. Storage 업로드
 - **사용자 인터페이스**: 결과 페이지(JobResultPage)의 "PDF 하이라이트/주석" 버튼 → 지시문 입력(예: "출금금액이 1000만원 이상인 거래 행", "사람 이름이 있는 부분") + 표시방식(`highlight`/`margin_note`/`both`) + 여백 코멘트 방식(`user_text`/`llm_summary`) 선택 → Celery 비동기 처리 (xlsx_advanced와 동일한 구독 사용량 예약/재시도 패턴)
 - **PaddleOCR-VL 1.6 실제 원본 스키마** (a1 프로덕션에서 실측, 사전 조사했던 PP-StructureV3 계열 `table_res_list`/`cell_box_list` 스키마와는 다름에 주의):
   - `{"width": px, "height": px, "layout_det_res": {...}, "parsing_res_list": [{"block_label": "table"|"text"|"title"|"seal"|..., "block_content": "<table>...</table>" (표는 HTML 문자열), "block_bbox": [xmin,ymin,xmax,ymax], ...}]}`
@@ -473,16 +478,18 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
   - 여백은 **기본적으로 우측에만** 추가한다. 주석 박스가 많아져 페이지 하단을 넘어 겹치게 되면, 하단도 필요한 만큼 늘린다. PaddleOCR-VL / PDF 시각 좌표계의 원점이 좌상단이므로 우측/하단 확장은 원점을 이동시키지 않는다. 좌측/상단 여백은 건드리지 않는다.
 - 여백 코멘트 박스는 서로 겹치지 않도록 세로 위치를 순서대로 밀어내며 배치하고(`_layout_margin_notes`), 원래 요소 위치와 배치된 박스 위치가 달라지면 꺾이는 연결선(callout)으로 이어준다. **박스 높이는 텍스트 양에 따라 가변** (`_estimate_note_height`): 폰트 8pt 기준 약 22문자/줄로 줄 수를 추정해 높이를 계산, 최소 11pt(약 1줄)~최대 120pt(약 10줄) 범위에서 조절된다.
 - LLM 요소 선택 프롬프트(`build_element_highlight_prompt`)는 표 행과 텍스트 블록이 혼합된 요소 목록에서 조건에 맞는 요소를 선택한다. 표 행은 헤더 컬럼명을 정확히 매칭하도록 명시하고, 텍스트 블록은 특정 단어/이름/날짜 포함 여부로 판단한다. 완전한 정확도는 보장되지 않으므로 결과 검토가 필요하다. 텍스트 블록은 앞 200자만 LLM에 전달해 토큰 폭증을 방지한다. **주석 코멘트는 사용자가 instruction에 사용한 언어로 작성**된다 — 프롬프트에서 "write the comment in the SAME language as the user's condition text"로 지시하여, 앱 지원 언어(ko/en/ja) 외의 언어(예: 불어, 스페인어)로 조건을 입력한 사용자도 자신의 언어로 주석을 받을 수 있다. 프롬프트 자체는 모두 영어로 작성되어 있다.
-- DB 필드: `Job.annotate_instruction/annotate_mode/annotate_comment_mode/annotate_status/annotate_job_id/annotate_recovery_notes/annotate_refundable/annotate_reserved_pages/annotate_reserved_period_start`, `result_ocr_layout_storage_path`, `result_annotated_pdf_storage_path` (`020_add_pdf_annotate_fields.sql`). `annotate_job_id`/`result_xlsx_advanced_job_id`는 VARCHAR(64) (`021_widen_job_id_columns.sql`). 주석 결과 파일 목록은 `annotated_pdf_files` JSONB (`022_add_annotated_pdf_files.sql`).
+- DB 필드: `Job.annotate_instruction/annotate_mode/annotate_comment_mode/annotate_status/annotate_job_id/annotate_recovery_notes/annotate_refundable/annotate_reserved_pages/annotate_reserved_period_start`, `result_ocr_layout_storage_path`, `result_annotated_pdf_storage_path` (`020_add_pdf_annotate_fields.sql`). `annotate_job_id`/`result_xlsx_advanced_job_id`는 VARCHAR(64) (`021_widen_job_id_columns.sql`). 주석 결과 파일 목록은 `annotated_pdf_files` JSONB (`022_add_annotated_pdf_files.sql`). 고급주석(Vision LLM) 여부는 `annotate_advanced` BOOLEAN (`023_add_annotate_advanced.sql`).
 - Key files:
   - `app/backend/core/ocr_layout.py` — PaddleOCR-VL `parsing_res_list` → `PageLayout`/`OcrTable`/`OcrRow`/`OcrTextBlock` 정규화 (HTML 표 파싱 + 행 bbox 균등분할 추정, 텍스트 블록 추출)
   - `app/backend/core/pdf_coords.py` — 픽셀 bbox ↔ PDF 포인트 변환, 페이지 경계 clamp
   - `app/backend/core/pdf_annotator.py` — `AnnotationTarget` 기반 하이라이트/여백 주석 렌더링 (회전 보정, 원본 mediabox 직접 확장으로 원점 이동 방지, 텍스트 양에 따른 가변 박스 높이, 겹침 방지 배치)
-  - `app/backend/core/pdf_annotate_converter.py` — 오케스트레이터 (`run()`): 페이지 렌더링 → OCR bbox 확보 → 요소 수집(표 행+텍스트 블록) → LLM 요소 선택 → 좌표 변환 → 주석 적용 → 업로드. `_images_to_pdf()`로 이미지→PDF 변환 지원.
+  - `app/backend/core/pdf_annotate_converter.py` — 오케스트레이터 (`run()`): 페이지 이미지 확보 → 보정(deskew + 90° 회전) → OCR bbox 확보 → 요소 수집(표 행+텍스트 블록) → LLM 요소 선택 → 좌표 변환 → 주석 적용 → 업로드. `_images_to_pdf()`로 이미지→PDF 변환 지원.
+  - `app/backend/core/image_deskew.py` — 이미지 미세 기울기 보정 (`deskew` 라이브러리). 0.5° 미만은 생략, 흰색 배경으로 채움.
   - `app/backend/core/prompts.py` — `build_element_highlight_prompt()` (표 행+텍스트 블록 혼합, 사용자 조건 문구 언어로 코멘트 작성 지시), `build_row_highlight_prompt()` (레거시, 표 전용). 모든 프롬프트는 영어로 작성.
-  - `app/backend/core/paddleocr_client.py` — `convert_image_with_layout()` (bbox 포함 변환), `_convert_and_poll()` 공통 폴링
+  - `app/backend/core/paddleocr_client.py` — `convert_image_with_layout()` (bbox 포함 변환, angle_code 반환), `_convert_and_poll()` 공통 폴링
   - `app/backend/paddleocr_service/main.py` — `_extract_layout_from_result()`, `ConvertResponse.layout` 필드, AI Studio `prunedResult` 전달
-  - `app/backend/workers/tasks.py` — `annotate_pdf_job` Celery task
+  - `app/backend/core/supabase_client.py` — `upload_image()` (원본 이미지를 `pdfs` 버킷에 개별 업로드). `_get_page_image_paths()`가 이 경로를 다운로드할 수 있도록 동일 버킷을 사용해야 한다.
+  - `app/backend/workers/tasks.py` — `annotate_pdf_job` Celery task; 이미지 파일 처리 후 `extracted_files[i].storage_path`를 `upload_image()`로 설정
   - `app/backend/api/jobs.py` — `POST /jobs/{id}/annotate`, `POST /jobs/{id}/annotate-action` (xlsx_advanced와 동일 패턴)
   - `app/frontend/src/pages/JobResultPage.jsx` — 하이라이트/주석 생성 버튼 + 모달 + 상태 폴링
   - `app/frontend/src/api.js` — `annotateJob()`, `annotateAction()`

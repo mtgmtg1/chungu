@@ -97,6 +97,7 @@ class Job(Base):
     annotate_instruction: Mapped[str] = mapped_column(Text, default="")
     annotate_mode: Mapped[str] = mapped_column(String(20), default="highlight")  # highlight | margin_note | both
     annotate_comment_mode: Mapped[str] = mapped_column(String(20), default="user_text")  # user_text | llm_summary
+    annotate_advanced: Mapped[bool] = mapped_column(Boolean, default=False)  # True=Vision LLM 고급주석
     annotate_status: Mapped[str] = mapped_column(String(20), default="")  # "" | processing | done | error
     annotate_job_id: Mapped[str] = mapped_column(String(32), default="")
     annotate_recovery_notes: Mapped[list] = mapped_column(JSON, default=list)

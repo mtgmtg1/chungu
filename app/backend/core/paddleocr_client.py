@@ -10,6 +10,7 @@ from typing import Callable
 import requests
 
 from ..config import settings
+from .image_deskew import deskew_image
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +52,17 @@ def _convert_and_poll(
     base_url = _get_service_url()
     logger.info(f"[paddleocr-client] {path.name} 변환 시작 (size={path.stat().st_size / 1024 / 1024:.1f}MB)")
 
+    # [Flow: Step 0 (미세 회전 보정) — deskew 전처리 후 보정된 이미지를 AI Studio로 전송]
+    # 90° 단위 대회전은 AI Studio API의 useDocOrientationClassify=True가 담당하고,
+    # 수평에서 몇 도 기울어진 미세 회전은 deskew 라이브러리로 보정한다.
+    # 보정된 이미지 기준으로 bbox가 반환되므로 주석 하이라이트가 텍스트와 정렬된다.
+    send_path, applied_angle = deskew_image(path)
+    if applied_angle != 0.0:
+        logger.info(f"[paddleocr-client] {path.name} deskew 보정 적용 ({applied_angle:.3f}°) → {send_path.name}")
+
     # Step 1: 비동기 변환 시작
     convert_url = f"{base_url}/api/convert"
-    with open(path, "rb") as f:
+    with open(send_path, "rb") as f:
         files = {"file": (path.name, f)}
         resp = requests.post(convert_url, files=files, timeout=UPLOAD_TIMEOUT)
 
@@ -143,14 +152,12 @@ def convert_image_with_layout(
     image_path: Path,
     timeout: int = 600,
     on_progress: Callable[[int, int], None] | None = None,
-) -> tuple[str, dict]:
-    """PDF 하이라이트/여백 주석 기능용: 이미지 한 장을 변환하고 bbox 원본(layout)까지 반환한다.
+) -> tuple[str, dict, int]:
+    """PDF 하이라이트/여백 주석 기능용: 이미지 한 장을 변환하고 bbox 원본(layout)과 90° 회전 각도를 반환한다.
 
-    PaddleOCR 서비스는 요청마다 useDocOrientationClassify/useDocUnwarping을 False로 고정 전송하므로
-    (paddleocr_service/main.py `_aistudio_submit_job` 참고) 반환되는 bbox는 항상 원본 이미지 좌표 기준이다.
-
-    로컬 PaddleOCR-VL 1.6 서버로 전환할 때는 이 함수 내부에서 호출하는 엔드포인트만
-    (`base_url/api/convert` → `base_url/convert/layout` 등) 교체하면 되고, 반환 스키마는 동일하게 유지된다.
+    AI Studio API의 useDocOrientationClassify=True가 보정한 90° 단위 회전 각도(0/1/2/3)를 함께 반환한다.
+    클라이언트는 이 각도로 원본 이미지를 회전시켜 AI Studio 보정 결과를 재현한 후 주석 PDF를 생성한다.
+    미세 회전은 _convert_and_poll 내부에서 deskew 전처리로 이미 보정되어 전송된다.
 
     Args:
         image_path: 변환할 페이지 이미지 경로 (렌더링 DPI를 호출자가 알고 있어야 좌표 역변환 가능)
@@ -158,14 +165,17 @@ def convert_image_with_layout(
         on_progress: 진행률 콜백
 
     Returns:
-        (markdown_text, layout_dict) — layout_dict는 res.json과 동일 스키마의 단일 페이지 원본 딕셔너리
-        (layout_det_res/overall_ocr_res/table_res_list 등). 실패 시 빈 dict.
+        (markdown_text, layout_dict, angle_code) —
+        layout_dict는 res.json과 동일 스키마의 단일 페이지 원본 딕셔너리. 실패 시 빈 dict.
+        angle_code는 0/1/2/3(0°/90°/180°/270°) 또는 -1(미적용).
     """
     result = _convert_and_poll(image_path, timeout, on_progress)
     markdown = result.get("markdown", "")
     layout_pages = result.get("layout", [])
+    page_angles = result.get("page_angles", [])
     layout = layout_pages[0] if layout_pages else {}
-    return markdown, layout
+    angle_code = page_angles[0] if page_angles else -1
+    return markdown, layout, angle_code
 
 
 def convert_image(image_path: Path, timeout: int = 600) -> str:

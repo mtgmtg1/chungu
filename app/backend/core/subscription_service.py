@@ -5,11 +5,24 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..db.models import SubscriptionUsage, User
+from ..db.models import AdminUser, SubscriptionUsage, User
 
 logger = logging.getLogger(__name__)
+
+
+def _is_admin_user(db: Session, user: User) -> bool:
+    """관리자 여부를 판별한다.
+    User.is_admin 플래그 또는 admin_users 테이블 등록 여부를 기준으로 한다.
+    (points_service.spend_points 의 관리자 판별 로직과 동일하게 유지)"""
+    if getattr(user, "is_admin", False):
+        return True
+    return (
+        db.execute(select(AdminUser).where(AdminUser.email == user.email)).scalar_one_or_none()
+        is not None
+    )
 
 # 플랜별 월간 한도
 PLAN_LIMITS: dict[str, dict[str, int]] = {
@@ -85,11 +98,36 @@ def _get_usage_for_period(db: Session, user_id: uuid.UUID, period_start: datetim
 
 
 def get_subscription_status(db: Session, user: User) -> dict[str, Any]:
-    """사용자의 구독 플랜, 상태, 현재 기간 사용량 및 잔여 한도를 반환한다."""
+    """사용자의 구독 플랜, 상태, 현재 기간 사용량 및 잔여 한도를 반환한다.
+
+    관리자는 플랜 한도와 무관하게 무제한으로 표시한다.
+    사용량(used)은 통계를 위해 계속 누적 기록한다."""
     plan = user.subscription_plan or "free"
     limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
     period_start = _get_period_start(user)
     usage = _get_usage_for_period(db, user.id, period_start)
+
+    # 관리자 우회: 한도를 무제한(-1)으로 표시한다.
+    if _is_admin_user(db, user):
+        unlimited_limits = {"basic_pages": -1, "premium_pages": -1, "media_seconds": -1}
+        return {
+            "plan": plan,
+            "status": user.subscription_status or "inactive",
+            "active": True,
+            "period_start": period_start.isoformat(),
+            "period_end": user.subscription_period_end.isoformat() if user.subscription_period_end else None,
+            "limits": unlimited_limits,
+            "used": {
+                "basic_pages": usage.basic_pages,
+                "premium_pages": usage.premium_pages,
+                "media_seconds": usage.media_seconds,
+            },
+            "remaining": {
+                "basic_pages": -1,  # 무제한
+                "premium_pages": -1,
+                "media_seconds": -1,
+            },
+        }
 
     return {
         "plan": plan,
@@ -121,7 +159,22 @@ def check_enough(
     """주어진 사용량이 현재 구독 한도 내에서 가능한지 확인한다. (차감하지 않음)
 
     반환값: {"ok": bool, "reason": str|None, "remaining": dict, "limits": dict}
+
+    관리자는 구독 플랜 한도와 무관하게 무제한 사용 가능하다.
     """
+    # 관리자 우회: 월간 페이지/미디어 한도를 무제한으로 취급한다.
+    if _is_admin_user(db, user):
+        return {
+            "ok": True,
+            "reason": None,
+            "remaining": {
+                "basic_pages": -1,  # 무제한을 나타내는 센티넬값
+                "premium_pages": -1,
+                "media_seconds": -1,
+            },
+            "limits": {"basic_pages": -1, "premium_pages": -1, "media_seconds": -1},
+        }
+
     if not is_subscription_active(user):
         return {"ok": False, "reason": "구독이 활성 상태가 아닙니다.", "remaining": {}, "limits": {}}
 
@@ -189,7 +242,34 @@ def reserve_usage(
 ) -> dict[str, Any]:
     """작업 승인 시점에 월간 구독 한도 내 사용량을 예약(차감)한다.
     한도 초과 시 ValueError를 발생시킨다.
-    반환값: 현재 사용량과 잔여 한도를 포함한 상태."""
+    반환값: 현재 사용량과 잔여 한도를 포함한 상태.
+
+    관리자는 구독 플랜 한도와 무관하게 무제한 사용 가능하다.
+    사용량 레코드는 통계/가시성을 위해 계속 누적 기록하되, 한도 초과 검사는 건너뛴다."""
+    # 관리자 우회: 한도 초과 검사 없이 사용량만 누적 기록한다.
+    if _is_admin_user(db, user):
+        period_start = _get_period_start(user)
+        usage = _get_usage_for_period(db, user.id, period_start)
+        usage.basic_pages += basic_pages
+        usage.premium_pages += premium_pages
+        usage.media_seconds += media_seconds
+        db.commit()
+        db.refresh(usage)
+        return {
+            "plan": user.subscription_plan or "free",
+            "period_start": period_start.isoformat(),
+            "used": {
+                "basic_pages": usage.basic_pages,
+                "premium_pages": usage.premium_pages,
+                "media_seconds": usage.media_seconds,
+            },
+            "remaining": {
+                "basic_pages": -1,  # 무제한
+                "premium_pages": -1,
+                "media_seconds": -1,
+            },
+        }
+
     if not is_subscription_active(user):
         raise ValueError("구독이 활성 상태가 아닙니다. 요금제를 선택해주세요.")
 

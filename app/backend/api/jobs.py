@@ -17,7 +17,7 @@ from typing import List
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
 from pypdf import PdfReader
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from .. import settings_store
@@ -1899,7 +1899,11 @@ def save_user_annotations(
         else:
             raise HTTPException(status_code=404, detail="Annotation file not found")
 
-    if source_index < 0 or source_index >= len(entries):
+    if source_index < 0:
+        # [Flow: source_index가 -1이면 원본 PDF에 사용자 주석을 적용해 새 annotation 파일을 생성한다]
+        return _create_user_annotated_pdf(job, annotations, db)
+
+    if source_index >= len(entries):
         raise HTTPException(status_code=404, detail="Annotation file not found")
 
     entry = entries[source_index]
@@ -1938,6 +1942,83 @@ def save_user_annotations(
     except Exception as e:
         logger.exception(f"[save_user_annotations] {job_id} source_index={source_index} 실패: {e}")
         raise HTTPException(status_code=500, detail=f"주석 저장 실패: {e}")
+
+
+def _annotation_display_name(job: Job, n: int) -> str:
+    """[Flow: Step 1 (원본 파일명 확인) -> Step 2 (확장자 제거) -> Step 3 (주석 순서 접미사 추가)]"""
+    stem = Path(job.original_filename).stem if job.original_filename else "result"
+    return f"{stem}_annotation{n}.pdf"
+
+
+def _create_user_annotated_pdf(job: Job, annotations: list, db: Session) -> dict:
+    """[Flow: Step 1 (원본 PDF storage_path 확인) -> Step 2 (원본 PDF 다운로드)
+          -> Step 3 (사용자 주석 PyMuPDF로 적용) -> Step 4 (원자적 다음 인덱스 할당)
+          -> Step 5 (results 버킷에 PDF + JSON 업로드) -> Step 6 (annotated_pdf_files에 entry 추가)
+          -> Step 7 (DB commit 및 preview 캐시 무효화)]
+
+    사용자가 원본 PDF에 직접 추가한 주석을 받아 새로운 annotation PDF 파일을 생성한다.
+    """
+    job_id = job.id
+    original_path = job.pdf_storage_path
+    if not original_path:
+        raise HTTPException(status_code=404, detail="Original PDF not found")
+
+    try:
+        client = supabase_client.get_service_client()
+        pdf_bytes = client.storage.from_("pdfs").download(original_path)
+        new_pdf_bytes = pdf_user_annotator.apply_user_annotations(pdf_bytes, annotations)
+
+        # 원자적으로 다음 인덱스를 할당한다. 동시에 여러 주석 저장이 실행되더라도
+        # 각각 고유한 파일명을 가지므로 덮어쓰기가 발생하지 않는다.
+        result = db.execute(
+            update(Job)
+            .where(Job.id == job_id)
+            .values(annotated_pdf_next_index=Job.annotated_pdf_next_index + 1)
+            .returning(Job.annotated_pdf_next_index)
+        )
+        db.commit()
+        next_index = result.scalar()
+        if not next_index:
+            raise HTTPException(status_code=500, detail="Failed to allocate annotation index")
+
+        storage_path = f"{job_id}/annotated_{next_index}.pdf"
+        annotations_json_storage_path = f"{job_id}/annotated_{next_index}.annotations.json"
+
+        client.storage.from_("results").upload(
+            storage_path,
+            new_pdf_bytes,
+            {"content-type": "application/pdf", "upsert": "true"},
+        )
+        client.storage.from_("results").upload(
+            annotations_json_storage_path,
+            json.dumps(annotations, ensure_ascii=False).encode("utf-8"),
+            {"content-type": "application/json", "upsert": "true"},
+        )
+
+        entry = {
+            "index": next_index,
+            "storage_path": storage_path,
+            "annotations_json_storage_path": annotations_json_storage_path,
+            "filename": _annotation_display_name(job, next_index),
+            "instruction": "",
+            "mode": "user",
+            "comment_mode": "user",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        annotated_files = list(job.annotated_pdf_files or [])
+        annotated_files.append(entry)
+        job.annotated_pdf_files = annotated_files
+        job.result_annotated_pdf_storage_path = storage_path
+        db.commit()
+        cache.invalidate_pattern(f"preview:{job_id}:*")
+        return {
+            "ok": True,
+            "storage_path": storage_path,
+            "annotations_json_storage_path": annotations_json_storage_path,
+        }
+    except Exception as e:
+        logger.exception(f"[_create_user_annotated_pdf] {job_id} 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"주석 PDF 생성 실패: {e}")
 
 
 @router.post("/jobs/{job_id}/action")

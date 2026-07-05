@@ -79,10 +79,22 @@ export default function SourcePanel({
   const selectedIndex = isControlled ? selectedFileIndex : internalIndex;
   const setSelectedIndex = isControlled ? onFileSelect : setInternalIndex;
   const pdfViewerRef = useRef(null);
+  const autoSaveRef = useRef(null);
   const [selectedAnnotationsJson, setSelectedAnnotationsJson] = useState(null);
   const [hasAnnotationChanges, setHasAnnotationChanges] = useState(false);
 
   const selectedFile = files.length > 1 ? (files[selectedIndex] || files[0]) : files[0];
+
+  /**
+   * [Flow: Step 1 (컴포넌트 언마운트 시 진행 중인 자동 저장 타이머 정리)]
+   */
+  useEffect(() => {
+    return () => {
+      if (autoSaveRef.current) {
+        clearTimeout(autoSaveRef.current);
+      }
+    };
+  }, []);
 
   /**
    * [Flow: Step 1 (선택된 파일의 annotations_json_url 확인) -> Step 2 (fetch로 JSON 로드)
@@ -119,18 +131,29 @@ export default function SourcePanel({
   }, [selectedFile?.annotations_json_url]);
 
   /**
-   * [Flow: Step 1 (주석 변경 이벤트 수신) -> Step 2 (변경 플래그 true)]
+   * [Flow: Step 1 (주석 변경 이벤트 수신) -> Step 2 (변경 플래그 true)
+   *       -> Step 3 (2초 debounce 후 자동 저장 예약)]
    */
   const handleAnnotationChanged = () => {
     setHasAnnotationChanges(true);
+    if (autoSaveRef.current) {
+      clearTimeout(autoSaveRef.current);
+    }
+    autoSaveRef.current = setTimeout(() => {
+      handleSaveAnnotations();
+    }, 2000);
   };
 
   /**
-   * [Flow: Step 1 (PdfViewer ref로 exportAnnotations 호출) -> Step 2 (JSON 파싱)
-   *       -> Step 3 (상위 onSaveAnnotations 콜백에 전달) -> Step 4 (변경 플래그 false)]
+   * [Flow: Step 1 (자동 저장 타이머 취소) -> Step 2 (PdfViewer ref로 exportAnnotations 호출)
+   *       -> Step 3 (JSON 파싱) -> Step 4 (상위 onSaveAnnotations 콜백에 전달) -> Step 5 (변경 플래그 false)]
    */
   const handleSaveAnnotations = async () => {
     if (!pdfViewerRef.current || !onSaveAnnotations) return;
+    if (autoSaveRef.current) {
+      clearTimeout(autoSaveRef.current);
+      autoSaveRef.current = null;
+    }
     const jsonString = await pdfViewerRef.current.exportAnnotations();
     if (!jsonString) return;
     try {
@@ -142,8 +165,7 @@ export default function SourcePanel({
     }
   };
 
-  const showSaveButton =
-    onSaveAnnotations && selectedFile?.source_kind === "annotation" && (selectedAnnotationsJson !== null || hasAnnotationChanges);
+  const showSaveButton = onSaveAnnotations && selectedFile?.type === "pdf";
 
   if (files.length === 1) {
     const file = files[0];

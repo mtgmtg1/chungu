@@ -909,37 +909,44 @@ export default function JobResultPage() {
       {deleteSourceFileModal &&
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-oid="delete-source-modal-overlay">
         <div className="bg-white rounded-lg shadow-lg border border-outline-variant p-6 w-full max-w-sm" data-oid="delete-source-modal">
-          <h3 className="font-headline-md text-headline-md font-bold text-on-surface mb-2" data-oid="delete-source-modal-title">
-            {pendingDeleteFile?.status === "processing"
-              ? t("page:result.annotateCancelTitle")
-              : t("page:result.deleteSourceFileTitle")}
-          </h3>
-          <p className="text-sm text-on-surface-variant mb-6" data-oid="delete-source-modal-desc">
-            {pendingDeleteFile?.status === "processing"
-              ? t("page:result.annotateCancelDesc", { filename: pendingDeleteFile?.name || "" })
-              : t("page:result.deleteSourceFileDesc", { filename: pendingDeleteFile?.name || "" })}
-          </p>
-          <div className="flex justify-end gap-2" data-oid="delete-source-modal-actions">
-            <button
-              onClick={closeDeleteSourceFileModal}
-              disabled={converting}
-              className="px-4 py-2 rounded-lg border border-outline-variant text-on-surface hover:bg-surface-container-high transition-colors"
-              data-oid="delete-source-modal-cancel">
-              {t("common:actions.cancel")}
-            </button>
-            <button
-              onClick={confirmDeleteSourceFile}
-              disabled={converting}
-              className="flex items-center gap-1 px-4 py-2 rounded-lg bg-error text-white hover:opacity-90 transition-colors"
-              data-oid="delete-source-modal-confirm">
-              {converting ?
-              <Loader2 size={16} className="animate-spin" data-oid="delete-source-modal-spinner" /> :
-              <Trash2 size={16} data-oid="delete-source-modal-icon" />}
-              {pendingDeleteFile?.status === "processing"
-                ? t("page:result.annotateCancel")
-                : t("common:delete")}
-            </button>
-          </div>
+          {(() => {
+            const isCancellable = pendingDeleteFile?.status === "processing" || pendingDeleteFile?.status === "error";
+            return (
+              <>
+                <h3 className="font-headline-md text-headline-md font-bold text-on-surface mb-2" data-oid="delete-source-modal-title">
+                  {isCancellable
+                    ? t("page:result.annotateCancelTitle")
+                    : t("page:result.deleteSourceFileTitle")}
+                </h3>
+                <p className="text-sm text-on-surface-variant mb-6" data-oid="delete-source-modal-desc">
+                  {isCancellable
+                    ? t("page:result.annotateCancelDesc", { filename: pendingDeleteFile?.name || "" })
+                    : t("page:result.deleteSourceFileDesc", { filename: pendingDeleteFile?.name || "" })}
+                </p>
+                <div className="flex justify-end gap-2" data-oid="delete-source-modal-actions">
+                  <button
+                    onClick={closeDeleteSourceFileModal}
+                    disabled={converting}
+                    className="px-4 py-2 rounded-lg border border-outline-variant text-on-surface hover:bg-surface-container-high transition-colors"
+                    data-oid="delete-source-modal-cancel">
+                    {t("common:actions.cancel")}
+                  </button>
+                  <button
+                    onClick={confirmDeleteSourceFile}
+                    disabled={converting}
+                    className="flex items-center gap-1 px-4 py-2 rounded-lg bg-error text-white hover:opacity-90 transition-colors"
+                    data-oid="delete-source-modal-confirm">
+                    {converting ?
+                    <Loader2 size={16} className="animate-spin" data-oid="delete-source-modal-spinner" /> :
+                    <Trash2 size={16} data-oid="delete-source-modal-icon" />}
+                    {isCancellable
+                      ? t("page:result.annotateCancel")
+                      : t("common:delete")}
+                  </button>
+                </div>
+              </>
+            );
+          })()}
         </div>
       </div>
       }

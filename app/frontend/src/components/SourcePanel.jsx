@@ -337,7 +337,14 @@ export default function SourcePanel({
                       ) : (
                         <SourceIcon type={f.type} />
                       )}
-                      <span className="truncate">{f.name}</span>
+                      <span className="flex flex-col items-start min-w-0">
+                        <span className="truncate">{f.name}</span>
+                        {f.status === "error" && (
+                          <span className="text-error text-[10px] leading-none mt-0.5">
+                            {t("page:result.annotateFailed")}
+                          </span>
+                        )}
+                      </span>
                     </button>
                     <div className="flex-shrink-0 flex items-center gap-1">
                       {f.status === "error" && onRetryAnnotation && (
@@ -346,22 +353,50 @@ export default function SourcePanel({
                             e.stopPropagation();
                             onRetryAnnotation(f.source_index);
                           }}
-                          className="flex-shrink-0 p-1 rounded text-primary/70 hover:text-primary hover:bg-primary/10 transition-colors"
+                          className="flex-shrink-0 flex items-center gap-1 px-1.5 py-1 rounded text-primary/70 hover:text-primary hover:bg-primary/10 transition-colors text-[10px]"
                           title={t("page:result.annotateRetry")}
                           aria-label={t("page:result.annotateRetry")}
                         >
                           <RotateCw size={14} />
+                          <span>{t("page:result.annotateRetry")}</span>
                         </button>
                       )}
-                      {onDeleteFile && (
+                      {f.status === "error" && onDeleteFile && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteFile(f.source_index, f.source_kind);
+                          }}
+                          className="flex-shrink-0 flex items-center gap-1 px-1.5 py-1 rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors text-[10px]"
+                          title={t("page:result.annotateCancel")}
+                          aria-label={t("page:result.annotateCancel")}
+                        >
+                          <Trash2 size={14} />
+                          <span>{t("page:result.annotateCancel")}</span>
+                        </button>
+                      )}
+                      {f.status === "processing" && onDeleteFile && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             onDeleteFile(f.source_index, f.source_kind);
                           }}
                           className="flex-shrink-0 p-1 rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors"
-                          title={f.status === "processing" ? t("page:result.annotateCancel") : t("common:delete")}
-                          aria-label={f.status === "processing" ? t("page:result.annotateCancel") : t("common:delete")}
+                          title={t("page:result.annotateCancel")}
+                          aria-label={t("page:result.annotateCancel")}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                      {f.status !== "error" && f.status !== "processing" && onDeleteFile && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteFile(f.source_index, f.source_kind);
+                          }}
+                          className="flex-shrink-0 p-1 rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors"
+                          title={t("common:delete")}
+                          aria-label={t("common:delete")}
                         >
                           <Trash2 size={14} />
                         </button>
@@ -382,15 +417,26 @@ export default function SourcePanel({
                 <div className="flex-1 flex flex-col items-center justify-center h-full w-full text-error text-sm p-4 gap-3">
                   <AlertCircle size={32} className="text-error" />
                   <span>{t("page:result.annotateErrorItem", { instruction: selected.instruction || "" })}</span>
-                  {onRetryAnnotation && (
-                    <button
-                      onClick={() => onRetryAnnotation(selected.source_index)}
-                      className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-white hover:opacity-90 transition-colors"
-                    >
-                      <RotateCw size={16} />
-                      {t("page:result.annotateRetry")}
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {onRetryAnnotation && (
+                      <button
+                        onClick={() => onRetryAnnotation(selected.source_index)}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-white hover:opacity-90 transition-colors"
+                      >
+                        <RotateCw size={16} />
+                        {t("page:result.annotateRetry")}
+                      </button>
+                    )}
+                    {onDeleteFile && (
+                      <button
+                        onClick={() => onDeleteFile(selected.source_index, selected.source_kind)}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-error text-error hover:bg-error/10 transition-colors"
+                      >
+                        <Trash2 size={16} />
+                        {t("page:result.annotateCancel")}
+                      </button>
+                    )}
+                  </div>
                 </div>
               ) : selected.type === "pdf" ? (
                 <PdfViewerWithFab

@@ -48,12 +48,28 @@ function replaceSelectionWithMarkdown(editor, markdown) {
   editor.chain().focus().insertContentAt({ from, to }, html).run();
 }
 
-export default function AiMenu({ editor }) {
+export default function AiMenu({ editor, editable = true }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [customPrompt, setCustomPrompt] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
+  const [hasSelection, setHasSelection] = useState(false);
   const menuRef = useRef(null);
+
+  // [Flow: Step 1 (Tiptap editor selection 변경 구독) -> Step 2 (hasSelection state 업데이트) -> Step 3 (버튼 disabled 상태 반영)]
+  useEffect(() => {
+    if (!editor) return;
+    const update = () => setHasSelection(!editor.state.selection.empty);
+    editor.on("selectionUpdate", update);
+    editor.on("focus", update);
+    editor.on("blur", () => setHasSelection(false));
+    update();
+    return () => {
+      editor.off("selectionUpdate", update);
+      editor.off("focus", update);
+      editor.off("blur", () => setHasSelection(false));
+    };
+  }, [editor]);
 
   const { completion, complete, isLoading, error } = useCompletion({
     api: "/api/v1/ai/generate",
@@ -80,8 +96,6 @@ export default function AiMenu({ editor }) {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [open]);
-
-  const hasSelection = editor && !editor.state.selection.empty;
 
   /**
    * [Flow: Step 1 (선택 마크다운 추출) -> Step 2 (continue는 커서 이전 텍스트 사용) -> Step 3 (useCompletion complete 호출)]
@@ -113,7 +127,7 @@ export default function AiMenu({ editor }) {
     await complete(prompt, { body: { option: "zap", command: customPrompt.trim() } });
   };
 
-  if (!editor) return null;
+  if (!editor || !editable) return null;
 
   return (
     <div ref={menuRef} className="relative">

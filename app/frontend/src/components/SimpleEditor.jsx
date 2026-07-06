@@ -458,7 +458,7 @@ ref)
         </ToolbarButton>
         <ToolbarDivider data-oid="k3gd.63" />
 
-        <AiMenu editor={editor} data-oid="ai-menu" />
+        <AiMenu editor={editor} editable={editable} data-oid="ai-menu" />
         <ToolbarDivider data-oid="ai-divider" />
 
         <ToolbarButton

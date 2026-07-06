@@ -1,87 +1,68 @@
 #!/usr/bin/env python3
-# [Flow: Step 1 (dev_bypass_auth 설정 확인) -> Step 2 (고정 dev 사용자 조회/생성) -> Step 3 (Supabase JWT 발급) -> Step 4 (세션 정보 반환)]
+# [Flow: Step 1 (dev_bypass_auth 설정 확인) -> Step 2 (설정된 dev 계정으로 Supabase Auth 로그인) -> Step 3 (Supabase 세션 반환)]
 """로컬 개발 전용 인증 bypass.
 
-이 모듈은 프로덕션이 아닌 로컬 개발 환경에서만 사용됩니다.
-`DEV_BYPASS_AUTH=true`로 설정된 경우에만 `/api/dev-login` 엔드포인트가 활성화되며,
-실제 Supabase Auth를 거치지 않고 유효한 access token을 발급합니다.
+이 모듈은 프로덕션이 아닌 로컬 개발 환경에서만 사용합니다.
+`DEV_BYPASS_AUTH=true`로 설정된 경우에만 `/api/dev/login` 엔드포인트가 활성화되며,
+설정된 이메일/비밀번호로 실제 Supabase Auth에 로그인해 유효한 세션을 발급합니다.
 """
-from datetime import datetime, timedelta, timezone
+import logging
 
-import jwt
+import httpx
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..db.models import User
-from ..db.session import SessionLocal
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/dev", tags=["dev-auth"])
 
-ALGO = "HS256"
 
+def _sign_in_with_password(email: str, password: str) -> dict:
+    """[Flow: Step 1 (Supabase token endpoint 조립) -> Step 2 (email/password로 로그인 요청)
+          -> Step 3 (access_token/refresh_token/user 추출) -> Step 4 (결과 반환)]
 
-def _ensure_dev_user() -> User:
-    """고정 dev 사용자를 local DB에 생성/조회합니다."""
-    db = SessionLocal()
-    try:
-        uid = settings.dev_bypass_user_id
-        user = db.execute(select(User).where(User.id == uid)).scalar_one_or_none()
-        if user is None:
-            user = User(
-                id=uid,
-                email=settings.dev_bypass_email,
-                points_balance=10000,  # 개발 테스트용 잔액 (10 USD)
-                language="ko",
-                is_admin=True,
-            )
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-        return user
-    finally:
-        db.close()
-
-
-def _mint_dev_token(user: User) -> str:
-    """Supabase JWT secret으로 개발용 access token을 생성합니다."""
-    now = datetime.now(timezone.utc)
-    payload = {
-        "sub": str(user.id),
-        "email": user.email,
-        "role": "authenticated",
-        "aud": "authenticated",
-        "iat": now,
-        "exp": now + timedelta(days=365),
+    Supabase Auth의 signInWithPassword API를 직접 호출하여 실제 세션을 얻는다.
+    """
+    base_url = settings.supabase_url.rstrip("/")
+    url = f"{base_url}/auth/v1/token?grant_type=password"
+    headers = {
+        "apikey": settings.supabase_key,
+        "Authorization": f"Bearer {settings.supabase_key}",
+        "Content-Type": "application/json",
     }
-    return jwt.encode(payload, settings.supabase_jwt_secret, algorithm=ALGO)
+    payload = {"email": email, "password": password}
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.post(url, headers=headers, json=payload)
+    if resp.status_code != 200:
+        logger.error(f"[dev_auth] Supabase login failed: {resp.status_code} {resp.text}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Supabase login failed: {resp.status_code} {resp.text}",
+        )
+    return resp.json()
 
 
 @router.post("/login")
 def dev_login():
-    """로컬 개발 전용: 설정이 활성화된 경우 유효한 access token을 반환합니다."""
+    """로컬 개발 전용: 설정된 계정으로 실제 Supabase Auth에 로그인해 세션을 반환합니다."""
     if not settings.dev_bypass_auth:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Dev auth bypass is not enabled.",
         )
 
-    if not settings.supabase_jwt_secret:
+    if not settings.dev_bypass_email or not settings.dev_bypass_password:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="SUPABASE_JWT_SECRET is not configured.",
+            detail="DEV_BYPASS_AUTH_EMAIL and DEV_BYPASS_AUTH_PASSWORD are not configured.",
         )
 
-    user = _ensure_dev_user()
-    access_token = _mint_dev_token(user)
+    session = _sign_in_with_password(settings.dev_bypass_email, settings.dev_bypass_password)
     return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "expires_in": 365 * 24 * 60 * 60,
-        "user": {
-            "id": str(user.id),
-            "email": user.email,
-            "role": "authenticated",
-        },
+        "access_token": session["access_token"],
+        "refresh_token": session["refresh_token"],
+        "token_type": session.get("token_type", "bearer"),
+        "expires_in": session.get("expires_in", 3600),
+        "user": session["user"],
     }

@@ -32,6 +32,45 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
     });
   }
 
+  /**
+   * [Flow: Step 1 (Luckysheet 데이터를 XLSX Blob으로 변환) -> Step 2 (서버에 업로드)
+   *       -> Step 3 (자동 저장 메시지 표시)]
+   * 자동 저장이므로 saving 오버레이/에러 배너 없이 조용히 처리한다.
+   * exportToBlob/luckysheetDataToWorkbook은 function 선언으로 호이스팅되므로
+   * 이 위치에서 안전하게 호출 가능하다.
+   */
+  const handleAutoSave = useCallback(async () => {
+    const blob = exportToBlob();
+    if (!blob) return;
+    if (autoSaveRef.current) {
+      clearTimeout(autoSaveRef.current);
+      autoSaveRef.current = null;
+    }
+    try {
+      await api.saveEditedXlsx(jobId, blob, fileName || "edited.xlsx");
+      setSaveMessage(t("page:result.autoSaved"));
+      if (autoSaveMessageTimerRef.current) clearTimeout(autoSaveMessageTimerRef.current);
+      autoSaveMessageTimerRef.current = setTimeout(() => setSaveMessage(""), 2000);
+    } catch (e) {
+      console.error("[auto-save xlsx] failed:", e);
+    }
+  }, [jobId, fileName, t]);
+
+  /**
+   * [Flow: Step 1 (셀 편집 등 변경 이벤트 수신) -> Step 2 (1초 debounce 후 자동 저장 예약)]
+   * 초기 로드 시 발생하는 이벤트는 무시한다.
+   */
+  const handleCellChange = useCallback(() => {
+    if (isInitialLoadRef.current) return;
+    if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
+    autoSaveRef.current = setTimeout(() => {
+      handleAutoSave();
+    }, 1000);
+  }, [handleAutoSave]);
+
+  // [Flow: handleCellChange ref를 항상 최신으로 유지 (luckysheet create 시 고정되므로)]
+  handleCellChangeRef.current = handleCellChange;
+
   // Luckysheet 라이브러리 동적 로드
   useEffect(() => {
     let mounted = true;
@@ -204,43 +243,6 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }
-
-  /**
-   * [Flow: Step 1 (Luckysheet 데이터를 XLSX Blob으로 변환) -> Step 2 (서버에 업로드)
-   *       -> Step 3 (자동 저장 메시지 표시)]
-   * 자동 저장이므로 saving 오버레이/에러 배너 없이 조용히 처리한다.
-   */
-  const handleAutoSave = useCallback(async () => {
-    const blob = exportToBlob();
-    if (!blob) return;
-    if (autoSaveRef.current) {
-      clearTimeout(autoSaveRef.current);
-      autoSaveRef.current = null;
-    }
-    try {
-      await api.saveEditedXlsx(jobId, blob, fileName || "edited.xlsx");
-      setSaveMessage(t("page:result.autoSaved"));
-      if (autoSaveMessageTimerRef.current) clearTimeout(autoSaveMessageTimerRef.current);
-      autoSaveMessageTimerRef.current = setTimeout(() => setSaveMessage(""), 2000);
-    } catch (e) {
-      console.error("[auto-save xlsx] failed:", e);
-    }
-  }, [jobId, fileName, t]);
-
-  /**
-   * [Flow: Step 1 (셀 편집 등 변경 이벤트 수신) -> Step 2 (1초 debounce 후 자동 저장 예약)]
-   * 초기 로드 시 발생하는 이벤트는 무시한다.
-   */
-  const handleCellChange = useCallback(() => {
-    if (isInitialLoadRef.current) return;
-    if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
-    autoSaveRef.current = setTimeout(() => {
-      handleAutoSave();
-    }, 1000);
-  }, [handleAutoSave]);
-
-  // [Flow: handleCellChange ref를 항상 최신으로 유지 (luckysheet create 시 고정되므로)]
-  handleCellChangeRef.current = handleCellChange;
 
   function handleReset() {
     if (!luckysheetRef.current || !initialOptions) return;

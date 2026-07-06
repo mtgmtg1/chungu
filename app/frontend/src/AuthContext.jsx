@@ -40,9 +40,11 @@ export function AuthProvider({ children }) {
 
       if (initialSession && import.meta.env.DEV) {
         // 실제 세션이 있으면 mock을 대체합니다.
+        console.log("[DEV] 실제 Supabase 세션 감지, mock 모드 해제");
         mode = null;
         enableDevMock(false);
       } else if (!session && import.meta.env.DEV) {
+        console.log("[DEV auto-login] /api/dev/login 개발 bypass 시도");
         // 개발 모드 자동 로그인: 로컬 백엔드 bypass 사용
         try {
           const resp = await fetch(`${window.location.origin}/api/dev/login`, {

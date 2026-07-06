@@ -1,6 +1,17 @@
-// [Flow: Step 1 (devBypassMode가 mock인지 확인) -> Step 2 (고정 배너 렌더링)]
-/** 개발 mock 모드일 때 상단에 표시되는 안내 배너입니다. */
+// [Flow: Step 1 (devBypassMode 값 확인) -> Step 2 (backend/mock 모드에 맞는 배너 렌더링)]
+/** 개발 모드일 때 상단에 표시되는 안내 배너입니다. */
 export default function DevBypassBanner({ mode }) {
+  if (mode === "backend") {
+    return (
+      <div
+        className="bg-blue-100 text-blue-800 text-xs px-4 py-1 text-center"
+        data-oid="dev-bypass-banner"
+      >
+        [DEV] /api/dev/login 개발 인증 bypass로 로그인 중
+      </div>
+    );
+  }
+
   if (mode !== "mock") return null;
 
   return (

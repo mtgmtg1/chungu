@@ -78,6 +78,8 @@ Copy `app/.env.example` to `app/.env` and fill in:
 
 ## Local Development
 
+### Full Local Stack (backend + frontend + worker)
+
 ```bash
 cd app
 # Backend
@@ -100,6 +102,58 @@ npm install
 npm run build        # outputs to docs/build/
 npm run start        # dev server at localhost:3000
 ```
+
+### Local Frontend with a1 Backend/Supabase
+
+a1 서버에서 백엔드/워커/Supabase가 이미 실행 중일 때, 로컬 머신에서 프론트엔드만 띄워 개발할 수 있습니다. Vite dev server의 `/api`, `/supabase` 프록시를 a1로 전달합니다.
+
+#### 1. 환경변수 설정
+
+`app/.env.development.example`을 `app/.env.development`로 복사하고 값을 채웁니다.
+
+```bash
+cp app/.env.development.example app/.env.development
+```
+
+핵심 변수:
+
+- `VITE_DEV_BACKEND_URL`: a1 백엔드 주소
+  - 내부망 직접 연결: `http://192.168.1.50:28181`
+  - SSH 터널링 사용: `http://localhost:28181`
+- `VITE_SUPABASE_ANON_KEY`: a1 Supabase anon key
+- `VITE_TURNSTILE_SITE_KEY` / `VITE_TURNSTILE_WORKER_URL`: CAPTCHA 사용 시 (비워두면 미사용)
+
+#### 2. 직접 연결 (내부망)
+
+```bash
+cd app/frontend
+npm install
+npm run dev
+```
+
+`http://localhost:5173`에서 프론트엔드가 실행되며, API/Supabase 요청은 `VITE_DEV_BACKEND_URL`로 프록시됩니다.
+
+#### 3. SSH 터널링 (내부망에 접근 불가하거나 원격 개발 시)
+
+```bash
+# LAN 우선, 실패 시 WAN으로 시도
+./scripts/dev-tunnel.sh
+
+# 터미널을 하나 더 열어
+VITE_DEV_BACKEND_URL=http://localhost:28181 npm run dev
+```
+
+스크립트는 a1의 `28181`(backend)과 `28000`(Supabase) 포트를 로컬로 포워드합니다. SSH 키는 `~/Documents/ssh-key-backup/`에서 자동 감지하며, 필요하면 `SSH_KEY` 환경변수로 직접 지정할 수 있습니다. WAN 주소는 `A1_WAN_HOST` 환경변수로 설정합니다.
+
+#### 4. 인증 방식
+
+- **Dev bypass 자동 로그인** (기본): a1 `.env`에 `DEV_BYPASS_AUTH=true`가 설정되어 있으면, `npm run dev` 실행 시 `/api/dev/login`으로 자동 로그인됩니다. 화면 상단에 파란색 배너가 표시됩니다. **프로덕션 a1에서는 절대 활성화하지 마세요.**
+- **실제 Supabase Auth**: a1 `.env`에 `DEV_BYPASS_AUTH=false`이면 정상적인 회원가입/로그인을 사용합니다. Turnstile이 활성화되어 있으면 CAPTCHA도 필요합니다.
+- **Mock 모드**: a1에 연결할 수 없거나 bypass가 비활성화되면 자동으로 mock 사용자로 전환됩니다. 화면 상단에 노란색 배너가 표시됩니다. 이는 UI 레이아웃 점검용이며 실제 데이터 흐름은 테스트하지 않습니다.
+
+#### 5. TUS 업로드 개발 주의
+
+a1 Supabase의 `SUPABASE_PUBLIC_URL`이 `https://proof.teamcat.app/supabase`로 설정되어 있으면, TUS 업로드 중 Supabase가 반환하는 `Location` 헤더가 외부 도메인을 가리킬 수 있습니다. `app/frontend/src/tusUpload.js`는 개발 모드에서 이 URL을 자동으로 `window.location.origin/supabase`로 재작성하여 로컬 개발이 원활하도록 합니다.
 
 ## LLM Routing & Load Balancing
 

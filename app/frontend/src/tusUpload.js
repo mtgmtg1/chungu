@@ -37,6 +37,20 @@ export function uploadFileTUS(file, storagePath, onProgress) {
         cacheControl: '3600',
       },
       chunkSize: 6 * 1024 * 1024,
+      // [Flow: 개발 모드에서 Supabase가 외부 URL(proof.teamcat.app)을 Location 헤더로 반환하면 -> 로컬 origin(/supabase)으로 재작성]
+      onUploadUrlAvailable() {
+        if (import.meta.env.DEV && upload.url) {
+          try {
+            const originalUrl = new URL(upload.url)
+            const localPath = `${originalUrl.pathname}${originalUrl.search}`
+            const rewrittenUrl = `${window.location.origin}/supabase${localPath.replace(/^\/supabase/, '')}`
+            upload.url = rewrittenUrl
+            console.log('[TUS dev] upload URL rewritten to local:', rewrittenUrl)
+          } catch (err) {
+            console.warn('[TUS dev] upload URL rewrite failed:', err.message)
+          }
+        }
+      },
       onError(error) {
         reject(error)
       },

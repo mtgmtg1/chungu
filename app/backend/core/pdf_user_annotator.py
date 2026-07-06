@@ -286,16 +286,17 @@ def _parse_ink_list(ink_list: Any) -> list[list[fitz.Point]] | None:
 # [Flow: Step 1 (PyMuPDF 색상 튜플 수신) -> Step 2 (0-255 변환) -> Step 3 (hex 문자열 반환)]
 # PyMuPDF의 annot.colors는 stroke/fill 각각 (r, g, b) 0-1 튜플로 반환한다.
 EMBEDPDF_TYPE_MAP = {
-    fitz.PDF_ANNOT_HIGHLIGHT: HIGHLIGHT,
-    fitz.PDF_ANNOT_UNDERLINE: UNDERLINE,
-    fitz.PDF_ANNOT_SQUIGGLY: SQUIGGLY,
-    fitz.PDF_ANNOT_STRIKEOUT: STRIKEOUT,
-    fitz.PDF_ANNOT_FREETEXT: FREETEXT,
-    fitz.PDF_ANNOT_SQUARE: SQUARE,
-    fitz.PDF_ANNOT_CIRCLE: CIRCLE,
-    fitz.PDF_ANNOT_LINE: LINE,
-    fitz.PDF_ANNOT_INK: INK,
-    fitz.PDF_ANNOT_STAMP: STAMP,
+    # PyMuPDF 버전에 따라 상수 이름이 다를 수 있으므로 getattr로 안전하게 참조한다.
+    getattr(fitz, "PDF_ANNOT_HIGHLIGHT", 8): HIGHLIGHT,
+    getattr(fitz, "PDF_ANNOT_UNDERLINE", 9): UNDERLINE,
+    getattr(fitz, "PDF_ANNOT_SQUIGGLY", 10): SQUIGGLY,
+    getattr(fitz, "PDF_ANNOT_STRIKEOUT", getattr(fitz, "PDF_ANNOT_STRIKE_OUT", 11)): STRIKEOUT,
+    getattr(fitz, "PDF_ANNOT_FREETEXT", 2): FREETEXT,
+    getattr(fitz, "PDF_ANNOT_SQUARE", 4): SQUARE,
+    getattr(fitz, "PDF_ANNOT_CIRCLE", 5): CIRCLE,
+    getattr(fitz, "PDF_ANNOT_LINE", 3): LINE,
+    getattr(fitz, "PDF_ANNOT_INK", 14): INK,
+    getattr(fitz, "PDF_ANNOT_STAMP", 12): STAMP,
 }
 
 

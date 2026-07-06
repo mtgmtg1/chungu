@@ -1271,29 +1271,61 @@ def _source_files(job: Job) -> list[dict]:
     return source_files
 
 
+def _deduplicate_annotations(annotations: list[dict]) -> list[dict]:
+    """[Flow: Step 1 (각 주석의 pageIndex/rect/type/contents 기준 키 생성)
+          -> Step 2 (이미 본 키는 제거) -> Step 3 (중복 제거된 목록 반환)]
+
+    EmbedPDF 뷰어에서 exportAnnotations() 시 PDF 내장 주석이 반복 포함되면서
+    동일한 pageIndex/rect/type/contents를 가진 주석이 누적되는 경우가 있다.
+    이런 중복을 제거해 user_annotations.json이 계속 불어나는 것을 막는다.
+    """
+    seen: set[str] = set()
+    result: list[dict] = []
+    for item in annotations:
+        if not isinstance(item, dict):
+            continue
+        a = item.get("annotation") if "annotation" in item else item
+        if not isinstance(a, dict):
+            continue
+        key = json.dumps(
+            {
+                "pageIndex": a.get("pageIndex"),
+                "rect": a.get("rect"),
+                "type": a.get("type"),
+                "contents": a.get("contents", ""),
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
 def _ensure_clean_source_pdf(
     job_id: str,
     storage_path: str,
     bucket: str = "pdfs",
 ) -> tuple[str | None, list[dict] | None]:
-    """[Flow: Step 1 (clean PDF 존재 확인) -> Step 2 (없으면 원본 PDF 다운로드)
+    """[Flow: Step 1 (clean PDF signed URL 생성 시도) -> Step 2 (없으면 원본 PDF 다운로드)
           -> Step 3 (내장 주석 추출) -> Step 4 (주석이 있으면 clean PDF 생성/업로드)
-          -> Step 5 (clean PDF URL과 추출한 주석 반환)]
+          -> Step 5 (preview 캐시 무효화 후 clean PDF URL과 추출한 주석 반환)]
 
     원본 PDF에 내장된 주석이 있으면, 주석을 제거한 clean PDF를 생성하고 추출한 주석을
     EmbedPDF JSON 형식으로 반환한다. clean PDF가 이미 존재하면 URL만 반환한다.
     """
     clean_storage_path = f"{job_id}/clean.pdf"
 
-    # Step 1: clean PDF가 이미 존재하는지 확인
+    # Step 1: clean PDF가 이미 존재하면 signed URL을 바로 반환한다.
+    # list() 대신 signed URL 생성을 시도해 Storage 폴더 구조 의존/권한 문제를 피한다.
     try:
-        client = supabase_client.get_service_client()
-        files = client.storage.from_(bucket).list(job_id)
-        if any(f.get("name") == "clean.pdf" for f in files):
-            url = supabase_client.get_signed_download_url(clean_storage_path, bucket=bucket, expires_in=3600)
+        url = supabase_client.get_signed_download_url(clean_storage_path, bucket=bucket, expires_in=3600)
+        if url:
             return url, None
     except Exception as e:
-        logger.warning(f"[_ensure_clean_source_pdf] {job_id} clean.pdf 존재 확인 실패: {e}")
+        logger.warning(f"[_ensure_clean_source_pdf] {job_id} clean.pdf URL 생성 실패(아직 없을 수 있음): {e}")
 
     # Step 2: 원본 PDF 다운로드
     try:
@@ -1323,6 +1355,8 @@ def _ensure_clean_source_pdf(
             {"content-type": "application/pdf", "upsert": "true"},
         )
         url = supabase_client.get_signed_download_url(clean_storage_path, bucket=bucket, expires_in=3600)
+        # clean PDF가 새로 생겼으므로 preview 캐시를 무효화해 source_files 응답이 갱신되도록 한다.
+        cache.invalidate_pattern(f"preview:{job_id}:*")
         return url, annotations
     except Exception as e:
         logger.warning(f"[_ensure_clean_source_pdf] {job_id} clean PDF 업로드 실패: {e}")
@@ -1330,24 +1364,29 @@ def _ensure_clean_source_pdf(
 
 
 def _initialize_user_annotations_json(job_id: str, annotations: list[dict]) -> None:
-    """[Flow: Step 1 (user_annotations.json 존재 확인) -> Step 2 (없으면 초기 주석 저장)]
+    """[Flow: Step 1 (기존 user_annotations.json 다운로드) -> Step 2 (기존 주석과 병합)
+          -> Step 3 (중복 제거) -> Step 4 (저장 및 preview 캐시 무효화)]
 
     원본 PDF에서 추출한 내장 주석을 user_annotations.json에 초기값으로 저장한다.
-    이미 파일이 존재하면 덮어쓰지 않는다.
+    이미 파일이 존재하면 기존 주석과 병합한 뒤 중복을 제거하여 덮어쓴다.
     """
     storage_path = f"{job_id}/user_annotations.json"
     try:
         client = supabase_client.get_service_client()
         try:
-            client.storage.from_("results").download(storage_path)
-            return
+            existing_bytes = client.storage.from_("results").download(storage_path)
+            existing = json.loads(existing_bytes.decode("utf-8"))
+            if isinstance(existing, list):
+                annotations = existing + annotations
         except Exception:
             pass
+        annotations = _deduplicate_annotations(annotations)
         client.storage.from_("results").upload(
             storage_path,
             json.dumps(annotations, ensure_ascii=False).encode("utf-8"),
             {"content-type": "application/json", "upsert": "true"},
         )
+        cache.invalidate_pattern(f"preview:{job_id}:*")
     except Exception as e:
         logger.warning(f"[_initialize_user_annotations_json] {job_id} 초기 주석 저장 실패: {e}")
 
@@ -2171,7 +2210,9 @@ def save_user_annotations(
             return item["annotation"].get("type") is not None and item["annotation"].get("pageIndex") is not None
         return item.get("type") is not None and item.get("pageIndex") is not None
 
-    valid_count = sum(1 for a in annotations if _has_annotation(a))
+    valid_annotations = [a for a in annotations if _has_annotation(a)]
+    valid_annotations = _deduplicate_annotations(valid_annotations)
+    valid_count = len(valid_annotations)
     logger.info(f"[save_user_annotations] {job_id} source_index={source_index} raw={len(annotations)} valid={valid_count}")
     if valid_count == 0:
         raise HTTPException(status_code=400, detail="No valid annotations found")
@@ -2179,7 +2220,7 @@ def save_user_annotations(
     # [Flow: source_index가 -1이면 원본 PDF에 대한 사용자 주석을 JSON으로만 저장한다]
     # 별도의 주석 PDF 파일을 생성하지 않고, 원본 PDF 뷰어에서 annotations_json_url로 로드한다.
     if source_index < 0:
-        return _save_user_annotations_json(job, annotations, db)
+        return _save_user_annotations_json(job, valid_annotations, db)
 
     entries = list(job.annotated_pdf_files or [])
     if not entries:
@@ -2214,7 +2255,7 @@ def save_user_annotations(
     try:
         client = supabase_client.get_service_client()
         pdf_bytes = client.storage.from_("results").download(storage_path)
-        new_pdf_bytes = pdf_user_annotator.apply_user_annotations(pdf_bytes, annotations)
+        new_pdf_bytes = pdf_user_annotator.apply_user_annotations(pdf_bytes, valid_annotations)
         client.storage.from_("results").upload(
             storage_path,
             new_pdf_bytes,
@@ -2222,7 +2263,7 @@ def save_user_annotations(
         )
         client.storage.from_("results").upload(
             annotations_json_storage_path,
-            json.dumps(annotations, ensure_ascii=False).encode("utf-8"),
+            json.dumps(valid_annotations, ensure_ascii=False).encode("utf-8"),
             {"content-type": "application/json", "upsert": "true"},
         )
         if entry.get("annotations_json_storage_path") != annotations_json_storage_path:
@@ -2252,9 +2293,10 @@ def _save_user_annotations_json(job: Job, annotations: list, db: Session) -> dic
     storage_path = f"{job_id}/user_annotations.json"
     try:
         client = supabase_client.get_service_client()
+        deduped = _deduplicate_annotations(annotations)
         client.storage.from_("results").upload(
             storage_path,
-            json.dumps(annotations, ensure_ascii=False).encode("utf-8"),
+            json.dumps(deduped, ensure_ascii=False).encode("utf-8"),
             {"content-type": "application/json", "upsert": "true"},
         )
         cache.invalidate_pattern(f"preview:{job_id}:*")

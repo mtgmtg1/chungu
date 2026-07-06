@@ -147,10 +147,7 @@ const handlers = [
   // 모든 쓰기/변형 요청은 성공처럼 처리합니다.
   {
     match: () => true,
-    response: (path, method, options) => {
-      console.warn(`[DEV MOCK] ${method} ${path}`, options);
-      return {};
-    },
+    response: () => ({}),
   },
 ];
 

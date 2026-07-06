@@ -884,6 +884,7 @@ export default function JobResultPage() {
           data-oid="w605w2j">
 
               <SimpleEditor
+            key={selectedFileIndex}
             ref={editorRef}
             markdown={displayMarkdown}
             editable

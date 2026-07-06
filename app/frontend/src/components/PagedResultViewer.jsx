@@ -101,6 +101,7 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
     }
     return (
       <SimpleEditor
+        key={currentPage}
         ref={editorRef}
         markdown={pageMarkdown}
         editable

@@ -177,7 +177,7 @@ ref)
     })],
 
 
-    content: "",
+    content: injectPageMarkers(marked.parse(markdown || "")),
     editable
   });
 
@@ -200,18 +200,13 @@ ref)
     };
   }, [editor]);
 
-  useEffect(() => {
-    if (!editor || !markdown) return;
-    if (markdown === lastMarkdownRef.current) return;
-    lastMarkdownRef.current = markdown;
-    const htmlWithMarkers = injectPageMarkers(marked.parse(markdown));
-    editor.commands.setContent(htmlWithMarkers, false);
-  }, [editor, markdown]);
-
-  // [Flow: Step 1 (마크다운이 변경되면 현재 페이지 추적 초기화) -> Step 2 (DOM paint 이후 스크롤 컨테이너 내 페이지 마커 탐색) -> Step 3 (IntersectionObserver로 뷰포트 진입 마커 감시) -> Step 4 (가장 위쪽 마커 페이지를 onPageChange로 전달)]
+  // [Flow: Step 1 (에디터 마운트 시 페이지 마커 탐색) -> Step 2 (IntersectionObserver로 뷰포트 진입 마커 감시) -> Step 3 (가장 위쪽 마커 페이지를 onPageChange 콜백에 전달)]
   useEffect(() => {
     observedPageRef.current = null;
-    if (!editor || !markdown || !onPageChange) return;
+    if (!editor || !onPageChange) return;
+
+    const onPageChangeRef = { current: onPageChange };
+    onPageChangeRef.current = onPageChange;
 
     let rafId;
     let observer = null;
@@ -238,7 +233,7 @@ ref)
           const topPage = visible[0].pageNum;
           if (topPage !== observedPageRef.current) {
             observedPageRef.current = topPage;
-            onPageChange(topPage);
+            onPageChangeRef.current(topPage);
           }
         },
         { root: container, threshold: 0, rootMargin: "0px" }
@@ -247,7 +242,7 @@ ref)
       markers.forEach((marker) => observer.observe(marker));
     };
 
-    // setContent 이후 DOM이 반영된 다음 paint에서 observer를 설정한다.
+    // DOM이 반영된 다음 paint에서 observer를 설정한다.
     rafId = requestAnimationFrame(() => {
       rafId = requestAnimationFrame(setupObserver);
     });
@@ -256,7 +251,7 @@ ref)
       cancelAnimationFrame(rafId);
       if (observer) observer.disconnect();
     };
-  }, [editor, markdown, onPageChange]);
+  }, [editor, onPageChange]);
 
   useImperativeHandle(
     ref,

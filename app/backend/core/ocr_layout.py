@@ -139,8 +139,22 @@ def _parse_table_block(block: dict) -> OcrTable | None:
 TEXT_BLOCK_LABELS = {"text", "title", "figure_title", "seal", "header", "footer", "reference", "formula"}
 
 
-def _parse_text_block(block: dict) -> OcrTextBlock | None:
-    """표가 아닌 블록에서 텍스트를 추출해 OcrTextBlock으로 반환한다."""
+def _parse_text_block(block: dict, word_boxes: list[WordBox] | None = None) -> OcrTextBlock | None:
+    """표가 아닌 블록에서 텍스트를 추출해 OcrTextBlock으로 반환한다.
+
+    [Flow: Step 1 (block_bbox / block_content 추출) -> Step 2 (텍스트 유효성 검사)
+          -> Step 3 (word_boxes가 주어지면 블록 영역 내 단어 bbox 수집)
+          -> Step 4 (OcrTextBlock 생성)]
+
+    Args:
+        block: PaddleOCR-VL parsing_res_list의 개별 블록 딕셔너리.
+        word_boxes: overall_ocr_res에서 파싱한 WordBox 목록 (optional).
+            제공되면 블록 bbox 내부에 포함된 단어 bbox를
+            OcrTextBlock.word_bboxes에 채워넣는다.
+
+    Returns:
+        파싱된 OcrTextBlock. 필수 필드가 없으면 None.
+    """
     bbox = block.get("block_bbox")
     if not bbox or len(bbox) < 4:
         return None
@@ -151,7 +165,15 @@ def _parse_text_block(block: dict) -> OcrTextBlock | None:
     if not text:
         return None
     block_bbox: BBox = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
-    return OcrTextBlock(text=text, bbox_px=block_bbox, block_label=block.get("block_label", "text"))
+    matched_word_bboxes: list[BBox] = []
+    if word_boxes:
+        matched_word_bboxes = [w.bbox for w in _collect_words_in_block(word_boxes, block_bbox)]
+    return OcrTextBlock(
+        text=text,
+        bbox_px=block_bbox,
+        block_label=block.get("block_label", "text"),
+        word_bboxes=matched_word_bboxes,
+    )
 
 
 def _parse_word_boxes(raw: dict) -> list[WordBox]:

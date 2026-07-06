@@ -157,6 +157,11 @@ ref)
     onChangeRef.current = onChange;
   }, [onChange]);
 
+  // [Flow: 마크다운 prop이 변경될 때 (저장 성공 후 부모가 업데이트) lastMarkdownRef도 동기화하여 중복 onChange 방지]
+  useEffect(() => {
+    lastMarkdownRef.current = markdown;
+  }, [markdown]);
+
   const editor = useEditor({
     extensions: [
     StarterKit,
@@ -190,6 +195,7 @@ ref)
       onChangeTimerRef.current = setTimeout(() => {
         const updated = turndown.turndown(editor.getHTML());
         if (updated === lastMarkdownRef.current) return;
+        lastMarkdownRef.current = updated;
         onChangeRef.current(updated);
       }, 1000);
     };

@@ -21,9 +21,11 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
   const [pageMarkdown, setPageMarkdown] = useState("");
   const [loadingPage, setLoadingPage] = useState(false);
   const [error, setError] = useState("");
+  const [saveMessage, setSaveMessage] = useState("");
   const editorRef = useRef(null);
   const pendingMarkdownRef = useRef(pageMarkdown);
   const autoSaveTimerRef = useRef(null);
+  const saveMessageTimerRef = useRef(null);
 
   const loadPage = useCallback(
     async (pageNum) => {
@@ -55,6 +57,9 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
     try {
       await api.saveResultPage(jobId, currentPage, markdownToSave);
       pendingMarkdownRef.current = markdownToSave;
+      setSaveMessage(t("page:result.autoSaved"));
+      if (saveMessageTimerRef.current) clearTimeout(saveMessageTimerRef.current);
+      saveMessageTimerRef.current = setTimeout(() => setSaveMessage(""), 2000);
     } catch (e) {
       setError(e.message || t("page:errors.unknown"));
       throw e;
@@ -120,6 +125,12 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
 
           {error}
         </div>
+      }
+
+      {saveMessage &&
+      <div className="px-4 py-1 text-sm text-on-surface-variant font-medium bg-surface border-b border-outline-variant flex-shrink-0" data-oid="paged-save-msg">
+        {saveMessage}
+      </div>
       }
 
       {hasSourcePanel ?

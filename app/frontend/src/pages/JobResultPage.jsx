@@ -66,6 +66,8 @@ export default function JobResultPage() {
   const [jobActionModal, setJobActionModal] = useState(false);
   const [deleteSourceFileModal, setDeleteSourceFileModal] = useState(false);
   const [pendingDeleteFile, setPendingDeleteFile] = useState(null);
+  const [markdownSaveMessage, setMarkdownSaveMessage] = useState("");
+  const markdownSaveMessageTimerRef = useRef(null);
 
   // PDF 하이라이트/여백 주석 (원본 스캔 PDF에 형광펜 + 여백 코멘트 생성)
   const [annotateModalOpen, setAnnotateModalOpen] = useState(false);
@@ -246,6 +248,9 @@ export default function JobResultPage() {
         await api.saveResultMarkdown(jobId, updated);
         setMarkdown(updated);
       }
+      setMarkdownSaveMessage(t("page:result.autoSaved"));
+      if (markdownSaveMessageTimerRef.current) clearTimeout(markdownSaveMessageTimerRef.current);
+      markdownSaveMessageTimerRef.current = setTimeout(() => setMarkdownSaveMessage(""), 2000);
     } catch (e) {
       setError(e.message || t("page:errors.unknown"));
     }
@@ -748,31 +753,39 @@ export default function JobResultPage() {
 
       {job?.status === "done" && !loading && !needsPagedMode(job) &&
       <div className="flex-1 flex flex-col overflow-hidden min-h-0" data-oid="ww-27ni">
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-outline-variant bg-surface flex-shrink-0" data-oid="preview-tabs">
-            <button
-              onClick={() => setPreviewMode("markdown")}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "markdown" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
-              data-oid="tab-markdown">
-              Markdown
-            </button>
-            <button
-              onClick={() => {
-                setPreviewMode("xlsxBasic");
-                if (!job?.xlsx_basic_converted) {
-                  convertOnly("xlsx_basic");
-                }
-              }}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "xlsxBasic" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
-              data-oid="tab-xlsx-basic">
-              Excel Basic
-            </button>
-            {(job?.xlsx_advanced_converted || xlsxAdvancedPolling) &&
-            <button
-              onClick={() => setPreviewMode("xlsxAdvanced")}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "xlsxAdvanced" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
-              data-oid="tab-xlsx-advanced">
-              Excel Advanced
-            </button>
+          <div className="flex items-center justify-between px-4 py-2 border-b border-outline-variant bg-surface flex-shrink-0" data-oid="preview-tabs">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPreviewMode("markdown")}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "markdown" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
+                data-oid="tab-markdown">
+                Markdown
+              </button>
+              <button
+                onClick={() => {
+                  setPreviewMode("xlsxBasic");
+                  if (!job?.xlsx_basic_converted) {
+                    convertOnly("xlsx_basic");
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "xlsxBasic" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
+                data-oid="tab-xlsx-basic">
+                Excel Basic
+              </button>
+              {(job?.xlsx_advanced_converted || xlsxAdvancedPolling) &&
+              <button
+                onClick={() => setPreviewMode("xlsxAdvanced")}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "xlsxAdvanced" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
+                data-oid="tab-xlsx-advanced">
+                Excel Advanced
+              </button>
+              }
+            </div>
+
+            {previewMode === "markdown" && markdownSaveMessage &&
+            <span className="text-sm text-on-surface-variant font-medium" data-oid="markdown-save-msg">
+              {markdownSaveMessage}
+            </span>
             }
           </div>
 

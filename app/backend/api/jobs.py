@@ -926,7 +926,10 @@ def _delete_original_file(job: Job, source_index: int, db: Session) -> dict:
 def _delete_annotation_file(job: Job, source_index: int, db: Session) -> dict:
     """지정한 인덱스의 주석 PDF 파일을 Storage와 DB에서 삭제한다.
 
-    [Flow: Step 1 (하위 호환 단일 주석이면 result_annotated_pdf_storage_path 삭제) -> Step 2 (annotated_pdf_files 목록에서 항목 제거) -> Step 3 (preview 캐시 무효화) -> Step 4 (모든 주석이 삭제되면 result_annotated_pdf_storage_path 초기화)]
+    [Flow: Step 1 (하위 호환 단일 주석이면 result_annotated_pdf_storage_path 삭제) -> Step 2 (annotated_pdf_files 목록에서 index로 항목 찾기) -> Step 3 (Storage 삭제 + 목록에서 제거) -> Step 4 (preview 캐시 무효화)]
+
+    source_index는 annotated_pdf_files 내의 position이 아닌 entry의 index 필드 값이다.
+    processing 상태의 entry는 삭제할 수 없다.
     """
     entries = list(job.annotated_pdf_files or [])
     if not entries and job.result_annotated_pdf_storage_path and source_index == 0:
@@ -936,13 +939,18 @@ def _delete_annotation_file(job: Job, source_index: int, db: Session) -> dict:
         cache.invalidate_pattern(f"preview:{job.id}:*")
         db.commit()
         return {"deleted": True, "source_kind": "annotation", "source_index": 0}
-    if source_index >= len(entries):
+    # index 필드로 entry 찾기 (position 기반이 아님)
+    entry_idx = next((i for i, e in enumerate(entries) if e.get("index") == source_index), None)
+    if entry_idx is None:
         raise HTTPException(status_code=404, detail="Annotation file not found")
-    entry = entries[source_index]
+    entry = entries[entry_idx]
+    entry_status = entry.get("status", "done")
+    if entry_status == "processing":
+        raise HTTPException(status_code=400, detail="Cannot delete a processing annotation")
     storage_path = entry.get("storage_path") if isinstance(entry, dict) else None
     if storage_path:
         supabase_client.delete_storage_path("results", storage_path)
-    entries.pop(source_index)
+    entries.pop(entry_idx)
     job.annotated_pdf_files = entries
     if not entries:
         job.result_annotated_pdf_storage_path = ""
@@ -1125,7 +1133,22 @@ def _source_files(job: Job) -> list[dict]:
             results = [f.result() for f in futures]
         source_files = [item for item in results if item is not None]
 
-    # 주석 PDF 추가
+    # [Flow: 원본 PDF에 대한 사용자 주석 JSON URL 설정]
+    # user_annotations.json이 존재하면 원본 PDF 항목에 annotations_json_url을 설정하여
+    # PdfViewer에서 주석을 로드할 수 있도록 한다.
+    user_annotations_json_path = f"{job.id}/user_annotations.json"
+    try:
+        user_annotations_url = supabase_client.get_signed_download_url(
+            user_annotations_json_path, bucket="results", expires_in=3600
+        )
+    except Exception:
+        user_annotations_url = None
+    if user_annotations_url:
+        for item in source_files:
+            if item.get("source_kind") == "original" and item.get("type") in ("pdf", "docx", "hwp"):
+                item["annotations_json_url"] = user_annotations_url
+
+    # 주석 PDF 추가 (processing/done/error 상태 모두 포함)
     annotated_entries = list(job.annotated_pdf_files or [])
     if not annotated_entries and job.annotate_status == "done" and job.result_annotated_pdf_storage_path:
         # 하위 호환: 목록 컬럼 추가 전에 생성된 단일 주석 PDF
@@ -1133,15 +1156,54 @@ def _source_files(job: Job) -> list[dict]:
         annotated_entries = [
             {
                 "index": 1,
+                "status": "done",
                 "storage_path": job.result_annotated_pdf_storage_path,
                 "filename": f"{stem}_annotation1.pdf",
             }
         ]
     annotated_entries = sorted(annotated_entries, key=lambda e: e.get("index", 0))
-    start_idx = len(source_files)
-    for idx, entry in enumerate(annotated_entries, start=start_idx):
+    for entry in annotated_entries:
+        entry_status = entry.get("status", "done")
+        entry_index = entry.get("index", 0)
         storage_path = entry.get("storage_path", "")
         annotations_json_storage_path = entry.get("annotations_json_storage_path")
+
+        if entry_status == "processing":
+            # processing entry: URL 없이 상태 정보만 전달
+            source_files.append({
+                "name": entry.get("filename", f"AI 주석 #{entry_index}"),
+                "type": "pdf",
+                "url": None,
+                "storage_path": None,
+                "page_num": 1,
+                "source_index": entry_index,
+                "source_kind": "annotation",
+                "status": "processing",
+                "instruction": entry.get("instruction", ""),
+                "mode": entry.get("mode", ""),
+            })
+            continue
+
+        if entry_status == "error":
+            # error entry: URL 없이 에러 정보 + 재시도용 정보 전달
+            source_files.append({
+                "name": entry.get("filename", f"AI 주석 #{entry_index} (실패)"),
+                "type": "pdf",
+                "url": None,
+                "storage_path": None,
+                "page_num": 1,
+                "source_index": entry_index,
+                "source_kind": "annotation",
+                "status": "error",
+                "instruction": entry.get("instruction", ""),
+                "mode": entry.get("mode", ""),
+                "comment_mode": entry.get("comment_mode", ""),
+                "advanced": bool(entry.get("advanced", False)),
+                "recovery_notes": entry.get("recovery_notes", []),
+            })
+            continue
+
+        # done entry: 기존 로직대로 signed URL 생성
         item = _build_source_file_item(
             {
                 "path": entry.get("filename", ""),
@@ -1149,7 +1211,7 @@ def _source_files(job: Job) -> list[dict]:
                 "type": "pdf",
                 "bucket": "results",
             },
-            idx - start_idx,
+            entry_index,
             source_kind="annotation",
         )
         if item:
@@ -1160,6 +1222,7 @@ def _source_files(job: Job) -> list[dict]:
                     )
                 except Exception:
                     item["annotations_json_url"] = None
+            item["status"] = "done"
             source_files.append(item)
     return source_files
 
@@ -1735,8 +1798,6 @@ def annotate_job(
             return {"download_url": url, "status": "done", "storage_path": existing["storage_path"], "filename": existing.get("filename")}
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {e}")
-    if job.annotate_status == "processing":
-        raise HTTPException(status_code=409, detail="Annotation already in progress")
 
     # 비회원 사용자 체크
     if job.user_id is None:
@@ -1746,6 +1807,19 @@ def annotate_job(
     db_user = db.get(User, job.user_id)
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # 원자적으로 다음 인덱스를 할당한다. 동시에 여러 주석 작업이 실행되더라도
+    # 각각 고유한 파일명을 가지므로 덮어쓰기가 발생하지 않는다.
+    result = db.execute(
+        update(Job)
+        .where(Job.id == job_id)
+        .values(annotated_pdf_next_index=Job.annotated_pdf_next_index + 1)
+        .returning(Job.annotated_pdf_next_index)
+    )
+    db.commit()
+    annotation_index = result.scalar()
+    if not annotation_index:
+        raise HTTPException(status_code=500, detail="주석 인덱스 할당에 실패했습니다.")
 
     # 관리자 체크 (무제한 사용)
     if db_user.is_admin:
@@ -1784,24 +1858,52 @@ def annotate_job(
         job.annotate_refundable = True
         job.annotate_reserved_pages = units
         job.annotate_reserved_period_start = datetime.fromisoformat(result["period_start"])
-    job.result_annotated_pdf_storage_path = ""
+
+    # processing entry를 annotated_pdf_files에 추가한다.
+    # 동시 쓰기 안전성을 위해 SELECT FOR UPDATE로 행을 잠근다.
+    locked_job = db.execute(
+        select(Job).where(Job.id == job_id).with_for_update()
+    ).scalar_one()
+    annotated_files = list(locked_job.annotated_pdf_files or [])
+    processing_entry = {
+        "index": annotation_index,
+        "status": "processing",
+        "instruction": instruction,
+        "mode": mode,
+        "comment_mode": comment_mode,
+        "advanced": advanced,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    annotated_files.append(processing_entry)
+    locked_job.annotated_pdf_files = annotated_files
     db.commit()
 
     from ..workers import tasks
-    task = tasks.annotate_pdf_job.delay(job_id, instruction, mode, comment_mode, advanced=advanced)
+    task = tasks.annotate_pdf_job.delay(
+        job_id, instruction, mode, comment_mode, advanced=advanced,
+        annotation_index=annotation_index,
+    )
     try:
         job.annotate_job_id = task.id
         db.commit()
     except Exception:
-        # task ID 저장 실패 시 상태를 되돌려 사용자가 재시도할 수 있도록 한다
+        # task ID 저장 실패 시 entry를 error 상태로 변경한다
         db.rollback()
-        job = db.get(Job, job_id)
-        job.annotate_status = "error"
-        job.annotate_refundable = False
-        job.annotate_recovery_notes = [{"reason": "작업 큐잉 실패: task ID 저장 에러"}]
+        locked_job = db.execute(
+            select(Job).where(Job.id == job_id).with_for_update()
+        ).scalar_one()
+        files = list(locked_job.annotated_pdf_files or [])
+        for e in files:
+            if e.get("index") == annotation_index:
+                e["status"] = "error"
+                e["recovery_notes"] = [{"reason": "작업 큐잉 실패: task ID 저장 에러"}]
+                break
+        locked_job.annotated_pdf_files = files
+        locked_job.annotate_status = "error"
+        locked_job.annotate_refundable = False
         db.commit()
         raise HTTPException(status_code=500, detail="주석 작업 큐잉에 실패했습니다. 다시 시도해주세요.")
-    return {"job_id": task.id, "status": "processing"}
+    return {"job_id": task.id, "status": "processing", "annotation_index": annotation_index}
 
 
 @router.post("/jobs/{job_id}/annotate-action")
@@ -1811,12 +1913,15 @@ def annotate_action(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """PDF 주석 생성 실패 시 재시도를 처리한다 (구독제이므로 환불은 제공하지 않는다)."""
+    """PDF 주석 생성 실패 시 재시도를 처리한다 (구독제이므로 환불은 제공하지 않는다).
+
+    annotation_index로 지정한 실패 entry를 재시도한다.
+    여러 주석이 동시에 실패할 수 있으므로 단일 annotate_status가 아닌
+    개별 entry의 status를 기준으로 판단한다.
+    """
     job = db.get(Job, job_id)
     _require_job_access(job, user)
     _require_job_not_expired(job)
-    if job.annotate_status != "error":
-        raise HTTPException(status_code=400, detail="Not in a retryable state")
 
     # 비회원 사용자 체크
     if job.user_id is None:
@@ -1826,28 +1931,41 @@ def annotate_action(
     if action != "retry":
         raise HTTPException(status_code=400, detail="Unsupported action")
 
+    annotation_index = int(payload.get("annotation_index", 0))
+
     from ..db.models import User
     db_user = db.get(User, job.user_id)
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # retry: 실패한 마지막 주석 항목을 제거하고 상태 초기화 후 비용 없이 task 재실행
-    old_path = job.result_annotated_pdf_storage_path
-    annotated_files = job.annotated_pdf_files or []
-    if annotated_files and annotated_files[-1].get("storage_path") == old_path:
-        job.annotated_pdf_files = annotated_files[:-1]
+    # index로 실패한 entry 찾기
+    entries = list(job.annotated_pdf_files or [])
+    entry = next((e for e in entries if e.get("index") == annotation_index), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Annotation entry not found")
+    if entry.get("status", "done") != "error":
+        raise HTTPException(status_code=400, detail="Not in a retryable state")
+
+    # entry를 processing 상태로 리셋하고 task 재실행 (비용 없이)
+    entry["status"] = "processing"
+    entry["recovery_notes"] = []
+    job.annotated_pdf_files = entries
     job.annotate_status = "processing"
     job.annotate_refundable = False
-    job.result_annotated_pdf_storage_path = ""
     db.commit()
+
     from ..workers import tasks
     task = tasks.annotate_pdf_job.delay(
-        job_id, job.annotate_instruction, job.annotate_mode, job.annotate_comment_mode,
-        advanced=bool(job.annotate_advanced),
+        job_id,
+        entry.get("instruction", ""),
+        entry.get("mode", "highlight"),
+        entry.get("comment_mode", "user_text"),
+        advanced=bool(entry.get("advanced", False)),
+        annotation_index=annotation_index,
     )
     job.annotate_job_id = task.id
     db.commit()
-    return {"job_id": task.id, "status": "processing"}
+    return {"job_id": task.id, "status": "processing", "annotation_index": annotation_index}
 
 
 @router.post("/jobs/{job_id}/user-annotations")
@@ -1884,10 +2002,10 @@ def save_user_annotations(
     if valid_count == 0:
         raise HTTPException(status_code=400, detail="No valid annotations found")
 
-    # [Flow: source_index가 -1이면 원본 PDF에 사용자 주석을 적용해 새 annotation 파일을 생성한다]
-    # 기존 주석 파일 존재 여부와 무관하게 먼저 처리해야 한다.
+    # [Flow: source_index가 -1이면 원본 PDF에 대한 사용자 주석을 JSON으로만 저장한다]
+    # 별도의 주석 PDF 파일을 생성하지 않고, 원본 PDF 뷰어에서 annotations_json_url로 로드한다.
     if source_index < 0:
-        return _create_user_annotated_pdf(job, annotations, db)
+        return _save_user_annotations_json(job, annotations, db)
 
     entries = list(job.annotated_pdf_files or [])
     if not entries:
@@ -1896,6 +2014,8 @@ def save_user_annotations(
             stem = Path(job.original_filename).stem if job.original_filename else "result"
             entries = [
                 {
+                    "index": 1,
+                    "status": "done",
                     "storage_path": job.result_annotated_pdf_storage_path,
                     "annotations_json_storage_path": None,
                     "filename": f"{stem}_annotation1.pdf",
@@ -1904,17 +2024,18 @@ def save_user_annotations(
         else:
             raise HTTPException(status_code=404, detail="Annotation file not found")
 
-    if source_index >= len(entries):
+    # index 필드로 entry 찾기 (position 기반이 아님)
+    entry = next((e for e in entries if e.get("index") == source_index), None)
+    if entry is None:
         raise HTTPException(status_code=404, detail="Annotation file not found")
 
-    entry = entries[source_index]
     storage_path = entry.get("storage_path")
     if not storage_path:
         raise HTTPException(status_code=404, detail="Annotation file not found")
 
     annotations_json_storage_path = entry.get("annotations_json_storage_path")
     if not annotations_json_storage_path:
-        annotations_json_storage_path = f"{job_id}/annotated_{source_index + 1}.annotations.json"
+        annotations_json_storage_path = f"{job_id}/annotated_{source_index}.annotations.json"
 
     try:
         client = supabase_client.get_service_client()
@@ -1942,6 +2063,32 @@ def save_user_annotations(
         }
     except Exception as e:
         logger.exception(f"[save_user_annotations] {job_id} source_index={source_index} 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"주석 저장 실패: {e}")
+
+
+def _save_user_annotations_json(job: Job, annotations: list, db: Session) -> dict:
+    """[Flow: Step 1 (주석 JSON을 results 버킷에 저장) -> Step 2 (preview 캐시 무효화)]
+
+    원본 PDF에 대한 사용자 주석을 JSON 형태로만 저장한다.
+    별도의 주석 PDF 파일을 생성하지 않고, 원본 PDF 뷰어에서 annotations_json_url로 로드한다.
+    파일 경로는 고정: {job_id}/user_annotations.json
+    """
+    job_id = job.id
+    storage_path = f"{job_id}/user_annotations.json"
+    try:
+        client = supabase_client.get_service_client()
+        client.storage.from_("results").upload(
+            storage_path,
+            json.dumps(annotations, ensure_ascii=False).encode("utf-8"),
+            {"content-type": "application/json", "upsert": "true"},
+        )
+        cache.invalidate_pattern(f"preview:{job_id}:*")
+        return {
+            "ok": True,
+            "annotations_json_storage_path": storage_path,
+        }
+    except Exception as e:
+        logger.exception(f"[_save_user_annotations_json] {job_id} 실패: {e}")
         raise HTTPException(status_code=500, detail=f"주석 저장 실패: {e}")
 
 
@@ -2009,6 +2156,7 @@ def _create_user_annotated_pdf(job: Job, annotations: list, db: Session) -> dict
 
             entry = {
                 "index": next_index,
+                "status": "done",
                 "storage_path": storage_path,
                 "annotations_json_storage_path": annotations_json_storage_path,
                 "filename": _annotation_display_name(job, next_index),

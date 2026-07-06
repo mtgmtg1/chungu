@@ -817,6 +817,7 @@ export default function JobResultPage() {
                   selectedFileIndex={selectedFileIndex}
                   onFileSelect={handleFileSelect}
                   onDeleteFile={openDeleteSourceFileModal}
+                  onRetryAnnotation={(index) => handleAnnotateAction("retry", index)}
                   currentPage={currentPage}
                   onSaveAnnotations={handleSaveAnnotations}
                   data-oid="rp.07za" />

@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import fitz  # PyMuPDF
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from .. import settings_store
 from ..config import settings
@@ -468,6 +468,7 @@ def run(
     comment_mode: str,
     language: str = "en",
     advanced: bool = False,
+    annotation_index: int = 0,
 ) -> dict:
     """하이라이트/여백 주석 작업을 실행하고 job 상태를 갱신한다.
 
@@ -478,6 +479,7 @@ def run(
         comment_mode: "user_text" | "llm_summary"
         language: 사용자 언어 코드 ("ko"/"en"/"ja") — 주석 코멘트가 이 언어로 작성된다
         advanced: True이면 Vision LLM 파이프라인(정밀 bbox + 색상) 사용, False이면 기존 PaddleOCR 기반 파이프라인
+        annotation_index: API 수준에서 원자적으로 할당된 고유 인덱스 (파일명 충돌 방지)
     """
     db = SessionLocal()
     job = db.get(Job, job_id)
@@ -499,26 +501,7 @@ def run(
         ]
         db.commit()
 
-    # 원자적으로 다음 인덱스를 할당한다. 동시에 여러 주석 작업이 실행되더라도
-    # 각각 고유한 파일명을 가지므로 덮어쓰기가 발생하지 않는다.
-    next_index = None
-    try:
-        result = db.execute(
-            update(Job)
-            .where(Job.id == job_id)
-            .values(annotated_pdf_next_index=Job.annotated_pdf_next_index + 1)
-            .returning(Job.annotated_pdf_next_index)
-        )
-        db.commit()
-        next_index = result.scalar()
-    except Exception as e:
-        db.rollback()
-        logger.exception(f"[pdf_annotate_converter] {job_id} 인덱스 할당 실패: {e}")
-        db.close()
-        return {"error": f"인덱스 할당 실패: {e}"}
-    if not next_index:
-        db.close()
-        return {"error": "인덱스 할당 실패"}
+    next_index = annotation_index
 
     endpoint = job.endpoint or settings_store.get_setting(db, "llm_endpoint") or settings.default_llm_endpoint
     model = job.model or settings_store.get_setting(db, "llm_model") or settings.default_llm_model
@@ -540,11 +523,7 @@ def run(
                     image_paths, instruction, want_llm_comment, endpoint, model, api_key
                 )
                 if not targets:
-                    job.annotate_status = "done"
-                    job.annotate_refundable = False
-                    job.result_annotated_pdf_storage_path = ""
-                    job.annotate_recovery_notes = [{"reason": "조건에 맞는 요소를 찾지 못했습니다"}]
-                    db.commit()
+                    _update_entry_status(db, job_id, next_index, "done", recovery_notes=[{"reason": "조건에 맞는 요소를 찾지 못했습니다"}])
                     return {"job_id": job_id, "status": "done", "matched_rows": 0}
             else:
                 # [Flow: 주석 PDF 베이스 — 정돈된 이미지(deskew + 90° 대회전 보정 완료)로 PDF 생성]
@@ -563,11 +542,7 @@ def run(
 
                 matches = _select_elements_with_llm(elements, instruction, want_llm_comment, endpoint, model, api_key)
                 if not matches:
-                    job.annotate_status = "done"
-                    job.annotate_refundable = False
-                    job.result_annotated_pdf_storage_path = ""
-                    job.annotate_recovery_notes = [{"reason": "조건에 맞는 요소를 찾지 못했습니다"}]
-                    db.commit()
+                    _update_entry_status(db, job_id, next_index, "done", recovery_notes=[{"reason": "조건에 맞는 요소를 찾지 못했습니다"}])
                     return {"job_id": job_id, "status": "done", "matched_rows": 0}
 
                 targets = _matches_to_targets(matches, elements, page_point_sizes)
@@ -577,7 +552,6 @@ def run(
 
             annotated_bytes = annotate_pdf(pdf_bytes, targets, mode)
             embedpdf_annotations = build_embedpdf_annotations(pdf_bytes, targets, mode)
-            annotated_files = job.annotated_pdf_files or []
             storage_path = f"{job.id}/annotated_{next_index}.pdf"
             annotations_json_storage_path = f"{job.id}/annotated_{next_index}.annotations.json"
             display_name = _annotation_display_name(job, next_index)
@@ -593,21 +567,30 @@ def run(
                 {"content-type": "application/json", "upsert": "true"},
             )
 
-            entry = {
-                "index": next_index,
-                "storage_path": storage_path,
-                "annotations_json_storage_path": annotations_json_storage_path,
-                "filename": display_name,
-                "instruction": instruction,
-                "mode": mode,
-                "comment_mode": comment_mode,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
-            job.annotated_pdf_files = annotated_files + [entry]
-            job.result_annotated_pdf_storage_path = storage_path
-            job.annotate_status = "done"
-            job.annotate_refundable = False
-            job.annotate_recovery_notes = [{"skipped_matches": skipped}] if skipped else []
+            # 동시 쓰기 안전성을 위해 SELECT FOR UPDATE로 행을 잠근다.
+            # 해당 index의 processing entry를 done 상태로 갱신한다.
+            locked_job = db.execute(
+                select(Job).where(Job.id == job_id).with_for_update()
+            ).scalar_one()
+            files = list(locked_job.annotated_pdf_files or [])
+            for e in files:
+                if e.get("index") == next_index:
+                    e["status"] = "done"
+                    e["storage_path"] = storage_path
+                    e["annotations_json_storage_path"] = annotations_json_storage_path
+                    e["filename"] = display_name
+                    e["instruction"] = instruction
+                    e["mode"] = mode
+                    e["comment_mode"] = comment_mode
+                    e["created_at"] = datetime.now(timezone.utc).isoformat()
+                    if skipped:
+                        e["recovery_notes"] = [{"skipped_matches": skipped}]
+                    break
+            locked_job.annotated_pdf_files = files
+            locked_job.result_annotated_pdf_storage_path = storage_path
+            locked_job.annotate_status = "done"
+            locked_job.annotate_refundable = False
+            locked_job.annotate_recovery_notes = [{"skipped_matches": skipped}] if skipped else []
             db.commit()
             cache.invalidate_pattern(f"preview:{job_id}:*")
             return {"job_id": job_id, "status": "done", "matched_rows": len(targets)}
@@ -615,10 +598,34 @@ def run(
     except Exception as e:
         logger.exception(f"[pdf_annotate_converter] {job_id} 주석 생성 실패: {e}")
         tb = traceback.format_exc()
-        job.annotate_status = "error"
-        job.annotate_refundable = True
-        job.annotate_recovery_notes = [{"reason": str(e), "traceback": tb[-2000:]}]
-        db.commit()
+        _update_entry_status(db, job_id, next_index, "error", recovery_notes=[{"reason": str(e), "traceback": tb[-2000:]}])
         return {"job_id": job_id, "status": "error", "error": str(e)}
     finally:
         db.close()
+
+
+def _update_entry_status(db, job_id: str, annotation_index: int, status: str, recovery_notes: list = None):
+    """해당 index의 annotated_pdf_files entry 상태를 갱신한다 (동시 쓰기 안전).
+
+    [Flow: Step 1 (SELECT FOR UPDATE로 행 잠금) -> Step 2 (entry 찾아 status 갱신) -> Step 3 (commit)]
+    """
+    locked_job = db.execute(
+        select(Job).where(Job.id == job_id).with_for_update()
+    ).scalar_one()
+    files = list(locked_job.annotated_pdf_files or [])
+    for e in files:
+        if e.get("index") == annotation_index:
+            e["status"] = status
+            if recovery_notes is not None:
+                e["recovery_notes"] = recovery_notes
+            break
+    locked_job.annotated_pdf_files = files
+    # 하위 호환: 단일 status 필드도 갱신
+    locked_job.annotate_status = status
+    if status == "error":
+        locked_job.annotate_refundable = True
+        locked_job.annotate_recovery_notes = recovery_notes or []
+    elif status == "done":
+        locked_job.annotate_refundable = False
+        locked_job.annotate_recovery_notes = recovery_notes or []
+    db.commit()

@@ -218,7 +218,10 @@
     "annotateCommentLabel": "Margin note text",
     "annotateCommentUserText": "Use my instruction as-is",
     "annotateCommentLlmSummary": "AI auto-summary",
-    "annotateSubmit": "Generate"
+    "annotateSubmit": "Generate",
+    "annotateProcessingItem": "Generating AI annotation: {{instruction}}",
+    "annotateErrorItem": "AI annotation failed: {{instruction}}",
+    "annotateRetry": "Retry"
   },
   "poems": [
     {

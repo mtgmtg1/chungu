@@ -1,7 +1,8 @@
 // [Flow: Step 1 (sourceFiles/sourceUrl/sourceType/imageUrls/jobId 수신) -> Step 2 (단일/다중 파일에 따라 PdfViewer에 URL 전달) -> Step 3 (pdf/docx/hwp가 아니면 기존 미디어/이미지 프리뷰)]
+// processing/error 상태의 주석 항목은 URL 없이 상태 정보만 표시한다.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { FileText, ImageIcon, Volume2, Film, Trash2 } from "lucide-react";
+import { FileText, ImageIcon, Volume2, Film, Trash2, Loader2, AlertCircle, RotateCw } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer from "./PdfViewer.jsx";
 import MediaPlayer from "./MediaPlayer.jsx";
@@ -71,6 +72,7 @@ export default function SourcePanel({
   onFileSelect,
   onDeleteFile,
   onSaveAnnotations,
+  onRetryAnnotation,
 }) {
   const { t } = useTranslation();
   const files = sourceFiles && sourceFiles.length > 0 ? sourceFiles : [];
@@ -208,29 +210,69 @@ export default function SourcePanel({
                       onClick={() => setSelectedIndex(idx)}
                       className="flex items-center gap-2 text-left flex-1 min-w-0"
                     >
-                      <SourceIcon type={f.type} />
+                      {f.status === "processing" ? (
+                        <Loader2 size={16} className="text-primary animate-spin flex-shrink-0" />
+                      ) : f.status === "error" ? (
+                        <AlertCircle size={16} className="text-error flex-shrink-0" />
+                      ) : (
+                        <SourceIcon type={f.type} />
+                      )}
                       <span className="truncate">{f.name}</span>
                     </button>
-                    {onDeleteFile && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDeleteFile(f.source_index, f.source_kind);
-                        }}
-                        className="flex-shrink-0 p-1 rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors"
-                        title={t("common:delete")}
-                        aria-label={t("common:delete")}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
+                    <div className="flex-shrink-0 flex items-center gap-1">
+                      {f.status === "error" && onRetryAnnotation && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRetryAnnotation(f.source_index);
+                          }}
+                          className="flex-shrink-0 p-1 rounded text-primary/70 hover:text-primary hover:bg-primary/10 transition-colors"
+                          title={t("page:result.annotateRetry")}
+                          aria-label={t("page:result.annotateRetry")}
+                        >
+                          <RotateCw size={14} />
+                        </button>
+                      )}
+                      {onDeleteFile && f.status !== "processing" && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteFile(f.source_index, f.source_kind);
+                          }}
+                          className="flex-shrink-0 p-1 rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors"
+                          title={t("common:delete")}
+                          aria-label={t("common:delete")}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
             </Panel>
             <PanelResizeHandle className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize" />
             <Panel className="overflow-hidden min-h-0 flex flex-col">
-              {selected.type === "pdf" || selected.type === "docx" || selected.type === "hwp" ? (
+              {selected.status === "processing" ? (
+                <div className="flex-1 flex flex-col items-center justify-center h-full w-full text-on-surface-variant text-sm p-4 gap-3">
+                  <Loader2 size={32} className="text-primary animate-spin" />
+                  <span>{t("page:result.annotateProcessingItem", { instruction: selected.instruction || "" })}</span>
+                </div>
+              ) : selected.status === "error" ? (
+                <div className="flex-1 flex flex-col items-center justify-center h-full w-full text-error text-sm p-4 gap-3">
+                  <AlertCircle size={32} className="text-error" />
+                  <span>{t("page:result.annotateErrorItem", { instruction: selected.instruction || "" })}</span>
+                  {onRetryAnnotation && (
+                    <button
+                      onClick={() => onRetryAnnotation(selected.source_index)}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-white hover:opacity-90 transition-colors"
+                    >
+                      <RotateCw size={16} />
+                      {t("page:result.annotateRetry")}
+                    </button>
+                  )}
+                </div>
+              ) : selected.type === "pdf" || selected.type === "docx" || selected.type === "hwp" ? (
                 <PdfViewer
                   ref={pdfViewerRef}
                   url={selected.preview_url || selected.url}

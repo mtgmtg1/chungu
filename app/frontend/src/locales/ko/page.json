@@ -218,7 +218,10 @@
     "annotateCommentLabel": "여백 주석 텍스트",
     "annotateCommentUserText": "입력한 문구 그대로",
     "annotateCommentLlmSummary": "AI가 자동 요약",
-    "annotateSubmit": "생성"
+    "annotateSubmit": "생성",
+    "annotateProcessingItem": "AI 주석 생성 중: {{instruction}}",
+    "annotateErrorItem": "AI 주석 실패: {{instruction}}",
+    "annotateRetry": "재시도"
   },
   "poems": [
     {

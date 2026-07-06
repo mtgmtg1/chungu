@@ -218,7 +218,10 @@
     "annotateCommentLabel": "余白注釈テキスト",
     "annotateCommentUserText": "入力した文言をそのまま使用",
     "annotateCommentLlmSummary": "AIが自動要約",
-    "annotateSubmit": "生成"
+    "annotateSubmit": "生成",
+    "annotateProcessingItem": "AI注釈を生成中: {{instruction}}",
+    "annotateErrorItem": "AI注釈が失敗しました: {{instruction}}",
+    "annotateRetry": "再試行"
   },
   "poems": [
     {

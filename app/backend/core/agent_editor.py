@@ -40,21 +40,24 @@ class EditorState(TypedDict, total=False):
 
 @tool
 def get_section(heading: str) -> str:
-    """마크다운에서 지정한 제목의 섹션을 추출한다.
+    """[Flow: Step 1 (섹션 제목 수신) -> Step 2 (실제 추출은 _execute_node의 _do_get_section에서 수행) -> Step 3 (JSON 결과 반환)]
+
+    마크다운에서 지정한 제목의 섹션을 추출한다.
 
     Args:
         heading: 찾을 섹션 제목.
 
     Returns:
-        섹션 내용 문자열.
+        섹션 내용 JSON 문자열.
     """
-    # TODO: 실제 마크다운 파싱 연동
     return json.dumps({"heading": heading, "content": ""}, ensure_ascii=False)
 
 
 @tool
 def get_table(table_index: int) -> str:
-    """마크다운에서 N번째 표를 추출한다.
+    """[Flow: Step 1 (표 인덱스 수신) -> Step 2 (실제 추출은 _execute_node의 _do_get_table에서 수행) -> Step 3 (JSON 결과 반환)]
+
+    마크다운에서 N번째 표를 추출한다.
 
     Args:
         table_index: 0-based 표 인덱스.
@@ -62,8 +65,7 @@ def get_table(table_index: int) -> str:
     Returns:
         표 내용 JSON 문자열.
     """
-    # TODO: 실제 마크다운 파싱 연동
-    return json.dumps({"table_index": table_index, "rows": []}, ensure_ascii=False)
+    return json.dumps({"table_index": table_index, "content": ""}, ensure_ascii=False)
 
 
 @tool
@@ -290,7 +292,7 @@ def _do_get_table(markdown: str, table_index: int) -> str:
         return json.dumps({"table_index": table_index, "rows": []}, ensure_ascii=False)
     match = matches[table_index]
     table_text = match.group(0)
-    return json.dumps({"table_index": table_index, "markdown": table_text}, ensure_ascii=False)
+    return json.dumps({"table_index": table_index, "content": table_text}, ensure_ascii=False)
 
 
 def _route_after_agent(state: EditorState) -> str:

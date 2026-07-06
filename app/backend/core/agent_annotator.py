@@ -57,7 +57,10 @@ class AnnotatorState(TypedDict, total=False):
 
 @tool
 def search_text(query: str, page_no: int | None = None) -> str:
-    """PDF 텍스트 레이어에서 키워드나 정규식으로 텍스트를 검색한다.
+    """[Flow: Step 1 (검색어와 페이지 번호 수신) -> Step 2 (실제 검색은 _execute_node의 _do_search_text에서 수행)
+          -> Step 3 (검색 결과 JSON 반환)]
+
+    PDF 텍스트 레이어에서 키워드나 정규식으로 텍스트를 검색한다.
 
     Args:
         query: 검색할 문자열. 정규식을 지원한다.
@@ -66,7 +69,6 @@ def search_text(query: str, page_no: int | None = None) -> str:
     Returns:
         검색된 요소의 요약 목록 JSON 문자열.
     """
-    # TODO: TextLayerSearcher 연동
     return json.dumps(
         {"matches": [], "query": query, "page_no": page_no},
         ensure_ascii=False,
@@ -278,12 +280,13 @@ def _agent_node(state: AnnotatorState, llm) -> AnnotatorState:
     return {"messages": [response]}
 
 
-def _execute_node(state: AnnotatorState) -> AnnotatorState:
+def _execute_node(state: AnnotatorState, text_searcher: Any = None) -> AnnotatorState:
     """[Flow: Step 1 (마지막 AIMessage의 tool_calls 추출) -> Step 2 (도구 이름으로 함수 매핑)
-          -> Step 3 (도구 실행 또는 state 기반 계산) -> Step 4 (ToolMessage 추가 및 상태 갱신/승인 요청 감지)]
+          -> Step 3 (도구 실행 또는 state/text_searcher 기반 계산) -> Step 4 (ToolMessage 추가 및 상태 갱신/승인 요청 감지)]
 
     LLM이 요청한 도구를 실행하고 결과를 메시지로 추가한다.
-    search_text/get_elements/compare_elements는 이미 로드된 state["elements"]를 기반으로 결과를 계산하고,
+    search_text는 text_searcher(있는 경우)와 state["elements"]를 모두 사용한다.
+    get_elements/compare_elements는 state["elements"]를 기반으로 결과를 계산하고,
     add_highlight/add_callout 결과는 선택된 주석 대상으로 변환한다.
     삭제/질문 등 승인이 필요한 도구는 pending_interrupt에 저장한다.
     """
@@ -311,7 +314,7 @@ def _execute_node(state: AnnotatorState) -> AnnotatorState:
 
         try:
             if name == "search_text":
-                result = _do_search_text(elements, args.get("query", ""), args.get("page_no"))
+                result = _do_search_text(elements, args.get("query", ""), args.get("page_no"), text_searcher)
             elif name == "get_elements":
                 result = _do_get_elements(elements, args.get("page_no"))
             elif name == "compare_elements":
@@ -348,13 +351,35 @@ def _execute_node(state: AnnotatorState) -> AnnotatorState:
     return updates
 
 
-def _do_search_text(elements: list[dict], query: str, page_no: int | None = None) -> str:
-    """elements 목록에서 query를 포함하는 요소를 검색한다."""
+def _do_search_text(
+    elements: list[dict],
+    query: str,
+    page_no: int | None = None,
+    text_searcher: Any = None,
+) -> str:
+    """[Flow: Step 1 (query/page_no 정규화) -> Step 2 (text_searcher가 있으면 PDF 텍스트 레이어에서 검색)
+          -> Step 3 (text_searcher 결과가 없으면 elements 기반 검색 폴백) -> Step 4 (JSON 결과 반환)]
+
+    query를 포함하는 요소를 검색한다. PDF 텍스트 레이어 검색기가 있으면 더 정확한 PDF 좌표를 우선 사용한다.
+    """
     q = str(query).lower()
     try:
         page_no = int(page_no) if page_no is not None else None
     except Exception:
         page_no = None
+
+    if text_searcher is not None and page_no is not None and q:
+        try:
+            rects = text_searcher.search(page_no, query)
+            if rects:
+                matches = [
+                    {"element_index": i, "page_no": page_no, "bbox_pdf": list(rect), "text": query}
+                    for i, rect in enumerate(rects)
+                ]
+                return json.dumps({"matches": matches, "query": query, "page_no": page_no}, ensure_ascii=False)
+        except Exception as exc:
+            logger.warning("[search_text] TextLayerSearcher 검색 실패: %s", exc)
+
     matches = []
     for i, el in enumerate(elements):
         if page_no is not None and el.get("page_no") != page_no:
@@ -519,8 +544,9 @@ def _finalize_node(state: AnnotatorState) -> AnnotatorState:
 def build_annotator_graph(
     llm: Any,
     checkpointer: Any = None,
+    text_searcher: Any = None,
 ) -> Any:
-    """[Flow: Step 1 (LLM 인스턴스 수신) -> Step 2 (StateGraph 정의)
+    """[Flow: Step 1 (LLM 인스턴스 및 text_searcher 수신) -> Step 2 (StateGraph 정의)
           -> Step 3 (노드/엣지 연결) -> Step 4 (체크포인터로 컴파일)]
 
     PDF AI 주석 에이전트 그래프를 생성한다.
@@ -528,6 +554,7 @@ def build_annotator_graph(
     Args:
         llm: LangChain chat model 인스턴스 (build_agent_llm로 생성하거나 테스트용 FakeChatModel).
         checkpointer: LangGraph checkpointer. None이면 InMemorySaver를 사용한다.
+        text_searcher: TextLayerSearcher 인스턴스. None이면 search_text tool은 elements 기반 검색만 수행한다.
 
     Returns:
         compile()된 StateGraph.
@@ -539,7 +566,7 @@ def build_annotator_graph(
     builder = StateGraph(AnnotatorState)
     builder.add_node("plan", _plan_node)
     builder.add_node("agent", lambda state: _agent_node(state, llm))
-    builder.add_node("execute", _execute_node)
+    builder.add_node("execute", lambda state: _execute_node(state, text_searcher))
     builder.add_node("hitl", _hitl_node)
     builder.add_node("finalize", _finalize_node)
 
@@ -580,13 +607,11 @@ async def run_annotator_agent(
     """
     from .agent_engine import run_agent_graph
 
-    llm = build_agent_llm(endpoint, model, api_key)
-    graph = build_annotator_graph(llm, get_async_redis_checkpointer())
-    await setup_redis_checkpointer(get_async_redis_checkpointer())
-
-    # [Flow: Step 1 (job_id로 PDF/이미지에서 elements 추출) -> Step 2 (page_range 필터링) -> Step 3 (에이전트 state에 주입)]
+    # [Flow: Step 1 (job_id로 PDF/이미지에서 elements 및 pdf_bytes 추출) -> Step 2 (page_range 필터링)
+    #       -> Step 3 (TextLayerSearcher 생성) -> Step 4 (에이전트 state에 주입 및 그래프 실행)]
     # NOTE: pdf_annotate_converter는 PyMuPDF/OCR/SQLAlchemy 등 무거운 의존성을 가지므로 함수 내부에서 lazy import한다.
     from .pdf_annotate_converter import collect_elements_for_agent
+    from .pdf_text_layer import TextLayerSearcher
 
     try:
         elements, pdf_bytes = collect_elements_for_agent(job_id, page_range=page_range)
@@ -594,58 +619,70 @@ async def run_annotator_agent(
         logger.exception("[run_annotator_agent] elements 추출 실패")
         return {"status": "error", "error": f"elements 추출 실패: {exc}", "result": None}
 
-    inputs: AnnotatorState = {
-        "messages": [],
-        "job_id": job_id,
-        "instruction": instruction,
-        "mode": mode,
-        "comment_mode": comment_mode,
-        "page_range": page_range,
-        "language": language,
-        "elements": elements,
-        "selected_targets": [],
-        "pending_removals": [],
-        "recovery_notes": [],
-        "status": "running",
-        "final_annotations": None,
-        "pending_interrupt": None,
-        "error": "",
-    }
-    result = await run_agent_graph(graph, inputs, thread_id)
+    text_searcher = None
+    if pdf_bytes:
+        text_searcher = TextLayerSearcher(pdf_bytes)
 
-    # [Flow: Step 1 (agent가 선택한 selected_targets 확인) -> Step 2 (pdf_bytes 기준으로 EmbedPDF AnnotationTransferItem 생성)
-    #       -> Step 3 (final_annotations에 JSON 결과 저장)]
-    if result.get("status") == "done" and pdf_bytes:
-        from .pdf_annotator import build_embedpdf_annotations
+    llm = build_agent_llm(endpoint, model, api_key)
+    graph = build_annotator_graph(llm, get_async_redis_checkpointer(), text_searcher)
+    await setup_redis_checkpointer(get_async_redis_checkpointer())
 
-        raw_targets = (result.get("result") or {}).get("final_annotations") or []
-        targets = []
-        for t in raw_targets:
-            try:
-                targets.append(
-                    AnnotationTarget(
-                        page_no=int(t["page_no"]),
-                        bbox_pdf=tuple(t["bbox_pdf"]),
-                        comment=t.get("comment", ""),
-                        color=tuple(t["color"]) if t.get("color") else (1.0, 0.92, 0.3),
-                        callout_color=tuple(t["callout_color"]) if t.get("callout_color") else None,
-                        opacity=t.get("opacity"),
+    try:
+        inputs: AnnotatorState = {
+            "messages": [],
+            "job_id": job_id,
+            "instruction": instruction,
+            "mode": mode,
+            "comment_mode": comment_mode,
+            "page_range": page_range,
+            "language": language,
+            "elements": elements,
+            "selected_targets": [],
+            "pending_removals": [],
+            "recovery_notes": [],
+            "status": "running",
+            "final_annotations": None,
+            "pending_interrupt": None,
+            "error": "",
+        }
+        result = await run_agent_graph(graph, inputs, thread_id)
+
+        # [Flow: Step 1 (agent가 선택한 selected_targets 확인) -> Step 2 (pdf_bytes 기준으로 EmbedPDF AnnotationTransferItem 생성)
+        #       -> Step 3 (final_annotations에 JSON 결과 저장)]
+        if result.get("status") == "done" and pdf_bytes:
+            from .pdf_annotator import build_embedpdf_annotations
+
+            raw_targets = (result.get("result") or {}).get("final_annotations") or []
+            targets = []
+            for t in raw_targets:
+                try:
+                    targets.append(
+                        AnnotationTarget(
+                            page_no=int(t["page_no"]),
+                            bbox_pdf=tuple(t["bbox_pdf"]),
+                            comment=t.get("comment", ""),
+                            color=tuple(t["color"]) if t.get("color") else (1.0, 0.92, 0.3),
+                            callout_color=tuple(t["callout_color"]) if t.get("callout_color") else None,
+                            opacity=t.get("opacity"),
+                        )
                     )
-                )
-            except Exception as te:
-                logger.warning(f"[run_annotator_agent] target 변환 실패: {te} (target={t})")
-        if targets:
-            page_elements_bboxes: dict[int, list[tuple[float, float, float, float]]] = {}
-            for el in elements:
-                page_elements_bboxes.setdefault(el.get("page_no", 1), []).append(el.get("bbox_pdf", (0, 0, 0, 0)))
-            try:
-                annotations = build_embedpdf_annotations(
-                    pdf_bytes, targets, mode, page_elements_bboxes=page_elements_bboxes
-                )
-                result["result"]["final_annotations"] = annotations
-            except Exception as be:
-                logger.exception("[run_annotator_agent] build_embedpdf_annotations 실패")
-                result["result"]["final_annotations"] = raw_targets
-        else:
-            result["result"]["final_annotations"] = []
-    return result
+                except Exception as te:
+                    logger.warning(f"[run_annotator_agent] target 변환 실패: {te} (target={t})")
+            if targets:
+                page_elements_bboxes: dict[int, list[tuple[float, float, float, float]]] = {}
+                for el in elements:
+                    page_elements_bboxes.setdefault(el.get("page_no", 1), []).append(el.get("bbox_pdf", (0, 0, 0, 0)))
+                try:
+                    annotations = build_embedpdf_annotations(
+                        pdf_bytes, targets, mode, page_elements_bboxes=page_elements_bboxes
+                    )
+                    result["result"]["final_annotations"] = annotations
+                except Exception as be:
+                    logger.exception("[run_annotator_agent] build_embedpdf_annotations 실패")
+                    result["result"]["final_annotations"] = raw_targets
+            else:
+                result["result"]["final_annotations"] = []
+        return result
+    finally:
+        if text_searcher is not None:
+            text_searcher.close()

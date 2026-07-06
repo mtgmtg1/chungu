@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { Menu, X, LogOut } from "lucide-react";
 import { useAuth } from "../AuthContext.jsx";
 import LanguageSelector from "./LanguageSelector.jsx";
+import Logo from "./Logo.jsx";
 
 const getNavItems = (t) => [
 { icon: "dashboard", label: t("nav.dashboard"), href: "/dashboard" },
@@ -74,32 +75,10 @@ export default function SidebarLayout({ children, title, subtitle }) {
           className={`flex items-center gap-3 mb-8 px-2 ${expanded ? "" : "justify-center"}`}
           data-oid="c3oet69">
 
-          <div
-            className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center shrink-0"
-            data-oid="mzxpvts">
+          {expanded ?
+          <Logo height="48px" toHome={false} data-oid="ejen81n" /> :
 
-            <span
-              className="material-symbols-outlined text-white text-xl"
-              data-oid="o7duxnm">
-
-              dataset
-            </span>
-          </div>
-          {expanded &&
-          <div data-oid="dyteh.z">
-              <h1
-              className="font-headline-md text-headline-md font-bold text-primary leading-tight"
-              data-oid="ejen81n">
-
-                PROOF
-              </h1>
-              <p
-              className="text-[10px] uppercase tracking-widest text-outline"
-              data-oid="p30h3dl">
-
-                Precision Data
-              </p>
-            </div>
+          <Logo height="42px" toHome={false} data-oid="o7duxnm" />
           }
         </Link>
 

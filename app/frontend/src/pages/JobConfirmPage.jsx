@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowLeft, Loader2, CreditCard, Zap, Sparkles, FileText, Brain, CheckCircle2, Clock } from "lucide-react";
 import { api } from "../api.js";
 import { SkeletonCard } from "../components/Skeleton.jsx";
+import Logo from "../components/Logo.jsx";
 
 export default function JobConfirmPage() {
   const { jobId } = useParams();
@@ -95,12 +96,7 @@ export default function JobConfirmPage() {
     <div className="min-h-screen bg-background text-on-background flex flex-col" data-oid="nxnt213">
       <nav className="w-full bg-transparent" data-oid="3-k6pmw">
         <div className="max-w-container-max mx-auto flex justify-between items-center h-20 px-gutter" data-oid="gud7eer">
-          <Link
-            to="/"
-            className="font-headline-md text-headline-md font-bold text-primary tracking-tight"
-            data-oid=".4rj2i5">
-            PROOF
-          </Link>
+          <Logo height="54px" data-oid=".4rj2i5" />
         </div>
       </nav>
 

@@ -9,6 +9,7 @@ import { useAuth } from "../AuthContext.jsx";
 import { api } from "../api.js";
 import { uploadFilesTUS } from "../tusUpload.js";
 import GlobalFooter from "../components/GlobalFooter.jsx";
+import Logo from "../components/Logo.jsx";
 
 export default function UploadPage() {
   const { user, loading: authLoading } = useAuth();
@@ -174,12 +175,7 @@ export default function UploadPage() {
       <nav className="w-full bg-transparent" data-oid="i7-y4-o">
         <div className="max-w-container-max mx-auto flex justify-between items-center h-20 px-gutter" data-oid="2gdjtc9">
           <div className="flex items-center gap-2" data-oid="ro0013g">
-            <Link
-              to="/"
-              className="font-headline-md text-headline-md font-bold text-primary tracking-tight"
-              data-oid="9p74bh1">
-              PROOF
-            </Link>
+            <Logo height="54px" data-oid="9p74bh1" />
           </div>
           <div className="flex items-center gap-6" data-oid="azbdxm0">
             <Link

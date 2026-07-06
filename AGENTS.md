@@ -8,6 +8,17 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 브랜딩 (로고)
+
+- **공식 로고 적용**: `proof-logo.png`(가로형, 16:9)를 앱 전반의 공식 로고로 사용. 원본(800×450, 77KB)을 400×225(32KB)로 리사이즈하여 `app/frontend/public/proof-logo.png`에 배치 — Vite가 루트 경로(`/proof-logo.png`)로 서빙.
+- **재사용 가능한 Logo 컴포넌트**: `app/frontend/src/components/Logo.jsx` — `height`, `toHome`(Link 래핑 토글), `className` 등의 prop 제공. 모든 주요 브랜드 노출 위치에서 재사용.
+- **적용 위치**:
+  - 랜딩페이지(`UploadPage.jsx`) 네비게이션: 54px
+  - 작업 확인 페이지(`JobConfirmPage.jsx`) 네비게이션: 54px
+  - 사이드바(`SidebarLayout.jsx`): 펼침 48px, 접힘 42px
+- **Favicon**: `app/frontend/index.html`에 `<link rel="icon">` 및 `apple-touch-icon` 추가.
+- **원본 백업**: `proof-logo.original.png`를 루트에 보관(public 밖이므로 서빙되지 않음).
+
 ### Searchable PDF (텍스트 레이어)
 
 - **업로드 시점 텍스트 레이어 생성**: PaddleOCR이 반환한 `overall_ocr_res`의 `rec_texts`/`rec_boxes`를 사용해 원본 PDF/이미지에 투명 텍스트 레이어를 추가. `app/backend/core/pdf_text_layer.py`의 `add_text_layer_from_ocr()`가 핵심.

@@ -616,8 +616,6 @@ def run(
                     e["mode"] = mode
                     e["comment_mode"] = comment_mode
                     e["created_at"] = datetime.now(timezone.utc).isoformat()
-                    if skipped:
-                        e["recovery_notes"] = [{"skipped_matches": skipped}]
                     entry_found = True
                     break
             if not entry_found:
@@ -630,7 +628,7 @@ def run(
             locked_job.result_annotated_pdf_storage_path = storage_path
             locked_job.annotate_status = "done"
             locked_job.annotate_refundable = False
-            locked_job.annotate_recovery_notes = [{"skipped_matches": skipped}] if skipped else []
+            locked_job.annotate_recovery_notes = []
             db.commit()
             cache.invalidate_pattern(f"preview:{job_id}:*")
             return {"job_id": job_id, "status": "done", "matched_rows": len(targets)}

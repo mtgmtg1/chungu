@@ -1,7 +1,7 @@
-// [Flow: Step 1 (downloadUrl로 XLSX fetch) -> Step 2 (LuckyExcel로 Luckysheet 데이터로 변환) -> Step 3 (luckysheet.create로 초기화) -> Step 4 (사용자 편집) -> Step 5 (SheetJS로 XLSX 반출) -> Step 6 (저장 또는 다운로드)]
-import { useEffect, useRef, useState } from "react";
+// [Flow: Step 1 (downloadUrl로 XLSX fetch) -> Step 2 (LuckyExcel로 Luckysheet 데이터로 변환) -> Step 3 (luckysheet.create로 초기화, 편집 hook 설정) -> Step 4 (사용자 편집 시 hook 발생) -> Step 5 (1초 debounce 후 자동 저장) -> Step 6 (SheetJS로 XLSX 반출하여 서버에 업로드)]
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, Download, Save, RotateCcw } from "lucide-react";
+import { Loader2, Download, RotateCcw } from "lucide-react";
 import * as XLSX from "xlsx";
 import { api } from "../api.js";
 
@@ -9,9 +9,12 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
   const { t } = useTranslation();
   const containerRef = useRef(null);
   const luckysheetRef = useRef(null);
+  const autoSaveRef = useRef(null);
+  const autoSaveMessageTimerRef = useRef(null);
+  const isInitialLoadRef = useRef(true);
+  const handleCellChangeRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [initialOptions, setInitialOptions] = useState(null);
   const [libsLoaded, setLibsLoaded] = useState(false);
@@ -67,11 +70,20 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
     init();
     return () => {
       mounted = false;
+      // [Flow: 언마운트 시 pending 자동 저장 flush 및 타이머 정리]
+      if (autoSaveRef.current) {
+        clearTimeout(autoSaveRef.current);
+        autoSaveRef.current = null;
+        handleAutoSave();
+      }
+      if (autoSaveMessageTimerRef.current) {
+        clearTimeout(autoSaveMessageTimerRef.current);
+      }
       if (luckysheetRef.current && typeof luckysheetRef.current.destroy === "function") {
         luckysheetRef.current.destroy();
       }
     };
-  }, []);
+  }, [handleAutoSave]);
 
   // 라이브러리 로드 완료 후 downloadUrl이 있으면 loadExcel 호출
   // downloadUrl 변경 시 데이터 다시 로드
@@ -127,13 +139,30 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
           allowEdit: true,
           enableAddRow: true,
           enableAddBackTop: true,
-          data: exportJson.sheets
+          data: exportJson.sheets,
+          // [Flow: 편집 hook 설정 - 셀/행/열 변경 시 handleCellChangeRef 호출]
+          hook: {
+            cellUpdated: () => handleCellChangeRef.current?.(),
+            cellDeleteAfter: () => handleCellChangeRef.current?.(),
+            rangeDelete: () => handleCellChangeRef.current?.(),
+            rangePaste: () => handleCellChangeRef.current?.(),
+            rangeCut: () => handleCellChangeRef.current?.(),
+            rowDelete: () => handleCellChangeRef.current?.(),
+            rowInsert: () => handleCellChangeRef.current?.(),
+            columnDelete: () => handleCellChangeRef.current?.(),
+            columnInsert: () => handleCellChangeRef.current?.(),
+            sheetDelete: () => handleCellChangeRef.current?.(),
+            sheetCopy: () => handleCellChangeRef.current?.(),
+          },
         };
         setInitialOptions(options);
+        isInitialLoadRef.current = true;
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
             luckysheet.create(options);
             setLoading(false);
+            // [Flow: 초기 로드 완료 후 편집 이벤트 감지 시작]
+            setTimeout(() => { isInitialLoadRef.current = false; }, 500);
           });
         });
       });
@@ -158,6 +187,12 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
   }
 
   function handleDownload() {
+    // [Flow: 다운로드 전 pending 자동 저장 flush]
+    if (autoSaveRef.current) {
+      clearTimeout(autoSaveRef.current);
+      autoSaveRef.current = null;
+      handleAutoSave();
+    }
     const blob = exportToBlob();
     if (!blob) return;
     const url = URL.createObjectURL(blob);
@@ -170,26 +205,53 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
     URL.revokeObjectURL(url);
   }
 
-  async function handleSave() {
+  /**
+   * [Flow: Step 1 (Luckysheet 데이터를 XLSX Blob으로 변환) -> Step 2 (서버에 업로드)
+   *       -> Step 3 (자동 저장 메시지 표시)]
+   * 자동 저장이므로 saving 오버레이/에러 배너 없이 조용히 처리한다.
+   */
+  const handleAutoSave = useCallback(async () => {
     const blob = exportToBlob();
     if (!blob) return;
-    setSaving(true);
-    setSaveMessage("");
-    setError("");
+    if (autoSaveRef.current) {
+      clearTimeout(autoSaveRef.current);
+      autoSaveRef.current = null;
+    }
     try {
       await api.saveEditedXlsx(jobId, blob, fileName || "edited.xlsx");
-      setSaveMessage(t("page:result.saved"));
-      setTimeout(() => setSaveMessage(""), 2000);
+      setSaveMessage(t("page:result.autoSaved"));
+      if (autoSaveMessageTimerRef.current) clearTimeout(autoSaveMessageTimerRef.current);
+      autoSaveMessageTimerRef.current = setTimeout(() => setSaveMessage(""), 2000);
     } catch (e) {
-      setError(e.message || t("page:result.spreadsheetSaveError"));
-    } finally {
-      setSaving(false);
+      console.error("[auto-save xlsx] failed:", e);
     }
-  }
+  }, [jobId, fileName, t]);
+
+  /**
+   * [Flow: Step 1 (셀 편집 등 변경 이벤트 수신) -> Step 2 (1초 debounce 후 자동 저장 예약)]
+   * 초기 로드 시 발생하는 이벤트는 무시한다.
+   */
+  const handleCellChange = useCallback(() => {
+    if (isInitialLoadRef.current) return;
+    if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
+    autoSaveRef.current = setTimeout(() => {
+      handleAutoSave();
+    }, 1000);
+  }, [handleAutoSave]);
+
+  // [Flow: handleCellChange ref를 항상 최신으로 유지 (luckysheet create 시 고정되므로)]
+  handleCellChangeRef.current = handleCellChange;
 
   function handleReset() {
     if (!luckysheetRef.current || !initialOptions) return;
+    // [Flow: 리셋 전 pending 자동 저장 취소]
+    if (autoSaveRef.current) {
+      clearTimeout(autoSaveRef.current);
+      autoSaveRef.current = null;
+    }
+    isInitialLoadRef.current = true;
     luckysheetRef.current.create(initialOptions);
+    setTimeout(() => { isInitialLoadRef.current = false; }, 500);
   }
 
   function luckysheetDataToWorkbook(sheets) {
@@ -262,15 +324,6 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
       <div className="flex items-center justify-between px-4 py-2 border-b border-outline-variant flex-shrink-0" data-oid="spreadsheet-toolbar">
         <div className="flex items-center gap-2">
           <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-colors"
-          data-oid="spreadsheet-save-btn">
-            {saving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
-            {t("page:result.save")}
-          </button>
-
-          <button
           onClick={handleDownload}
           className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-container-high text-on-surface rounded-lg text-sm font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
           data-oid="spreadsheet-download-btn">
@@ -288,7 +341,7 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
         </div>
 
         {saveMessage &&
-        <span className="text-sm text-green-600 font-medium" data-oid="spreadsheet-save-msg">
+        <span className="text-sm text-on-surface-variant font-medium" data-oid="spreadsheet-save-msg">
           {saveMessage}
         </span>
         }

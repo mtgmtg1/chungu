@@ -8,6 +8,15 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### Searchable PDF (텍스트 레이어)
+
+- **업로드 시점 텍스트 레이어 생성**: PaddleOCR이 반환한 `overall_ocr_res`의 `rec_texts`/`rec_boxes`를 사용해 원본 PDF/이미지에 투명 텍스트 레이어를 추가. `app/backend/core/pdf_text_layer.py`의 `add_text_layer_from_ocr()`가 핵심.
+- **원본 미리보기 대체**: `app/backend/api/jobs.py:_source_files()`와 `_build_source_file_item()`에서 원본 PDF/이미지의 `preview_url`을 `searchable_pdf_storage_path`로 대체. 다운로드용 `url`은 원본 유지.
+- **DB 메타데이터**: `Job` 테이블에 `searchable_pdf_storage_path` 컬럼 추가. 단일 PDF 업로드는 Job 컬럼 사용, 멀티파일 이미지는 `extracted_files` JSONB에 `searchable_pdf_storage_path` 필드 추가.
+- **AI 주석 최적화**: `app/backend/core/pdf_annotate_converter.py`에서 `job.searchable_pdf_storage_path`가 있으면 OCR을 생략하고, `_collect_page_elements_from_searchable_pdf()`로 텍스트 레이어에서 `elements`를 추출. `TextLayerSearcher`로 직접 bbox 검색.
+- **좌표 보정**: `pdf_annotator.py`와 `pdf_user_annotator.py`의 `_rect_to_embedpdf_rect()`/`_fitz_rect_to_embedpdf_rect()`에 `page.rect.x0`을 고려해 CropBox/MediaBox가 있는 PDF에서도 정확히 정렬.
+- **핵심 파일**: `pdf_text_layer.py`, `pipeline_vision.py`, `workers/tasks.py`, `api/jobs.py`, `pdf_annotate_converter.py`, `db/models.py`.
+
 ### AI 주석 (PDF Annotation)
 
 - **비동기/원자적 인덱스**: 주석 생성 요청마다 고유 인덱스를 원자적으로 할당해 파일 덮어쓰기 및 동시 생성 충돌 방지.

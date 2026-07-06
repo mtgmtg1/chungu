@@ -40,10 +40,10 @@ def run_vision(
     media_api_key: str = "",
     on_progress: Callable[[int, int], None] | None = None,
     on_error: Callable[[int, str], None] | None = None,
-) -> list[tuple[int, str]]:
+) -> tuple[list[tuple[int, str]], dict[int, dict]]:
     """PDF를 PNG로 렌더링하면서 렌더링이 완료된 페이지는 즉시 OCR에 제출한다.
 
-    [Flow: Step 1 (총 페이지 수 계산) -> Step 2 (OCR executor 생성) -> Step 3 (render_pdf에 on_page_rendered 콜백 전달, 렌더링 완료 페이지 즉시 OCR 제출) -> Step 4 (모든 OCR future 수집/대기) -> Step 5 (페이지 번호 순서로 결과 반환)]
+    [Flow: Step 1 (총 페이지 수 계산) -> Step 2 (OCR executor 생성) -> Step 3 (render_pdf에 on_page_rendered 콜백 전달, 렌더링 완료 페이지 즉시 OCR 제출) -> Step 4 (모든 OCR future 수집/대기) -> Step 5 (페이지 번호 순서로 결과 반환) -> Step 6 (searchable PDF 생성용 layout_by_page 반환)]
     """
     work = Path(work_dir)
     img_dir = work / "img"
@@ -60,7 +60,7 @@ def run_vision(
     ocr_done_count = 0
     ocr_futures: set = set()
     future_to_page_num: dict = {}
-    results: list[tuple[int, str]] = []
+    results: list[tuple[int, str | None, dict]] = []
 
     def update_progress() -> None:
         if not on_progress or total_pages <= 0:
@@ -71,47 +71,52 @@ def run_vision(
     def resolve_endpoint(idx: int) -> tuple[str, str, str]:
         return endpoint, model, api_key
 
-    def _try_paddleocr_fallback(img: Path, page_num: int) -> str | None:
+    def _try_paddleocr_fallback(img: Path, page_num: int) -> tuple[str | None, dict]:
         """PaddleOCR 폴백으로 페이지 이미지를 처리한다.
 
-        [Flow: Step 1 (폴백 가능 여부 확인) -> Step 2 (paddleocr_client.convert_image 호출) -> Step 3 (성공 시 consume_fallback, markdown 반환) -> Step 4 (실패 시 None)]
+        [Flow: Step 1 (폴백 가능 여부 확인) -> Step 2 (paddleocr_client.convert_image_with_layout 호출)
+              -> Step 3 (성공 시 consume_fallback, markdown + layout 반환) -> Step 4 (실패 시 None, {})]
         """
         if not fallback_controller.can_use_fallback():
-            return None
+            return None, {}
         try:
-            md = paddleocr_client.convert_image(img)
+            md, layout, _ = paddleocr_client.convert_image_with_layout(img)
+            fb_result = ocr_client.extract_markdown_content(md)
+            if not fb_result:
+                return None, {}
             fallback_controller.consume_fallback()
             logger.info(f"[vision-fallback] page {page_num} PaddleOCR 폴백 성공")
-            return ocr_client.extract_markdown_content(md)
+            return fb_result, layout
         except Exception as e:
             logger.warning(f"[vision-fallback] page {page_num} PaddleOCR 폴백 실패: {e}")
-            return None
+            return None, {}
 
-    def process(page_idx: int, page_num: int, img: Path) -> tuple[int, str]:
+    def process(page_idx: int, page_num: int, img: Path) -> tuple[int, str | None, dict]:
         """단일 페이지 이미지를 OCR 처리한다.
 
         [Flow: Step 1 (PaddleOCR 폴백 우선 시도) -> Step 2 (폴백 실패 시 LLM vision 호출) -> Step 3 (예외 발생 시 최종 폴백 시도) -> Step 4 (완료 시 진행률 갱신)]
         """
         nonlocal ocr_done_count
+        layout_raw: dict = {}
         try:
             # run_vision으로 라우팅된 모든 페이지는 PaddleOCR을 우선 사용한다
             if fallback_controller.is_fallback_preferred():
-                fb_result = _try_paddleocr_fallback(img, page_num)
-                if fb_result is not None:
-                    return page_num, fb_result
+                fb_result, layout_raw = _try_paddleocr_fallback(img, page_num)
+                if fb_result:
+                    return page_num, fb_result, layout_raw
                 # 폴백 실패 시 기본 요청으로 진행
 
             ep, mdl, key = resolve_endpoint(page_idx)
             try:
                 content, _ = ocr_client.call_vision(img, prompt, ep, mdl, key, max_tokens)
                 fallback_controller.record_success()
-                return page_num, ocr_client.extract_markdown_content(content)
+                return page_num, ocr_client.extract_markdown_content(content), layout_raw
             except Exception as e:
                 fallback_controller.record_failure()
                 logger.warning(f"[vision] page {page_num} 기본 요청 실패, PaddleOCR 폴백 시도: {e}")
-                fb_result = _try_paddleocr_fallback(img, page_num)
-                if fb_result is not None:
-                    return page_num, fb_result
+                fb_result, layout_raw = _try_paddleocr_fallback(img, page_num)
+                if fb_result:
+                    return page_num, fb_result, layout_raw
                 raise
         finally:
             with lock:
@@ -146,12 +151,14 @@ def run_vision(
         for future in as_completed(pending_futures):
             page_num = future_to_page_num.get(future)
             try:
-                page_num, result = future.result()
-                results.append((page_num, result))
+                page_num, result, layout_raw = future.result()
+                results.append((page_num, result, layout_raw))
             except Exception as e:  # noqa: BLE001
                 if on_error and page_num is not None:
                     on_error(page_num, str(e))
 
     # Step 5: 페이지 번호 순서로 정렬하여 반환
     results.sort(key=lambda x: x[0])
-    return results
+    page_tables = [(page_num, result) for page_num, result, _ in results if result]
+    layout_by_page: dict[int, dict] = {page_num: layout for page_num, _, layout in results if layout}
+    return page_tables, layout_by_page

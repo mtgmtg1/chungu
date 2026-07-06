@@ -220,7 +220,7 @@ def build_embedpdf_annotations(
 
             page_height = visual.height
             if enable_highlight:
-                rect_ep = _rect_to_embedpdf_rect(x0, y0, x1, y1, page_height)
+                rect_ep = _rect_to_embedpdf_rect(x0, y0, x1, y1, page_height, visual.x0)
                 annotations.append({
                     "annotation": {
                         "id": f"{base_id}-highlight",
@@ -239,14 +239,15 @@ def build_embedpdf_annotations(
                 layout = note_layouts.get(id(t))
                 if layout:
                     note_top, note_height = layout
-                    margin_x0 = visual.x1 + 4
-                    margin_x1 = visual.x1 + MARGIN_WIDTH_PT - 4
+                    page_width = visual.x1 - visual.x0
+                    margin_x0 = page_width + 4
+                    margin_x1 = page_width + MARGIN_WIDTH_PT - 4
                     annotations.append({
                         "annotation": {
                             "id": f"{base_id}-note",
                             "type": FREETEXT_TYPE,
                             "pageIndex": page_no - 1,
-                            "rect": _rect_to_embedpdf_rect(margin_x0, note_top, margin_x1, note_top + note_height, page_height),
+                            "rect": _rect_to_embedpdf_rect(margin_x0, note_top, margin_x1, note_top + note_height, page_height, visual.x0),
                             "contents": t.comment,
                             "fontFamily": HELVETICA_FONT,
                             "fontSize": MARGIN_NOTE_FONT_SIZE,
@@ -273,17 +274,22 @@ def _rect_to_embedpdf_rect(
     x1: float,
     y1: float,
     page_height: float,
+    page_x0: float = 0.0,
 ) -> dict:
-    """[Flow: Step 1 (PyMuPDF PDF user-space 좌표 수신) -> Step 2 (y축 flip으로 device-space 변환)
-          -> Step 3 (EmbedPDF Rect 형식: origin=좌상단(y↓), size=width/height 반환)]
+    """[Flow: Step 1 (PyMuPDF PDF user-space 좌표 수신) -> Step 2 (page.rect.x0 기준 상대좌표로 변환)
+          -> Step 3 (y축 flip으로 device-space 변환) -> Step 4 (EmbedPDF Rect 형식 반환)]
 
     PDF 좌표계는 원점이 좌하단이고 y는 위로 증가한다. EmbedPDF는 annotation rect의
     origin.y를 device-space(원점 좌상단, y↓)로 해석해 CSS `top: origin.y * scale`로
     직접 렌더링한다. 따라서 PDF user-space 상단(y1)을 device-space 상단
     (page_height - y1)로 flip해야 한다.
+
+    CropBox/MediaBox가 있는 PDF에서 page.rect.x0이 0이 아닐 경우, EmbedPDF의 좌표는
+    page.rect의 왼쪽 끝을 기준으로 상대좌표를 사용한다. 따라서 x0에서 page_x0을
+    빼서 상대 위치를 맞춘다.
     """
     return {
-        "origin": {"x": x0, "y": page_height - y1},
+        "origin": {"x": x0 - page_x0, "y": page_height - y1},
         "size": {"width": max(0.0, x1 - x0), "height": max(0.0, y1 - y0)},
     }
 

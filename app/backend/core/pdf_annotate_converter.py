@@ -27,6 +27,11 @@ from .image_deskew import deskew_image
 from .ocr_layout import BBox, OcrRow, OcrTextBlock, parse_layout_result
 from .pdf_annotator import AnnotationTarget, build_embedpdf_annotations
 from .pdf_coords import clamp_rect_to_page, px_bbox_to_pdf_rect
+from .pdf_text_layer import (
+    TextLayerSearcher,
+    add_text_layer_from_ocr,
+    extract_page_ocr_results_from_layout,
+)
 from .prompts import build_element_highlight_prompt, build_vision_bbox_highlight_prompt
 from .xlsx_advanced_converter import _get_page_image_paths
 
@@ -150,24 +155,27 @@ def _rotate_image_90(image_path: Path, angle_code: int, output_dir: Path) -> Pat
 def _collect_page_elements(
     job: Job,
     temp_dir: Path,
-) -> tuple[list[AnnotateElement], dict[int, Path]]:
+) -> tuple[list[AnnotateElement], dict[int, Path], dict[int, dict]]:
     """모든 페이지를 렌더링하고 PaddleOCR bbox를 확보해 텍스트 요소 목록을 반환한다.
 
     [Flow: Step 1 (페이지 이미지 로드) -> Step 2 (deskew 미세 회전 보정) -> Step 3 (PaddleOCR 전송 + bbox + angle_code 수신)
-          -> Step 4 (angle_code로 90° 회전 적용한 최종 이미지 준비) -> Step 5 (표 행 + 텍스트 블록 수집)]
+          -> Step 4 (angle_code로 90° 회전 적용한 최종 이미지 준비) -> Step 5 (표 행 + 텍스트 블록 수집)
+          -> Step 6 (layout 원본 보관 — 텍스트 레이어 생성용)]
 
     표의 행(table_row)과 텍스트 블록(text)을 모두 수집한다.
     반환하는 corrected_images는 "deskew + 90° 대회전 보정이 모두 완료된 정돈된 이미지"이며,
     이 이미지들로 주석 PDF를 생성하면 bbox와 완벽히 정렬된다.
 
     Returns:
-        (elements, corrected_images) —
+        (elements, corrected_images, layout_by_page) —
         elements: 주석 대상 텍스트 요소 목록 (bbox는 보정된 이미지 기준)
         corrected_images: page_no(1-based) → 정돈된 페이지 이미지 경로
+        layout_by_page: page_no → PaddleOCR layout 원본 dict (overall_ocr_res 포함)
     """
     image_paths = _get_page_image_paths(job, temp_dir)
     elements: list[AnnotateElement] = []
     corrected_images: dict[int, Path] = {}
+    layout_by_page: dict[int, dict] = {}
 
     for page_no in sorted(image_paths.keys()):
         img_path = image_paths[page_no]
@@ -176,6 +184,8 @@ def _collect_page_elements(
         except Exception as e:
             logger.warning(f"[pdf_annotate] page={page_no} PaddleOCR 레이아웃 확보 실패: {e}")
             continue
+
+        layout_by_page[page_no] = layout_raw or {}
 
         # deskew는 paddleocr_client 내부에서 이미 적용되어 전송됐지만, 주석 PDF의 베이스 이미지도
         # 동일하게 deskew해야 bbox와 정렬된다. 여기서 원본 이미지에 deskew를 다시 적용한다.
@@ -205,7 +215,7 @@ def _collect_page_elements(
                 cell_bboxes=[],
             ))
 
-    return elements, corrected_images
+    return elements, corrected_images, layout_by_page
 
 
 def _page_point_sizes(pdf_bytes: bytes) -> dict[int, tuple[float, float]]:
@@ -219,6 +229,84 @@ def _page_point_sizes(pdf_bytes: bytes) -> dict[int, tuple[float, float]]:
     finally:
         doc.close()
     return sizes
+
+
+def _render_pdf_to_image_paths(
+    pdf_bytes: bytes,
+    temp_dir: Path,
+    dpi: int = RENDER_DPI,
+) -> dict[int, Path]:
+    """[Flow: Step 1 (PDF bytes를 임시 파일로 저장) -> Step 2 (ocr_client.render_pdf로 페이지 이미지 렌더링)
+          -> Step 3 (페이지 번호 추출) -> Step 4 (page_no → 이미지 경로 매핑 반환)]
+
+    searchable PDF 등 외부에서 이미 확보된 PDF bytes로부터 페이지 이미지를 생성한다.
+    """
+    image_paths: dict[int, Path] = {}
+    input_path = temp_dir / "input.pdf"
+    input_path.write_bytes(pdf_bytes)
+    try:
+        ocr_client.render_pdf(str(input_path), str(temp_dir), dpi=dpi)
+        for p in sorted(temp_dir.glob("page-*.png")):
+            try:
+                page_num = int(p.stem.split("-")[-1])
+                image_paths[page_num] = p
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"[_render_pdf_to_image_paths] PDF 렌더링 실패: {e}")
+    return image_paths
+
+
+def _collect_page_elements_from_searchable_pdf(
+    pdf_bytes: bytes,
+    temp_dir: Path,
+    dpi: int = RENDER_DPI,
+) -> tuple[list[AnnotateElement], dict[int, Path]]:
+    """[Flow: Step 1 (searchable PDF 열기) -> Step 2 (페이지별 이미지 렌더링)
+          -> Step 3 (텍스트 레이어에서 텍스트 블록 추출) -> Step 4 (AnnotateElement 생성)]
+
+    searchable PDF의 텍스트 레이어에서 이미 OCR이 완료된 텍스트/bbox를 추출해
+    AnnotateElement 목록과 페이지 이미지를 반환한다. 별도 PaddleOCR 호출 없이
+    AI 주석 생성에 필요한 요소를 확보한다.
+    """
+    scale = dpi / 72.0
+    elements: list[AnnotateElement] = []
+    corrected_images: dict[int, Path] = {}
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        for page in doc:
+            page_no = page.number + 1
+            img_path = temp_dir / f"page-{page_no:04d}.png"
+            try:
+                pix = page.get_pixmap(dpi=dpi)
+                pix.save(str(img_path))
+                corrected_images[page_no] = img_path
+            except Exception as e:
+                logger.warning(f"[_collect_page_elements_from_searchable_pdf] page={page_no} 이미지 렌더링 실패: {e}")
+                continue
+
+            blocks = page.get_text("blocks")
+            for block in blocks:
+                try:
+                    x0, y0, x1, y1, text, _block_no, _block_type = block
+                except Exception:
+                    continue
+                if not text or not text.strip():
+                    continue
+                bbox_px: BBox = (int(x0 * scale), int(y0 * scale), int(x1 * scale), int(y1 * scale))
+                elements.append(AnnotateElement(
+                    page_no=page_no,
+                    bbox_px=bbox_px,
+                    kind="text",
+                    text=text.strip(),
+                    word_bboxes=[],
+                    cell_texts=[],
+                    cell_bboxes=[],
+                ))
+    finally:
+        doc.close()
+    return elements, corrected_images
 
 
 def _images_to_pdf(image_paths: dict[int, Path]) -> bytes:
@@ -351,8 +439,17 @@ def _matches_to_targets(
     matches: list[dict],
     elements: list[AnnotateElement],
     page_point_sizes: dict[int, tuple[float, float]],
+    text_searcher: TextLayerSearcher | None = None,
 ) -> list[AnnotationTarget]:
-    """LLM이 반환한 match 목록을 AnnotationTarget 목록으로 변환한다 (scope/색상 적용)."""
+    """LLM이 반환한 match 목록을 AnnotationTarget 목록으로 변환한다 (scope/색상 적용).
+
+    [Flow: Step 1 (match 순회) -> Step 2 (element_index 유효성 검사)
+          -> Step 3 (텍스트 레이어 검색 우선 — 없으면 OCR bbox 사용) -> Step 4 (페이지 범위 clamp)
+          -> Step 5 (AnnotationTarget 생성)]
+
+    텍스트 레이어가 추가된 PDF가 있으면, OCR bbox 변환 대신 PDF 텍스트 레이어에서 직접
+    텍스트를 검색하여 bbox를 얻는다. 이 방식은 좌표 변환 오차 없이 정확한 위치를 제공한다.
+    """
     targets: list[AnnotationTarget] = []
     for m in matches:
         idx = m.get("element_index")
@@ -362,7 +459,20 @@ def _matches_to_targets(
         scope = m.get("highlight_scope")
         narrowed_bbox = _narrow_bbox_by_scope(el, scope)
         bbox_px = narrowed_bbox if narrowed_bbox is not None else el.bbox_px
-        rect_pdf = px_bbox_to_pdf_rect(bbox_px, dpi=RENDER_DPI)
+
+        # 텍스트 레이어에서 직접 검색하면 bbox 변환 오차를 피할 수 있다.
+        rect_pdf: tuple[float, float, float, float] | None = None
+        if text_searcher is not None:
+            search_text = el.text.replace(" | ", " ").strip()[:80]
+            if search_text:
+                found = text_searcher.search(el.page_no, search_text)
+                if found:
+                    rect_pdf = found[0]
+                    logger.info(f"[pdf_annotate] 텍스트 레이어 검색 성공 page={el.page_no}: '{search_text[:30]}'")
+
+        if rect_pdf is None:
+            rect_pdf = px_bbox_to_pdf_rect(bbox_px, dpi=RENDER_DPI)
+
         page_pt = page_point_sizes.get(el.page_no)
         if page_pt:
             rect_pdf = clamp_rect_to_page(rect_pdf, page_pt[0], page_pt[1])
@@ -530,7 +640,20 @@ def run(
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             temp_dir = Path(tmpdir)
-            image_paths = _get_page_image_paths(job, temp_dir)
+
+            # [Flow: searchable PDF가 있으면 이를 사용 — OCR 중복 방지]
+            searchable_pdf_bytes: bytes | None = None
+            if job.searchable_pdf_storage_path:
+                try:
+                    searchable_pdf_bytes = supabase_client.download_pdf(job.searchable_pdf_storage_path).read()
+                    logger.info(f"[pdf_annotate] searchable PDF 사용: {job.searchable_pdf_storage_path}")
+                except Exception as e:
+                    logger.warning(f"[pdf_annotate] searchable PDF 다운로드 실패, 원본 PDF 사용: {e}")
+
+            if searchable_pdf_bytes:
+                image_paths = _render_pdf_to_image_paths(searchable_pdf_bytes, temp_dir, dpi=RENDER_DPI)
+            else:
+                image_paths = _get_page_image_paths(job, temp_dir)
             if not image_paths:
                 raise ValueError("원본 파일을 이미지로 렌더링하지 못해 주석을 생성할 수 없습니다")
 
@@ -547,19 +670,42 @@ def run(
                     _update_entry_status(db, job_id, next_index, "done", recovery_notes=[{"reason": "조건에 맞는 요소를 찾지 못했습니다"}])
                     return {"job_id": job_id, "status": "done", "matched_rows": 0}
             else:
-                # [Flow: 주석 PDF 베이스 — 정돈된 이미지(deskew + 90° 대회전 보정 완료)로 PDF 생성]
-                # 원본 PDF를 사용하지 않고 보정된 페이지 이미지로 새 PDF를 생성한다.
-                # 이유: bbox가 "deskew + AI Studio 90° 보정된 이미지" 기준으로 반환되므로,
-                # 주석 PDF의 베이스도 동일하게 보정된 이미지여야 bbox와 완벽히 정렬된다.
-                # 원본 PDF 벡터 품질 손실(텍스트 선택 불가)은 사용자가 명시적으로 수용한 트레이드오프.
-                elements, corrected_images = _collect_page_elements(job, temp_dir)
-                if not elements:
-                    raise ValueError("텍스트 요소를 인식하지 못해 하이라이트/여백 주석 대상을 찾을 수 없습니다")
-                if not corrected_images:
-                    raise ValueError("보정된 페이지 이미지를 생성하지 못해 주석 PDF를 만들 수 없습니다")
+                if searchable_pdf_bytes:
+                    # [Flow: searchable PDF 기반 AI 주석 — OCR 생략]
+                    # 업로드 시점에 이미 생성된 searchable PDF의 텍스트 레이어에서 요소를 추출하고
+                    # 동일한 PDF를 주석 베이스로 재사용한다. 별도 PaddleOCR 호출이 없어 훨씬 빠르다.
+                    elements, corrected_images = _collect_page_elements_from_searchable_pdf(
+                        searchable_pdf_bytes, temp_dir, dpi=RENDER_DPI
+                    )
+                    if not elements:
+                        raise ValueError("searchable PDF에서 텍스트 요소를 찾을 수 없습니다")
+                    if not corrected_images:
+                        raise ValueError("searchable PDF에서 페이지 이미지를 생성하지 못해 주석 PDF를 만들 수 없습니다")
+                    pdf_bytes = searchable_pdf_bytes
+                    page_point_sizes = _page_point_sizes(pdf_bytes)
+                else:
+                    # [Flow: 주석 PDF 베이스 — 정돈된 이미지(deskew + 90° 대회전 보정 완료)로 PDF 생성]
+                    # 원본 PDF를 사용하지 않고 보정된 페이지 이미지로 새 PDF를 생성한다.
+                    # 이유: bbox가 "deskew + AI Studio 90° 보정된 이미지" 기준으로 반환되므로,
+                    # 주석 PDF의 베이스도 동일하게 보정된 이미지여야 bbox와 완벽히 정렬된다.
+                    # 원본 PDF 벡터 품질 손실(텍스트 선택 불가)은 사용자가 명시적으로 수용한 트레이드오프.
+                    elements, corrected_images, layout_by_page = _collect_page_elements(job, temp_dir)
+                    if not elements:
+                        raise ValueError("텍스트 요소를 인식하지 못해 하이라이트/여백 주석 대상을 찾을 수 없습니다")
+                    if not corrected_images:
+                        raise ValueError("보정된 페이지 이미지를 생성하지 못해 주석 PDF를 만들 수 없습니다")
 
-                pdf_bytes = _images_to_pdf(corrected_images)
-                page_point_sizes = _page_point_sizes(pdf_bytes)
+                    pdf_bytes = _images_to_pdf(corrected_images)
+                    page_point_sizes = _page_point_sizes(pdf_bytes)
+
+                    # [Flow: 텍스트 레이어 추가 — OCR 결과로 검색/선택 가능한 PDF 생성]
+                    # 텍스트 레이어가 있으면 AI 주석 생성 시 텍스트 검색으로 정확한 bbox를 얻는다.
+                    page_ocr_results = extract_page_ocr_results_from_layout(layout_by_page)
+                    if page_ocr_results:
+                        pdf_bytes = add_text_layer_from_ocr(
+                            pdf_bytes, page_ocr_results, dpi=RENDER_DPI, language=language
+                        )
+                        page_point_sizes = _page_point_sizes(pdf_bytes)
 
                 matches, llm_mode, llm_comment_mode = _select_elements_with_llm(
                     elements, instruction, endpoint, model, api_key
@@ -568,7 +714,14 @@ def run(
                     _update_entry_status(db, job_id, next_index, "done", recovery_notes=[{"reason": "조건에 맞는 요소를 찾지 못했습니다"}])
                     return {"job_id": job_id, "status": "done", "matched_rows": 0}
 
-                targets = _matches_to_targets(matches, elements, page_point_sizes)
+                text_searcher = None
+                if pdf_bytes:
+                    text_searcher = TextLayerSearcher(pdf_bytes)
+                try:
+                    targets = _matches_to_targets(matches, elements, page_point_sizes, text_searcher)
+                finally:
+                    if text_searcher:
+                        text_searcher.close()
 
             if not targets:
                 raise ValueError("LLM이 선택한 요소를 원본 bbox로 매핑하지 못했습니다")

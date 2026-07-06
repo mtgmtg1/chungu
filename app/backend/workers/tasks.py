@@ -10,13 +10,14 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 
+import fitz  # PyMuPDF
 from pypdf import PdfReader
 from sqlalchemy import text as sql_text
 
 from ..celery_app import celery
 from celery.signals import worker_ready
 from ..config import settings
-from ..core import archive_handler, converter, excel_writer, media_loader, merge, pdf_annotate_converter, subscription_service, supabase_client, xlsx_advanced_converter
+from ..core import archive_handler, converter, excel_writer, media_loader, merge, pdf_annotate_converter, pdf_text_layer, subscription_service, supabase_client, xlsx_advanced_converter
 from ..core.ocr_client import has_pdf_text_layer
 from ..core.pipeline_docling import run_docling, run_hwp
 from ..core.pipeline_hybrid import run_hybrid
@@ -201,6 +202,62 @@ def count_oversized_pages(file_path: Path) -> tuple[int, int]:
         return 0, 0
 
 
+def _build_and_upload_searchable_pdf(
+    db,
+    job: Job,
+    input_path: Path,
+    layout_by_page: dict[int, dict],
+    dpi: int,
+) -> None:
+    """[Flow: Step 1 (layout_by_page에서 OCR 결과 추출) -> Step 2 (원본 PDF에 투명 텍스트 레이어 추가)
+          -> Step 3 (searchable PDF Storage 업로드) -> Step 4 (Job DB 저장)]
+
+    PaddleOCR이 반환한 페이지별 layout로부터 텍스트/bbox를 추출해 원본 PDF에 투명 텍스트 레이어를
+    입히고, 그 결과를 Storage에 업로드한다. 생성된 searchable PDF는 원본 PDF의 preview_url로
+    사용된다.
+    """
+    page_ocr_results = pdf_text_layer.extract_page_ocr_results_from_layout(layout_by_page)
+    if not page_ocr_results:
+        return
+    try:
+        pdf_bytes = input_path.read_bytes()
+        searchable_pdf_bytes = pdf_text_layer.add_text_layer_from_ocr(pdf_bytes, page_ocr_results, dpi=dpi, language="ko")
+        storage_path = supabase_client.upload_input(BytesIO(searchable_pdf_bytes), "searchable.pdf", job.id)
+        job.searchable_pdf_storage_path = storage_path
+        db.commit()
+        logger.info(f"[run_job:{job.id}] searchable PDF 업로드 완료: {storage_path}")
+    except Exception as e:
+        logger.warning(f"[run_job:{job.id}] searchable PDF 생성/업로드 실패: {e}")
+
+
+def _image_to_searchable_pdf(
+    image_path: Path,
+    layout_raw: dict,
+    dpi: int = 200,
+) -> bytes:
+    """[Flow: Step 1 (이미지로 1페이지 PDF 생성) -> Step 2 (OCR layout에서 텍스트/bbox 추출)
+          -> Step 3 (투명 텍스트 레이어 추가) -> Step 4 (searchable PDF bytes 반환)]
+
+    단일 이미지를 1페이지 PDF로 변환하고, PaddleOCR layout의 텍스트/bbox를 투명 텍스트 레이어로
+    추가해 searchable PDF를 만든다.
+    """
+    img = fitz.Pixmap(str(image_path))
+    doc = fitz.open()
+    try:
+        width_pt = img.width * 72.0 / dpi
+        height_pt = img.height * 72.0 / dpi
+        page = doc.new_page(width=width_pt, height=height_pt)
+        page.insert_image(fitz.Rect(0, 0, width_pt, height_pt), filename=str(image_path))
+        pdf_bytes = doc.tobytes()
+    finally:
+        doc.close()
+
+    page_ocr_results = pdf_text_layer.extract_page_ocr_results_from_layout({1: layout_raw})
+    if page_ocr_results:
+        return pdf_text_layer.add_text_layer_from_ocr(pdf_bytes, page_ocr_results, dpi=dpi, language="ko")
+    return pdf_bytes
+
+
 @celery.task(name="backend.workers.tasks.run_job")
 def run_job(job_id: str) -> dict:
     """업로드된 파일(단일 PDF 또는 멀티미디어)을 변환하는 메인 워커 태스크."""
@@ -310,7 +367,7 @@ def run_job(job_id: str) -> dict:
                 fmt = "markdown"
             elif input_path.suffix.lower() == ".pdf":
                 _set_status(db, job, "ocr")
-                page_tables = run_vision(
+                page_tables, layout_by_page = run_vision(
                     str(input_path),
                     str(work_dir),
                     columns,
@@ -327,6 +384,9 @@ def run_job(job_id: str) -> dict:
                     on_error=on_error,
                 )
                 fmt = "markdown"
+
+                # [Flow: PaddleOCR layout로 searchable PDF 생성]
+                _build_and_upload_searchable_pdf(db, job, input_path, layout_by_page, job.dpi or 200)
             else:
                 _set_status(db, job, "ocr")
                 page_tables = run_docling(
@@ -568,6 +628,26 @@ def run_job(job_id: str) -> dict:
                         durations[ftype] += media_loader.get_media_duration_seconds(fp)
                 job.media_duration_seconds = durations["audio"] + durations["video"]
 
+                # [Flow: 이미지 파일 searchable PDF 생성]
+                # run_media 내에서 이미 PaddleOCR이 호출되지만 layout은 반환하지 않으므로,
+                # 여기서 convert_image_with_layout을 한 번 더 호출해 searchable PDF를 만든다.
+                image_searchable_paths: dict[str, str] = {}
+                for ftype, fp in media_files:
+                    if ftype != "image":
+                        continue
+                    try:
+                        md, layout_raw, _ = paddleocr_client.convert_image_with_layout(fp)
+                        searchable_pdf_bytes = _image_to_searchable_pdf(fp, layout_raw, dpi=200)
+                        searchable_path = supabase_client.upload_input(
+                            BytesIO(searchable_pdf_bytes),
+                            f"searchable_{fp.name}",
+                            job_id,
+                        )
+                        image_searchable_paths[fp.name] = searchable_path
+                        logger.info(f"[run_job:{job_id}] 이미지 searchable PDF 업로드 완료: {fp.name}")
+                    except Exception as e:
+                        logger.warning(f"[run_job:{job_id}] 이미지 searchable PDF 생성 실패: {fp.name}: {e}")
+
                 # 추출 파일 정보 업데이트 (이미지는 Storage에 개별 업로드)
                 extracted_info = []
                 for p in extracted:
@@ -584,6 +664,7 @@ def run_job(job_id: str) -> dict:
                             info["storage_path"] = supabase_client.upload_image(job_id, p, p.name)
                         except Exception as e:
                             errors.append(f"{p.name}: 이미지 업로드 실패 {e}")
+                        info["searchable_pdf_storage_path"] = image_searchable_paths.get(p.name, "")
                     elif ftype in media_loader.DOCLING_TYPES or ftype in media_loader.HWP_TYPES:
                         try:
                             info["storage_path"] = supabase_client.upload_input(BytesIO(p.read_bytes()), p.name, job_id)

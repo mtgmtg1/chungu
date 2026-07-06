@@ -1118,16 +1118,30 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
         # image/audio/video는 원본 signed URL만 필요
         client = supabase_client.create_fresh_service_client()
         url = supabase_client.get_signed_download_url_with_client(client, storage_path, bucket=bucket, expires_in=3600)
-        return {
+        item = {
             "name": info.get("path", info.get("storage_path", "")),
             "type": ftype,
             "url": url,
             "storage_path": storage_path,
             "page_num": idx + 1,
             "result_markdown": info.get("result_markdown", ""),
+            "preview_url": url,
             "source_index": idx,
             "source_kind": source_kind,
         }
+        # 이미지에 searchable PDF가 있으면 preview_url을 대체 (텍스트 검색/선택 가능)
+        if ftype == "image":
+            searchable_path = info.get("searchable_pdf_storage_path")
+            if searchable_path:
+                try:
+                    searchable_url = supabase_client.get_signed_download_url_with_client(
+                        client, searchable_path, bucket="pdfs", expires_in=3600
+                    )
+                    if searchable_url:
+                        item["preview_url"] = searchable_url
+                except Exception as e:
+                    logger.warning(f"[source_files] 이미지 searchable PDF URL 생성 실패: {e}")
+        return item
     except Exception:
         return None
 
@@ -1178,6 +1192,20 @@ def _source_files(job: Job) -> list[dict]:
             item["preview_url"] = clean_url
         if extracted_annotations:
             _initialize_user_annotations_json(job.id, extracted_annotations)
+
+        # [Flow: searchable PDF가 있으면 미리보기 URL을 대체]
+        # 다운로드용 url은 원본 clean PDF를 유지하고, preview_url만 searchable PDF로 변경.
+        # 이렇게 하면 사용자는 뷰어에서 텍스트 검색/선택이 가능한 PDF를 보지만,
+        # 다운로드는 원본 PDF를 받는다.
+        if job.searchable_pdf_storage_path:
+            try:
+                searchable_url = supabase_client.get_signed_download_url(
+                    job.searchable_pdf_storage_path, bucket="pdfs", expires_in=3600
+                )
+                if searchable_url:
+                    item["preview_url"] = searchable_url
+            except Exception as e:
+                logger.warning(f"[source_files:{job.id}] searchable PDF URL 생성 실패: {e}")
 
     # [Flow: user_annotations.json이 존재하면 원본 PDF 항목에 annotations_json_url을 설정]
     user_annotations_json_path = f"{job.id}/user_annotations.json"

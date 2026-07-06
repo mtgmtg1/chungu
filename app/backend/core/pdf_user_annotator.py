@@ -311,17 +311,20 @@ def _fitz_color_to_hex(color: Any) -> str | None:
         return None
 
 
-def _fitz_rect_to_embedpdf_rect(rect: fitz.Rect, page_height: float) -> dict:
-    """[Flow: Step 1 (PyMuPDF Rect 수신) -> Step 2 (EmbedPDF 좌표계로 변환)
-          -> Step 3 (origin/size 형태 반환)]
+def _fitz_rect_to_embedpdf_rect(rect: fitz.Rect, page_height: float, page_x0: float = 0.0) -> dict:
+    """[Flow: Step 1 (PyMuPDF Rect 수신) -> Step 2 (page.rect.x0 기준 상대좌표로 변환)
+          -> Step 3 (y축 flip) -> Step 4 (origin/size 형태 반환)]
 
     PyMuPDF Rect는 좌하단 원점, y가 위로 증가하는 PDF 좌표계를 사용한다.
     EmbedPDF는 origin이 좌상단, y가 아래로 증가하는 device-space 좌표계를 사용하므로
     y축을 page_height - y1로 flip해야 한다.
+
+    CropBox/MediaBox가 있는 PDF에서 page.rect.x0이 0이 아닐 경우, EmbedPDF 좌표는
+    page.rect의 왼쪽 끝을 기준으로 한 상대좌표를 사용하므로 x0에서 page_x0을 빼준다.
     """
     x0, y0, x1, y1 = rect.x0, rect.y0, rect.x1, rect.y1
     return {
-        "origin": {"x": x0, "y": page_height - y1},
+        "origin": {"x": x0 - page_x0, "y": page_height - y1},
         "size": {"width": max(0.0, x1 - x0), "height": max(0.0, y1 - y0)},
     }
 
@@ -350,7 +353,7 @@ def extract_pdf_annotations(pdf_bytes: bytes) -> list[dict]:
                 embed_type = EMBEDPDF_TYPE_MAP.get(annot_type)
                 if embed_type is None:
                     continue
-                rect = _fitz_rect_to_embedpdf_rect(annot.rect, page_height)
+                rect = _fitz_rect_to_embedpdf_rect(annot.rect, page_height, page.rect.x0)
                 colors = annot.colors or {}
                 stroke_color = _fitz_color_to_hex(colors.get("stroke")) if colors.get("stroke") else None
                 fill_color = _fitz_color_to_hex(colors.get("fill")) if colors.get("fill") else None

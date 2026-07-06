@@ -4,6 +4,7 @@
 //       -> Step 7 (page prop/annotationsJson 변경 시 동기화) -> Step 8 (상위 ref로 exportAnnotations 노출)]
 import { forwardRef, lazy, Suspense, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import * as jsonpatch from "fast-json-patch";
 
 /**
  * [Flow: Step 1 (@embedpdf/react-pdf-viewer의 PDFViewer를 동적 import)
@@ -151,10 +152,7 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
 
   /**
    * [Flow: Step 1 (기존 주석을 모두 삭제) -> Step 2 (새 주석 JSON을 importAnnotations로 로드)]
-   * importAnnotations가 기존 주석을 업데이트하지 않고 추가만 하므로,
-   * 편집 후 재import 시 기존 주석을 먼저 삭제하여 중복/미갱신을 방지한다.
-   * annotationsJson은 서버의 단일 진실원(AI + 사용자 주석 모두 포함)이므로
-   * 삭제 후 재import해도 데이터 손실이 없다.
+   * exportAnnotations 실패나 diff 적용 불가 시 폴백으로 사용한다.
    */
   const replaceAnnotations = async (api, items) => {
     try {
@@ -168,7 +166,135 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
   };
 
   /**
-   * [Flow: Step 1 (annotationsJson 변경 감지) -> Step 2 (annotation plugin이 준비되면 기존 주석 삭제 후 재import)
+   * [Flow: Step 1 (현재 뷰어 주석 export) -> Step 2 (ID 기준으로 old/new Map 구성)
+   *       -> Step 3 (new에 없는 ID 삭제) -> Step 4 (current에 없는 ID 생성)
+   *       -> Step 5 (같은 ID의 주석 중 변경된 필드만 updateAnnotation)
+   *       -> Step 6 (fast-json-patch로 검증)]
+   *
+   * importAnnotations가 기존 주석을 업데이트하지 않고 추가만 하므로,
+   * diff 기반으로 추가/삭제/갱신을 분리하여 안전하게 갱신한다.
+   * 사용자가 그린 미저장 주석은 current에 있고, 서버 JSON에도 포함되면 new에 있어
+   * 삭제되지 않고 유지된다. 만약 서버 JSON에 아직 없다면, export 후 재import 시
+   * 복원되지 않을 수 있으므로 폴백(deleteAll+import)을 사용한다.
+   */
+  const applyAnnotationDiff = async (api, newItems) => {
+    // [Flow: Step 1 — 현재 뷰어 주석 export]
+    let currentItems = [];
+    try {
+      const task = api.exportAnnotations();
+      if (task) {
+        if (typeof task.toPromise === "function") {
+          currentItems = (await task.toPromise()) ?? [];
+        } else if (typeof task.wait === "function") {
+          currentItems = await new Promise((resolve, reject) => {
+            task.wait((result) => resolve(result ?? []), (error) => reject(error));
+          });
+        } else {
+          currentItems = await task;
+        }
+      }
+    } catch (e) {
+      console.warn("[PdfViewer] exportAnnotations failed, falling back to deleteAll+import:", e);
+      return replaceAnnotations(api, newItems);
+    }
+
+    if (!Array.isArray(currentItems)) {
+      currentItems = [];
+    }
+
+    const getId = (item) => item?.annotation?.id ?? item?.id;
+    const getPage = (item) => item?.annotation?.pageIndex ?? item?.pageIndex;
+    const getAnnotation = (item) => item?.annotation ?? item;
+
+    // [Flow: Step 2 — ID 기준 Map 구성]
+    const currentById = new Map();
+    for (const item of currentItems) {
+      const id = getId(item);
+      if (id) currentById.set(id, item);
+    }
+
+    const newById = new Map();
+    for (const item of newItems) {
+      const id = getId(item);
+      if (id) newById.set(id, item);
+    }
+
+    // [Flow: Step 3 — new에 없는 ID 삭제]
+    for (const [id, item] of currentById) {
+      if (!newById.has(id)) {
+        try {
+          const pageIndex = getPage(item);
+          if (typeof api.deleteAnnotation === "function" && pageIndex != null) {
+            api.deleteAnnotation(pageIndex, id);
+          }
+        } catch (e) {
+          console.warn("[PdfViewer] deleteAnnotation failed:", id, e);
+        }
+      }
+    }
+
+    // [Flow: Step 4 — current에 없는 ID 생성]
+    for (const [id, item] of newById) {
+      if (!currentById.has(id)) {
+        try {
+          const ann = getAnnotation(item);
+          const pageIndex = getPage(item);
+          if (typeof api.createAnnotation === "function" && pageIndex != null) {
+            api.createAnnotation(ann, pageIndex);
+          }
+        } catch (e) {
+          console.warn("[PdfViewer] createAnnotation failed:", id, e);
+        }
+      }
+    }
+
+    // [Flow: Step 5 — 같은 ID의 주석 중 변경된 필드만 updateAnnotation]
+    const UPDATABLE_FIELDS = ["color", "contents", "opacity", "strokeColor", "strokeWidth", "calloutLine"];
+    for (const [id, newItem] of newById) {
+      const oldItem = currentById.get(id);
+      if (!oldItem) continue;
+      const oldAnn = getAnnotation(oldItem);
+      const newAnn = getAnnotation(newItem);
+      const patch = {};
+      for (const field of UPDATABLE_FIELDS) {
+        if (JSON.stringify(oldAnn[field]) !== JSON.stringify(newAnn[field])) {
+          patch[field] = newAnn[field];
+        }
+      }
+      if (Object.keys(patch).length > 0) {
+        try {
+          const pageIndex = getPage(newItem);
+          if (typeof api.updateAnnotation === "function" && pageIndex != null) {
+            api.updateAnnotation(pageIndex, id, patch);
+          }
+        } catch (e) {
+          console.warn("[PdfViewer] updateAnnotation failed:", id, e);
+        }
+      }
+    }
+
+    // [Flow: Step 6 — fast-json-patch 검증: old에 diff를 적용하면 new가 되어야 함]
+    try {
+      const oldForPatch = Array.from(currentById.values()).map((item) => getAnnotation(item));
+      const newForPatch = Array.from(newById.values()).map((item) => getAnnotation(item));
+      const indexMap = new Map(oldForPatch.map((ann, i) => [ann.id, i]));
+      const oldArray = oldForPatch;
+      const newArray = newForPatch;
+      const patch = jsonpatch.compare(oldArray, newArray);
+      if (patch.length > 0) {
+        const result = jsonpatch.applyPatch(oldArray, patch).newDocument;
+        const match = JSON.stringify(result) === JSON.stringify(newArray);
+        if (!match) {
+          console.warn("[PdfViewer] fast-json-patch verification mismatch");
+        }
+      }
+    } catch (e) {
+      console.warn("[PdfViewer] fast-json-patch verification failed:", e);
+    }
+  };
+
+  /**
+   * [Flow: Step 1 (annotationsJson 변경 감지) -> Step 2 (annotation plugin이 준비되면 diff 기반 갱신)
    *       -> Step 3 (중복 import 방지를 위해 마지막 import 문자열 기록)]
    */
   useEffect(() => {
@@ -179,10 +305,10 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
     if (currentJson === importedAnnotationsJsonRef.current) return;
     const runImport = async () => {
       try {
-        await replaceAnnotations(api, annotationsJson);
+        await applyAnnotationDiff(api, annotationsJson);
         importedAnnotationsJsonRef.current = currentJson;
       } catch (e) {
-        console.error("[PdfViewer] importAnnotations failed:", e);
+        console.error("[PdfViewer] applyAnnotationDiff failed:", e);
       }
     };
     runImport();

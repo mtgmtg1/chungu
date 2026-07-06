@@ -218,14 +218,16 @@ def build_embedpdf_annotations(
             base_id = f"backend-{page_no}-{idx}"
             x0, y0, x1, y1 = t.bbox_pdf
 
+            page_height = visual.height
             if enable_highlight:
+                rect_ep = _rect_to_embedpdf_rect(x0, y0, x1, y1, page_height)
                 annotations.append({
                     "annotation": {
                         "id": f"{base_id}-highlight",
                         "type": HIGHLIGHT_TYPE,
                         "pageIndex": page_no - 1,
-                        "rect": _rect_to_embedpdf_rect(x0, y0, x1, y1),
-                        "segmentRects": [_rect_to_embedpdf_rect(x0, y0, x1, y1)],
+                        "rect": rect_ep,
+                        "segmentRects": [rect_ep],
                         "strokeColor": _rgb_to_hex(t.color),
                         "color": _rgb_to_hex(t.color),
                         "opacity": 0.45,
@@ -244,7 +246,7 @@ def build_embedpdf_annotations(
                             "id": f"{base_id}-note",
                             "type": FREETEXT_TYPE,
                             "pageIndex": page_no - 1,
-                            "rect": _rect_to_embedpdf_rect(margin_x0, note_top, margin_x1, note_top + note_height),
+                            "rect": _rect_to_embedpdf_rect(margin_x0, note_top, margin_x1, note_top + note_height, page_height),
                             "contents": t.comment,
                             "fontFamily": HELVETICA_FONT,
                             "fontSize": MARGIN_NOTE_FONT_SIZE,
@@ -265,15 +267,23 @@ def _rgb_to_hex(rgb: tuple[float, float, float]) -> str:
     return f"#{int(round(r * 255)):02X}{int(round(g * 255)):02X}{int(round(b * 255)):02X}"
 
 
-def _rect_to_embedpdf_rect(x0: float, y0: float, x1: float, y1: float) -> dict:
-    """[Flow: Step 1 (PyMuPDF 좌표 수신) -> Step 2 (EmbedPDF Rect 형식으로 변환)
-          -> Step 3 (origin=좌상단, size=width/height 반환)]
+def _rect_to_embedpdf_rect(
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    page_height: float,
+) -> dict:
+    """[Flow: Step 1 (PyMuPDF PDF user-space 좌표 수신) -> Step 2 (y축 flip으로 device-space 변환)
+          -> Step 3 (EmbedPDF Rect 형식: origin=좌상단(y↓), size=width/height 반환)]
 
-    PDF 좌표계에서 원점은 좌하단, y는 위로 증가한다. EmbedPDF Rect의 origin은 좌상단이므로
-    origin.y에 y1(상단)을 사용한다.
+    PDF 좌표계는 원점이 좌하단이고 y는 위로 증가한다. EmbedPDF는 annotation rect의
+    origin.y를 device-space(원점 좌상단, y↓)로 해석해 CSS `top: origin.y * scale`로
+    직접 렌더링한다. 따라서 PDF user-space 상단(y1)을 device-space 상단
+    (page_height - y1)로 flip해야 한다.
     """
     return {
-        "origin": {"x": x0, "y": y1},
+        "origin": {"x": x0, "y": page_height - y1},
         "size": {"width": max(0.0, x1 - x0), "height": max(0.0, y1 - y0)},
     }
 

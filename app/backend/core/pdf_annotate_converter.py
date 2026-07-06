@@ -24,7 +24,7 @@ from ..db.session import SessionLocal
 from . import cache, ocr_client, paddleocr_client, supabase_client
 from .image_deskew import deskew_image
 from .ocr_layout import BBox, OcrRow, OcrTextBlock, parse_layout_result
-from .pdf_annotator import AnnotationTarget, annotate_pdf, build_embedpdf_annotations
+from .pdf_annotator import AnnotationTarget, build_embedpdf_annotations
 from .pdf_coords import clamp_rect_to_page, px_bbox_to_pdf_rect
 from .prompts import build_element_highlight_prompt, build_vision_bbox_highlight_prompt
 from .xlsx_advanced_converter import _get_page_image_paths
@@ -582,7 +582,11 @@ def run(
                 for t in targets:
                     t.comment = instruction
 
-            annotated_bytes = annotate_pdf(pdf_bytes, targets, mode)
+            # [Flow: 주석 표시 — embedpdf JSON 오버레이 방식]
+            # annotate_pdf()로 주석을 PDF에 구워 넣는 대신, 깨끗한 보정 이미지 PDF를
+            # 표시 기반으로 두고 embedpdf JSON(AnnotationTransferItem[])을 프론트에서
+            # 오버레이한다. 단일 진실원이자 사용자 편집 가능. flatten 다운로드는
+            # 프론트의 embedpdf export plugin(saveAsCopy)이 처리한다.
             embedpdf_annotations = build_embedpdf_annotations(pdf_bytes, targets, mode)
             storage_path = f"{job.id}/annotated_{next_index}.pdf"
             annotations_json_storage_path = f"{job.id}/annotated_{next_index}.annotations.json"
@@ -590,7 +594,7 @@ def run(
             client = supabase_client.get_service_client()
             client.storage.from_("results").upload(
                 storage_path,
-                annotated_bytes,
+                pdf_bytes,
                 {"content-type": "application/pdf", "upsert": "true"},
             )
             client.storage.from_("results").upload(

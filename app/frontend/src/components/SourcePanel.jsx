@@ -62,12 +62,73 @@ function ImageList({ urls, t }) {
 }
 
 /**
- * [Flow: Step 1 (FAB 클릭 또는 외부 클릭으로 open 상태 토글) -> Step 2 (instruction 입력 관리)
- *       -> Step 3 (제출 시 onStartAnnotate 콜백 호출) -> Step 4 (전송 후 팝업 닫기 및 초기화)]
- * PDF 패널 하단 우측에 떠 있는 AI 주석 FAB입니다.
- * 클릭하면 입력 카드 팝업이 부드러운 애니메이션으로 펼쳐집니다.
+ * [Flow: Step 1 (annotationRuns에서 processing/done/error 개수 집계)
+ *       -> Step 2 (processing이 있으면 스피너 + "N개 생성 중" 헤더 표시)
+ *       -> Step 3 (각 run의 상태 아이콘 + instruction 텍스트를 리스트로 렌더링)]
+ * AI 주석 FAB 바로 위에 떠 있는 주석 생성 상태 카드입니다.
+ * processing 또는 error 상태의 run이 있을 때만 노출되며, done만 있으면 숨김.
  */
-function AiAnnotationFab({ onStartAnnotate, disabled }) {
+function AnnotationStatusCard({ runs, t }) {
+  if (!runs || runs.length === 0) return null;
+  const sorted = [...runs].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+  const processingCount = sorted.filter((r) => r.status === "processing").length;
+  const errorCount = sorted.filter((r) => r.status === "error").length;
+  // processing 또는 error가 있을 때만 표시 (전부 done이면 FAB 위에 상태 카드 불필요)
+  if (processingCount === 0 && errorCount === 0) return null;
+
+  const headerText = processingCount > 0
+    ? t("page:result.annotateStatusProcessing", { count: processingCount })
+    : t("page:result.annotateStatusError", { count: errorCount });
+
+  return (
+    <div
+      className="absolute bottom-full right-0 mb-2 w-64 bg-white rounded-lg shadow-lg border border-outline-variant p-3 transition-all duration-300 origin-bottom-right"
+      data-oid="annotate-status-card">
+      <div className="flex items-center gap-2 mb-2 pb-2 border-b border-outline-variant">
+        {processingCount > 0 ? (
+          <Loader2 size={14} className="text-primary animate-spin flex-shrink-0" />
+        ) : (
+          <AlertCircle size={14} className="text-error flex-shrink-0" />
+        )}
+        <span className="text-xs font-bold text-on-surface truncate">{headerText}</span>
+      </div>
+      <ul className="space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar">
+        {sorted.map((r) => (
+          <li key={r.index ?? Math.random()} className="flex items-start gap-2 text-xs">
+            <span className="flex-shrink-0 mt-0.5">
+              {r.status === "processing" ? (
+                <Loader2 size={12} className="text-primary animate-spin" />
+              ) : r.status === "error" ? (
+                <AlertCircle size={12} className="text-error" />
+              ) : (
+                <Check size={12} className="text-primary" />
+              )}
+            </span>
+            <span className={`min-w-0 flex-1 leading-tight ${
+              r.status === "error" ? "text-error" : "text-on-surface-variant"
+            }`}>
+              {r.instruction
+                ? r.instruction.length > 40
+                  ? r.instruction.slice(0, 40) + "…"
+                  : r.instruction
+                : t("page:result.annotateStatusNoInstruction")}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * [Flow: Step 1 (FAB 클릭 또는 외부 클릭으로 open 상태 토글) -> Step 2 (instruction 입력 관리)
+ *       -> Step 3 (제출 시 onStartAnnotate 콜백 호출) -> Step 4 (전송 후 팝업 닫기 및 초기화)
+ *       -> Step 5 (annotationRuns가 있으면 FAB 위에 상태 카드 렌더링)]
+ * PDF 패널 하단 우측에 떠 있는 AI 주석 FAB입니다.
+ * 클릭하면 입력 카드 팝업이 부드러운 애니메이션으로 펼쳐지며,
+ * 주석 생성 중에는 FAB 위에 현재 run들의 상태 리스트가 표시됩니다.
+ */
+function AiAnnotationFab({ onStartAnnotate, disabled, annotationRuns }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
@@ -92,18 +153,31 @@ function AiAnnotationFab({ onStartAnnotate, disabled }) {
     setOpen(false);
   };
 
+  // processing 개수 — FAB 배지에 표시
+  const processingCount = (annotationRuns || []).filter((r) => r.status === "processing").length;
+
   return (
     <div ref={containerRef} className="absolute bottom-4 right-4 z-40">
+      {/* 주석 생성 상태 카드 — FAB 바로 위 (팝업이 열려 있으면 숨김) */}
+      {!open && <AnnotationStatusCard runs={annotationRuns} t={t} />}
+
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         disabled={disabled}
-        className={`flex items-center justify-center w-10 h-10 rounded-full shadow-lg border transition-all duration-300 ${
+        className={`flex items-center justify-center w-10 h-10 rounded-full shadow-lg border transition-all duration-300 relative ${
           open ? "bg-primary text-white rotate-0" : "bg-surface-container-high text-primary hover:bg-surface border-outline-variant"
         } disabled:opacity-50`}
         aria-label={t("page:result.annotate")}
         data-oid="annotate-fab">
         <Sparkles size={18} />
+        {processingCount > 0 && (
+          <span
+            className="absolute -top-1 -right-1 flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-primary text-white text-[9px] font-bold leading-none"
+            data-oid="annotate-fab-badge">
+            {processingCount}
+          </span>
+        )}
       </button>
 
       <div
@@ -149,7 +223,8 @@ function AiAnnotationFab({ onStartAnnotate, disabled }) {
 }
 
 /**
- * [Flow: Step 1 (PDF 뷰어를 상대 위치 컨테이너로 감싸기) -> Step 2 (onStartAnnotate가 있으면 하단 우측에 FAB 배치)]
+ * [Flow: Step 1 (PDF 뷰어를 상대 위치 컨테이너로 감싸기) -> Step 2 (onStartAnnotate가 있으면 하단 우측에 FAB 배치)
+ *       -> Step 3 (annotationRuns를 FAB에 전달해 생성 상태 카드 표시)]
  */
 function PdfViewerWithFab({
   url,
@@ -159,6 +234,7 @@ function PdfViewerWithFab({
   viewerRef,
   onStartAnnotate,
   converting,
+  annotationRuns,
 }) {
   return (
     <div className="relative flex flex-col h-full w-full min-h-0 overflow-hidden">
@@ -173,6 +249,7 @@ function PdfViewerWithFab({
         <AiAnnotationFab
           onStartAnnotate={onStartAnnotate}
           disabled={converting}
+          annotationRuns={annotationRuns}
         />
       )}
     </div>
@@ -193,6 +270,7 @@ export default function SourcePanel({
   onRetryAnnotation,
   onStartAnnotate,
   converting = false,
+  annotationRuns = [],
 }) {
   const { t } = useTranslation();
   const files = sourceFiles && sourceFiles.length > 0 ? sourceFiles : [];
@@ -295,6 +373,7 @@ export default function SourcePanel({
           onAnnotationChanged={handleAnnotationChanged}
           onStartAnnotate={onStartAnnotate}
           converting={converting}
+          annotationRuns={annotationRuns}
         />
       );
     }
@@ -455,6 +534,7 @@ export default function SourcePanel({
                   onAnnotationChanged={handleAnnotationChanged}
                   onStartAnnotate={onStartAnnotate}
                   converting={converting}
+                  annotationRuns={annotationRuns}
                 />
               ) : selected.type === "docx" || selected.type === "hwp" ? (
                 <PdfViewer
@@ -484,6 +564,7 @@ export default function SourcePanel({
         onAnnotationChanged={handleAnnotationChanged}
         onStartAnnotate={onStartAnnotate}
         converting={converting}
+        annotationRuns={annotationRuns}
       />
     );
   }

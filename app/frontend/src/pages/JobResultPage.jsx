@@ -586,6 +586,7 @@ export default function JobResultPage() {
             onSaveAnnotations={handleSaveAnnotations}
             onStartAnnotate={startAnnotate}
             converting={converting}
+            annotationRuns={job?.annotated_pdf_files || []}
             data-oid="result-source" />
         </Panel>
         <PanelResizeHandle

@@ -218,6 +218,11 @@ def _build_and_upload_searchable_pdf(
     """
     page_ocr_results = pdf_text_layer.extract_page_ocr_results_from_layout(layout_by_page)
     if not page_ocr_results:
+        logger.warning(
+            f"[run_job:{job.id}] searchable PDF 생성 스킵: page_ocr_results 비어있음 "
+            f"(layout_by_page keys={list(layout_by_page.keys())}, "
+            f"첫 페이지 layout keys={list(layout_by_page[list(layout_by_page.keys())[0]].keys()) if layout_by_page else 'N/A'})"
+        )
         return
     try:
         pdf_bytes = input_path.read_bytes()
@@ -228,6 +233,28 @@ def _build_and_upload_searchable_pdf(
         logger.info(f"[run_job:{job.id}] searchable PDF 업로드 완료: {storage_path}")
     except Exception as e:
         logger.warning(f"[run_job:{job.id}] searchable PDF 생성/업로드 실패: {e}")
+
+
+def _register_searchable_pdf_if_text_layer(db, job: Job, input_path: Path) -> None:
+    """[Flow: Step 1 (PDF 텍스트 레이어 검사) -> Step 2 (있으면 원본을 searchable PDF로 등록)]
+
+    원본 PDF에 텍스트 레이어가 있으면 별도 OCR 텍스트 레이어 생성 없이 원본 PDF를
+    주석 검색용 searchable PDF로 그대로 등록한다. 디지털 텍스트 PDF의 정확한 좌표를
+    주석에 직접 활용할 수 있다.
+    """
+    if job.searchable_pdf_storage_path:
+        return  # 이미 등록되어 있으면 스킵
+    try:
+        if not has_pdf_text_layer(str(input_path)):
+            return
+        # 원본 PDF를 Storage에 searchable.pdf로 업로드
+        pdf_bytes = input_path.read_bytes()
+        storage_path = supabase_client.upload_input(BytesIO(pdf_bytes), "searchable.pdf", job.id)
+        job.searchable_pdf_storage_path = storage_path
+        db.commit()
+        logger.info(f"[run_job:{job.id}] 원본 PDF에 텍스트 레이어 있음 → searchable PDF로 등록: {storage_path}")
+    except Exception as e:
+        logger.warning(f"[run_job:{job.id}] 원본 PDF searchable 등록 실패: {e}")
 
 
 def _image_to_searchable_pdf(
@@ -365,6 +392,9 @@ def run_job(job_id: str) -> dict:
                     ocr_engine=ocr_engine,
                 )
                 fmt = "markdown"
+                # [Flow: 원본 PDF가 텍스트 레이어를 가지면 searchable PDF로 등록]
+                # 별도 OCR 텍스트 레이어 생성 없이 원본 PDF를 그대로 주석 검색용으로 사용한다.
+                _register_searchable_pdf_if_text_layer(db, job, input_path)
             elif input_path.suffix.lower() == ".pdf":
                 _set_status(db, job, "ocr")
                 page_tables, layout_by_page = run_vision(
@@ -387,6 +417,9 @@ def run_job(job_id: str) -> dict:
 
                 # [Flow: PaddleOCR layout로 searchable PDF 생성]
                 _build_and_upload_searchable_pdf(db, job, input_path, layout_by_page, job.dpi or 300)
+                # [Flow: 원본 PDF가 텍스트 레이어를 가지면 searchable PDF로 등록 (premium 모드)]
+                # run_vision으로 OCR을 수행했더라도 원본에 텍스트 레이어가 있으면 원본을 주석 검색용으로 우선 등록한다.
+                _register_searchable_pdf_if_text_layer(db, job, input_path)
             else:
                 _set_status(db, job, "ocr")
                 page_tables = run_docling(

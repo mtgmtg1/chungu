@@ -475,6 +475,8 @@ def _matches_to_targets(
                 if found:
                     rect_pdf = found[0]
                     logger.info(f"[pdf_annotate] 텍스트 레이어 검색 성공 page={el.page_no}: '{search_text[:30]}'")
+                else:
+                    logger.info(f"[pdf_annotate] 텍스트 레이어 검색 실패 page={el.page_no}: '{search_text[:30]}'")
 
         if rect_pdf is None:
             # 폴백: 픽셀 bbox를 PDF 좌표로 변환 (y축 flip 포함)

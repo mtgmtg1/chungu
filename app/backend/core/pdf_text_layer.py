@@ -221,6 +221,9 @@ class TextLayerSearcher:
     def search(self, page_no: int, text: str) -> list[tuple[float, float, float, float]]:
         """주어진 페이지에서 텍스트를 검색해 bbox 목록을 반환한다.
 
+        [Flow: Step 1 (전체 텍스트 검색) -> Step 2 (실패 시 첫 줄로 검색)
+              -> Step 3 (실패 시 단어 단위 검색) -> Step 4 (모든 매칭 rect를 합친 bbox 반환)]
+
         Args:
             page_no: 1-based 페이지 번호
             text: 검색할 텍스트
@@ -231,8 +234,31 @@ class TextLayerSearcher:
         if not text or page_no < 1 or page_no > self.doc.page_count:
             return []
         page = self.doc[page_no - 1]
+
+        # Step 1: 전체 텍스트로 검색
         rects = page.search_for(text)
-        return [(r.x0, r.y0, r.x1, r.y1) for r in rects]
+        if rects:
+            return [(r.x0, r.y0, r.x1, r.y1) for r in rects]
+
+        # Step 2: 멀티라인 텍스트인 경우 첫 줄로 검색
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
+        if len(lines) > 1:
+            rects = page.search_for(lines[0])
+            if rects:
+                return [(r.x0, r.y0, r.x1, r.y1) for r in rects]
+
+        # Step 3: 첫 줄도 실패하면 의미있는 첫 단어로 검색
+        words = text.replace("\n", " ").split()
+        if words:
+            # 2글자 이상 단어 사용 (1글자는 너무 많은 매칭 발생)
+            for word in words:
+                if len(word) >= 2:
+                    rects = page.search_for(word)
+                    if rects:
+                        return [(r.x0, r.y0, r.x1, r.y1) for r in rects]
+                    break
+
+        return []
 
     def close(self) -> None:
         """PDF 문서를 닫는다."""

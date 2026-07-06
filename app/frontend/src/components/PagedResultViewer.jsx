@@ -49,7 +49,7 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
   }, [currentPage, loadPage]);
 
   // [Flow: Step 1 (페이지 마크다운 변경 시 pendingRef 갱신) -> Step 2 (1.5초 debounce 타이머 설정) -> Step 3 (타이머 완료 시 서버에 페이지 저장)]
-  const saveCurrentPage = async (updated) => {
+  const saveCurrentPage = useCallback(async (updated) => {
     const markdownToSave = updated !== undefined ? updated : pendingMarkdownRef.current;
     setError("");
     try {
@@ -59,19 +59,19 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
       setError(e.message || t("page:errors.unknown"));
       throw e;
     }
-  };
+  }, [currentPage, jobId, t]);
 
-  const handleChange = (updated) => {
+  const handleChange = useCallback((updated) => {
     pendingMarkdownRef.current = updated;
     clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(() => {
       saveCurrentPage(pendingMarkdownRef.current);
     }, 1500);
-  };
+  }, [saveCurrentPage]);
 
   useImperativeHandle(ref, () => ({
     save: () => saveCurrentPage(pendingMarkdownRef.current)
-  }));
+  }), [saveCurrentPage]);
 
   useEffect(() => {
     return () => {
@@ -80,7 +80,8 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
         saveCurrentPage(pendingMarkdownRef.current);
       }
     };
-  }, [pageMarkdown]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const hasSourcePanel =
   sourceType === "pdf" ||

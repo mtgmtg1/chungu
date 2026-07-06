@@ -1,5 +1,5 @@
 // [Flow: Step 1 (job ID로 진입) -> Step 2 (작업 상태 폴링) -> Step 3 (완료 시 preview API 호출) -> Step 4 (100페이지 초과 시 페이지 단위 뷰어, 이하 시 전체 에디터) -> Step 5 (마크다운/Office/CSV 다운로드)]
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -45,7 +45,6 @@ export default function JobResultPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [converting, setConverting] = useState(false);
-  const [autoSaveMessage, setAutoSaveMessage] = useState("");
   const [pages, setPages] = useState([]);
   const [sourceType, setSourceType] = useState(null);
   const [imageUrls, setImageUrls] = useState([]);
@@ -58,7 +57,6 @@ export default function JobResultPage() {
   const pollRef = useRef(null);
   const editorRef = useRef(null);
   const pagedViewerRef = useRef(null);
-  const autoSaveTimerRef = useRef(null);
 
   const [previewMode, setPreviewMode] = useState("markdown"); // "markdown" | "xlsxBasic" | "xlsxAdvanced"
   const [basicUrl, setBasicUrl] = useState(null);
@@ -247,17 +245,17 @@ export default function JobResultPage() {
         await api.saveResultMarkdown(jobId, updated);
         setMarkdown(updated);
       }
-      setAutoSaveMessage(t("page:result.autoSaved"));
-      clearTimeout(autoSaveTimerRef.current);
-      autoSaveTimerRef.current = setTimeout(() => setAutoSaveMessage(""), 2000);
     } catch (e) {
       setError(e.message || t("page:errors.unknown"));
     }
   }
 
-  const handleMarkdownChange = (updated) => {
-    autoSaveMarkdown(updated);
-  };
+  const autoSaveMarkdownRef = useRef(autoSaveMarkdown);
+  autoSaveMarkdownRef.current = autoSaveMarkdown;
+
+  const handleMarkdownChange = useCallback((updated) => {
+    autoSaveMarkdownRef.current(updated);
+  }, []);
 
   const handleFileSelect = async (index) => {
     if (index === selectedFileIndex) return;
@@ -493,23 +491,6 @@ export default function JobResultPage() {
   const xlsxBasicUnits = job ? (job.total_pages || job.total_files || 1) : 0;
   const xlsxAdvancedUnits = job ? (job.total_pages || job.total_files || 1) : 0;
 
-  // [Flow: Step 1 (마크다운 텍스트 확인) -> Step 2 (테이블 구분선 패턴 검색) -> Step 3 (표 존재 여부 반환)]
-  function hasMarkdownTable(text) {
-    if (!text) return false;
-    const lines = text.split("\n");
-    for (let i = 0; i < lines.length - 1; i++) {
-      const current = lines[i].trim();
-      const next = lines[i + 1].trim();
-      if (current.startsWith("|") && current.endsWith("|") &&
-          next.startsWith("|") && next.endsWith("|") && next.includes("-")) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  const showXlsxBasicTab = job?.xlsx_basic_converted || hasMarkdownTable(displayMarkdown);
-
   const pct = getDisplayProgress(job, 80, now);
 
   return (
@@ -697,15 +678,6 @@ export default function JobResultPage() {
         </div>
       </header>
 
-      {autoSaveMessage &&
-      <div
-        className="bg-green-50 text-green-700 px-4 py-1.5 text-sm flex items-center gap-2 border-b border-green-200"
-        data-oid="uhtevhw">
-
-          {autoSaveMessage}
-        </div>
-      }
-
       {error &&
       <div
         className="bg-red-50 text-red-700 px-4 py-1.5 text-sm flex items-center gap-2 border-b border-red-200"
@@ -778,7 +750,6 @@ export default function JobResultPage() {
 
       {job?.status === "done" && !loading && !needsPagedMode(job) &&
       <div className="flex-1 flex flex-col overflow-hidden min-h-0" data-oid="ww-27ni">
-          {(showXlsxBasicTab || job?.xlsx_advanced_converted || xlsxAdvancedPolling) &&
           <div className="flex items-center gap-2 px-4 py-2 border-b border-outline-variant bg-surface flex-shrink-0" data-oid="preview-tabs">
             <button
               onClick={() => setPreviewMode("markdown")}
@@ -786,7 +757,6 @@ export default function JobResultPage() {
               data-oid="tab-markdown">
               Markdown
             </button>
-            {showXlsxBasicTab &&
             <button
               onClick={() => {
                 setPreviewMode("xlsxBasic");
@@ -798,7 +768,6 @@ export default function JobResultPage() {
               data-oid="tab-xlsx-basic">
               Excel Basic
             </button>
-            }
             {(job?.xlsx_advanced_converted || xlsxAdvancedPolling) &&
             <button
               onClick={() => setPreviewMode("xlsxAdvanced")}
@@ -808,7 +777,6 @@ export default function JobResultPage() {
             </button>
             }
           </div>
-          }
 
           {previewMode !== "markdown" && xlsxAdvancedPolling &&
           <div className="px-4 py-2 bg-blue-50 text-blue-700 text-sm border-b border-blue-200 flex items-center gap-2 flex-shrink-0" data-oid="advanced-progress">

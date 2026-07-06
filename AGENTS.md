@@ -469,7 +469,7 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
   5. 선택된 요소의 bbox를 PDF 좌표로 변환
   6. PyMuPDF로 보정된 이미지 기반 PDF에 주석 적용
   7. Storage 업로드
-- **사용자 인터페이스**: 결과 페이지(JobResultPage)의 "PDF 하이라이트/주석" 버튼 → 지시문 입력(예: "출금금액이 1000만원 이상인 거래 행", "사람 이름이 있는 부분") + 표시방식(`highlight`/`margin_note`/`both`) + 여백 코멘트 방식(`user_text`/`llm_summary`) 선택 → Celery 비동기 처리 (xlsx_advanced와 동일한 구독 사용량 예약/재시도 패턴)
+- **사용자 인터페이스**: 결과 페이지(JobResultPage)의 "AI 주석" 버튼 → 지시문 입력(예: "출금금액이 1000만원 이상인 거래 행", "사람 이름이 있는 부분") + 표시방식(`highlight`/`margin_note`/`both`) + 여백 코멘트 방식(`user_text`/`llm_summary`) 선택 → Celery 비동기 처리 (xlsx_advanced와 동일한 구독 사용량 예약/재시도 패턴)
 - **PaddleOCR-VL 1.6 실제 원본 스키마** (a1 프로덕션에서 실측, 사전 조사했던 PP-StructureV3 계열 `table_res_list`/`cell_box_list` 스키마와는 다름에 주의):
   - `{"width": px, "height": px, "layout_det_res": {...}, "parsing_res_list": [{"block_label": "table"|"text"|"title"|"seal"|..., "block_content": "<table>...</table>" (표는 HTML 문자열), "block_bbox": [xmin,ymin,xmax,ymax], ...}]}`
   - 표는 **블록 전체 bbox만 있고 행/셀 단위 bbox가 없다** — `core/ocr_layout.py`가 `block_content`의 HTML을 `lxml`로 파싱하고, `block_bbox`를 `<tr>` 개수만큼 세로로 균등 분할해 각 행의 근사 bbox를 만든다.

@@ -1884,6 +1884,11 @@ def save_user_annotations(
     if valid_count == 0:
         raise HTTPException(status_code=400, detail="No valid annotations found")
 
+    # [Flow: source_index가 -1이면 원본 PDF에 사용자 주석을 적용해 새 annotation 파일을 생성한다]
+    # 기존 주석 파일 존재 여부와 무관하게 먼저 처리해야 한다.
+    if source_index < 0:
+        return _create_user_annotated_pdf(job, annotations, db)
+
     entries = list(job.annotated_pdf_files or [])
     if not entries:
         # 하위 호환: 목록 컬럼 추가 전에 생성된 단일 주석 PDF
@@ -1898,10 +1903,6 @@ def save_user_annotations(
             ]
         else:
             raise HTTPException(status_code=404, detail="Annotation file not found")
-
-    if source_index < 0:
-        # [Flow: source_index가 -1이면 원본 PDF에 사용자 주석을 적용해 새 annotation 파일을 생성한다]
-        return _create_user_annotated_pdf(job, annotations, db)
 
     if source_index >= len(entries):
         raise HTTPException(status_code=404, detail="Annotation file not found")

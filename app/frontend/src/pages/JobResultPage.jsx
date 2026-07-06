@@ -387,13 +387,11 @@ export default function JobResultPage() {
   }
 
 
-  // [Flow: Step 1 (선택된 원본 PDF의 주석을 저장) -> Step 2 (annotation PDF면 덮어쓰기, 원본 PDF면 새 annotation 파일 생성)
-  //       -> Step 3 (loadPreview/loadJob으로 상태 갱신)]
+  // [Flow: Step 1 (선택된 원본 PDF의 주석을 자동 저장) -> Step 2 (annotation PDF면 덮어쓰기, 원본 PDF면 새 annotation 파일 생성)]
+  // 자동 저장이므로 converting 오버레이/에러 배너/새로고침 없이 조용히 처리한다.
   async function handleSaveAnnotations(annotations) {
     const selected = sourceFiles[selectedFileIndex];
     if (!selected || selected.type !== "pdf") return;
-    setConverting(true);
-    setError("");
     try {
       // annotation PDF면 기존 항목을 덮어쓰고, 원본 PDF면 새 annotation 파일을 생성한다.
       const source_index = selected.source_kind === "annotation" ? selected.source_index : -1;
@@ -401,12 +399,9 @@ export default function JobResultPage() {
         source_index,
         annotations,
       });
-      await loadPreview();
-      await loadJob();
     } catch (e) {
-      setError(e.message || t("page:errors.unknown"));
-    } finally {
-      setConverting(false);
+      // 자동 저장 실패는 콘솔에만 기록하고 사용자에게 노출하지 않는다.
+      console.error("[auto-save annotations] failed:", e);
     }
   }
 

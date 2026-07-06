@@ -77,7 +77,7 @@ def _get_page_image_paths(job: Job, temp_dir: Path) -> dict[int, Path]:
         input_bytes = supabase_client.download_pdf(job.pdf_storage_path).read()
         input_path = temp_dir / "input.pdf"
         input_path.write_bytes(input_bytes)
-        render_pdf(str(input_path), str(temp_dir), dpi=200)
+        render_pdf(str(input_path), str(temp_dir), dpi=300)
         for p in sorted(temp_dir.glob("page-*.png")):
             try:
                 page_num = int(p.stem.split("-")[-1])

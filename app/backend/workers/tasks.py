@@ -233,7 +233,7 @@ def _build_and_upload_searchable_pdf(
 def _image_to_searchable_pdf(
     image_path: Path,
     layout_raw: dict,
-    dpi: int = 200,
+    dpi: int = 300,
 ) -> bytes:
     """[Flow: Step 1 (이미지로 1페이지 PDF 생성) -> Step 2 (OCR layout에서 텍스트/bbox 추출)
           -> Step 3 (투명 텍스트 레이어 추가) -> Step 4 (searchable PDF bytes 반환)]
@@ -386,7 +386,7 @@ def run_job(job_id: str) -> dict:
                 fmt = "markdown"
 
                 # [Flow: PaddleOCR layout로 searchable PDF 생성]
-                _build_and_upload_searchable_pdf(db, job, input_path, layout_by_page, job.dpi or 200)
+                _build_and_upload_searchable_pdf(db, job, input_path, layout_by_page, job.dpi or 300)
             else:
                 _set_status(db, job, "ocr")
                 page_tables = run_docling(
@@ -637,7 +637,7 @@ def run_job(job_id: str) -> dict:
                         continue
                     try:
                         md, layout_raw, _ = paddleocr_client.convert_image_with_layout(fp)
-                        searchable_pdf_bytes = _image_to_searchable_pdf(fp, layout_raw, dpi=200)
+                        searchable_pdf_bytes = _image_to_searchable_pdf(fp, layout_raw, dpi=job.dpi or 300)
                         searchable_path = supabase_client.upload_input(
                             BytesIO(searchable_pdf_bytes),
                             f"searchable_{fp.name}",

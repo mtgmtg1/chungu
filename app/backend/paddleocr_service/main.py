@@ -136,7 +136,7 @@ def _convert_office_to_pdf(input_path: Path, output_dir: Path) -> Path:
     return pdf_path
 
 
-def _pdf_to_images(pdf_path: Path, dpi: int = 200) -> list[Path]:
+def _pdf_to_images(pdf_path: Path, dpi: int = 300) -> list[Path]:
     # [Flow: Step 1 (PyMuPDF로 PDF 열기) -> Step 2 (페이지별 이미지 렌더링) -> Step 3 (임시 파일 저장)]
     image_paths: list[Path] = []
     doc = fitz.open(str(pdf_path))

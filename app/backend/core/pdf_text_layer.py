@@ -113,7 +113,7 @@ def _insert_invisible_text(
 def add_text_layer_from_ocr(
     pdf_bytes: bytes,
     page_ocr_results: dict[int, list[tuple[str, BBox]]],
-    dpi: int = 200,
+    dpi: int = 300,
     language: str | None = None,
 ) -> bytes:
     """이미지 기반 PDF에 PaddleOCR 결과를 투명 텍스트 레이어로 추가한다.

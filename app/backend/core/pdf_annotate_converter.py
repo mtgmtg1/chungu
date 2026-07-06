@@ -37,7 +37,7 @@ from .xlsx_advanced_converter import _get_page_image_paths
 
 logger = logging.getLogger(__name__)
 
-RENDER_DPI = 200  # _get_page_image_paths가 PDF를 렌더링할 때 사용하는 DPI와 동일해야 bbox 좌표가 맞는다.
+RENDER_DPI = 300  # 업로드 시점 렌더링 DPI와 동일해야 bbox 좌표가 맞는다 (최대 300, 저해상도는 자동 낮춤).
 MAX_ELEMENTS_FOR_LLM = 400  # 프롬프트 폭주 방지
 MAX_TEXT_BLOCK_CHARS = 200  # 텍스트 블록은 앞 200자만 LLM에 전달 (토큰 폭증 방지)
 

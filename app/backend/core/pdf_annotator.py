@@ -38,10 +38,10 @@ CALLOUT_STROKE_WIDTH = 1.0
 CALLOUT_LINE_ENDING_OPEN_ARROW = 4  # PdfAnnotationLineEnding.OpenArrow
 CALLOUT_TEXTBOX_BG_COLOR = "#FFFFFF"
 CALLOUT_TEXTBOX_FONT_COLOR = "#333333"
-CALLOUT_TEXTBOX_OPACITY = 0.92
 
 DEFAULT_HIGHLIGHT_COLOR = (1.0, 0.92, 0.3)  # 형광펜 노랑
 DEFAULT_CALLOUT_COLOR = (0.65, 0.35, 0.95)  # 보라색 (사용자 색상 요청이 없을 때 callout 기본색)
+DEFAULT_OPACITY = 0.5  # 하이라이트/callout 공통 기본 투명도 (50%)
 
 
 @dataclass
@@ -55,6 +55,9 @@ class AnnotationTarget:
     # callout 리더 라인/텍스트 박스 테두리 색. None이면 DEFAULT_CALLOUT_COLOR(보라) 사용.
     # 사용자가 명시적으로 색을 요청한 경우에만 이 필드를 설정한다.
     callout_color: tuple[float, float, float] | None = None
+    # 하이라이트/callout 투명도 (0.0=완전 투명, 1.0=완전 불투명).
+    # None이면 DEFAULT_OPACITY(0.5) 사용. 사용자가 투명도를 요청한 경우에만 설정.
+    opacity: float | None = None
 
 
 # --- EmbedPDF PdfAnnotationSubtype enum 값 (숫자 상수) ---
@@ -160,7 +163,7 @@ def build_embedpdf_annotations(
                         "segmentRects": [rect_ep],
                         "strokeColor": _rgb_to_hex(t.color),
                         "color": _rgb_to_hex(t.color),
-                        "opacity": 0.45,
+                        "opacity": t.opacity if t.opacity is not None else DEFAULT_OPACITY,
                         "contents": t.comment,
                     }
                 })
@@ -173,6 +176,7 @@ def build_embedpdf_annotations(
                     target_bbox=(x0, y0, x1, y1),
                     comment=t.comment,
                     color=t.callout_color if t.callout_color is not None else DEFAULT_CALLOUT_COLOR,
+                    opacity=t.opacity if t.opacity is not None else DEFAULT_OPACITY,
                     element_bboxes=obstacles,
                     page_width=page_width,
                     page_height=page_height,
@@ -205,6 +209,7 @@ def _build_callout_annotation(
     target_bbox: tuple[float, float, float, float],
     comment: str,
     color: tuple[float, float, float],
+    opacity: float,
     element_bboxes: list[tuple[float, float, float, float]],
     page_width: float,
     page_height: float,
@@ -275,7 +280,7 @@ def _build_callout_annotation(
             "textAlign": LEFT_ALIGN,
             "verticalAlign": TOP_ALIGN,
             "color": CALLOUT_TEXTBOX_BG_COLOR,
-            "opacity": CALLOUT_TEXTBOX_OPACITY,
+            "opacity": opacity,
         }
     }
 

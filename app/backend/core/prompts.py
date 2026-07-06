@@ -229,6 +229,9 @@ def build_element_highlight_prompt(
         "Determine the comment mode based on the user's request: "
         "'user_text' if the user explicitly says to use the input text verbatim as the comment, "
         "'llm_summary' if the user wants AI-generated summaries or does not specify.\n"
+        "When the user asks for a specific opacity/transparency (e.g., '투명하게', '옅게', '50%', '반투명'), "
+        "include an 'opacity' field with a value between 0.0 (fully transparent) and 1.0 (fully opaque). "
+        "If no opacity is requested, omit the 'opacity' field.\n"
         "\n"
         f"{comment_instr}\n"
         "If no elements match, return an empty matches array.\n"
@@ -237,7 +240,7 @@ def build_element_highlight_prompt(
         '  "mode": "both",\n'
         '  "comment_mode": "llm_summary",\n'
         '  "matches": [\n'
-        '    {"element_index": 0, "comment": "...", "highlight_scope": "full", "color": "yellow"}\n'
+        '    {"element_index": 0, "comment": "...", "highlight_scope": "full", "color": "yellow", "opacity": 0.5}\n'
         "  ]\n"
         "}\n"
     )
@@ -393,6 +396,9 @@ def build_vision_bbox_highlight_prompt(
         "Determine the comment mode based on the user's request: "
         "'user_text' if the user explicitly says to use the input text verbatim as the comment, "
         "'llm_summary' if the user wants AI-generated summaries or does not specify.\n"
+        "When the user asks for a specific opacity/transparency (e.g., '투명하게', '옅게', '50%', '반투명'), "
+        "include an 'opacity' field with a value between 0.0 (fully transparent) and 1.0 (fully opaque). "
+        "If no opacity is requested, omit the 'opacity' field.\n"
         f"{comment_instr}\n"
         "If no elements match, return an empty matches array.\n"
         "Output strictly in the following JSON format. Do not include explanations or code block markers (```).\n"
@@ -400,7 +406,7 @@ def build_vision_bbox_highlight_prompt(
         '  "mode": "both",\n'
         '  "comment_mode": "llm_summary",\n'
         '  "matches": [\n'
-        '    {"bbox": [x_min, y_min, x_max, y_max], "comment": "...", "color": "yellow"}\n'
+        '    {"bbox": [x_min, y_min, x_max, y_max], "comment": "...", "color": "yellow", "opacity": 0.5}\n'
         "  ]\n"
         "}\n"
     )

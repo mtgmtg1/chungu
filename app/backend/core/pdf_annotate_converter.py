@@ -399,6 +399,27 @@ def _color_name_to_rgb(color_name: str | None) -> tuple[float, float, float]:
     return HIGHLIGHT_COLOR_PALETTE.get(normalized, HIGHLIGHT_COLOR_PALETTE[DEFAULT_HIGHLIGHT_COLOR_NAME])
 
 
+def _parse_opacity(value) -> float | None:
+    """LLM이 반환한 opacity 값을 0.0~1.0 float로 변환한다. None/무효면 None 반환.
+
+    [Flow: Step 1 (None/빈 값 확인) -> Step 2 (0~100 정수면 백분율로 변환)
+          -> Step 3 (float 변환 + 0.0~1.0 clamp) -> Step 4 (유효하면 반환, 아니면 None)]
+
+    사용자가 "50%", "0.3", "30%" 등으로 요청한 경우를 처리한다.
+    0~1 범위면 그대로, 1~100 범위면 백분율로 간주해 100으로 나눈다.
+    """
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (ValueError, TypeError):
+        return None
+    # 1~100 범위면 백분율로 간주 (예: 50 → 0.5, 30 → 0.3)
+    if v > 1.0:
+        v = v / 100.0
+    return max(0.0, min(1.0, v))
+
+
 def _narrow_bbox_by_scope(element: AnnotateElement, scope: str | None) -> BBox | None:
     """LLM이 지정한 scope에 따라 element의 bbox를 좁힌다.
 
@@ -549,9 +570,11 @@ def _matches_to_targets(
         # 사용자가 명시적으로 색상을 요청한 경우에만 callout에도 같은 색 적용.
         # 요청이 없으면 callout_color=None → pdf_annotator에서 DEFAULT_CALLOUT_COLOR(보라) 사용.
         callout_color = color if color_name else None
+        # 사용자가 투명도를 요청한 경우에만 opacity 설정. 없으면 None → 기본 0.5.
+        opacity = _parse_opacity(m.get("opacity"))
         targets.append(AnnotationTarget(
             page_no=el.page_no, bbox_pdf=rect_pdf, comment=comment,
-            color=color, callout_color=callout_color,
+            color=color, callout_color=callout_color, opacity=opacity,
         ))
     return targets
 
@@ -621,9 +644,10 @@ def _collect_targets_with_vision_llm(
                 color_name = m.get("color")
                 color = _color_name_to_rgb(color_name)
                 callout_color = color if color_name else None
+                opacity = _parse_opacity(m.get("opacity"))
                 targets.append(AnnotationTarget(
                     page_no=page_no, bbox_pdf=rect_pdf, comment=comment,
-                    color=color, callout_color=callout_color,
+                    color=color, callout_color=callout_color, opacity=opacity,
                 ))
         except Exception as e:
             logger.warning(f"[pdf_annotate] page={page_no} Vision LLM 처리 실패: {e}")

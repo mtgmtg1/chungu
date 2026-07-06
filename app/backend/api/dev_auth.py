@@ -27,8 +27,8 @@ def _sign_in_with_password(email: str, password: str) -> dict:
     base_url = settings.supabase_url.rstrip("/")
     url = f"{base_url}/auth/v1/token?grant_type=password"
     headers = {
-        "apikey": settings.supabase_key,
-        "Authorization": f"Bearer {settings.supabase_key}",
+        "apikey": settings.supabase_anon_key,
+        "Authorization": f"Bearer {settings.supabase_anon_key}",
         "Content-Type": "application/json",
     }
     payload = {"email": email, "password": password}

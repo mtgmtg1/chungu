@@ -12,6 +12,7 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 - **비동기/원자적 인덱스**: 주석 생성 요청마다 고유 인덱스를 원자적으로 할당해 파일 덮어쓰기 및 동시 생성 충돌 방지.
 - **JSON 오버레이 단일 진실원**: 주석을 PDF에 구워 넣지 않고 embedpdf `AnnotationTransferItem[]` JSON 오버레이로만 표시. `pdf_annotate_converter.run()`은 깨끗한 보정 이미지 PDF를 표시 기반으로 업로드하고 `build_embedpdf_annotations()`로 JSON을 생성. flatten 다운로드는 embedpdf snippet 자체의 다운로드 UI가 처리.
+- **원본 내장 주석 중복 방지**: 원본 PDF에 이미 내장된 하이라이트/코멘트 주석이 있으면, embedpdf가 이를 자동으로 렌더링하고 `exportAnnotations()`에 포함해 `user_annotations.json`이 반복 저장되면서 중복 증식하는 문제를 방지. `api/jobs.py:_source_files()`에서 원본 PDF의 내장 주석을 PyMuPDF로 추출하여 `user_annotations.json` 초기값으로 저장하고, 주석이 제거된 `clean.pdf`를 별도 Storage 경로(`{job_id}/clean.pdf`)에 업로드해 원본 대신 표시. `pdf_user_annotator.py`에 `extract_pdf_annotations()`와 `remove_pdf_annotations()` 추가.
 - **좌표 변환**: `_rect_to_embedpdf_rect()`가 PDF user-space(원점 좌하단, y↑)를 embedpdf device-space(원점 좌상단, y↓)로 변환할 때 `origin.y = page_height - y1`로 y축 flip. embedpdf가 annotation `rect.origin.y`를 CSS `top`으로 직접 렌더링하므로 flip이 필수.
 - **JSONB 변경 감지**: `annotated_pdf_files`는 SQLAlchemy JSONB 컬럼이며, dict/list를 직접 변경한 뒤 재할당해도 SQLAlchemy가 변경을 감지하지 못하는 경우가 있으므로, 해당 컬럼을 수정하는 모든 경로(`pdf_annotate_converter.py`, `api/jobs.py`)에서 `flag_modified(job, "annotated_pdf_files")`를 호출해야 한다. 이를 누락하면 주석 생성이 완료되어도 DB entry 상태가 `processing`으로 남는다.
 - **자동 저장**: 원본 패널에서 사용자가 그린 주석을 자동 저장하며, 무한 파일 증식 및 404 깜빡임 문제를 방지.
@@ -184,6 +185,8 @@ VITE_DEV_BACKEND_URL=http://localhost:28181 npm run dev
 #### 4. 인증 방식
 
 - **Dev bypass 자동 로그인** (기본): a1 `.env`에 `DEV_BYPASS_AUTH=true`가 설정되어 있으면, `npm run dev` 실행 시 `/api/dev/login`으로 자동 로그인됩니다. 화면 상단에 파란색 배너가 표시됩니다. **프로덕션 a1에서는 절대 활성화하지 마세요.**
+  - `DEV_BYPASS_EMAIL` / `DEV_BYPASS_PASSWORD`로 설정된 계정을 실제 Supabase Auth에 로그인하여 세션을 발급합니다. local DB에도 동일 사용자가 있어야 업로드 및 job 생성 등 모든 기능이 정상 동작합니다.
+  - `DEV_BYPASS_AUTH_EMAIL` / `DEV_BYPASS_AUTH_PASSWORD`는 사용하지 않습니다. (config.py의 필드명은 `dev_bypass_email` / `dev_bypass_password`이며, Pydantic은 `DEV_BYPASS_EMAIL` / `DEV_BYPASS_PASSWORD` 환경변수를 매핑합니다.)
 - **실제 Supabase Auth**: a1 `.env`에 `DEV_BYPASS_AUTH=false`이면 정상적인 회원가입/로그인을 사용합니다. Turnstile이 활성화되어 있으면 CAPTCHA도 필요합니다.
 - **Mock 모드**: a1에 연결할 수 없거나 bypass가 비활성화되면 자동으로 mock 사용자로 전환됩니다. 화면 상단에 노란색 배너가 표시됩니다. 이는 UI 레이아웃 점검용이며 실제 데이터 흐름은 테스트하지 않습니다.
 

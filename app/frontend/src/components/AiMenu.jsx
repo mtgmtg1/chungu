@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useCompletion } from "ai/react";
 import { useTranslation } from "react-i18next";
+import { DOMSerializer } from "@tiptap/pm/model";
 import { marked } from "marked";
 import TurndownService from "turndown";
 import {
@@ -38,7 +39,8 @@ function getSelectedMarkdown(editor) {
     return "";
   }
   const slice = selection.content();
-  const html = editor.view.domSerializer.serializeFragment(slice.content, { document });
+  const serializer = DOMSerializer.fromSchema(editor.schema);
+  const html = serializer.serializeFragment(slice.content, { document });
   const markdown = turndown.turndown(html);
   console.log("[AI] getSelectedMarkdown: html length=", html.length, "markdown length=", markdown.length);
   return markdown;

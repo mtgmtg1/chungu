@@ -359,8 +359,8 @@ export default function JobResultPage() {
     }
   }
 
-  // [Flow: Step 1 (instruction 수신) -> Step 2 (AI 주석 API 호출) -> Step 3 (처리 상태면 폴링 활성화) -> Step 4 (job 상태 갱신)]
-  async function startAnnotate(instruction) {
+  // [Flow: Step 1 (instruction, pageRange 수신) -> Step 2 (AI 주석 API 호출) -> Step 3 (처리 상태면 폴링 활성화) -> Step 4 (job 상태 갱신)]
+  async function startAnnotate(instruction, pageRange) {
     if (!instruction || !instruction.trim()) return;
     setConverting(true);
     setError("");
@@ -370,6 +370,7 @@ export default function JobResultPage() {
         mode: annotateMode,
         commentMode: annotateCommentMode,
         advanced: annotateAdvanced,
+        pageRange: pageRange || null,
       });
       if (res.status === "processing") {
         setAnnotatePolling(true);
@@ -583,6 +584,7 @@ export default function JobResultPage() {
             onDeleteFile={openDeleteSourceFileModal}
             onRetryAnnotation={(index) => handleAnnotateAction("retry", index)}
             currentPage={currentPage}
+            totalPages={job?.total_pages || 1}
             onSaveAnnotations={handleSaveAnnotations}
             onStartAnnotate={startAnnotate}
             converting={converting}

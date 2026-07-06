@@ -229,7 +229,21 @@
     "annotateRetry": "再試行",
     "annotateCancel": "キャンセル",
     "annotateCancelTitle": "AI注釈生成をキャンセル",
-    "annotateCancelDesc": "{{filename}} の生成をキャンセルすると、進行中のAI処理を停止し予約済み使用量を解放します。"
+    "annotateCancelDesc": "{{filename}} の生成をキャンセルすると、進行中のAI処理を停止し予約済み使用量を解放します。",
+    "annotateAdvancedOptions": "詳細オプション",
+    "annotatePageRangeLabel": "ページ範囲",
+    "annotatePageRangePlaceholder": "現在 {{current}}/{{total}}ページ · 例: 1-5,7,10-12",
+    "annotatePageRangeHint": "空欄の場合は現在のページのみ処理します。例: 1-5,7,10-12",
+    "annotationListTitle": "注釈一覧",
+    "annotationListEmpty": "注釈がありません",
+    "annotationPage": "{{page}}ページ",
+    "annotationTypeHighlight": "ハイライト",
+    "annotationTypeCallout": "コメント",
+    "annotationNoText": "(テキストなし)",
+    "annotationEditColor": "色",
+    "annotationEditComment": "コメント",
+    "annotationEditOpacity": "不透明度",
+    "annotationDelete": "削除"
   },
   "poems": [
     {

@@ -83,10 +83,10 @@ export const api = {
   downloadJob: (id, type) => request(`/api/jobs/${id}/download?type=${type}`),
   xlsxAdvancedAction: (id, action) =>
     request(`/api/jobs/${id}/xlsx-advanced-action`, { method: 'POST', body: JSON.stringify({ action }) }),
-  annotateJob: (id, { instruction, mode, commentMode, advanced }) =>
+  annotateJob: (id, { instruction, mode, commentMode, advanced, pageRange }) =>
     request(`/api/jobs/${id}/annotate`, {
       method: 'POST',
-      body: JSON.stringify({ instruction, mode, comment_mode: commentMode, advanced }),
+      body: JSON.stringify({ instruction, mode, comment_mode: commentMode, advanced, page_range: pageRange }),
     }),
   annotateAction: (id, action, annotationIndex) =>
     request(`/api/jobs/${id}/annotate-action`, {

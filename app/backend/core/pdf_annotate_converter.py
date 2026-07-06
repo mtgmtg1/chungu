@@ -109,13 +109,17 @@ def _merge_annotations_for_run(
     new_annotations: list[dict],
     annotation_index: int,
 ) -> list[dict]:
-    """[Flow: Step 1 (공유 annotations.json 다운로드) -> Step 2 (동일 run의 기존 주석 제거)
-          -> Step 3 (새 주석 추가) -> Step 4 (병합된 목록 반환)]
+    """[Flow: Step 1 (공유 annotations.json 다운로드) -> Step 2 (동일 run의 기존 주석 분류)
+          -> Step 3 (사용자 편집 주석은 보존, 미편집 주석은 제거) -> Step 4 (새 주석 추가)
+          -> Step 5 (병합된 목록 반환)]
 
     병렬 AI 주석 생성에서 공유 JSON을 안전하게 갱신하기 위해 사용한다.
     실제 호출은 SELECT FOR UPDATE로 잠근 트랜잭션 안에서 이루어져야 한다.
-    동일 annotation_index가 생성했던 주석은 제거한 뒤 새 주석을 추가하여,
-    재시도 시 중복을 방지하고 멱등성을 보장한다.
+
+    사용자가 AI 주석을 편집(색상/코멘트/위치/투명도 변경)한 경우, 해당 주석에
+    `_userEdited: true` 필드가 설정되어 있으면 재생성 시 덮어쓰지 않고 보존한다.
+    이렇게 하면 같은 annotation_index로 재생성해도 사용자의 수동 편집이 유지된다.
+    편집되지 않은 동일 run의 주석은 제거한 뒤 새 주석으로 교체하여 멱등성을 보장한다.
     """
     prefix = f"backend-{annotation_index}-"
     client = supabase_client.get_service_client()
@@ -127,8 +131,36 @@ def _merge_annotations_for_run(
     except Exception:
         existing = []
 
-    filtered = [a for a in existing if not _annotation_id(a).startswith(prefix)]
-    return filtered + new_annotations
+    # [Flow: 기존 주석을 3그룹으로 분류]
+    # - other: 다른 run의 주석 또는 사용자 주석 → 무조건 보존
+    # - edited: 같은 run이지만 사용자가 편집한 주석 (_userEdited: true) → 보존
+    # - stale: 같은 run이고 편집되지 않은 주석 → 제거 (새 주석으로 교체)
+    preserved_edited: list[dict] = []
+    preserved_other: list[dict] = []
+    for a in existing:
+        aid = _annotation_id(a)
+        if not aid.startswith(prefix):
+            preserved_other.append(a)
+            continue
+        if _is_user_edited(a):
+            preserved_edited.append(a)
+            logger.info(f"[pdf_annotate] 사용자 편집 주석 보존: {aid}")
+        # stale 주석은 버린다
+
+    return preserved_other + preserved_edited + new_annotations
+
+
+def _is_user_edited(item: dict) -> bool:
+    """[Flow: Step 1 (annotation 객체 추출) -> Step 2 (_userEdited 필드 확인) -> Step 3 (반환)]
+
+    주석 객체에 _userEdited: true 필드가 있으면 사용자가 편집한 것으로 간주한다.
+    EmbedPDF AnnotationTransferItem 형태({"annotation": {...}})와 평면 dict 모두 지원한다.
+    """
+    if not isinstance(item, dict):
+        return False
+    if "annotation" in item and isinstance(item["annotation"], dict):
+        return bool(item["annotation"].get("_userEdited", False))
+    return bool(item.get("_userEdited", False))
 
 
 @dataclass
@@ -702,6 +734,7 @@ def run(
     language: str = "en",
     advanced: bool = False,
     annotation_index: int = 0,
+    page_range: list[int] | None = None,
 ) -> dict:
     """하이라이트/여백 주석 작업을 실행하고 job 상태를 갱신한다.
 
@@ -713,6 +746,7 @@ def run(
         language: 사용자 언어 코드 ("ko"/"en"/"ja") — 주석 코멘트가 이 언어로 작성된다
         advanced: True이면 Vision LLM 파이프라인(정밀 bbox + 색상) 사용, False이면 기존 PaddleOCR 기반 파이프라인
         annotation_index: API 수준에서 원자적으로 할당된 고유 인덱스 (파일명 충돌 방지)
+        page_range: 처리할 1-based 페이지 번호 리스트. None이면 전체 페이지를 처리한다.
     """
     db = SessionLocal()
     job = db.get(Job, job_id)
@@ -759,6 +793,17 @@ def run(
                 image_paths = _get_page_image_paths(job, temp_dir)
             if not image_paths:
                 raise ValueError("원본 파일을 이미지로 렌더링하지 못해 주석을 생성할 수 없습니다")
+
+            # [Flow: 페이지 범위 필터링 — 지정한 페이지만 처리하여 LLM 프롬프트 폭주 방지]
+            # page_range가 None이면 전체 페이지를 처리한다 (현행 동작).
+            # page_range는 1-based 페이지 번호 리스트이며, image_paths/elements/targets에 모두 적용된다.
+            if page_range is not None:
+                page_set = set(page_range)
+                image_paths = {p: path for p, path in image_paths.items() if p in page_set}
+                if not image_paths:
+                    _update_entry_status(db, job_id, next_index, "done", recovery_notes=[{"reason": "지정한 페이지 범위에 해당하는 페이지가 없습니다"}])
+                    return {"job_id": job_id, "status": "done", "matched_rows": 0}
+                logger.info(f"[pdf_annotate] page_range 필터 적용: {sorted(page_set)} ({len(image_paths)}페이지)")
 
             llm_mode: str | None = None
             llm_comment_mode: str | None = None
@@ -810,6 +855,11 @@ def run(
                             pdf_bytes, page_ocr_results, dpi=RENDER_DPI, language=language
                         )
                         page_point_sizes = _page_point_sizes(pdf_bytes)
+
+                # [Flow: elements를 페이지 범위로 필터링 — LLM에 지정 페이지 요소만 전달]
+                if page_range is not None:
+                    page_set = set(page_range)
+                    elements = [e for e in elements if e.page_no in page_set]
 
                 matches, llm_mode, llm_comment_mode = _select_elements_with_llm(
                     elements, instruction, endpoint, model, api_key

@@ -229,7 +229,21 @@
     "annotateRetry": "Retry",
     "annotateCancel": "Cancel",
     "annotateCancelTitle": "Cancel AI annotation generation",
-    "annotateCancelDesc": "Cancelling {{filename}} will stop the ongoing AI processing and refund the reserved usage."
+    "annotateCancelDesc": "Cancelling {{filename}} will stop the ongoing AI processing and refund the reserved usage.",
+    "annotateAdvancedOptions": "Advanced options",
+    "annotatePageRangeLabel": "Page range",
+    "annotatePageRangePlaceholder": "Current {{current}}/{{total}} · e.g. 1-5,7,10-12",
+    "annotatePageRangeHint": "Leave empty to process only the current page. e.g. 1-5,7,10-12",
+    "annotationListTitle": "Annotations",
+    "annotationListEmpty": "No annotations",
+    "annotationPage": "Page {{page}}",
+    "annotationTypeHighlight": "Highlight",
+    "annotationTypeCallout": "Comment",
+    "annotationNoText": "(no text)",
+    "annotationEditColor": "Color",
+    "annotationEditComment": "Comment",
+    "annotationEditOpacity": "Opacity",
+    "annotationDelete": "Delete"
   },
   "poems": [
     {

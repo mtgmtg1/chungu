@@ -2,10 +2,11 @@
 // processing/error 상태의 주석 항목은 URL 없이 상태 정보만 표시한다.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { FileText, ImageIcon, Volume2, Film, Trash2, Loader2, AlertCircle, RotateCw, Sparkles, Check } from "lucide-react";
+import { FileText, ImageIcon, Volume2, Film, Trash2, Loader2, AlertCircle, RotateCw, Sparkles, Check, ChevronDown, ChevronUp, List } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer from "./PdfViewer.jsx";
 import MediaPlayer from "./MediaPlayer.jsx";
+import AnnotationListPanel from "./AnnotationListPanel.jsx";
 
 function SourceIcon({ type }) {
   if (type === "pdf") return <FileText size={16} className="text-error flex-shrink-0" />;
@@ -122,16 +123,19 @@ function AnnotationStatusCard({ runs, t }) {
 
 /**
  * [Flow: Step 1 (FAB 클릭 또는 외부 클릭으로 open 상태 토글) -> Step 2 (instruction 입력 관리)
- *       -> Step 3 (제출 시 onStartAnnotate 콜백 호출) -> Step 4 (전송 후 팝업 닫기 및 초기화)
- *       -> Step 5 (annotationRuns가 있으면 FAB 위에 상태 카드 렌더링)]
+ *       -> Step 3 (고급 옵션 토글 시 페이지 범위 입력 표시) -> Step 4 (제출 시 onStartAnnotate 콜백 호출)
+ *       -> Step 5 (전송 후 팝업 닫기 및 초기화) -> Step 6 (annotationRuns가 있으면 FAB 위에 상태 카드 렌더링)]
  * PDF 패널 하단 우측에 떠 있는 AI 주석 FAB입니다.
  * 클릭하면 입력 카드 팝업이 부드러운 애니메이션으로 펼쳐지며,
  * 주석 생성 중에는 FAB 위에 현재 run들의 상태 리스트가 표시됩니다.
+ * 고급 옵션을 펼치면 처리할 페이지 범위를 지정할 수 있습니다 (기본값: 현재 보고 있는 페이지).
  */
-function AiAnnotationFab({ onStartAnnotate, disabled, annotationRuns }) {
+function AiAnnotationFab({ onStartAnnotate, disabled, annotationRuns, currentPage = 1, totalPages = 1 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [pageRange, setPageRange] = useState("");
   const containerRef = useRef(null);
 
   // [Flow: Step 1 (팝업이 열린 경우에만 이벤트 등록) -> Step 2 (컨테이너 외부 클릭 시 팝업 닫기)]
@@ -148,8 +152,12 @@ function AiAnnotationFab({ onStartAnnotate, disabled, annotationRuns }) {
 
   const handleSubmit = async () => {
     if (!instruction.trim() || !onStartAnnotate) return;
-    await onStartAnnotate(instruction);
+    // pageRange가 비어 있으면 현재 페이지를 기본값으로 전달
+    const effectivePageRange = pageRange.trim() || String(currentPage);
+    await onStartAnnotate(instruction, effectivePageRange);
     setInstruction("");
+    setPageRange("");
+    setShowAdvanced(false);
     setOpen(false);
   };
 
@@ -196,8 +204,36 @@ function AiAnnotationFab({ onStartAnnotate, disabled, annotationRuns }) {
           onChange={(e) => setInstruction(e.target.value)}
           placeholder={t("page:result.annotateInstructionPlaceholder")}
           rows={3}
-          className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none"
+          className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none"
           data-oid="annotate-instruction-input" />
+
+        {/* 고급 옵션 토글 — 페이지 범위 지정 */}
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((v) => !v)}
+          className="flex items-center gap-1 text-xs text-on-surface-variant hover:text-on-surface mb-2 transition-colors"
+          data-oid="annotate-advanced-toggle">
+          {showAdvanced ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          {t("page:result.annotateAdvancedOptions")}
+        </button>
+        {showAdvanced && (
+          <div className="mb-3">
+            <label className="block text-xs text-on-surface-variant mb-1">
+              {t("page:result.annotatePageRangeLabel")}
+            </label>
+            <input
+              type="text"
+              value={pageRange}
+              onChange={(e) => setPageRange(e.target.value)}
+              placeholder={t("page:result.annotatePageRangePlaceholder", { current: currentPage, total: totalPages })}
+              className="w-full px-3 py-1.5 border border-outline-variant rounded-lg text-xs mb-1 focus:outline-none focus:ring-2 focus:ring-primary/40"
+              data-oid="annotate-page-range-input" />
+            <p className="text-[10px] text-on-surface-variant">
+              {t("page:result.annotatePageRangeHint")}
+            </p>
+          </div>
+        )}
+
         <div className="flex justify-end gap-2">
           <button
             type="button"
@@ -235,7 +271,11 @@ function PdfViewerWithFab({
   onStartAnnotate,
   converting,
   annotationRuns,
+  totalPages = 1,
+  showAnnotationPanel = false,
+  onToggleAnnotationPanel,
 }) {
+  const { t } = useTranslation();
   return (
     <div className="relative flex flex-col h-full w-full min-h-0 overflow-hidden">
       <PdfViewer
@@ -245,11 +285,37 @@ function PdfViewerWithFab({
         annotationsJson={annotationsJson}
         onAnnotationChanged={onAnnotationChanged}
       />
+      {/* 주석 목록 패널 토글 버튼 — 우측 상단 */}
+      {onToggleAnnotationPanel && (
+        <button
+          type="button"
+          onClick={onToggleAnnotationPanel}
+          className={`absolute top-2 right-2 z-30 flex items-center justify-center w-8 h-8 rounded-lg shadow border transition-colors ${
+            showAnnotationPanel
+              ? "bg-primary text-white border-primary"
+              : "bg-white/90 text-on-surface-variant border-outline-variant hover:text-on-surface hover:bg-white"
+          }`}
+          aria-label={t("page:result.annotationListTitle")}
+          data-oid="annotation-panel-toggle">
+          <List size={16} />
+        </button>
+      )}
+      {/* 주석 편집 패널 — 우측에서 슬라이드 인 */}
+      {showAnnotationPanel && (
+        <AnnotationListPanel
+          viewerRef={viewerRef}
+          annotationsJson={annotationsJson}
+          onAnnotationChanged={onAnnotationChanged}
+          onClose={onToggleAnnotationPanel}
+        />
+      )}
       {onStartAnnotate && (
         <AiAnnotationFab
           onStartAnnotate={onStartAnnotate}
           disabled={converting}
           annotationRuns={annotationRuns}
+          currentPage={page}
+          totalPages={totalPages}
         />
       )}
     </div>
@@ -271,6 +337,7 @@ export default function SourcePanel({
   onStartAnnotate,
   converting = false,
   annotationRuns = [],
+  totalPages = 1,
 }) {
   const { t } = useTranslation();
   const files = sourceFiles && sourceFiles.length > 0 ? sourceFiles : [];
@@ -281,6 +348,7 @@ export default function SourcePanel({
   const pdfViewerRef = useRef(null);
   const autoSaveRef = useRef(null);
   const [selectedAnnotationsJson, setSelectedAnnotationsJson] = useState(null);
+  const [showAnnotationPanel, setShowAnnotationPanel] = useState(false);
 
   const selectedFile = files.length > 1 ? (files[selectedIndex] || files[0]) : files[0];
 
@@ -374,6 +442,9 @@ export default function SourcePanel({
           onStartAnnotate={onStartAnnotate}
           converting={converting}
           annotationRuns={annotationRuns}
+          totalPages={totalPages}
+          showAnnotationPanel={showAnnotationPanel}
+          onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}
         />
       );
     }
@@ -535,6 +606,9 @@ export default function SourcePanel({
                   onStartAnnotate={onStartAnnotate}
                   converting={converting}
                   annotationRuns={annotationRuns}
+                  totalPages={totalPages}
+                  showAnnotationPanel={showAnnotationPanel}
+                  onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}
                 />
               ) : selected.type === "docx" || selected.type === "hwp" ? (
                 <PdfViewer
@@ -565,6 +639,9 @@ export default function SourcePanel({
         onStartAnnotate={onStartAnnotate}
         converting={converting}
         annotationRuns={annotationRuns}
+        totalPages={totalPages}
+        showAnnotationPanel={showAnnotationPanel}
+        onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}
       />
     );
   }

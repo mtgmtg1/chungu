@@ -8,6 +8,18 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### AI 주석 — 페이지 범위 지정 + 주석 편집 패널
+
+- **페이지 범위 지정**: AI 주석 생성 시 처리할 페이지를 지정할 수 있다. FAB 다이얼로그의 "고급 옵션" 토글을 펼치면 페이지 범위 입력 필드가 표시되며, `"1-5,7,10-12"` 형태로 입력한다. 빈 값이면 **현재 보고 있는 페이지만** 처리 (기본값). 이전에는 항상 전체 페이지를 처리해 LLM 프롬프트가 `MAX_ELEMENTS_FOR_LLM=400`으로 잘려 뒷부분 페이지의 요소가 무시되는 문제가 있었다.
+- **`_parse_page_range()` 헬퍼** (`api/jobs.py`): `"1-5,7,10-12"` 문자열을 1-based 페이지 번호 리스트로 변환. 역순 범위(`5-3`) 허용, `total_pages` 초과 시 클램프, 빈 입력 → None(전체 페이지 의미).
+- **과금 변경**: 지정한 페이지 수만큼만 과금 (`units = page_range_count`). 관리자는 무제한. `annotated_pdf_files` entry에 `page_range` 저장하여 재시도/중복 검사에 사용.
+- **백엔드 필터링** (`pdf_annotate_converter.py:run()`): `page_range`가 None이 아니면 `image_paths`와 `elements`를 지정 페이지로 필터링. Vision LLM 경로와 텍스트 LLM 경로 모두에 적용. `tasks.py:annotate_pdf_job()` 시그니처에 `page_range` 파라미터 추가.
+- **사용자 편집 AI 주석 보존**: 같은 `annotation_index`로 AI 주석을 재생성해도 사용자가 편집한 주석을 덮어쓰지 않도록 보존. `_merge_annotations_for_run()`이 `_userEdited: true` 플래그가 있는 주석은 제거하지 않고 유지. `save_user_annotations()`가 export된 주석과 기존 JSON을 비교해 사용자가 AI 주석의 색상/코멘트/위치/투명도를 변경했는지 감지 (`_is_annotation_edited()`), 변경 시 `_mark_user_edited()`로 플래그 설정. 사용자가 삭제한 AI 주석은 export에 없으므로 자동 제외.
+- **주석 편집 패널** (`AnnotationListPanel.jsx`): PDF 뷰어 우측 상단 List 아이콘 버튼으로 토글. 주석을 페이지별로 그룹화해 리스트 표시. 항목 클릭 시 해당 페이지로 스크롤 + 주석 선택. 확장 시 색상(8색 컬러피커)/코멘트(textarea)/투명도(range slider) 편집 UI + 삭제 버튼. 변경 시 기존 `onAnnotationChanged` debounce 자동 저장 경로 재사용.
+- **PdfViewer ref API 확장**: `getAnnotations()`, `selectAnnotation(pageIndex, id)`, `updateAnnotation(pageIndex, id, patch)`, `deleteAnnotation(pageIndex, id)`, `scrollToPage(pageNumber)` 노출. embedpdf annotation plugin의 메서드를 래핑.
+- **i18n 키 추가** (ko/en/ja `page.json`): `annotateAdvancedOptions`, `annotatePageRangeLabel`, `annotatePageRangePlaceholder`, `annotatePageRangeHint`, `annotationListTitle`, `annotationListEmpty`, `annotationPage`, `annotationTypeHighlight`, `annotationTypeCallout`, `annotationNoText`, `annotationEditColor`, `annotationEditComment`, `annotationEditOpacity`, `annotationDelete`.
+- **핵심 파일**: `api/jobs.py`, `workers/tasks.py`, `core/pdf_annotate_converter.py`, `api.js`, `PdfViewer.jsx`, `SourcePanel.jsx`, `AnnotationListPanel.jsx`, `JobResultPage.jsx`.
+
 ### AI 주석 — Callout (FreeTextCallout)
 
 - **여백 주석 → callout 전환**: 기존 `margin_note`/`both` 모드는 페이지 우측에 mediabox를 확장해 FREETEXT 박스를 배치했으나, JSON 오버레이 방식 전환 후 mediabox 확장이 빠져 여백 박스가 페이지 밖에 떠 있어 보이지 않는 버그가 있었다. 이를 embedpdf의 `FreeTextCallout`(텍스트 박스 + 화살표 리더 라인)로 대체 — 페이지 내 빈 모서리/외곽 여백에 텍스트 박스를 배치하고 화살표로 원본 요소를 가리킨다.

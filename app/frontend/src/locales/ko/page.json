@@ -229,7 +229,21 @@
     "annotateRetry": "재시도",
     "annotateCancel": "취소",
     "annotateCancelTitle": "AI 주석 생성 취소",
-    "annotateCancelDesc": "{{filename}}의 생성을 취소하면 진행 중인 AI 처리를 중단하고 예약된 사용량을 환원합니다."
+    "annotateCancelDesc": "{{filename}}의 생성을 취소하면 진행 중인 AI 처리를 중단하고 예약된 사용량을 환원합니다.",
+    "annotateAdvancedOptions": "고급 옵션",
+    "annotatePageRangeLabel": "페이지 범위",
+    "annotatePageRangePlaceholder": "현재 {{current}}/{{total}}페이지 · 예: 1-5,7,10-12",
+    "annotatePageRangeHint": "비워두면 현재 페이지만 처리합니다. 예: 1-5,7,10-12",
+    "annotationListTitle": "주석 목록",
+    "annotationListEmpty": "주석이 없습니다",
+    "annotationPage": "{{page}}페이지",
+    "annotationTypeHighlight": "하이라이트",
+    "annotationTypeCallout": "코멘트",
+    "annotationNoText": "(텍스트 없음)",
+    "annotationEditColor": "색상",
+    "annotationEditComment": "코멘트",
+    "annotationEditOpacity": "투명도",
+    "annotationDelete": "삭제"
   },
   "poems": [
     {

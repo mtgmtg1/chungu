@@ -37,9 +37,13 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
   const importedAnnotationsJsonRef = useRef(null);
 
   /**
-   * [Flow: Step 1 (상위 ref로 노출할 API 정의) -> Step 2 (annotation plugin exportAnnotations를 Promise로 반환)]
-   * exportAnnotations()는 Task를 반환한다. Task에 toPromise()가 있으면 사용하고,
-   * 없으면 wait()를 Promise로 감싸서 AnnotationTransferItem[]을 받은 뒤 JSON 문자열로 변환한다.
+   * [Flow: Step 1 (상위 ref로 노출할 API 정의) -> Step 2 (annotation plugin 메서드 래핑)]
+   * exportAnnotations: 모든 주석을 JSON 문자열로 반환
+   * getAnnotations: 모든 주석을 배열로 반환 (TrackedAnnotation[])
+   * selectAnnotation: 특정 페이지의 주석을 선택 (해당 페이지로 스크롤 + 하이라이트)
+   * updateAnnotation: 기존 주석의 속성을 부분 업데이트 (색상/코멘트/투명도 등)
+   * deleteAnnotation: 특정 페이지의 주석을 삭제
+   * scrollToPage: 지정 페이지로 스크롤
    */
   useImperativeHandle(ref, () => ({
     exportAnnotations: async () => {
@@ -64,6 +68,59 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
       } catch (e) {
         console.error("[PdfViewer] exportAnnotations failed:", e);
         return null;
+      }
+    },
+    getAnnotations: () => {
+      const api = annotationApiRef.current;
+      if (!api || typeof api.getAnnotations !== "function") return [];
+      try {
+        return api.getAnnotations() ?? [];
+      } catch (e) {
+        console.error("[PdfViewer] getAnnotations failed:", e);
+        return [];
+      }
+    },
+    selectAnnotation: (pageIndex, annotationId) => {
+      const api = annotationApiRef.current;
+      const scrollApi = scrollApiRef.current;
+      if (!api) return;
+      try {
+        // 해당 페이지로 스크롤한 뒤 주석 선택
+        if (scrollApi && typeof scrollApi.scrollToPage === "function") {
+          scrollApi.scrollToPage({ pageNumber: pageIndex + 1 });
+        }
+        if (typeof api.selectAnnotation === "function") {
+          api.selectAnnotation(pageIndex, annotationId);
+        }
+      } catch (e) {
+        console.error("[PdfViewer] selectAnnotation failed:", e);
+      }
+    },
+    updateAnnotation: (pageIndex, annotationId, patch) => {
+      const api = annotationApiRef.current;
+      if (!api || typeof api.updateAnnotation !== "function") return;
+      try {
+        api.updateAnnotation(pageIndex, annotationId, patch);
+      } catch (e) {
+        console.error("[PdfViewer] updateAnnotation failed:", e);
+      }
+    },
+    deleteAnnotation: (pageIndex, annotationId) => {
+      const api = annotationApiRef.current;
+      if (!api || typeof api.deleteAnnotation !== "function") return;
+      try {
+        api.deleteAnnotation(pageIndex, annotationId);
+      } catch (e) {
+        console.error("[PdfViewer] deleteAnnotation failed:", e);
+      }
+    },
+    scrollToPage: (pageNumber) => {
+      const scrollApi = scrollApiRef.current;
+      if (!scrollApi || typeof scrollApi.scrollToPage !== "function") return;
+      try {
+        scrollApi.scrollToPage({ pageNumber });
+      } catch (e) {
+        console.error("[PdfViewer] scrollToPage failed:", e);
       }
     },
   }));

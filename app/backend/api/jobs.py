@@ -1372,6 +1372,86 @@ def _annotation_id(item: dict) -> str:
     return item.get("id", "")
 
 
+def _annotation_inner(item: dict) -> dict:
+    """EmbedPDF AnnotationTransferItem에서 내부 annotation dict를 추출한다 (평면 dict도 지원)."""
+    if not isinstance(item, dict):
+        return {}
+    if "annotation" in item and isinstance(item["annotation"], dict):
+        return item["annotation"]
+    return item
+
+
+def _is_annotation_edited(current: dict, original: dict) -> bool:
+    """[Flow: Step 1 (내부 annotation 객체 추출) -> Step 2 (주요 필드 비교) -> Step 3 (변경 여부 반환)]
+
+    사용자가 AI 주석을 편집했는지 확인한다. rect, color, contents, opacity, calloutLine
+    필드 중 하나라도 다르면 편집된 것으로 간주한다. 이미 _userEdited가 설정되어 있으면 true.
+    """
+    cur = _annotation_inner(current)
+    orig = _annotation_inner(original)
+    if cur.get("_userEdited") or orig.get("_userEdited"):
+        return True
+    # 주요 필드 비교 — rect, color, contents, opacity, calloutLine
+    for field in ("rect", "color", "contents", "opacity", "calloutLine", "strokeColor", "strokeWidth"):
+        if cur.get(field) != orig.get(field):
+            return True
+    return False
+
+
+def _mark_user_edited(item: dict) -> None:
+    """주석 객체에 _userEdited: true 플래그를 설정한다 (내부 annotation dict에 설정)."""
+    if "annotation" in item and isinstance(item["annotation"], dict):
+        item["annotation"]["_userEdited"] = True
+    else:
+        item["_userEdited"] = True
+
+
+def _parse_page_range(raw: str | None, total_pages: int) -> list[int] | None:
+    """[Flow: Step 1 (빈 입력 → None 반환하여 전체 페이지 의미) -> Step 2 (콤마로 분할)
+          -> Step 3 (각 토큰을 범위 파싱) -> Step 4 (1-based 페이지 번호 집합 반환)]
+
+    "1-5,7,10-12" 형태의 문자열을 1-based 페이지 번호 리스트로 변환한다.
+    빈 문자열이나 None이면 None을 반환하며, 이는 "전체 페이지"를 의미한다.
+    범위가 total_pages를 초과하면 잘라내고, 역순 범위(예: 5-3)도 허용한다.
+
+    Args:
+        raw: 사용자 입력 페이지 범위 문자열 (예: "1-5,7,10-12")
+        total_pages: PDF 전체 페이지 수 (초과 범위 클램프용)
+
+    Returns:
+        정렬된 1-based 페이지 번호 리스트. 빈 입력이면 None (전체 페이지 의미).
+    """
+    if not raw or not raw.strip():
+        return None
+    pages: set[int] = set()
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if "-" in token:
+            parts = token.split("-", 1)
+            try:
+                start = int(parts[0])
+                end = int(parts[1])
+            except (ValueError, IndexError):
+                continue
+            if start > end:
+                start, end = end, start
+            for p in range(start, end + 1):
+                if 1 <= p <= total_pages:
+                    pages.add(p)
+        else:
+            try:
+                p = int(token)
+            except ValueError:
+                continue
+            if 1 <= p <= total_pages:
+                pages.add(p)
+    if not pages:
+        return None
+    return sorted(pages)
+
+
 def _overall_annotation_status(entries: list[dict]) -> str:
     """[Flow: Step 1 (processing entry 존재 확인) -> Step 2 (error entry 존재 확인)
           -> Step 3 (전체 상태 문자열 반환)]
@@ -2019,7 +2099,21 @@ def annotate_job(
         raise HTTPException(status_code=400, detail="Unsupported comment_mode")
     advanced = bool(payload.get("advanced", False))
 
-    # 동일한 instruction/mode/comment_mode/advanced로 이미 생성된 주석이 있으면 재사용
+    # [Flow: 페이지 범위 파싱 — 빈 값이면 None(전체 페이지), 지정하면 해당 페이지만 처리]
+    # 프론트에서 기본값으로 현재 보고 있는 페이지를 전달하므로, 명시적으로 "전체"를 원할 때만
+    # page_range를 비워 보내지 않는다. 과금은 지정한 페이지 수만큼 계산한다.
+    total_pages = job.total_pages if job.total_pages else (job.total_files or 1)
+    raw_page_range = payload.get("page_range")
+    if raw_page_range is not None and not isinstance(raw_page_range, str):
+        # 리스트/숫자 형태로 오면 문자열로 정규화
+        if isinstance(raw_page_range, list):
+            raw_page_range = ",".join(str(p) for p in raw_page_range)
+        else:
+            raw_page_range = str(raw_page_range)
+    page_range = _parse_page_range(raw_page_range, total_pages)
+    page_range_count = len(page_range) if page_range else total_pages
+
+    # 동일한 instruction/mode/comment_mode/advanced/page_range로 이미 생성된 주석이 있으면 재사용
     existing = next(
         (
             e
@@ -2028,6 +2122,7 @@ def annotate_job(
             and e.get("mode") == mode
             and e.get("comment_mode") == comment_mode
             and bool(e.get("advanced", False)) == advanced
+            and e.get("page_range") == page_range
         ),
         None,
     )
@@ -2057,7 +2152,7 @@ def annotate_job(
     # 관리자 체크 (무제한 사용)
     if db_user.is_admin:
         # 관리자는 구독 체크 없이 바로 처리
-        units = job.total_pages if job.total_pages else (job.total_files or 1)
+        units = page_range_count
         job.annotate_instruction = instruction
         job.annotate_mode = mode
         job.annotate_comment_mode = comment_mode
@@ -2067,8 +2162,8 @@ def annotate_job(
         job.annotate_reserved_pages = 0  # 관리자는 예약 불필요
         job.annotate_reserved_period_start = None
     else:
-        # 일반 사용자는 구독 체크
-        units = job.total_pages if job.total_pages else (job.total_files or 1)
+        # 일반 사용자는 구독 체크 — 지정한 페이지 수만큼만 과금
+        units = page_range_count
         # 고급주석은 페이지당 Vision LLM 호출 → 일반 주석보다 비용이 높음. credits를 2배로 사용.
         if advanced:
             units *= 2
@@ -2122,6 +2217,7 @@ def annotate_job(
         "mode": mode,
         "comment_mode": comment_mode,
         "advanced": advanced,
+        "page_range": page_range,
         "storage_path": shared_storage_path,
         "annotations_json_storage_path": shared_annotations_json_path,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -2134,7 +2230,7 @@ def annotate_job(
     from ..workers import tasks
     task = tasks.annotate_pdf_job.delay(
         job_id, instruction, mode, comment_mode, advanced=advanced,
-        annotation_index=annotation_index,
+        annotation_index=annotation_index, page_range=page_range,
     )
     try:
         locked_job = db.execute(
@@ -2267,6 +2363,7 @@ def annotate_action(
             entry.get("comment_mode", "user_text"),
             advanced=bool(entry.get("advanced", False)),
             annotation_index=idx,
+            page_range=entry.get("page_range"),
         )
         tasks_to_track.append((entry, task))
 
@@ -2403,8 +2500,8 @@ def save_user_annotations(
             {"content-type": "application/pdf", "upsert": "true"},
         )
 
-        # 기존 AI 주석 JSON이 있으면 사용자 주석과 병합. 사용자 주석은 매번 전체 교체하고,
-        # AI 주석은 backend-{index}- prefix ID로 식별해 유지한다.
+        # 기존 AI 주석 JSON이 있으면 사용자 주석과 병합.
+        # [Flow: 사용자가 AI 주석을 편집한 경우(_userEdited 또는 내용 변경) 감지하여 보존]
         try:
             existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
             existing = json.loads(existing_bytes.decode("utf-8"))
@@ -2413,16 +2510,44 @@ def save_user_annotations(
         except Exception:
             existing = []
 
-        ai_annotations = [
-            a for a in existing
-            if isinstance(a, dict) and _annotation_id(a).startswith("backend-")
-        ]
-        # viewer에서 export한 주석 중 AI 생성 주석은 기존 JSON의 것을 유지하고,
-        # 사용자가 추가/수정한 주석만 병합하여 AI 주석 중복을 방지한다.
-        user_annotations = [
-            a for a in valid_annotations
-            if isinstance(a, dict) and not _annotation_id(a).startswith("backend-")
-        ]
+        # 기존 AI 주석을 ID 기준으로 인덱싱
+        existing_by_id: dict[str, dict] = {}
+        for a in existing:
+            aid = _annotation_id(a)
+            if aid.startswith("backend-"):
+                existing_by_id[aid] = a
+
+        # export된 주석을 AI 주석과 사용자 주석으로 분류하되,
+        # AI 주석 중 사용자가 편집한 것은 _userEdited 플래그를 설정해 보존
+        ai_annotations: list[dict] = []
+        user_annotations: list[dict] = []
+        for a in valid_annotations:
+            if not isinstance(a, dict):
+                continue
+            aid = _annotation_id(a)
+            if aid.startswith("backend-"):
+                orig = existing_by_id.get(aid)
+                if orig is None:
+                    # 기존에 없는 AI 주석 — 새로 추가된 것으로 간주
+                    ai_annotations.append(a)
+                elif _is_annotation_edited(a, orig):
+                    # 사용자가 편집한 AI 주석 — _userEdited 플래그 설정 후 보존
+                    _mark_user_edited(a)
+                    ai_annotations.append(a)
+                    logger.info(f"[save_user_annotations] {job_id} AI 주석 편집 감지: {aid}")
+                else:
+                    # 변경 없음 — 기존 것 유지 (멱등성)
+                    ai_annotations.append(orig)
+            else:
+                user_annotations.append(a)
+
+        # 기존 JSON에만 있고 export에 없는 AI 주석 (사용자가 삭제한 것)은 제외
+        exported_ai_ids = {_annotation_id(a) for a in ai_annotations}
+        for aid, orig in existing_by_id.items():
+            if aid not in exported_ai_ids:
+                # 삭제된 주석 — 사용자가 의도적으로 삭제한 것이므로 포함하지 않음
+                logger.info(f"[save_user_annotations] {job_id} AI 주석 삭제 감지: {aid}")
+
         merged = ai_annotations + user_annotations
 
         client.storage.from_("results").upload(

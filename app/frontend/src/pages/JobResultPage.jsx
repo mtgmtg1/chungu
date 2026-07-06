@@ -386,26 +386,6 @@ export default function JobResultPage() {
     }
   }
 
-  async function handleSaveAnnotations(annotations) {
-    const selected = sourceFiles[selectedFileIndex];
-    if (!selected || selected.type !== "pdf") return;
-    setConverting(true);
-    setError("");
-    try {
-      // annotation PDF면 기존 항목을 덮어쓰고, 원본 PDF면 새 annotation 파일을 생성한다.
-      const source_index = selected.source_kind === "annotation" ? selected.source_index : -1;
-      await api.saveUserAnnotations(jobId, {
-        source_index,
-        annotations,
-      });
-      await loadPreview();
-      await loadJob();
-    } catch (e) {
-      setError(e.message || t("page:errors.unknown"));
-    } finally {
-      setConverting(false);
-    }
-  }
 
   // [Flow: Step 1 (팝업에서 선택한 action 설정) -> Step 2 (jobAction API 호출) -> Step 3 (상태 갱신 및 폴링 재개)]
   async function handleJobAction(action) {
@@ -743,7 +723,6 @@ export default function JobResultPage() {
         sourceType={sourceType}
         sourceFiles={sourceFiles}
         imageUrls={imageUrls}
-        onSaveAnnotations={handleSaveAnnotations}
         data-oid="x.dznfp" />
 
       }
@@ -821,7 +800,6 @@ export default function JobResultPage() {
                   onFileSelect={handleFileSelect}
                   onDeleteFile={openDeleteSourceFileModal}
                   currentPage={currentPage}
-                  onSaveAnnotations={handleSaveAnnotations}
                   data-oid="rp.07za" />
 
               </Panel>

@@ -1,5 +1,5 @@
 // [Flow: Step 1 (sourceFiles/sourceUrl/sourceType/imageUrls/jobId 수신) -> Step 2 (단일/다중 파일에 따라 PdfViewer에 URL 전달) -> Step 3 (pdf/docx/hwp가 아니면 기존 미디어/이미지 프리뷰)]
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FileText, ImageIcon, Volume2, Film, Trash2 } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
@@ -16,13 +16,13 @@ function SourceIcon({ type }) {
   return <FileText size={16} className="text-outline flex-shrink-0" />;
 }
 
-function SingleFilePreview({ file, filename, annotationsJson, onAnnotationChanged }) {
+function SingleFilePreview({ file, filename, annotationsJson }) {
   // [Flow: Step 1 (파일 타입에 따라 콘텐츠 선택) -> Step 2 (항상 동일한 높이 컨테이너로 감싸서 반환)]
   let content = null;
   if (file.type === "pdf") {
-    content = <PdfViewer url={file.url} annotationsJson={annotationsJson} onAnnotationChanged={onAnnotationChanged} />;
+    content = <PdfViewer url={file.url} annotationsJson={annotationsJson} />;
   } else if (file.type === "docx" || file.type === "hwp") {
-    content = file.preview_url ? <PdfViewer url={file.preview_url} annotationsJson={annotationsJson} onAnnotationChanged={onAnnotationChanged} /> : null;
+    content = file.preview_url ? <PdfViewer url={file.preview_url} annotationsJson={annotationsJson} /> : null;
   } else if (file.type === "image") {
     content = (
       <div className="flex-1 overflow-auto custom-scrollbar p-4 flex items-center justify-center">
@@ -70,7 +70,6 @@ export default function SourcePanel({
   selectedFileIndex,
   onFileSelect,
   onDeleteFile,
-  onSaveAnnotations,
 }) {
   const { t } = useTranslation();
   const files = sourceFiles && sourceFiles.length > 0 ? sourceFiles : [];
@@ -78,23 +77,9 @@ export default function SourcePanel({
   const isControlled = selectedFileIndex !== undefined && onFileSelect;
   const selectedIndex = isControlled ? selectedFileIndex : internalIndex;
   const setSelectedIndex = isControlled ? onFileSelect : setInternalIndex;
-  const pdfViewerRef = useRef(null);
-  const autoSaveRef = useRef(null);
   const [selectedAnnotationsJson, setSelectedAnnotationsJson] = useState(null);
-  const [hasAnnotationChanges, setHasAnnotationChanges] = useState(false);
 
   const selectedFile = files.length > 1 ? (files[selectedIndex] || files[0]) : files[0];
-
-  /**
-   * [Flow: Step 1 (컴포넌트 언마운트 시 진행 중인 자동 저장 타이머 정리)]
-   */
-  useEffect(() => {
-    return () => {
-      if (autoSaveRef.current) {
-        clearTimeout(autoSaveRef.current);
-      }
-    };
-  }, []);
 
   /**
    * [Flow: Step 1 (선택된 파일의 annotations_json_url 확인) -> Step 2 (fetch로 JSON 로드)
@@ -104,7 +89,6 @@ export default function SourcePanel({
     const url = selectedFile?.annotations_json_url;
     if (!url) {
       setSelectedAnnotationsJson(null);
-      setHasAnnotationChanges(false);
       return;
     }
     let cancelled = false;
@@ -116,13 +100,11 @@ export default function SourcePanel({
       .then((data) => {
         if (!cancelled) {
           setSelectedAnnotationsJson(Array.isArray(data) ? data : null);
-          setHasAnnotationChanges(false);
         }
       })
       .catch(() => {
         if (!cancelled) {
           setSelectedAnnotationsJson(null);
-          setHasAnnotationChanges(false);
         }
       });
     return () => {
@@ -130,96 +112,26 @@ export default function SourcePanel({
     };
   }, [selectedFile?.annotations_json_url]);
 
-  /**
-   * [Flow: Step 1 (주석 변경 이벤트 수신) -> Step 2 (변경 플래그 true)
-   *       -> Step 3 (2초 debounce 후 자동 저장 예약)]
-   */
-  const handleAnnotationChanged = () => {
-    setHasAnnotationChanges(true);
-    if (autoSaveRef.current) {
-      clearTimeout(autoSaveRef.current);
-    }
-    autoSaveRef.current = setTimeout(() => {
-      handleSaveAnnotations();
-    }, 2000);
-  };
-
-  /**
-   * [Flow: Step 1 (자동 저장 타이머 취소) -> Step 2 (PdfViewer ref로 exportAnnotations 호출)
-   *       -> Step 3 (JSON 파싱) -> Step 4 (상위 onSaveAnnotations 콜백에 전달) -> Step 5 (변경 플래그 false)]
-   */
-  const handleSaveAnnotations = async () => {
-    if (!pdfViewerRef.current || !onSaveAnnotations) return;
-    if (autoSaveRef.current) {
-      clearTimeout(autoSaveRef.current);
-      autoSaveRef.current = null;
-    }
-    const jsonString = await pdfViewerRef.current.exportAnnotations();
-    if (!jsonString) return;
-    try {
-      const annotations = JSON.parse(jsonString);
-      onSaveAnnotations(annotations);
-      setHasAnnotationChanges(false);
-    } catch {
-      // parse error 무시
-    }
-  };
-
-  const showSaveButton = onSaveAnnotations && selectedFile?.type === "pdf";
-
   if (files.length === 1) {
     const file = files[0];
     if (file.type === "pdf") {
       return (
         <div className="flex flex-col h-full w-full min-h-0 overflow-hidden">
-          {showSaveButton && (
-            <div className="flex-shrink-0 px-3 py-2 border-b border-outline-variant bg-white flex justify-end">
-              <button
-                onClick={handleSaveAnnotations}
-                disabled={!hasAnnotationChanges}
-                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                  hasAnnotationChanges
-                    ? "bg-primary text-white hover:bg-primary/90"
-                    : "bg-surface-container-high text-on-surface-variant cursor-not-allowed"
-                }`}
-              >
-                {t("page:result.saveAnnotations")}
-              </button>
-            </div>
-          )}
           <PdfViewer
-            ref={pdfViewerRef}
             url={file.url}
             page={currentPage}
             annotationsJson={selectedAnnotationsJson}
-            onAnnotationChanged={handleAnnotationChanged}
           />
         </div>
       );
     }
-    return <SingleFilePreview file={file} filename={filename || file.name} annotationsJson={selectedAnnotationsJson} onAnnotationChanged={handleAnnotationChanged} />;
+    return <SingleFilePreview file={file} filename={filename || file.name} annotationsJson={selectedAnnotationsJson} />;
   }
 
   if (files.length > 1) {
     const selected = files[selectedIndex] || files[0];
     return (
       <div className="flex flex-col h-full overflow-hidden bg-surface-container-low">
-        <div className="p-3 border-b border-outline-variant bg-white flex-shrink-0 flex items-center justify-between">
-          <h3 className="font-bold text-sm text-on-surface">{t("page:result.sourceFiles")}</h3>
-          {showSaveButton && (
-            <button
-              onClick={handleSaveAnnotations}
-              disabled={!hasAnnotationChanges}
-              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                hasAnnotationChanges
-                  ? "bg-primary text-white hover:bg-primary/90"
-                  : "bg-surface-container-high text-on-surface-variant cursor-not-allowed"
-              }`}
-            >
-              {t("page:result.saveAnnotations")}
-            </button>
-          )}
-        </div>
         <div className="flex-1 overflow-hidden flex min-h-0">
           <PanelGroup
             direction="horizontal"
@@ -269,14 +181,12 @@ export default function SourcePanel({
             <Panel className="overflow-hidden min-h-0 flex flex-col">
               {selected.type === "pdf" || selected.type === "docx" || selected.type === "hwp" ? (
                 <PdfViewer
-                  ref={pdfViewerRef}
                   url={selected.preview_url || selected.url}
                   page={currentPage}
                   annotationsJson={selectedAnnotationsJson}
-                  onAnnotationChanged={handleAnnotationChanged}
                 />
               ) : (
-                <SingleFilePreview file={selected} filename={selected.name} annotationsJson={selectedAnnotationsJson} onAnnotationChanged={handleAnnotationChanged} />
+                <SingleFilePreview file={selected} filename={selected.name} annotationsJson={selectedAnnotationsJson} />
               )}
             </Panel>
           </PanelGroup>
@@ -288,27 +198,10 @@ export default function SourcePanel({
   if ((sourceType === "pdf" || sourceType === "docx" || sourceType === "hwp") && sourceUrl) {
     return (
       <div className="flex flex-col h-full w-full min-h-0 overflow-hidden">
-        {showSaveButton && (
-          <div className="flex-shrink-0 px-3 py-2 border-b border-outline-variant bg-white flex justify-end">
-            <button
-              onClick={handleSaveAnnotations}
-              disabled={!hasAnnotationChanges}
-              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                hasAnnotationChanges
-                  ? "bg-primary text-white hover:bg-primary/90"
-                  : "bg-surface-container-high text-on-surface-variant cursor-not-allowed"
-              }`}
-            >
-              {t("page:result.saveAnnotations")}
-            </button>
-          </div>
-        )}
         <PdfViewer
-          ref={pdfViewerRef}
           url={sourceUrl}
           page={currentPage}
           annotationsJson={selectedAnnotationsJson}
-          onAnnotationChanged={handleAnnotationChanged}
         />
       </div>
     );

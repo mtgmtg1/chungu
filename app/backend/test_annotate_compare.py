@@ -107,13 +107,18 @@ def run_pipeline_a(image_path: Path, instruction: str, mode: str, want_llm_comme
     page_height = doc[0].mediabox.height
     doc.close()
 
+    # 이미지 픽셀 높이 (y축 flip용)
+    from PIL import Image as PILImage
+    with PILImage.open(image_path) as img:
+        img_h = img.height
+
     targets: list[AnnotationTarget] = []
     for m in matches:
         idx = m.get("element_index")
         if not isinstance(idx, int) or idx < 0 or idx >= len(element_bboxes):
             continue
         bbox_px = element_bboxes[idx]
-        rect_pdf = px_bbox_to_pdf_rect(bbox_px, dpi=RENDER_DPI)
+        rect_pdf = px_bbox_to_pdf_rect(bbox_px, dpi=RENDER_DPI, page_height_px=img_h)
         rect_pdf = clamp_rect_to_page(rect_pdf, page_width, page_height)
         comment = str(m.get("comment") or instruction).strip() or instruction
         targets.append(AnnotationTarget(page_no=1, bbox_pdf=rect_pdf, comment=comment))
@@ -179,8 +184,8 @@ def run_pipeline_b(image_path: Path, instruction: str, mode: str, want_llm_comme
         y0 = float(bbox[1]) * scale_y
         x1 = float(bbox[2]) * scale_x
         y1 = float(bbox[3]) * scale_y
-        # 원본 이미지 픽셀 → PDF 포인트
-        rect_pdf = px_bbox_to_pdf_rect((x0, y0, x1, y1), dpi=RENDER_DPI)
+        # 원본 이미지 픽셀 → PDF 포인트 (y축 flip 포함)
+        rect_pdf = px_bbox_to_pdf_rect((x0, y0, x1, y1), dpi=RENDER_DPI, page_height_px=img_h)
         rect_pdf = clamp_rect_to_page(rect_pdf, page_width, page_height)
         comment = str(m.get("comment") or instruction).strip() or instruction
         targets.append(AnnotationTarget(page_no=1, bbox_pdf=rect_pdf, comment=comment))

@@ -286,6 +286,9 @@ def _collect_page_elements_from_searchable_pdf(
                 logger.warning(f"[_collect_page_elements_from_searchable_pdf] page={page_no} 이미지 렌더링 실패: {e}")
                 continue
 
+            # 이미지 픽셀 높이 (y축 flip용: PDF 좌표계 y↑ → 이미지 좌표계 y↓)
+            page_height_px = page.rect.height * scale
+
             blocks = page.get_text("blocks")
             for block in blocks:
                 try:
@@ -294,7 +297,10 @@ def _collect_page_elements_from_searchable_pdf(
                     continue
                 if not text or not text.strip():
                     continue
-                bbox_px: BBox = (int(x0 * scale), int(y0 * scale), int(x1 * scale), int(y1 * scale))
+                # PDF 좌표계(y↑) → 이미지 좌표계(y↓)로 변환
+                img_y0 = page_height_px - y1 * scale  # bbox 상단(PDF) → 이미지 상단(y↓)
+                img_y1 = page_height_px - y0 * scale  # bbox 하단(PDF) → 이미지 하단(y↓)
+                bbox_px: BBox = (int(x0 * scale), int(img_y0), int(x1 * scale), int(img_y1))
                 elements.append(AnnotateElement(
                     page_no=page_no,
                     bbox_px=bbox_px,
@@ -471,7 +477,13 @@ def _matches_to_targets(
                     logger.info(f"[pdf_annotate] 텍스트 레이어 검색 성공 page={el.page_no}: '{search_text[:30]}'")
 
         if rect_pdf is None:
-            rect_pdf = px_bbox_to_pdf_rect(bbox_px, dpi=RENDER_DPI)
+            # 폴백: 픽셀 bbox를 PDF 좌표로 변환 (y축 flip 포함)
+            page_pt = page_point_sizes.get(el.page_no)
+            if page_pt:
+                page_height_px = page_pt[1] * RENDER_DPI / 72.0
+                rect_pdf = px_bbox_to_pdf_rect(bbox_px, dpi=RENDER_DPI, page_height_px=page_height_px)
+            else:
+                rect_pdf = px_bbox_to_pdf_rect(bbox_px, dpi=RENDER_DPI)
 
         page_pt = page_point_sizes.get(el.page_no)
         if page_pt:
@@ -542,7 +554,7 @@ def _collect_targets_with_vision_llm(
                     y1 = float(bbox[3]) * scale_y
                 except (ValueError, TypeError):
                     continue
-                rect_pdf = px_bbox_to_pdf_rect((x0, y0, x1, y1), dpi=RENDER_DPI)
+                rect_pdf = px_bbox_to_pdf_rect((x0, y0, x1, y1), dpi=RENDER_DPI, page_height_px=img_h)
                 comment = str(m.get("comment") or "").strip()
                 color = _color_name_to_rgb(m.get("color"))
                 targets.append(AnnotationTarget(page_no=page_no, bbox_pdf=rect_pdf, comment=comment, color=color))

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-# [Flow: Step 1 (렌더링에 사용한 DPI 확인) -> Step 2 (픽셀 bbox를 PDF 포인트 bbox로 스케일 변환)]
-# PaddleOCR-VL은 PyMuPDF로 렌더링한 페이지 PNG(픽셀 좌표)에서 bbox를 반환한다.
-# 하이라이트/여백 주석 기능은 이 픽셀 bbox를 동일한 fitz.Page 객체에 주석으로 추가해야 하므로
-# 렌더링에 사용한 zoom(=dpi/72)의 역수로 스케일만 되돌리면 된다. (회전은 페이지를 직접 렌더링한
-# fitz.Page.get_pixmap()이 이미 반영하므로 별도 회전 행렬 계산이 필요 없다.)
+# [Flow: Step 1 (렌더링에 사용한 DPI 확인) -> Step 2 (픽셀 bbox를 PDF 포인트 bbox로 스케일 변환 + y축 flip)]
+# PaddleOCR-VL은 PyMuPDF로 렌더링한 페이지 PNG(픽셀 좌표, y↓ 원점 좌상단)에서 bbox를 반환한다.
+# PDF 좌표계는 y↑ 원점 좌하단이므로 단순 스케일 변환만 하면 y 좌표가 거울처럼 뒤집힌다.
+# 따라서 page_height_px에서 pixel y를 빼서 y축을 flip한 뒤 스케일 변환해야 한다.
 from __future__ import annotations
 
 from .ocr_layout import BBox
@@ -11,20 +10,37 @@ from .ocr_layout import BBox
 PDF_POINTS_PER_INCH = 72.0
 
 
-def px_bbox_to_pdf_rect(bbox_px: BBox, dpi: int) -> tuple[float, float, float, float]:
+def px_bbox_to_pdf_rect(
+    bbox_px: BBox,
+    dpi: int,
+    page_height_px: float | None = None,
+) -> tuple[float, float, float, float]:
     """픽셀 bbox(xmin,ymin,xmax,ymax)를 PDF 포인트 좌표로 변환한다.
 
+    [Flow: Step 1 (DPI 유효성 검사) -> Step 2 (스케일 계산) -> Step 3 (y축 flip 여부 확인)
+          -> Step 4 (픽셀 좌표를 PDF 포인트로 변환)]
+
     Args:
-        bbox_px: OCR이 반환한 픽셀 단위 bbox
-        dpi: 해당 이미지를 렌더링할 때 사용한 DPI (예: paddleocr_service._pdf_to_images 기본 200)
+        bbox_px: OCR이 반환한 픽셀 단위 bbox (이미지 좌표계: y↓ 원점 좌상단)
+        dpi: 해당 이미지를 렌더링할 때 사용한 DPI
+        page_height_px: 이미지의 픽셀 높이. y축 flip에 필요.
+            None이면 y-flip 없이 단순 스케일만 변환 (레거시 호환용, 권장하지 않음).
 
     Returns:
-        (x0, y0, x1, y1) PDF 포인트 좌표
+        (x0, y0, x1, y1) PDF 포인트 좌표 (PDF 좌표계: y↑ 원점 좌하단)
     """
     if dpi <= 0:
         raise ValueError(f"Invalid dpi: {dpi}")
     scale = PDF_POINTS_PER_INCH / float(dpi)
     x0, y0, x1, y1 = bbox_px
+
+    if page_height_px is not None and page_height_px > 0:
+        # 이미지 좌표계(y↓) → PDF 좌표계(y↑): y를 페이지 높이에서 뺀다
+        pdf_y0 = (page_height_px - y1) * scale  # bbox 하단(이미지) → PDF 하단
+        pdf_y1 = (page_height_px - y0) * scale  # bbox 상단(이미지) → PDF 상단
+        return (x0 * scale, pdf_y0, x1 * scale, pdf_y1)
+
+    # 레거시: y-flip 없이 단순 스케일만 변환
     return (x0 * scale, y0 * scale, x1 * scale, y1 * scale)
 
 

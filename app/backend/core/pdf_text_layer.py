@@ -11,7 +11,7 @@ from typing import Any
 import fitz  # PyMuPDF
 
 from .ocr_layout import BBox
-from .pdf_coords import clamp_rect_to_page, px_bbox_to_pdf_rect
+from .pdf_coords import PDF_POINTS_PER_INCH, clamp_rect_to_page, px_bbox_to_pdf_rect
 
 logger = logging.getLogger(__name__)
 
@@ -145,13 +145,15 @@ def add_text_layer_from_ocr(
 
         page_width = page.rect.width
         page_height = page.rect.height
+        # 이미지 픽셀 높이 = PDF 페이지 높이 * dpi / 72
+        page_height_px = page_height * dpi / PDF_POINTS_PER_INCH
 
         for text, bbox_px in items:
             text = _normalize_rec_text(text)
             if not text:
                 continue
             try:
-                rect_pdf = px_bbox_to_pdf_rect(bbox_px, dpi=dpi)
+                rect_pdf = px_bbox_to_pdf_rect(bbox_px, dpi=dpi, page_height_px=page_height_px)
             except Exception as e:
                 logger.warning(f"[pdf_text_layer] page={page_no} bbox 변환 실패: {e}")
                 continue

@@ -41,6 +41,7 @@ import {
   Heading3,
   Heading4 } from
 "lucide-react";
+import AiMenu from "./AiMenu.jsx";
 
 const turndown = new TurndownService({
   headingStyle: "atx",
@@ -456,6 +457,9 @@ ref)
           <ListTodo size={18} data-oid="ut6hju7" />
         </ToolbarButton>
         <ToolbarDivider data-oid="k3gd.63" />
+
+        <AiMenu editor={editor} data-oid="ai-menu" />
+        <ToolbarDivider data-oid="ai-divider" />
 
         <ToolbarButton
           onClick={toggleLink}

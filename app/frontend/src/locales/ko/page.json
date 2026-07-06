@@ -221,7 +221,10 @@
     "annotateSubmit": "생성",
     "annotateProcessingItem": "AI 주석 생성 중: {{instruction}}",
     "annotateErrorItem": "AI 주석 실패: {{instruction}}",
-    "annotateRetry": "재시도"
+    "annotateRetry": "재시도",
+    "annotateCancel": "취소",
+    "annotateCancelTitle": "AI 주석 생성 취소",
+    "annotateCancelDesc": "{{filename}}의 생성을 취소하면 진행 중인 AI 처리를 중단하고 예약된 사용량을 환원합니다."
   },
   "poems": [
     {
@@ -1733,6 +1736,16 @@
     "link": "링크",
     "image": "이미지",
     "table": "표",
+    "ai": {
+      "improve": "문장 개선",
+      "fix": "맞춤법/문법 교정",
+      "shorter": "짧게 줄이기",
+      "longer": "더 길게 확장",
+      "continue": "이어서 쓰기",
+      "custom": "사용자 지정",
+      "customPlaceholder": "AI에게 지시할 내용을 입력하세요",
+      "thinking": "AI가 생각 중…"
+    },
     "pdfPage": "{{page}}페이지",
     "pageOf": "{{current}} / {{total}} 페이지",
     "previousPage": "이전 페이지",

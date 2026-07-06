@@ -2,7 +2,7 @@
 // processing/error 상태의 주석 항목은 URL 없이 상태 정보만 표시한다.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { FileText, ImageIcon, Volume2, Film, Trash2, Loader2, AlertCircle, RotateCw } from "lucide-react";
+import { FileText, ImageIcon, Volume2, Film, Trash2, Loader2, AlertCircle, RotateCw, Sparkles, Check } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer from "./PdfViewer.jsx";
 import MediaPlayer from "./MediaPlayer.jsx";
@@ -61,6 +61,126 @@ function ImageList({ urls, t }) {
   );
 }
 
+/**
+ * [Flow: Step 1 (FAB 클릭 또는 외부 클릭으로 open 상태 토글) -> Step 2 (instruction 입력 관리)
+ *       -> Step 3 (제출 시 onStartAnnotate 콜백 호출) -> Step 4 (전송 후 팝업 닫기 및 초기화)]
+ * PDF 패널 하단 중앙에 떠 있는 AI 주석 FAB입니다.
+ * 클릭하면 입력 카드 팝업이 부드러운 애니메이션으로 펼쳐집니다.
+ */
+function AiAnnotationFab({ onStartAnnotate, disabled, isProcessing }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [instruction, setInstruction] = useState("");
+  const containerRef = useRef(null);
+
+  // [Flow: Step 1 (팝업이 열린 경우에만 이벤트 등록) -> Step 2 (컨테이너 외부 클릭 시 팝업 닫기)]
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  const handleSubmit = async () => {
+    if (!instruction.trim() || !onStartAnnotate) return;
+    await onStartAnnotate(instruction);
+    setInstruction("");
+    setOpen(false);
+  };
+
+  return (
+    <div ref={containerRef} className="absolute bottom-4 left-1/2 -translate-x-1/2 z-40">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        disabled={disabled || isProcessing}
+        className={`flex items-center justify-center w-10 h-10 rounded-full shadow-lg border transition-all duration-300 ${
+          open ? "bg-primary text-white rotate-0" : "bg-surface-container-high text-primary hover:bg-surface border-outline-variant"
+        } disabled:opacity-50`}
+        aria-label={t("page:result.annotate")}
+        data-oid="annotate-fab">
+        {isProcessing ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+      </button>
+
+      <div
+        className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-3 w-72 bg-white rounded-lg shadow-xl border border-outline-variant p-4 transition-all duration-300 ease-out origin-bottom ${
+          open ? "opacity-100 scale-100 translate-y-0 pointer-events-auto" : "opacity-0 scale-95 translate-y-2 pointer-events-none"
+        }`}
+        data-oid="annotate-popup">
+        <h4 className="font-bold text-sm text-on-surface mb-1">
+          {t("page:result.annotateTitle")}
+        </h4>
+        <p className="text-xs text-on-surface-variant mb-3">
+          {t("page:result.annotateDesc")}
+        </p>
+        <textarea
+          value={instruction}
+          onChange={(e) => setInstruction(e.target.value)}
+          placeholder={t("page:result.annotateInstructionPlaceholder")}
+          rows={3}
+          className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none"
+          data-oid="annotate-instruction-input" />
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            disabled={disabled}
+            className="px-3 py-1.5 rounded-lg border border-outline-variant text-on-surface hover:bg-surface-container-high text-sm transition-colors"
+            data-oid="annotate-popup-cancel">
+            {t("common:actions.cancel")}
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={disabled || !instruction.trim()}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary text-white text-sm hover:opacity-90 transition-colors disabled:opacity-50"
+            data-oid="annotate-popup-submit">
+            {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            {t("page:result.annotateSubmit")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * [Flow: Step 1 (PDF 뷰어를 상대 위치 컨테이너로 감싸기) -> Step 2 (onStartAnnotate가 있으면 하단 중앙에 FAB 배치)]
+ */
+function PdfViewerWithFab({
+  url,
+  page,
+  annotationsJson,
+  onAnnotationChanged,
+  viewerRef,
+  onStartAnnotate,
+  converting,
+  annotatePolling,
+}) {
+  return (
+    <div className="relative flex flex-col h-full w-full min-h-0 overflow-hidden">
+      <PdfViewer
+        ref={viewerRef}
+        url={url}
+        page={page}
+        annotationsJson={annotationsJson}
+        onAnnotationChanged={onAnnotationChanged}
+      />
+      {onStartAnnotate && (
+        <AiAnnotationFab
+          onStartAnnotate={onStartAnnotate}
+          disabled={converting}
+          isProcessing={annotatePolling}
+        />
+      )}
+    </div>
+  );
+}
+
 export default function SourcePanel({
   sourceFiles,
   sourceUrl,
@@ -73,6 +193,9 @@ export default function SourcePanel({
   onDeleteFile,
   onSaveAnnotations,
   onRetryAnnotation,
+  onStartAnnotate,
+  converting = false,
+  annotatePolling = false,
 }) {
   const { t } = useTranslation();
   const files = sourceFiles && sourceFiles.length > 0 ? sourceFiles : [];
@@ -167,15 +290,16 @@ export default function SourcePanel({
     const file = files[0];
     if (file.type === "pdf") {
       return (
-        <div className="flex flex-col h-full w-full min-h-0 overflow-hidden">
-          <PdfViewer
-            ref={pdfViewerRef}
-            url={file.url}
-            page={currentPage}
-            annotationsJson={selectedAnnotationsJson}
-            onAnnotationChanged={handleAnnotationChanged}
-          />
-        </div>
+        <PdfViewerWithFab
+          viewerRef={pdfViewerRef}
+          url={file.url}
+          page={currentPage}
+          annotationsJson={selectedAnnotationsJson}
+          onAnnotationChanged={handleAnnotationChanged}
+          onStartAnnotate={onStartAnnotate}
+          converting={converting}
+          annotatePolling={annotatePolling}
+        />
       );
     }
     return <SingleFilePreview file={file} filename={filename || file.name} annotationsJson={selectedAnnotationsJson} pdfViewerRef={pdfViewerRef} onAnnotationChanged={handleAnnotationChanged} />;
@@ -233,15 +357,15 @@ export default function SourcePanel({
                           <RotateCw size={14} />
                         </button>
                       )}
-                      {onDeleteFile && f.status !== "processing" && (
+                      {onDeleteFile && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             onDeleteFile(f.source_index, f.source_kind);
                           }}
                           className="flex-shrink-0 p-1 rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors"
-                          title={t("common:delete")}
-                          aria-label={t("common:delete")}
+                          title={f.status === "processing" ? t("page:result.annotateCancel") : t("common:delete")}
+                          aria-label={f.status === "processing" ? t("page:result.annotateCancel") : t("common:delete")}
                         >
                           <Trash2 size={14} />
                         </button>
@@ -272,7 +396,18 @@ export default function SourcePanel({
                     </button>
                   )}
                 </div>
-              ) : selected.type === "pdf" || selected.type === "docx" || selected.type === "hwp" ? (
+              ) : selected.type === "pdf" ? (
+                <PdfViewerWithFab
+                  viewerRef={pdfViewerRef}
+                  url={selected.preview_url || selected.url}
+                  page={currentPage}
+                  annotationsJson={selectedAnnotationsJson}
+                  onAnnotationChanged={handleAnnotationChanged}
+                  onStartAnnotate={onStartAnnotate}
+                  converting={converting}
+                  annotatePolling={annotatePolling}
+                />
+              ) : selected.type === "docx" || selected.type === "hwp" ? (
                 <PdfViewer
                   ref={pdfViewerRef}
                   url={selected.preview_url || selected.url}
@@ -290,7 +425,21 @@ export default function SourcePanel({
     );
   }
 
-  if ((sourceType === "pdf" || sourceType === "docx" || sourceType === "hwp") && sourceUrl) {
+  if (sourceType === "pdf" && sourceUrl) {
+    return (
+      <PdfViewerWithFab
+        viewerRef={pdfViewerRef}
+        url={sourceUrl}
+        page={currentPage}
+        annotationsJson={selectedAnnotationsJson}
+        onAnnotationChanged={handleAnnotationChanged}
+        onStartAnnotate={onStartAnnotate}
+        converting={converting}
+        annotatePolling={annotatePolling}
+      />
+    );
+  }
+  if ((sourceType === "docx" || sourceType === "hwp") && sourceUrl) {
     return (
       <div className="flex flex-col h-full w-full min-h-0 overflow-hidden">
         <PdfViewer

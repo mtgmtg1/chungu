@@ -221,7 +221,10 @@
     "annotateSubmit": "生成",
     "annotateProcessingItem": "AI注釈を生成中: {{instruction}}",
     "annotateErrorItem": "AI注釈が失敗しました: {{instruction}}",
-    "annotateRetry": "再試行"
+    "annotateRetry": "再試行",
+    "annotateCancel": "キャンセル",
+    "annotateCancelTitle": "AI注釈生成をキャンセル",
+    "annotateCancelDesc": "{{filename}} の生成をキャンセルすると、進行中のAI処理を停止し予約済み使用量を解放します。"
   },
   "poems": [
     {
@@ -620,6 +623,16 @@
     "link": "リンク",
     "image": "画像",
     "table": "表",
+    "ai": {
+      "improve": "文章を改善",
+      "fix": "文法・スペルを修正",
+      "shorter": "短くする",
+      "longer": "長くする",
+      "continue": "続きを書く",
+      "custom": "カスタム命令",
+      "customPlaceholder": "AIへの指示を入力",
+      "thinking": "AIが考え中…"
+    },
     "pdfPage": "{{page}}ページ",
     "pageOf": "{{current}} / {{total}} ページ",
     "previousPage": "前のページ",

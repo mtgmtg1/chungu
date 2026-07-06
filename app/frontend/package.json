@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@embedpdf/react-pdf-viewer": "^2.14.4",
     "@supabase/supabase-js": "^2.49.1",
     "@tiptap/extension-highlight": "^3.27.1",
     "@tiptap/extension-image": "^3.27.1",
@@ -25,8 +26,8 @@
     "@tiptap/pm": "^3.27.1",
     "@tiptap/react": "^3.27.1",
     "@tiptap/starter-kit": "^3.27.1",
+    "ai": "^3.4.33",
     "face-api.js": "^0.22.2",
-    "@embedpdf/react-pdf-viewer": "^2.14.4",
     "i18next": "^24.2.3",
     "i18next-browser-languagedetector": "^8.0.4",
     "lucide-react": "^0.469.0",

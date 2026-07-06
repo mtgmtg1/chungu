@@ -35,6 +35,16 @@ async function request(path, options = {}) {
   return body
 }
 
+async function authenticatedFetch(url, options = {}) {
+  const token = await getToken()
+  const headers = { ...(options.headers || {}) }
+  if (token) headers.Authorization = `Bearer ${token}`
+  if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json'
+  }
+  return fetch(url, { credentials: 'include', ...options, headers })
+}
+
 export const api = {
   // 사용자 인증/프로필
   me: () => request('/api/auth/me'),
@@ -160,4 +170,7 @@ export const api = {
   listApiKeys: () => request('/api/v1/keys'),
   deleteApiKey: (id) => request(`/api/v1/keys/${id}`, { method: 'DELETE' }),
   rotateApiKey: (id) => request(`/api/v1/keys/${id}/rotate`, { method: 'POST' }),
+
+  // AI 마크다운 에디터 스트리밍
+  aiGenerateStream: (url, options) => authenticatedFetch(url, options),
 }

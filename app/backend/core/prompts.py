@@ -221,12 +221,21 @@ def build_element_highlight_prompt(
         "'full' (entire element), 'first_column', 'last_column', 'amount_cell', 'name_cell', 'date_cell', or 'keyword: <word>'. "
         "If the user does not specify a part, default to 'full'. "
         "When the user asks for a specific highlight color (e.g., red, yellow, green, blue), use the corresponding color name. "
-        "Available colors: red, yellow, green, blue, orange, purple, pink, gray. If no color is implied, default to yellow. "
+        "Available colors: red, yellow, green, blue, orange, purple, pink, gray. If no color is implied, default to yellow.\n"
+        "Determine the annotation display mode based on the user's request: "
+        "'highlight' if the user asks for highlights only, "
+        "'margin_note' if the user asks for margin notes only, "
+        "'both' if the user asks for both or does not specify.\n"
+        "Determine the comment mode based on the user's request: "
+        "'user_text' if the user explicitly says to use the input text verbatim as the comment, "
+        "'llm_summary' if the user wants AI-generated summaries or does not specify.\n"
         "\n"
         f"{comment_instr}\n"
         "If no elements match, return an empty matches array.\n"
         "Output strictly in the following JSON format. Do not include explanations or code block markers (```).\n"
         "{\n"
+        '  "mode": "both",\n'
+        '  "comment_mode": "llm_summary",\n'
         '  "matches": [\n'
         '    {"element_index": 0, "comment": "...", "highlight_scope": "full", "color": "yellow"}\n'
         "  ]\n"
@@ -376,11 +385,20 @@ def build_vision_bbox_highlight_prompt(
         "For table rows, include only the cells that match the user's request, not necessarily the entire row. "
         "If numeric comparison is needed, remove commas and currency symbols and convert to numbers. "
         "When the user asks for a specific highlight color, use one of the following colors: "
-        "red, yellow, green, blue, orange, purple, pink, gray. If no color is implied, default to yellow. "
+        "red, yellow, green, blue, orange, purple, pink, gray. If no color is implied, default to yellow.\n"
+        "Determine the annotation display mode based on the user's request: "
+        "'highlight' if the user asks for highlights only, "
+        "'margin_note' if the user asks for margin notes only, "
+        "'both' if the user asks for both or does not specify.\n"
+        "Determine the comment mode based on the user's request: "
+        "'user_text' if the user explicitly says to use the input text verbatim as the comment, "
+        "'llm_summary' if the user wants AI-generated summaries or does not specify.\n"
         f"{comment_instr}\n"
         "If no elements match, return an empty matches array.\n"
         "Output strictly in the following JSON format. Do not include explanations or code block markers (```).\n"
         "{\n"
+        '  "mode": "both",\n'
+        '  "comment_mode": "llm_summary",\n'
         '  "matches": [\n'
         '    {"bbox": [x_min, y_min, x_max, y_max], "comment": "...", "color": "yellow"}\n'
         "  ]\n"

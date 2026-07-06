@@ -374,17 +374,22 @@ def _matches_to_targets(
 def _collect_targets_with_vision_llm(
     image_paths: dict[int, Path],
     instruction: str,
-    want_llm_comment: bool,
     endpoint: str,
     model: str,
     api_key: str,
-) -> list[AnnotationTarget]:
+) -> tuple[list[AnnotationTarget], str | None, str | None]:
     """Vision LLM에 페이지 이미지를 보내 정밀 bbox + 색상 + 코멘트를 얻어 AnnotationTarget 목록을 반환한다.
 
     [Flow: Step 1 (페이지별 이미지 순회) -> Step 2 (Gemma4 해상도 맞춤) -> Step 3 (Vision LLM bbox 요청)
-          -> Step 4 (원본 이미지 좌표로 스케일 복원) -> Step 5 (AnnotationTarget 생성)]
+          -> Step 4 (원본 이미지 좌표로 스케일 복원) -> Step 5 (AnnotationTarget 생성)
+          -> Step 6 (페이지별 mode/comment_mode 추출, 마지막 유효 값 사용)]
+
+    프롬프트는 LLM이 사용자 요청에 따라 표시 방식(mode)과 코멘트 모드(comment_mode)를
+    결정하도록 유도한다. 반환된 값은 상위 run()에서 최종 주석 옵션으로 오버라이드한다.
     """
     targets: list[AnnotationTarget] = []
+    mode: str | None = None
+    comment_mode: str | None = None
     for page_no, img_path in sorted(image_paths.items()):
         try:
             from PIL import Image
@@ -397,7 +402,8 @@ def _collect_targets_with_vision_llm(
             scale_x = img_w / fitted_w if fitted_w > 0 else 1.0
             scale_y = img_h / fitted_h if fitted_h > 0 else 1.0
 
-            prompt = build_vision_bbox_highlight_prompt(instruction, fitted_w, fitted_h, want_llm_comment)
+            # 코멘트는 AI 요약으로 생성한 뒤, comment_mode가 user_text이면 백엔드에서 교체한다.
+            prompt = build_vision_bbox_highlight_prompt(instruction, fitted_w, fitted_h, want_llm_comment=True)
             content, _ = ocr_client.call_vision(img_path, prompt, endpoint, model, api_key, max_tokens=4000)
             content = _strip_json_fence(content)
             try:
@@ -405,6 +411,13 @@ def _collect_targets_with_vision_llm(
             except json.JSONDecodeError as e:
                 logger.warning(f"[pdf_annotate] page={page_no} Vision LLM JSON 파싱 실패: {e}")
                 continue
+
+            page_mode = data.get("mode") if isinstance(data, dict) else None
+            page_comment_mode = data.get("comment_mode") if isinstance(data, dict) else None
+            if page_mode in ("highlight", "margin_note", "both"):
+                mode = page_mode
+            if page_comment_mode in ("user_text", "llm_summary"):
+                comment_mode = page_comment_mode
 
             matches = data.get("matches", []) if isinstance(data, dict) else []
             for m in matches:
@@ -425,28 +438,32 @@ def _collect_targets_with_vision_llm(
         except Exception as e:
             logger.warning(f"[pdf_annotate] page={page_no} Vision LLM 처리 실패: {e}")
             continue
-    return targets
+    return targets, mode, comment_mode
 
 
 def _select_elements_with_llm(
     elements: list[AnnotateElement],
     instruction: str,
-    want_llm_comment: bool,
     endpoint: str,
     model: str,
     api_key: str,
-) -> list[dict]:
+) -> tuple[list[dict], str | None, str | None]:
     """LLM에게 요소 텍스트만 전달해 조건에 맞는 요소 인덱스+코멘트+scope+색상을 받는다.
 
-    주석 코멘트는 사용자가 instruction에 사용한 언어로 작성되도록 프롬프트에 지시한다
-    (프롬프트가 "사용자 조건 문구와 같은 언어로 작성"하라고 LLM에 가이드한다).
+    [Flow: Step 1 (요소 목록을 LLM용 dict로 변환) -> Step 2 (프롬프트 생성 후 텍스트 LLM 호출)
+          -> Step 3 (JSON 파싱) -> Step 4 (matches 필터링 및 mode/comment_mode 추출)]
+
+    프롬프트는 LLM이 표시 방식(mode)과 코멘트 모드(comment_mode)를 사용자 요청에 따라
+    결정하도록 유도한다. 반환된 mode/comment_mode는 상위 run()에서 최종 주석 생성
+    옵션으로 오버라이드에 사용된다.
     """
     if not elements:
-        return []
+        return [], None, None
 
     truncated = elements[:MAX_ELEMENTS_FOR_LLM]
     element_dicts = [{"kind": e.kind, "text": e.text} for e in truncated]
-    prompt = build_element_highlight_prompt(element_dicts, instruction, want_llm_comment)
+    # 코멘트는 AI가 요약하도록 생성한 뒤, comment_mode가 user_text이면 백엔드에서 교체한다.
+    prompt = build_element_highlight_prompt(element_dicts, instruction, want_llm_comment=True)
 
     content, _ = ocr_client.call_text(prompt, endpoint, model, api_key, max_tokens=4000)
     content = _strip_json_fence(content)
@@ -455,10 +472,12 @@ def _select_elements_with_llm(
     except Exception as e:
         raise ValueError(f"LLM 응답 JSON 파싱 실패: {e} (content={content[:200]})")
 
+    mode = data.get("mode") if isinstance(data, dict) else None
+    comment_mode = data.get("comment_mode") if isinstance(data, dict) else None
     matches = data.get("matches", []) if isinstance(data, dict) else []
     if not isinstance(matches, list):
-        return []
-    return [m for m in matches if isinstance(m, dict) and "element_index" in m]
+        return [], mode, comment_mode
+    return [m for m in matches if isinstance(m, dict) and "element_index" in m], mode, comment_mode
 
 
 def run(
@@ -506,7 +525,6 @@ def run(
     endpoint = job.endpoint or settings_store.get_setting(db, "llm_endpoint") or settings.default_llm_endpoint
     model = job.model or settings_store.get_setting(db, "llm_model") or settings.default_llm_model
     api_key = settings_store.get_setting(db, "llm_api_key") or ""
-    want_llm_comment = comment_mode == "llm_summary"
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -515,12 +533,14 @@ def run(
             if not image_paths:
                 raise ValueError("원본 파일을 이미지로 렌더링하지 못해 주석을 생성할 수 없습니다")
 
+            llm_mode: str | None = None
+            llm_comment_mode: str | None = None
             if advanced:
                 # [Flow: 고급주석 — Vision LLM이 이미지를 직접 보고 정밀 bbox + 색상 + 코멘트 반환]
                 pdf_bytes = _images_to_pdf(image_paths)
                 page_point_sizes = _page_point_sizes(pdf_bytes)
-                targets = _collect_targets_with_vision_llm(
-                    image_paths, instruction, want_llm_comment, endpoint, model, api_key
+                targets, llm_mode, llm_comment_mode = _collect_targets_with_vision_llm(
+                    image_paths, instruction, endpoint, model, api_key
                 )
                 if not targets:
                     _update_entry_status(db, job_id, next_index, "done", recovery_notes=[{"reason": "조건에 맞는 요소를 찾지 못했습니다"}])
@@ -540,7 +560,9 @@ def run(
                 pdf_bytes = _images_to_pdf(corrected_images)
                 page_point_sizes = _page_point_sizes(pdf_bytes)
 
-                matches = _select_elements_with_llm(elements, instruction, want_llm_comment, endpoint, model, api_key)
+                matches, llm_mode, llm_comment_mode = _select_elements_with_llm(
+                    elements, instruction, endpoint, model, api_key
+                )
                 if not matches:
                     _update_entry_status(db, job_id, next_index, "done", recovery_notes=[{"reason": "조건에 맞는 요소를 찾지 못했습니다"}])
                     return {"job_id": job_id, "status": "done", "matched_rows": 0}
@@ -549,6 +571,16 @@ def run(
 
             if not targets:
                 raise ValueError("LLM이 선택한 요소를 원본 bbox로 매핑하지 못했습니다")
+
+            # LLM이 사용자 요청에 따라 mode/comment_mode를 결정하면 프론트에서 전달된 기본값을 오버라이드한다.
+            if llm_mode in ("highlight", "margin_note", "both"):
+                mode = llm_mode
+            if llm_comment_mode in ("user_text", "llm_summary"):
+                comment_mode = llm_comment_mode
+            # user_text 모드면 모든 코멘트를 사용자가 입력한 문구 그대로 교체한다.
+            if comment_mode == "user_text":
+                for t in targets:
+                    t.comment = instruction
 
             annotated_bytes = annotate_pdf(pdf_bytes, targets, mode)
             embedpdf_annotations = build_embedpdf_annotations(pdf_bytes, targets, mode)
@@ -573,6 +605,7 @@ def run(
                 select(Job).where(Job.id == job_id).with_for_update()
             ).scalar_one()
             files = list(locked_job.annotated_pdf_files or [])
+            entry_found = False
             for e in files:
                 if e.get("index") == next_index:
                     e["status"] = "done"
@@ -585,7 +618,14 @@ def run(
                     e["created_at"] = datetime.now(timezone.utc).isoformat()
                     if skipped:
                         e["recovery_notes"] = [{"skipped_matches": skipped}]
+                    entry_found = True
                     break
+            if not entry_found:
+                # 사용자가 취소하여 entry가 제거된 경우 업로드된 결과 파일을 정리한다.
+                supabase_client.delete_storage_path("results", storage_path)
+                supabase_client.delete_storage_path("results", annotations_json_storage_path)
+                db.rollback()
+                return {"job_id": job_id, "status": "cancelled", "matched_rows": 0}
             locked_job.annotated_pdf_files = files
             locked_job.result_annotated_pdf_storage_path = storage_path
             locked_job.annotate_status = "done"
@@ -607,18 +647,24 @@ def run(
 def _update_entry_status(db, job_id: str, annotation_index: int, status: str, recovery_notes: list = None):
     """해당 index의 annotated_pdf_files entry 상태를 갱신한다 (동시 쓰기 안전).
 
-    [Flow: Step 1 (SELECT FOR UPDATE로 행 잠금) -> Step 2 (entry 찾아 status 갱신) -> Step 3 (commit)]
+    [Flow: Step 1 (SELECT FOR UPDATE로 행 잠금) -> Step 2 (entry 찾아 status 갱신) -> Step 3 (entry가 없으면 취소된 것으로 간주하고 commit 없이 반환) -> Step 4 (commit)]
     """
     locked_job = db.execute(
         select(Job).where(Job.id == job_id).with_for_update()
     ).scalar_one()
     files = list(locked_job.annotated_pdf_files or [])
+    entry_found = False
     for e in files:
         if e.get("index") == annotation_index:
             e["status"] = status
             if recovery_notes is not None:
                 e["recovery_notes"] = recovery_notes
+            entry_found = True
             break
+    if not entry_found:
+        # 사용자가 취소하여 entry가 제거된 경우 상태 갱신을 무시한다.
+        db.rollback()
+        return
     locked_job.annotated_pdf_files = files
     # 하위 호환: 단일 status 필드도 갱신
     locked_job.annotate_status = status

@@ -614,7 +614,7 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
   - `job.xlsx_advanced_refundable` indicates whether the user can request a refund.
   - Retry/refund endpoints: `/api/jobs/{id}/xlsx-advanced-action` (web) and `/api/v1/jobs/{id}/xlsx-advanced-action` (API).
 - **Frontend**:
-  - `JobResultPage.jsx`: Excel dropdown group (CSV Basic, Excel Basic, Excel Advanced) + Office dropdown group (DOCX only). Preview tabs for Markdown / Excel Basic / Excel Advanced using `SpreadsheetEditor.jsx` (Luckysheet-based xlsx editor).
+  - `JobResultPage.jsx`: Single download icon button (`FileDown`) with a hover menu containing Excel Basic, Excel Advanced, Word, and Markdown. The previous separate Excel and Office buttons were merged. Preview tabs for Markdown / Excel Basic / Excel Advanced use `SpreadsheetEditor.jsx` (Luckysheet-based xlsx editor).
   - `JobsPage.jsx`: `DownloadMenu` shows Markdown (free), CSV Basic, Excel Basic, Excel Advanced, Word (free). Polling includes `xlsx_advanced_status === "processing"` jobs.
   - `ExcelPreview.jsx`: deprecated, replaced by `SpreadsheetEditor.jsx`.
 - **DB migration**: `013_add_xlsx_conversion_fields.sql` adds `result_xlsx_basic_storage_path`, `result_xlsx_advanced_storage_path`, `result_xlsx_advanced_job_id`, `xlsx_basic_converted`, `xlsx_advanced_converted`, `xlsx_advanced_status`, `xlsx_advanced_recovery_notes` (JSONB), `xlsx_advanced_refundable` columns.
@@ -830,7 +830,7 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 
 ## Frontend Dropdown Hover UX
 
-- CSS-only `group-hover` dropdowns (e.g. Excel/Office buttons in `JobResultPage.jsx`) can disappear when the cursor crosses the small gap between the trigger button and the dropdown panel.
+- CSS-only `group-hover` dropdowns (e.g. the download icon button in `JobResultPage.jsx`) can disappear when the cursor crosses the small gap between the trigger button and the dropdown panel.
 - Use React state + `useRef` timer instead:
   - `onMouseEnter`: clear any pending close timer and open the dropdown.
   - `onMouseLeave`: start a short timeout (e.g. 150ms) before closing the dropdown.
@@ -847,12 +847,13 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
   - `job.user_id`가 `None`이면 402 에러 반환 (주석 생성뿐 아니라 재시도 action 엔드포인트에서도 동일 체크)
   - `db_user.is_admin`가 `True`이면 구독 체크 없이 바로 처리 (환불 불필요, 예약 페이지 수 0)
   - 일반 사용자는 `subscription_service.reserve_usage()`로 구독 한도 체크 및 차감
-- **프론트엔드 처리** (`app/frontend/src/pages/JobResultPage.jsx`의 `startAnnotate` 함수):
-  - 에러 메시지에 "구독이 필요" 또는 "subscription"이 포함되면 2초 후 price 페이지로 자동 이동
+- **프론트엔드 처리**:
+  - `app/frontend/src/pages/JobResultPage.jsx`의 `startAnnotate(instruction)` 함수가 API를 호출하고, 에러 메시지에 "구독이 필요" 또는 "subscription"이 포함되면 2초 후 price 페이지로 자동 이동합니다.
+  - `app/frontend/src/components/SourcePanel.jsx`의 `AiAnnotationFab` 컴포넌트가 PDF 소스 패널 하단 중앙에 작은 FAB으로 표시됩니다. 클릭하면 `scale`/`opacity`/`translate` 트랜지션으로 입력 카드 팝업이 부드럽게 펼쳐지며, instruction을 입력하고 생성할 수 있습니다.
   - i18n 키 `page:errors.subscriptionRequired` 사용 (ko/en/ja 모두 추가)
 - **주석 생성 비용**: 프리미엄 페이지 수(`premium_pages`)로 차감됩니다. 관리자는 차감되지 않습니다.
 - **재시도 액션** (`annotate_action` 엔드포인트): 주석 생성이 `error` 상태로 실패한 경우 사용자가 재시도(retry)할 수 있습니다. 구독제이므로 환불(refund) 기능은 제공하지 않습니다. 비회원 사용자는 이 액션 엔드포인트에서도 402 에러를 받습니다.
-- **결과 파일 노출**: 주석 생성이 완료되면 `JobResultPage.jsx`의 파일 탭에 `<원본파일명>_annotation1.pdf`, `_annotation2.pdf` … 형식으로 누적 추가됩니다. 별도의 ‘주석 PDF 다운로드’ 버튼은 생성되지 않으며, 주석 버튼은 계속 ‘주석’ 생성 트리거로 유지됩니다.
+- **결과 파일 노출**: 주석 생성이 완료되면 `JobResultPage.jsx`의 파일 탭에 `<원본파일명>_annotation1.pdf`, `_annotation2.pdf` … 형식으로 누적 추가됩니다. 별도의 ‘주석 PDF 다운로드’ 버튼은 생성되지 않으며, AI 주석 FAB은 PDF 패널 하단에 계속 떠 있는 작은 트리거로 유지됩니다.
 - **결과 저장**: `app/backend/core/pdf_annotate_converter.py`는 각 주석을 `results/{job_id}/annotated_{N}.pdf`로 저장하고, `Job.annotated_pdf_files` JSONB 목록에 `storage_path`, `filename`, `instruction`, `mode`, `comment_mode`, `created_at`을 기록합니다. 동일한 `(instruction, mode, comment_mode)`로 재요청하면 기존 파일을 반환합니다.
 
 ## Frontend Variable Naming Conventions

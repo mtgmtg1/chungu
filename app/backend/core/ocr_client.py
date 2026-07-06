@@ -15,6 +15,8 @@ from typing import Callable
 
 from PIL import Image
 
+from .llm_utils import with_gemma4_kwargs
+
 
 logger = logging.getLogger(__name__)
 
@@ -236,17 +238,6 @@ def encode_image(image_path: Path, jpeg_quality: int = 95) -> str:
 # ---------------------------------------------------------------------------
 # OpenAI 호환 LLM 호출
 # ---------------------------------------------------------------------------
-def _is_gemma4(model: str) -> bool:
-    return "gemma-4" in (model or "").lower()
-
-
-def _with_gemma4_kwargs(payload: dict, model: str) -> dict:
-    if _is_gemma4(model):
-        payload.setdefault("chat_template_kwargs", {})
-        payload["chat_template_kwargs"]["enable_thinking"] = False
-    return payload
-
-
 def _post(endpoint: str, payload: dict, api_key: str = "", timeout: int = 1200, retries: int = 3) -> tuple[str, str | None]:
     """엔드포인트로 POST하고 (content, finish_reason)을 반환. 재시도 포함."""
     url = endpoint.rstrip("/") + "/chat/completions"
@@ -292,7 +283,7 @@ def call_vision(image_path: Path, prompt: str, endpoint: str, model: str, api_ke
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
         ]}],
     }
-    return _post(endpoint, _with_gemma4_kwargs(payload, model), api_key, timeout=1200)
+    return _post(endpoint, with_gemma4_kwargs(payload, model), api_key, timeout=1200)
 
 
 def call_text(prompt: str, endpoint: str, model: str, api_key: str = "", max_tokens: int = 4000) -> tuple[str, str | None]:
@@ -303,7 +294,7 @@ def call_text(prompt: str, endpoint: str, model: str, api_key: str = "", max_tok
         "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }
-    return _post(endpoint, _with_gemma4_kwargs(payload, model), api_key, timeout=300)
+    return _post(endpoint, with_gemma4_kwargs(payload, model), api_key, timeout=300)
 
 
 def encode_file(path: Path) -> tuple[str, str]:
@@ -371,7 +362,7 @@ def call_media(
         "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": content}],
     }
-    return _post(endpoint, _with_gemma4_kwargs(payload, model), api_key, timeout=1800)
+    return _post(endpoint, with_gemma4_kwargs(payload, model), api_key, timeout=1800)
 
 
 # ---------------------------------------------------------------------------

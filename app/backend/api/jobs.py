@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from .. import settings_store
 from ..auth.supabase_auth import CurrentUser, get_current_admin, get_current_user
+from ..celery_app import celery as celery_app
 from ..core import archive_handler, cache, converter, docling_client, hwp_converter, media_loader, office_converter, pdf_preview_converter, pdf_user_annotator, points_service, subscription_service, supabase_client
 
 
@@ -926,10 +927,10 @@ def _delete_original_file(job: Job, source_index: int, db: Session) -> dict:
 def _delete_annotation_file(job: Job, source_index: int, db: Session) -> dict:
     """지정한 인덱스의 주석 PDF 파일을 Storage와 DB에서 삭제한다.
 
-    [Flow: Step 1 (하위 호환 단일 주석이면 result_annotated_pdf_storage_path 삭제) -> Step 2 (annotated_pdf_files 목록에서 index로 항목 찾기) -> Step 3 (Storage 삭제 + 목록에서 제거) -> Step 4 (preview 캐시 무효화)]
+    [Flow: Step 1 (하위 호환 단일 주석이면 result_annotated_pdf_storage_path 삭제) -> Step 2 (annotated_pdf_files 목록에서 index로 항목 찾기) -> Step 3 (processing 상태면 Celery 취소 + 환불, 완료 상태면 Storage 삭제) -> Step 4 (entry 제거 + preview 캐시 무효화)]
 
     source_index는 annotated_pdf_files 내의 position이 아닌 entry의 index 필드 값이다.
-    processing 상태의 entry는 삭제할 수 없다.
+    processing 상태의 entry는 삭제 요청 시 Celery 작업을 취소하고 예약된 사용량을 환원한다.
     """
     entries = list(job.annotated_pdf_files or [])
     if not entries and job.result_annotated_pdf_storage_path and source_index == 0:
@@ -946,7 +947,31 @@ def _delete_annotation_file(job: Job, source_index: int, db: Session) -> dict:
     entry = entries[entry_idx]
     entry_status = entry.get("status", "done")
     if entry_status == "processing":
-        raise HTTPException(status_code=400, detail="Cannot delete a processing annotation")
+        # [Flow: Step 1 (Celery 작업 취소) -> Step 2 (entry 제거) -> Step 3 (구독 사용량 환원) -> Step 4 (annotate_status 갱신) -> Step 5 (preview 캐시 무효화)]
+        task_id = entry.get("task_id")
+        if task_id:
+            celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
+        entries.pop(entry_idx)
+        job.annotated_pdf_files = entries
+        if not entries:
+            job.result_annotated_pdf_storage_path = ""
+        if job.user_id and job.annotate_refundable:
+            from ..db.models import User
+            db_user = db.get(User, job.user_id)
+            if db_user and not db_user.is_admin:
+                premium_pages = entry.get("premium_pages", 0)
+                period_start_raw = entry.get("period_start")
+                if premium_pages:
+                    subscription_service.release_usage(
+                        db,
+                        db_user,
+                        premium_pages=premium_pages,
+                        period_start=datetime.fromisoformat(period_start_raw) if period_start_raw else None,
+                    )
+        job.annotate_status = "processing" if any(e.get("status") == "processing" for e in entries) else "done"
+        cache.invalidate_pattern(f"preview:{job.id}:*")
+        db.commit()
+        return {"deleted": True, "cancelled": True, "source_kind": "annotation", "source_index": source_index}
     storage_path = entry.get("storage_path") if isinstance(entry, dict) else None
     if storage_path:
         supabase_client.delete_storage_path("results", storage_path)
@@ -1884,11 +1909,27 @@ def annotate_job(
         annotation_index=annotation_index,
     )
     try:
-        job.annotate_job_id = task.id
+        locked_job = db.execute(
+            select(Job).where(Job.id == job_id).with_for_update()
+        ).scalar_one()
+        files = list(locked_job.annotated_pdf_files or [])
+        for e in files:
+            if e.get("index") == annotation_index:
+                e["task_id"] = task.id
+                e["premium_pages"] = units
+                e["period_start"] = (
+                    job.annotate_reserved_period_start.isoformat()
+                    if job.annotate_reserved_period_start
+                    else None
+                )
+                break
+        locked_job.annotated_pdf_files = files
+        locked_job.annotate_job_id = task.id
         db.commit()
     except Exception:
-        # task ID 저장 실패 시 entry를 error 상태로 변경한다
+        # task ID 저장 실패 시 Celery 작업을 취소하고 entry를 error 상태로 변경한다
         db.rollback()
+        celery_app.control.revoke(task.id, terminate=True, signal="SIGTERM")
         locked_job = db.execute(
             select(Job).where(Job.id == job_id).with_for_update()
         ).scalar_one()
@@ -1963,8 +2004,35 @@ def annotate_action(
         advanced=bool(entry.get("advanced", False)),
         annotation_index=annotation_index,
     )
-    job.annotate_job_id = task.id
-    db.commit()
+    try:
+        locked_job = db.execute(
+            select(Job).where(Job.id == job_id).with_for_update()
+        ).scalar_one()
+        files = list(locked_job.annotated_pdf_files or [])
+        for e in files:
+            if e.get("index") == annotation_index:
+                e["task_id"] = task.id
+                break
+        locked_job.annotated_pdf_files = files
+        locked_job.annotate_job_id = task.id
+        db.commit()
+    except Exception:
+        db.rollback()
+        celery_app.control.revoke(task.id, terminate=True, signal="SIGTERM")
+        locked_job = db.execute(
+            select(Job).where(Job.id == job_id).with_for_update()
+        ).scalar_one()
+        files = list(locked_job.annotated_pdf_files or [])
+        for e in files:
+            if e.get("index") == annotation_index:
+                e["status"] = "error"
+                e["recovery_notes"] = [{"reason": "재시도 작업 큐잉 실패: task ID 저장 에러"}]
+                break
+        locked_job.annotated_pdf_files = files
+        locked_job.annotate_status = "error"
+        locked_job.annotate_refundable = False
+        db.commit()
+        raise HTTPException(status_code=500, detail="주석 재시도 큐잉에 실패했습니다. 다시 시도해주세요.")
     return {"job_id": task.id, "status": "processing", "annotation_index": annotation_index}
 
 

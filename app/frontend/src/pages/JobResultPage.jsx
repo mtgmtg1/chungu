@@ -5,9 +5,10 @@ import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
   ArrowLeft,
-  Check,
-  Download,
+  FileCode,
+  FileDown,
   FileSpreadsheet,
+  FileText,
   Loader2,
   PanelLeft,
   PanelLeftClose,
@@ -58,6 +59,7 @@ export default function JobResultPage() {
   const pollRef = useRef(null);
   const editorRef = useRef(null);
   const pagedViewerRef = useRef(null);
+  const sourcePanelRef = useRef(null);
 
   const [previewMode, setPreviewMode] = useState("markdown"); // "markdown" | "xlsxBasic" | "xlsxAdvanced"
   const [basicUrl, setBasicUrl] = useState(null);
@@ -70,17 +72,13 @@ export default function JobResultPage() {
   const markdownSaveMessageTimerRef = useRef(null);
 
   // PDF 하이라이트/여백 주석 (원본 스캔 PDF에 형광펜 + 여백 코멘트 생성)
-  const [annotateModalOpen, setAnnotateModalOpen] = useState(false);
-  const [annotateInstruction, setAnnotateInstruction] = useState("");
-  const [annotateMode, setAnnotateMode] = useState("both"); // highlight | margin_note | both
-  const [annotateCommentMode, setAnnotateCommentMode] = useState("user_text"); // user_text | llm_summary
-  const [annotateAdvanced, setAnnotateAdvanced] = useState(false);
+  const annotateMode = "both"; // highlight | margin_note | both
+  const annotateCommentMode = "llm_summary"; // user_text | llm_summary
+  const annotateAdvanced = false;
   const [annotatePolling, setAnnotatePolling] = useState(false);
 
-  const [excelDropdownOpen, setExcelDropdownOpen] = useState(false);
-  const [officeDropdownOpen, setOfficeDropdownOpen] = useState(false);
-  const excelDropdownTimerRef = useRef(null);
-  const officeDropdownTimerRef = useRef(null);
+  const [downloadDropdownOpen, setDownloadDropdownOpen] = useState(false);
+  const downloadDropdownTimerRef = useRef(null);
 
   const openDropdown = (setter, timerRef) => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -192,6 +190,16 @@ export default function JobResultPage() {
     }, 5000);
     return () => clearInterval(interval);
   }, [annotatePolling, jobId]);
+
+  // [Flow: Step 1 (사이드바 상태 변경 감지) -> Step 2 (접힌 상태면 왼쪽 원본 패널 collapse, 펼친 상태면 expand)]
+  useEffect(() => {
+    if (!sourcePanelRef.current) return;
+    if (sidebarOpen) {
+      sourcePanelRef.current.expand();
+    } else {
+      sourcePanelRef.current.collapse();
+    }
+  }, [sidebarOpen]);
 
   async function loadPreview() {
     try {
@@ -331,13 +339,14 @@ export default function JobResultPage() {
     }
   }
 
-  async function startAnnotate() {
-    if (!annotateInstruction.trim()) return;
+  // [Flow: Step 1 (instruction 수신) -> Step 2 (AI 주석 API 호출) -> Step 3 (처리 상태면 폴링 활성화) -> Step 4 (job 상태 갱신)]
+  async function startAnnotate(instruction) {
+    if (!instruction || !instruction.trim()) return;
     setConverting(true);
     setError("");
     try {
       const res = await api.annotateJob(jobId, {
-        instruction: annotateInstruction.trim(),
+        instruction: instruction.trim(),
         mode: annotateMode,
         commentMode: annotateCommentMode,
         advanced: annotateAdvanced,
@@ -345,7 +354,6 @@ export default function JobResultPage() {
       if (res.status === "processing") {
         setAnnotatePolling(true);
       }
-      setAnnotateInstruction("");
       await loadJob();
     } catch (e) {
       const msg = e.message || t("page:errors.unknown");
@@ -438,6 +446,7 @@ export default function JobResultPage() {
       sourceIndex,
       sourceKind,
       name: file?.name || "",
+      status: file?.status || "done",
     });
     setDeleteSourceFileModal(true);
   }
@@ -497,13 +506,86 @@ export default function JobResultPage() {
 
   const pct = getDisplayProgress(job, 80, now);
 
+  // [Flow: Step 1 (previewMode에 따라 우측 콘텐츠 선택) -> Step 2 (마크다운이면 SimpleEditor, 엑셀이면 SpreadsheetEditor 또는 로딩 스피너)]
+  const renderRightContent = () => {
+    if (previewMode === "markdown") {
+      return (
+        <SimpleEditor
+          key={selectedFileIndex}
+          ref={editorRef}
+          markdown={displayMarkdown}
+          editable
+          onPageChange={setCurrentPage}
+          onChange={handleMarkdownChange}
+          data-oid="result-editor" />
+      );
+    }
+    if (previewMode === "xlsxBasic") {
+      return basicUrl
+        ? <SpreadsheetEditor downloadUrl={basicUrl} jobId={jobId} fileName={job?.original_filename || "result.xlsx"} />
+        : <div className="h-full flex items-center justify-center" data-oid="xlsx-basic-loading"><Loader2 className="animate-spin text-primary" size={24} /></div>;
+    }
+    return advancedUrl
+      ? <SpreadsheetEditor downloadUrl={advancedUrl} jobId={jobId} fileName={job?.original_filename || "result.xlsx"} />
+      : <div className="h-full flex items-center justify-center" data-oid="xlsx-advanced-loading"><Loader2 className="animate-spin text-primary" size={24} /></div>;
+  };
+
+  // [Flow: Step 1 (원본 파일/URL 존재 여부 확인) -> Step 2 (원본이 없으면 전체 너비로 우측 콘텐츠만 표시) -> Step 3 (원본이 있으면 좌측 SourcePanel + 우측 콘텐츠 분할, 사이드바 상태에 따라 collapse/expand)]
+  const renderResultArea = () => {
+    const rightContent = renderRightContent();
+    if (!sourceUrl && sourceFiles.length === 0) {
+      return (
+        <div className="flex-1 flex flex-col bg-white overflow-hidden min-h-0" data-oid="result-fullwidth">
+          {rightContent}
+        </div>
+      );
+    }
+
+    return (
+      <PanelGroup direction="horizontal" className="flex-1 flex min-h-0" data-oid="result-split">
+        <Panel
+          ref={sourcePanelRef}
+          defaultSize={30}
+          minSize={20}
+          maxSize={60}
+          collapsible
+          collapsedSize={0}
+          className="flex flex-col h-full min-h-0 overflow-hidden"
+          data-oid="result-source-panel">
+          <SourcePanel
+            sourceFiles={sourceFiles}
+            sourceUrl={sourceUrl}
+            sourceType={sourceType}
+            imageUrls={imageUrls}
+            filename={job?.filename}
+            selectedFileIndex={selectedFileIndex}
+            onFileSelect={handleFileSelect}
+            onDeleteFile={openDeleteSourceFileModal}
+            onRetryAnnotation={(index) => handleAnnotateAction("retry", index)}
+            currentPage={currentPage}
+            onSaveAnnotations={handleSaveAnnotations}
+            onStartAnnotate={startAnnotate}
+            converting={converting}
+            annotatePolling={annotatePolling}
+            data-oid="result-source" />
+        </Panel>
+        <PanelResizeHandle
+          className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize"
+          data-oid="result-resize-handle" />
+        <Panel className="flex flex-col h-full min-h-0 overflow-hidden" data-oid="result-content-panel">
+          {rightContent}
+        </Panel>
+      </PanelGroup>
+    );
+  };
+
   return (
     <div
       className="h-screen bg-background flex flex-col"
       data-oid="vl.tj_r">
 
       <header
-        className="h-14 border-b border-outline-variant bg-surface flex items-center justify-between px-4 flex-shrink-0"
+        className="relative h-14 border-b border-outline-variant bg-surface flex items-center justify-between px-4 flex-shrink-0"
         data-oid="kxse7f.">
 
         <div className="flex items-center gap-4" data-oid="jz8kj2e">
@@ -555,7 +637,46 @@ export default function JobResultPage() {
             </span>
           }
         </div>
+
+        {/* [Flow: Step 1 (완료된 작업의 결과 탭을 헤더 중앙에 배치) -> Step 2 (Markdown / Excel / Excel Advanced 선택)] */}
+        {job?.status === "done" && !needsPagedMode(job) &&
+        <div
+          className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2"
+          data-oid="preview-tabs">
+          <button
+            onClick={() => setPreviewMode("markdown")}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "markdown" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
+            data-oid="tab-markdown">
+            Markdown
+          </button>
+          <button
+            onClick={() => {
+              setPreviewMode("xlsxBasic");
+              if (!job?.xlsx_basic_converted) {
+                convertOnly("xlsx_basic");
+              }
+            }}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "xlsxBasic" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
+            data-oid="tab-xlsx-basic">
+            {t("page:result.excel")}
+          </button>
+          {(job?.xlsx_advanced_converted || xlsxAdvancedPolling) &&
+          <button
+            onClick={() => setPreviewMode("xlsxAdvanced")}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "xlsxAdvanced" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
+            data-oid="tab-xlsx-advanced">
+            Excel Advanced
+          </button>
+          }
+        </div>
+        }
+
         <div className="flex items-center gap-2" data-oid=":tdat.:">
+          {job?.status === "done" && previewMode === "markdown" && markdownSaveMessage &&
+          <span className="text-sm text-on-surface-variant font-medium" data-oid="markdown-save-msg">
+            {markdownSaveMessage}
+          </span>
+          }
           {job?.status === "done" && (sourceUrl || sourceFiles.length > 0) &&
           <button
             onClick={() => setSidebarOpen((v) => !v)}
@@ -571,25 +692,25 @@ export default function JobResultPage() {
           <>
               <div
                 className="relative group"
-                onMouseEnter={() => openDropdown(setExcelDropdownOpen, excelDropdownTimerRef)}
-                onMouseLeave={() => closeDropdown(setExcelDropdownOpen, excelDropdownTimerRef)}
-                data-oid="excel-group">
+                onMouseEnter={() => openDropdown(setDownloadDropdownOpen, downloadDropdownTimerRef)}
+                onMouseLeave={() => closeDropdown(setDownloadDropdownOpen, downloadDropdownTimerRef)}
+                data-oid="download-group">
                 <button
-                  className="flex items-center gap-1.5 px-3 py-2 bg-primary text-white rounded-lg font-bold hover:opacity-90 transition-colors shadow-sm"
-                  data-oid="excel-group-btn">
-                  <FileSpreadsheet size={16} data-oid="excel-icon" />
-                  {t("page:result.excel")}
+                  className="flex items-center justify-center w-10 h-10 bg-primary text-white rounded-lg font-bold hover:opacity-90 transition-colors shadow-sm"
+                  data-oid="download-group-btn"
+                  aria-label={t("page:result.download")}>
+                  <FileDown size={20} data-oid="download-icon" />
                 </button>
                 <div
-                className={`absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-lg border border-outline-variant flex-col z-50 py-1 ${excelDropdownOpen ? "flex" : "hidden"}`}
-                data-oid="excel-dropdown">
+                className={`absolute right-0 top-full mt-1 w-64 bg-white rounded-lg shadow-lg border border-outline-variant flex-col z-50 py-1 ${downloadDropdownOpen ? "flex" : "hidden"}`}
+                data-oid="download-dropdown">
 
                   <button
                   onClick={() => convertAndDownload("xlsx_basic")}
                   disabled={converting}
-                  className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+                  className="flex items-center gap-2 text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
                   data-oid="xlsx-basic-btn">
-
+                    <FileSpreadsheet size={16} className="text-primary flex-shrink-0" />
                     {job.xlsx_basic_converted ?
                   t("page:result.xlsxBasicDownload") :
                   t("page:result.xlsxBasic", { cost: xlsxBasicUnits.toLocaleString() })}
@@ -597,14 +718,30 @@ export default function JobResultPage() {
                   <button
                   onClick={() => startXlsxAdvanced()}
                   disabled={converting || xlsxAdvancedPolling}
-                  className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+                  className="flex items-center gap-2 text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
                   data-oid="xlsx-advanced-btn">
-
+                    <FileSpreadsheet size={16} className="text-primary flex-shrink-0" />
                     {xlsxAdvancedPolling ?
                   t("page:result.xlsxAdvancedProcessing") :
                   job.xlsx_advanced_converted ?
                   t("page:result.xlsxAdvancedDownload") :
                   t("page:result.xlsxAdvanced", { cost: xlsxAdvancedUnits.toLocaleString() })}
+                  </button>
+                  <div className="h-px bg-outline-variant my-1" />
+                  <button
+                  onClick={() => convertAndDownload("docx")}
+                  disabled={converting}
+                  className="flex items-center gap-2 text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+                  data-oid="docx-btn">
+                    <FileText size={16} className="text-primary flex-shrink-0" />
+                    {t("page:result.word")}
+                  </button>
+                  <button
+                  onClick={() => download("md")}
+                  className="flex items-center gap-2 text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
+                  data-oid="md-btn">
+                    <FileCode size={16} className="text-primary flex-shrink-0" />
+                    {t("page:result.md")}
                   </button>
                 </div>
               </div>
@@ -630,52 +767,6 @@ export default function JobResultPage() {
                 </button>
               </div>
               }
-
-              <button
-                onClick={() => setAnnotateModalOpen(true)}
-                disabled={converting}
-                className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
-                data-oid="annotate-btn">
-                {annotatePolling &&
-                <Loader2 className="animate-spin" size={16} data-oid="annotate-spinner" />
-                }
-                {annotatePolling ?
-                t("page:result.annotateProcessing") :
-                t("page:result.annotate")}
-              </button>
-
-              <div
-                className="relative group"
-                onMouseEnter={() => openDropdown(setOfficeDropdownOpen, officeDropdownTimerRef)}
-                onMouseLeave={() => closeDropdown(setOfficeDropdownOpen, officeDropdownTimerRef)}
-                data-oid="office-group">
-                <button
-                  className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
-                  data-oid="office-group-btn">
-                  <Download size={16} data-oid="office-icon" />
-                  {t("page:result.office")}
-                </button>
-                <div
-                className={`absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg border border-outline-variant flex-col z-50 py-1 ${officeDropdownOpen ? "flex" : "hidden"}`}
-                data-oid="office-dropdown">
-
-                  <button
-                  onClick={() => convertAndDownload("docx")}
-                  disabled={converting}
-                  className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                  data-oid="docx-btn">
-
-                    {t("page:result.word")}
-                  </button>
-                  <button
-                  onClick={() => download("md")}
-                  className="text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface"
-                  data-oid="md-btn">
-
-                    {t("page:result.md")}
-                  </button>
-                </div>
-              </div>
             </>
           }
         </div>
@@ -753,42 +844,6 @@ export default function JobResultPage() {
 
       {job?.status === "done" && !loading && !needsPagedMode(job) &&
       <div className="flex-1 flex flex-col overflow-hidden min-h-0" data-oid="ww-27ni">
-          <div className="flex items-center justify-between px-4 py-2 border-b border-outline-variant bg-surface flex-shrink-0" data-oid="preview-tabs">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPreviewMode("markdown")}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "markdown" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
-                data-oid="tab-markdown">
-                Markdown
-              </button>
-              <button
-                onClick={() => {
-                  setPreviewMode("xlsxBasic");
-                  if (!job?.xlsx_basic_converted) {
-                    convertOnly("xlsx_basic");
-                  }
-                }}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "xlsxBasic" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
-                data-oid="tab-xlsx-basic">
-                Excel Basic
-              </button>
-              {(job?.xlsx_advanced_converted || xlsxAdvancedPolling) &&
-              <button
-                onClick={() => setPreviewMode("xlsxAdvanced")}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "xlsxAdvanced" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
-                data-oid="tab-xlsx-advanced">
-                Excel Advanced
-              </button>
-              }
-            </div>
-
-            {previewMode === "markdown" && markdownSaveMessage &&
-            <span className="text-sm text-on-surface-variant font-medium" data-oid="markdown-save-msg">
-              {markdownSaveMessage}
-            </span>
-            }
-          </div>
-
           {previewMode !== "markdown" && xlsxAdvancedPolling &&
           <div className="px-4 py-2 bg-blue-50 text-blue-700 text-sm border-b border-blue-200 flex items-center gap-2 flex-shrink-0" data-oid="advanced-progress">
             <Loader2 className="animate-spin" size={16} data-oid="advanced-spinner" />
@@ -809,82 +864,7 @@ export default function JobResultPage() {
           </div>
           }
 
-          {previewMode === "markdown" && (sidebarOpen && (sourceUrl || sourceFiles.length > 0) ?
-        <PanelGroup
-          direction="horizontal"
-          className="flex-1 flex min-h-0"
-          data-oid="wn6pn3w">
-
-              <Panel
-            defaultSize={30}
-            minSize={20}
-            maxSize={60}
-            className="flex flex-col h-full min-h-0 overflow-hidden"
-            data-oid="8gj26he">
-
-                <SourcePanel
-                  sourceFiles={sourceFiles}
-                  sourceUrl={sourceUrl}
-                  sourceType={sourceType}
-                  imageUrls={imageUrls}
-                  filename={job?.filename}
-                  selectedFileIndex={selectedFileIndex}
-                  onFileSelect={handleFileSelect}
-                  onDeleteFile={openDeleteSourceFileModal}
-                  onRetryAnnotation={(index) => handleAnnotateAction("retry", index)}
-                  currentPage={currentPage}
-                  onSaveAnnotations={handleSaveAnnotations}
-                  data-oid="rp.07za" />
-
-              </Panel>
-              <PanelResizeHandle
-            className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize"
-            data-oid="j-sm.n3" />
-
-
-              <Panel className="flex flex-col h-full min-h-0" data-oid="2xixpf2">
-                <div
-              className="flex flex-col h-full bg-white overflow-hidden"
-              data-oid="1pwia81">
-
-                  <SimpleEditor
-                ref={editorRef}
-                markdown={displayMarkdown}
-                editable
-                onPageChange={setCurrentPage}
-                onChange={handleMarkdownChange}
-                data-oid="xzqyv5." />
-
-                </div>
-              </Panel>
-            </PanelGroup> :
-
-        <div
-          className="flex-1 flex flex-col bg-white overflow-hidden min-h-0"
-          data-oid="w605w2j">
-
-              <SimpleEditor
-            key={selectedFileIndex}
-            ref={editorRef}
-            markdown={displayMarkdown}
-            editable
-            onPageChange={setCurrentPage}
-            onChange={handleMarkdownChange}
-            data-oid="r9i48wh" />
-
-            </div>
-        )}
-
-          {previewMode === "xlsxBasic" &&
-          <div className="flex-1 min-h-0 overflow-hidden" data-oid="xlsx-basic-preview">
-            <SpreadsheetEditor downloadUrl={basicUrl} jobId={jobId} fileName={job?.original_filename || "result.xlsx"} />
-          </div>
-          }
-          {previewMode === "xlsxAdvanced" &&
-          <div className="flex-1 min-h-0 overflow-hidden" data-oid="xlsx-advanced-preview">
-            <SpreadsheetEditor downloadUrl={advancedUrl} jobId={jobId} fileName={job?.original_filename || "result.xlsx"} />
-          </div>
-          }
+          {renderResultArea()}
         </div>
       }
 
@@ -931,10 +911,14 @@ export default function JobResultPage() {
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-oid="delete-source-modal-overlay">
         <div className="bg-white rounded-lg shadow-lg border border-outline-variant p-6 w-full max-w-sm" data-oid="delete-source-modal">
           <h3 className="font-headline-md text-headline-md font-bold text-on-surface mb-2" data-oid="delete-source-modal-title">
-            {t("page:result.deleteSourceFileTitle")}
+            {pendingDeleteFile?.status === "processing"
+              ? t("page:result.annotateCancelTitle")
+              : t("page:result.deleteSourceFileTitle")}
           </h3>
           <p className="text-sm text-on-surface-variant mb-6" data-oid="delete-source-modal-desc">
-            {t("page:result.deleteSourceFileDesc", { filename: pendingDeleteFile?.name || "" })}
+            {pendingDeleteFile?.status === "processing"
+              ? t("page:result.annotateCancelDesc", { filename: pendingDeleteFile?.name || "" })
+              : t("page:result.deleteSourceFileDesc", { filename: pendingDeleteFile?.name || "" })}
           </p>
           <div className="flex justify-end gap-2" data-oid="delete-source-modal-actions">
             <button
@@ -952,91 +936,15 @@ export default function JobResultPage() {
               {converting ?
               <Loader2 size={16} className="animate-spin" data-oid="delete-source-modal-spinner" /> :
               <Trash2 size={16} data-oid="delete-source-modal-icon" />}
-              {t("common:delete")}
+              {pendingDeleteFile?.status === "processing"
+                ? t("page:result.annotateCancel")
+                : t("common:delete")}
             </button>
           </div>
         </div>
       </div>
       }
 
-      {annotateModalOpen &&
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-oid="annotate-modal-overlay">
-        <div className="bg-white rounded-lg shadow-lg border border-outline-variant p-6 w-full max-w-lg" data-oid="annotate-modal">
-          <h3 className="font-headline-md text-headline-md font-bold text-on-surface mb-2" data-oid="annotate-modal-title">
-            {t("page:result.annotateTitle")}
-          </h3>
-          <p className="text-sm text-on-surface-variant mb-3" data-oid="annotate-modal-desc">
-            {t("page:result.annotateDesc")}
-          </p>
-          <textarea
-            value={annotateInstruction}
-            onChange={(e) => setAnnotateInstruction(e.target.value)}
-            placeholder={t("page:result.annotateInstructionPlaceholder")}
-            rows={3}
-            className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-primary/40"
-            data-oid="annotate-instruction-input" />
-
-          <div className="mb-4" data-oid="annotate-mode-group">
-            <div className="text-xs font-bold text-on-surface-variant mb-1">{t("page:result.annotateModeLabel")}</div>
-            <div className="flex gap-2">
-              {[
-              { value: "highlight", label: t("page:result.annotateModeHighlight") },
-              { value: "margin_note", label: t("page:result.annotateModeMarginNote") },
-              { value: "both", label: t("page:result.annotateModeBoth") }].
-              map((opt) =>
-              <button
-                key={opt.value}
-                onClick={() => setAnnotateMode(opt.value)}
-                className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${annotateMode === opt.value ? "bg-primary text-white border-primary" : "border-outline-variant text-on-surface hover:bg-surface-container-high"}`}
-                data-oid={`annotate-mode-${opt.value}`}>
-                  {opt.label}
-                </button>
-              )}
-            </div>
-          </div>
-
-          {annotateMode !== "highlight" &&
-          <div className="mb-6" data-oid="annotate-comment-group">
-            <div className="text-xs font-bold text-on-surface-variant mb-1">{t("page:result.annotateCommentLabel")}</div>
-            <div className="flex gap-2">
-              {[
-              { value: "user_text", label: t("page:result.annotateCommentUserText") },
-              { value: "llm_summary", label: t("page:result.annotateCommentLlmSummary") }].
-              map((opt) =>
-              <button
-                key={opt.value}
-                onClick={() => setAnnotateCommentMode(opt.value)}
-                className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${annotateCommentMode === opt.value ? "bg-primary text-white border-primary" : "border-outline-variant text-on-surface hover:bg-surface-container-high"}`}
-                data-oid={`annotate-comment-${opt.value}`}>
-                  {opt.label}
-                </button>
-              )}
-            </div>
-          </div>
-          }
-
-          <div className="flex justify-end gap-2" data-oid="annotate-modal-actions">
-            <button
-              onClick={() => setAnnotateModalOpen(false)}
-              disabled={converting}
-              className="px-4 py-2 rounded-lg border border-outline-variant text-on-surface hover:bg-surface-container-high transition-colors"
-              data-oid="annotate-modal-cancel">
-              {t("common:actions.cancel")}
-            </button>
-            <button
-              onClick={() => startAnnotate()}
-              disabled={converting || !annotateInstruction.trim()}
-              className="flex items-center gap-1 px-4 py-2 rounded-lg bg-primary text-white hover:opacity-90 transition-colors disabled:opacity-50"
-              data-oid="annotate-modal-submit">
-              {converting ?
-              <Loader2 size={16} className="animate-spin" data-oid="annotate-modal-spinner" /> :
-              <Check size={16} data-oid="annotate-modal-check" />}
-              {t("page:result.annotateSubmit")}
-            </button>
-          </div>
-        </div>
-      </div>
-      }
     </div>);
 
 }

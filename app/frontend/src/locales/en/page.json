@@ -221,7 +221,10 @@
     "annotateSubmit": "Generate",
     "annotateProcessingItem": "Generating AI annotation: {{instruction}}",
     "annotateErrorItem": "AI annotation failed: {{instruction}}",
-    "annotateRetry": "Retry"
+    "annotateRetry": "Retry",
+    "annotateCancel": "Cancel",
+    "annotateCancelTitle": "Cancel AI annotation generation",
+    "annotateCancelDesc": "Cancelling {{filename}} will stop the ongoing AI processing and refund the reserved usage."
   },
   "poems": [
     {
@@ -619,6 +622,16 @@
     "link": "Link",
     "image": "Image",
     "table": "Table",
+    "ai": {
+      "improve": "Improve writing",
+      "fix": "Fix grammar",
+      "shorter": "Make shorter",
+      "longer": "Make longer",
+      "continue": "Continue writing",
+      "custom": "Custom command",
+      "customPlaceholder": "Tell AI what to do",
+      "thinking": "AI is thinking…"
+    },
     "pdfPage": "Page {{page}}",
     "pageOf": "Page {{current}} of {{total}}",
     "previousPage": "Previous page",

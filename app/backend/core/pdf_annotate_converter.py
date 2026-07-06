@@ -544,8 +544,15 @@ def _matches_to_targets(
         if page_pt:
             rect_pdf = clamp_rect_to_page(rect_pdf, page_pt[0], page_pt[1])
         comment = str(m.get("comment") or "").strip()
-        color = _color_name_to_rgb(m.get("color"))
-        targets.append(AnnotationTarget(page_no=el.page_no, bbox_pdf=rect_pdf, comment=comment, color=color))
+        color_name = m.get("color")
+        color = _color_name_to_rgb(color_name)
+        # 사용자가 명시적으로 색상을 요청한 경우에만 callout에도 같은 색 적용.
+        # 요청이 없으면 callout_color=None → pdf_annotator에서 DEFAULT_CALLOUT_COLOR(보라) 사용.
+        callout_color = color if color_name else None
+        targets.append(AnnotationTarget(
+            page_no=el.page_no, bbox_pdf=rect_pdf, comment=comment,
+            color=color, callout_color=callout_color,
+        ))
     return targets
 
 
@@ -611,8 +618,13 @@ def _collect_targets_with_vision_llm(
                     continue
                 rect_pdf = px_bbox_to_pdf_rect((x0, y0, x1, y1), dpi=RENDER_DPI, page_height_px=img_h)
                 comment = str(m.get("comment") or "").strip()
-                color = _color_name_to_rgb(m.get("color"))
-                targets.append(AnnotationTarget(page_no=page_no, bbox_pdf=rect_pdf, comment=comment, color=color))
+                color_name = m.get("color")
+                color = _color_name_to_rgb(color_name)
+                callout_color = color if color_name else None
+                targets.append(AnnotationTarget(
+                    page_no=page_no, bbox_pdf=rect_pdf, comment=comment,
+                    color=color, callout_color=callout_color,
+                ))
         except Exception as e:
             logger.warning(f"[pdf_annotate] page={page_no} Vision LLM 처리 실패: {e}")
             continue

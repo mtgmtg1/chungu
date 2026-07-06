@@ -41,6 +41,7 @@ CALLOUT_TEXTBOX_FONT_COLOR = "#333333"
 CALLOUT_TEXTBOX_OPACITY = 0.92
 
 DEFAULT_HIGHLIGHT_COLOR = (1.0, 0.92, 0.3)  # 형광펜 노랑
+DEFAULT_CALLOUT_COLOR = (0.65, 0.35, 0.95)  # 보라색 (사용자 색상 요청이 없을 때 callout 기본색)
 
 
 @dataclass
@@ -51,6 +52,9 @@ class AnnotationTarget:
     bbox_pdf: tuple[float, float, float, float]  # (x0, y0, x1, y1), 시각적(렌더링된 이미지 기준) PDF 포인트 좌표
     comment: str
     color: tuple[float, float, float] = DEFAULT_HIGHLIGHT_COLOR
+    # callout 리더 라인/텍스트 박스 테두리 색. None이면 DEFAULT_CALLOUT_COLOR(보라) 사용.
+    # 사용자가 명시적으로 색을 요청한 경우에만 이 필드를 설정한다.
+    callout_color: tuple[float, float, float] | None = None
 
 
 # --- EmbedPDF PdfAnnotationSubtype enum 값 (숫자 상수) ---
@@ -168,7 +172,7 @@ def build_embedpdf_annotations(
                 callout_anno = _build_callout_annotation(
                     target_bbox=(x0, y0, x1, y1),
                     comment=t.comment,
-                    color=t.color,
+                    color=t.callout_color if t.callout_color is not None else DEFAULT_CALLOUT_COLOR,
                     element_bboxes=obstacles,
                     page_width=page_width,
                     page_height=page_height,

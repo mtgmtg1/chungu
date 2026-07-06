@@ -1,7 +1,7 @@
 // [Flow: Step 1 (downloadUrl로 XLSX fetch) -> Step 2 (LuckyExcel로 Luckysheet 데이터로 변환) -> Step 3 (luckysheet.create로 초기화, 편집 hook 설정) -> Step 4 (사용자 편집 시 hook 발생) -> Step 5 (1초 debounce 후 자동 저장) -> Step 6 (SheetJS로 XLSX 반출하여 서버에 업로드)]
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, Download, RotateCcw } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { api } from "../api.js";
 
@@ -323,32 +323,6 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-white">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-outline-variant flex-shrink-0" data-oid="spreadsheet-toolbar">
-        <div className="flex items-center gap-2">
-          <button
-          onClick={handleDownload}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-container-high text-on-surface rounded-lg text-sm font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
-          data-oid="spreadsheet-download-btn">
-            <Download size={16} />
-            {t("page:result.download")}
-          </button>
-
-          <button
-          onClick={handleReset}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-container-high text-on-surface rounded-lg text-sm font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
-          data-oid="spreadsheet-reset-btn">
-            <RotateCcw size={16} />
-            {t("page:result.reset")}
-          </button>
-        </div>
-
-        {saveMessage &&
-        <span className="text-sm text-on-surface-variant font-medium" data-oid="spreadsheet-save-msg">
-          {saveMessage}
-        </span>
-        }
-      </div>
-
       {error &&
       <div className="px-4 py-2 text-sm text-red-600 bg-red-50 flex-shrink-0" data-oid="spreadsheet-error">
         {error}
@@ -361,6 +335,11 @@ export default function SpreadsheetEditor({ downloadUrl, jobId, fileName }) {
           <Loader2 className="animate-spin mr-2" size={20} />
           {t("page:result.excelLoading")}
         </div>
+        }
+        {saveMessage &&
+        <span className="absolute top-2 right-2 z-10 text-sm text-on-surface-variant font-medium bg-surface/80 px-2 py-1 rounded" data-oid="spreadsheet-save-msg">
+          {saveMessage}
+        </span>
         }
         <div ref={containerRef} id="luckysheet-container" className="w-full h-full" style={{ margin: 0, padding: 0, position: "absolute", width: "100%", height: "100%", left: 0, top: 0 }} data-oid="luckysheet-container" />
       </div>

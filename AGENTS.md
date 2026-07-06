@@ -4,6 +4,34 @@
 
 PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It exposes core functionality both as a web application and as a monetized API (`/api/v1/*`) for external developers.
 
+## Recent Changes
+
+최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
+
+### AI 주석 (PDF Annotation)
+
+- **비동기/원자적 인덱스**: 주석 생성 요청마다 고유 인덱스를 원자적으로 할당해 파일 덮어쓰기 및 동시 생성 충돌 방지.
+- **JSON 오버레이**: 원본 PDF 주석을 별도 파일로보내지 않고 JSON 오버레이로 표시; 원본 문서는 그대로 보존.
+- **자동 저장**: 원본 패널에서 사용자가 그린 주석을 자동 저장하며, 무한 파일 증식 및 404 깜빡임 문제를 방지.
+- **AI 주석 생성**: PDF 패널 하단 중앙 플로팅 FAB으로 AI 주석 생성 트리거 이동; Vision LLM이 mode/comment_mode를 동적으로 결정.
+- **버그 수정**: `pdf_annotate_converter.py`에서 `_matches_to_targets` 분리 후 정의되지 않은 `skipped` 변수를 참조하던 NameError 수정.
+
+### 마크다운 에디터
+
+- **자동 저장**: 결과 페이지 마크다운 에디터에 1초 debounce 자동 저장 적용; `lastMarkdownRef` 동기화로 피드백 및 콘텐츠 중복/리셋 문제 해결.
+- **AI 텍스트 생성**: `AiMenu` 컴포넌트 및 스트리밍 텍스트 생성 엔드포인트 추가.
+- **UX 개선**: 텍스트 선택 시 AI 버튼이 활성화되도록 수정.
+
+### 엑셀 베이직
+
+- **자동 저장**: 1초 debounce 자동 저장 추가.
+- **UI 정리**: 베이직 탭에서 다운로드/초기화 버튼이 포함된 툴바 제거.
+- **안정성**: `handleAutoSave` 사용 순서로 인한 TDZ(Temporal Dead Zone) 에러 수정.
+
+### 개발 환경
+
+- **로컬 프론트엔드 개선**: a1 백엔드/Supabase 연결을 위한 `app/.env.development.example` 및 `scripts/dev-tunnel.sh` 보강.
+
 ## Tech Stack
 
 - **Backend**: FastAPI + SQLAlchemy + Celery + Redis

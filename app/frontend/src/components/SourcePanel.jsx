@@ -67,7 +67,7 @@ function ImageList({ urls, t }) {
  * PDF 패널 하단 중앙에 떠 있는 AI 주석 FAB입니다.
  * 클릭하면 입력 카드 팝업이 부드러운 애니메이션으로 펼쳐집니다.
  */
-function AiAnnotationFab({ onStartAnnotate, disabled, isProcessing }) {
+function AiAnnotationFab({ onStartAnnotate, disabled }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
@@ -97,13 +97,13 @@ function AiAnnotationFab({ onStartAnnotate, disabled, isProcessing }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        disabled={disabled || isProcessing}
+        disabled={disabled}
         className={`flex items-center justify-center w-10 h-10 rounded-full shadow-lg border transition-all duration-300 ${
           open ? "bg-primary text-white rotate-0" : "bg-surface-container-high text-primary hover:bg-surface border-outline-variant"
         } disabled:opacity-50`}
         aria-label={t("page:result.annotate")}
         data-oid="annotate-fab">
-        {isProcessing ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+        <Sparkles size={18} />
       </button>
 
       <div
@@ -139,7 +139,7 @@ function AiAnnotationFab({ onStartAnnotate, disabled, isProcessing }) {
             disabled={disabled || !instruction.trim()}
             className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary text-white text-sm hover:opacity-90 transition-colors disabled:opacity-50"
             data-oid="annotate-popup-submit">
-            {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+            <Check size={14} />
             {t("page:result.annotateSubmit")}
           </button>
         </div>
@@ -159,7 +159,6 @@ function PdfViewerWithFab({
   viewerRef,
   onStartAnnotate,
   converting,
-  annotatePolling,
 }) {
   return (
     <div className="relative flex flex-col h-full w-full min-h-0 overflow-hidden">
@@ -174,7 +173,6 @@ function PdfViewerWithFab({
         <AiAnnotationFab
           onStartAnnotate={onStartAnnotate}
           disabled={converting}
-          isProcessing={annotatePolling}
         />
       )}
     </div>
@@ -195,7 +193,6 @@ export default function SourcePanel({
   onRetryAnnotation,
   onStartAnnotate,
   converting = false,
-  annotatePolling = false,
 }) {
   const { t } = useTranslation();
   const files = sourceFiles && sourceFiles.length > 0 ? sourceFiles : [];
@@ -298,7 +295,6 @@ export default function SourcePanel({
           onAnnotationChanged={handleAnnotationChanged}
           onStartAnnotate={onStartAnnotate}
           converting={converting}
-          annotatePolling={annotatePolling}
         />
       );
     }
@@ -405,7 +401,6 @@ export default function SourcePanel({
                   onAnnotationChanged={handleAnnotationChanged}
                   onStartAnnotate={onStartAnnotate}
                   converting={converting}
-                  annotatePolling={annotatePolling}
                 />
               ) : selected.type === "docx" || selected.type === "hwp" ? (
                 <PdfViewer
@@ -435,7 +430,6 @@ export default function SourcePanel({
         onAnnotationChanged={handleAnnotationChanged}
         onStartAnnotate={onStartAnnotate}
         converting={converting}
-        annotatePolling={annotatePolling}
       />
     );
   }

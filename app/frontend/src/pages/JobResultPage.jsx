@@ -566,7 +566,6 @@ export default function JobResultPage() {
             onSaveAnnotations={handleSaveAnnotations}
             onStartAnnotate={startAnnotate}
             converting={converting}
-            annotatePolling={annotatePolling}
             data-oid="result-source" />
         </Panel>
         <PanelResizeHandle

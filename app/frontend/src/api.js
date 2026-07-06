@@ -88,6 +88,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ instruction, mode, comment_mode: commentMode, advanced, page_range: pageRange }),
     }),
+  annotateJobEdit: (id, { instruction, pageRange }) =>
+    request(`/api/jobs/${id}/annotate-edit`, {
+      method: 'POST',
+      body: JSON.stringify({ instruction, page_range: pageRange }),
+    }),
   annotateAction: (id, action, annotationIndex) =>
     request(`/api/jobs/${id}/annotate-action`, {
       method: 'POST',

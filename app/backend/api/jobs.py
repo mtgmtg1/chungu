@@ -2273,6 +2273,155 @@ def annotate_job(
     return {"job_id": task.id, "status": "processing", "annotation_index": annotation_index}
 
 
+@router.post("/jobs/{job_id}/annotate-edit")
+def annotate_edit_job_endpoint(
+    job_id: str,
+    payload: dict = Body(...),
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """[Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (instruction/page_range 파싱)
+          -> Step 3 (구독 체크 및 원자적 인덱스 할당) -> Step 4 (processing entry 추가)
+          -> Step 5 (Celery annotate_edit_job 큐잉) -> Step 6 (task_id 저장)]
+
+    기존 AI 주석의 색상/코멘트를 사용자 instruction에 맞게 LLM으로 재편집한다.
+    지정한 페이지 범위의 기존 AI 주석만 편집 대상이며, 사용자 수동 편집 주석은 보존된다.
+    과금은 지정한 페이지 수만큼 계산한다 (기존 annotate와 동일).
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+    if job.status != "done":
+        raise HTTPException(status_code=400, detail="Only completed jobs can be annotated")
+
+    instruction = str(payload.get("instruction", "")).strip()
+    if not instruction:
+        raise HTTPException(status_code=400, detail="instruction is required")
+
+    # [Flow: 페이지 범위 파싱 — 빈 값이면 None(전체 페이지), 지정하면 해당 페이지만 편집]
+    total_pages = job.total_pages if job.total_pages else (job.total_files or 1)
+    raw_page_range = payload.get("page_range")
+    if raw_page_range is not None and not isinstance(raw_page_range, str):
+        if isinstance(raw_page_range, list):
+            raw_page_range = ",".join(str(p) for p in raw_page_range)
+        else:
+            raw_page_range = str(raw_page_range)
+    page_range = _parse_page_range(raw_page_range, total_pages)
+    page_range_count = len(page_range) if page_range else total_pages
+
+    # 비회원 사용자 체크
+    if job.user_id is None:
+        raise HTTPException(status_code=402, detail="구독이 필요한 기능입니다.")
+
+    from ..db.models import User
+    db_user = db.get(User, job.user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # 관리자 체크 (무제한 사용)
+    if db_user.is_admin:
+        units = page_range_count
+        job.annotate_status = "processing"
+        job.annotate_refundable = False
+        job.annotate_reserved_pages = 0
+        job.annotate_reserved_period_start = None
+    else:
+        # 일반 사용자는 구독 체크 — 지정한 페이지 수만큼만 과금 (편집은 생성과 동일 단가)
+        units = page_range_count
+        try:
+            sub_result = subscription_service.reserve_usage(
+                db,
+                db_user,
+                basic_pages=0,
+                premium_pages=units,
+                media_seconds=0,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=402, detail=str(e))
+        job.annotate_status = "processing"
+        job.annotate_refundable = True
+        job.annotate_reserved_pages = units
+        job.annotate_reserved_period_start = datetime.fromisoformat(sub_result["period_start"])
+
+    # 원자적으로 다음 인덱스를 할당한다 (entry 추적용).
+    idx_result = db.execute(
+        update(Job)
+        .where(Job.id == job_id)
+        .values(annotated_pdf_next_index=Job.annotated_pdf_next_index + 1)
+        .returning(Job.annotated_pdf_next_index)
+    )
+    db.commit()
+    annotation_index = idx_result.scalar()
+    if not annotation_index:
+        raise HTTPException(status_code=500, detail="주석 인덱스 할당에 실패했습니다.")
+
+    shared_storage_path = f"{job.id}/annotated.pdf"
+    shared_annotations_json_path = f"{job.id}/annotated.annotations.json"
+
+    # processing entry를 annotated_pdf_files에 추가한다 (edit: true 플래그로 편집 run임을 표시).
+    locked_job = db.execute(
+        select(Job).where(Job.id == job_id).with_for_update()
+    ).scalar_one()
+    annotated_files = list(locked_job.annotated_pdf_files or [])
+    processing_entry = {
+        "index": annotation_index,
+        "status": "processing",
+        "instruction": instruction,
+        "edit": True,
+        "page_range": page_range,
+        "storage_path": shared_storage_path,
+        "annotations_json_storage_path": shared_annotations_json_path,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    annotated_files.append(processing_entry)
+    locked_job.annotated_pdf_files = annotated_files
+    flag_modified(locked_job, "annotated_pdf_files")
+    db.commit()
+
+    from ..workers import tasks
+    task = tasks.annotate_edit_job.delay(
+        job_id, instruction, page_range, annotation_index,
+    )
+    try:
+        locked_job = db.execute(
+            select(Job).where(Job.id == job_id).with_for_update()
+        ).scalar_one()
+        files = list(locked_job.annotated_pdf_files or [])
+        for e in files:
+            if e.get("index") == annotation_index:
+                e["task_id"] = task.id
+                e["premium_pages"] = units
+                e["period_start"] = (
+                    job.annotate_reserved_period_start.isoformat()
+                    if job.annotate_reserved_period_start
+                    else None
+                )
+                break
+        locked_job.annotated_pdf_files = files
+        flag_modified(locked_job, "annotated_pdf_files")
+        locked_job.annotate_job_id = task.id
+        db.commit()
+    except Exception:
+        db.rollback()
+        celery_app.control.revoke(task.id, terminate=True, signal="SIGTERM")
+        locked_job = db.execute(
+            select(Job).where(Job.id == job_id).with_for_update()
+        ).scalar_one()
+        files = list(locked_job.annotated_pdf_files or [])
+        for e in files:
+            if e.get("index") == annotation_index:
+                e["status"] = "error"
+                e["recovery_notes"] = [{"reason": "큐잉 실패"}]
+                break
+        locked_job.annotated_pdf_files = files
+        flag_modified(locked_job, "annotated_pdf_files")
+        locked_job.annotate_status = _overall_annotation_status(files)
+        locked_job.annotate_refundable = False
+        db.commit()
+        raise HTTPException(status_code=500, detail="주석 편집 큐잉에 실패했습니다. 다시 시도해주세요.")
+    return {"job_id": task.id, "status": "processing", "annotation_index": annotation_index}
+
+
 @router.post("/jobs/{job_id}/annotate-action")
 def annotate_action(
     job_id: str,

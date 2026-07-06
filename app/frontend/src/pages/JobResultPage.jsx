@@ -389,6 +389,34 @@ export default function JobResultPage() {
     }
   }
 
+  // [Flow: Step 1 (instruction, pageRange 수신) -> Step 2 (AI 주석 편집 API 호출) -> Step 3 (처리 상태면 폴링 활성화) -> Step 4 (job 상태 갱신)]
+  // 기존 AI 주석의 색상/코멘트를 LLM으로 재편집한다. 지정한 페이지의 기존 주석만 편집 대상.
+  async function startAnnotateEdit(instruction, pageRange) {
+    if (!instruction || !instruction.trim()) return;
+    setConverting(true);
+    setError("");
+    try {
+      const res = await api.annotateJobEdit(jobId, {
+        instruction: instruction.trim(),
+        pageRange: pageRange || null,
+      });
+      if (res.status === "processing") {
+        setAnnotatePolling(true);
+      }
+      await loadJob();
+    } catch (e) {
+      const msg = e.message || t("page:errors.unknown");
+      if (msg.includes("구독이 필요") || msg.includes("subscription")) {
+        setError(t("page:errors.subscriptionRequired"));
+        setTimeout(() => nav("/price"), 2000);
+      } else {
+        setError(msg);
+      }
+    } finally {
+      setConverting(false);
+    }
+  }
+
   async function handleAnnotateAction(action, annotationIndex) {
     setConverting(true);
     setError("");
@@ -587,6 +615,7 @@ export default function JobResultPage() {
             totalPages={job?.total_pages || 1}
             onSaveAnnotations={handleSaveAnnotations}
             onStartAnnotate={startAnnotate}
+            onStartAnnotateEdit={startAnnotateEdit}
             converting={converting}
             annotationRuns={job?.annotated_pdf_files || []}
             data-oid="result-source" />

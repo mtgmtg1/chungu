@@ -921,6 +921,22 @@ def annotate_pdf_job(
     )
 
 
+@celery.task(name="backend.workers.tasks.annotate_edit_job")
+def annotate_edit_job(
+    job_id: str, instruction: str, page_range: list[int] | None, annotation_index: int,
+) -> dict:
+    """[Flow: Step 1 (기존 AI 주석 추출) -> Step 2 (LLM으로 색상/코멘트 재편집) -> Step 3 (병합 업로드)]
+
+    기존 AI 주석의 색상/코멘트를 사용자 instruction에 맞게 LLM으로 재편집한다.
+    지정한 페이지 범위의 기존 AI 주석만 편집 대상으로 삼고, 사용자 수동 편집 주석과
+    다른 페이지의 주석은 건드리지 않는다. 기존 주석의 id/rect는 유지하고 속성만 갱신한다.
+    annotation_index는 API 수준에서 원자적으로 할당된 고유 인덱스로, entry 추적에 사용한다.
+    """
+    return pdf_annotate_converter.run_edit(
+        job_id, instruction, page_range, annotation_index,
+    )
+
+
 @celery.task(name="backend.workers.tasks.auto_recharge_retry")
 def auto_recharge_retry() -> dict:
     """자동 충전 실패 사용자를 찾아 1일 간격으로 재시도한다.

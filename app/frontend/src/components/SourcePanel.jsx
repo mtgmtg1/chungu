@@ -85,18 +85,20 @@ function AnnotationStatusCard({ runs, t }) {
     <div
       className="absolute bottom-full right-0 mb-2 w-64 bg-white rounded-lg shadow-lg border border-outline-variant p-3 transition-all duration-300 origin-bottom-right"
       data-oid="annotate-status-card">
-      <div className="flex items-center gap-2 mb-2 pb-2 border-b border-outline-variant">
-        {processingCount > 0 ? (
-          <Loader2 size={14} className="text-primary animate-spin flex-shrink-0" />
-        ) : (
-          <AlertCircle size={14} className="text-error flex-shrink-0" />
-        )}
+      <div className="flex items-center gap-2 mb-2 pb-2 border-b border-outline-variant h-5">
+        <span className="flex-shrink-0 inline-flex items-center justify-center w-3.5 h-3.5 overflow-hidden">
+          {processingCount > 0 ? (
+            <Loader2 size={14} className="text-primary animate-spin" />
+          ) : (
+            <AlertCircle size={14} className="text-error" />
+          )}
+        </span>
         <span className="text-xs font-bold text-on-surface truncate">{headerText}</span>
       </div>
       <ul className="space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar">
         {sorted.map((r) => (
-          <li key={r.index ?? Math.random()} className="flex items-start gap-2 text-xs">
-            <span className="flex-shrink-0 mt-0.5">
+          <li key={r.index ?? Math.random()} className="flex items-start gap-2 text-xs leading-tight min-h-[14px]">
+            <span className="flex-shrink-0 inline-flex items-center justify-center w-3 h-3 overflow-hidden mt-px">
               {r.status === "processing" ? (
                 <Loader2 size={12} className="text-primary animate-spin" />
               ) : r.status === "error" ? (
@@ -105,7 +107,7 @@ function AnnotationStatusCard({ runs, t }) {
                 <Check size={12} className="text-primary" />
               )}
             </span>
-            <span className={`min-w-0 flex-1 leading-tight ${
+            <span className={`min-w-0 flex-1 ${
               r.status === "error" ? "text-error" : "text-on-surface-variant"
             }`}>
               {r.instruction
@@ -122,17 +124,20 @@ function AnnotationStatusCard({ runs, t }) {
 }
 
 /**
- * [Flow: Step 1 (FAB 클릭 또는 외부 클릭으로 open 상태 토글) -> Step 2 (instruction 입력 관리)
- *       -> Step 3 (고급 옵션 토글 시 페이지 범위 입력 표시) -> Step 4 (제출 시 onStartAnnotate 콜백 호출)
- *       -> Step 5 (전송 후 팝업 닫기 및 초기화) -> Step 6 (annotationRuns가 있으면 FAB 위에 상태 카드 렌더링)]
+ * [Flow: Step 1 (FAB 클릭 또는 외부 클릭으로 open 상태 토글) -> Step 2 (모드 토글: 생성/편집)
+ *       -> Step 3 (instruction 입력 관리) -> Step 4 (고급 옵션 토글 시 페이지 범위 입력 표시)
+ *       -> Step 5 (제출 시 모드에 따라 onStartAnnotate 또는 onStartAnnotateEdit 콜백 호출)
+ *       -> Step 6 (전송 후 팝업 닫기 및 초기화) -> Step 7 (annotationRuns가 있으면 FAB 위에 상태 카드 렌더링)]
  * PDF 패널 하단 우측에 떠 있는 AI 주석 FAB입니다.
  * 클릭하면 입력 카드 팝업이 부드러운 애니메이션으로 펼쳐지며,
  * 주석 생성 중에는 FAB 위에 현재 run들의 상태 리스트가 표시됩니다.
+ * 상단의 세그먼트 토글로 "새 주석 생성"과 "기존 주석 편집" 모드를 전환합니다.
  * 고급 옵션을 펼치면 처리할 페이지 범위를 지정할 수 있습니다 (기본값: 현재 보고 있는 페이지).
  */
-function AiAnnotationFab({ onStartAnnotate, disabled, annotationRuns, currentPage = 1, totalPages = 1 }) {
+function AiAnnotationFab({ onStartAnnotate, onStartAnnotateEdit, disabled, annotationRuns, currentPage = 1, totalPages = 1 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState("create"); // "create" | "edit"
   const [instruction, setInstruction] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [pageRange, setPageRange] = useState("");
@@ -151,10 +156,16 @@ function AiAnnotationFab({ onStartAnnotate, disabled, annotationRuns, currentPag
   }, [open]);
 
   const handleSubmit = async () => {
-    if (!instruction.trim() || !onStartAnnotate) return;
+    if (!instruction.trim()) return;
     // pageRange가 비어 있으면 현재 페이지를 기본값으로 전달
     const effectivePageRange = pageRange.trim() || String(currentPage);
-    await onStartAnnotate(instruction, effectivePageRange);
+    if (mode === "edit" && onStartAnnotateEdit) {
+      await onStartAnnotateEdit(instruction, effectivePageRange);
+    } else if (mode === "create" && onStartAnnotate) {
+      await onStartAnnotate(instruction, effectivePageRange);
+    } else {
+      return;
+    }
     setInstruction("");
     setPageRange("");
     setShowAdvanced(false);
@@ -163,6 +174,13 @@ function AiAnnotationFab({ onStartAnnotate, disabled, annotationRuns, currentPag
 
   // processing 개수 — FAB 배지에 표시
   const processingCount = (annotationRuns || []).filter((r) => r.status === "processing").length;
+
+  // 모드별 표시 텍스트
+  const titleText = mode === "edit" ? t("page:result.annotateEditTitle") : t("page:result.annotateTitle");
+  const descText = mode === "edit" ? t("page:result.annotateEditDesc") : t("page:result.annotateDesc");
+  const placeholderText = mode === "edit"
+    ? t("page:result.annotateEditPlaceholder")
+    : t("page:result.annotateInstructionPlaceholder");
 
   return (
     <div ref={containerRef} className="absolute bottom-4 right-4 z-40">
@@ -193,16 +211,35 @@ function AiAnnotationFab({ onStartAnnotate, disabled, annotationRuns, currentPag
           open ? "opacity-100 scale-100 translate-y-0 pointer-events-auto" : "opacity-0 scale-95 translate-y-2 pointer-events-none"
         }`}
         data-oid="annotate-popup">
+        {/* 모드 세그먼트 토글 — 새 주석 생성 / 기존 주석 편집 */}
+        <div className="flex mb-2 p-0.5 bg-surface-container-high rounded-lg" data-oid="annotate-mode-toggle">
+          <button
+            type="button"
+            onClick={() => setMode("create")}
+            className={`flex-1 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
+              mode === "create" ? "bg-white text-primary shadow-sm" : "text-on-surface-variant hover:text-on-surface"
+            }`}>
+            {t("page:result.annotateModeCreate")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("edit")}
+            className={`flex-1 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
+              mode === "edit" ? "bg-white text-primary shadow-sm" : "text-on-surface-variant hover:text-on-surface"
+            }`}>
+            {t("page:result.annotateModeEdit")}
+          </button>
+        </div>
         <h4 className="font-bold text-sm text-on-surface mb-1">
-          {t("page:result.annotateTitle")}
+          {titleText}
         </h4>
         <p className="text-xs text-on-surface-variant mb-3">
-          {t("page:result.annotateDesc")}
+          {descText}
         </p>
         <textarea
           value={instruction}
           onChange={(e) => setInstruction(e.target.value)}
-          placeholder={t("page:result.annotateInstructionPlaceholder")}
+          placeholder={placeholderText}
           rows={3}
           className="w-full px-3 py-2 border border-outline-variant rounded-lg text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none"
           data-oid="annotate-instruction-input" />
@@ -269,6 +306,7 @@ function PdfViewerWithFab({
   onAnnotationChanged,
   viewerRef,
   onStartAnnotate,
+  onStartAnnotateEdit,
   converting,
   annotationRuns,
   totalPages = 1,
@@ -312,6 +350,7 @@ function PdfViewerWithFab({
       {onStartAnnotate && (
         <AiAnnotationFab
           onStartAnnotate={onStartAnnotate}
+          onStartAnnotateEdit={onStartAnnotateEdit}
           disabled={converting}
           annotationRuns={annotationRuns}
           currentPage={page}
@@ -335,6 +374,7 @@ export default function SourcePanel({
   onSaveAnnotations,
   onRetryAnnotation,
   onStartAnnotate,
+  onStartAnnotateEdit,
   converting = false,
   annotationRuns = [],
   totalPages = 1,
@@ -440,6 +480,7 @@ export default function SourcePanel({
           annotationsJson={selectedAnnotationsJson}
           onAnnotationChanged={handleAnnotationChanged}
           onStartAnnotate={onStartAnnotate}
+          onStartAnnotateEdit={onStartAnnotateEdit}
           converting={converting}
           annotationRuns={annotationRuns}
           totalPages={totalPages}
@@ -604,6 +645,7 @@ export default function SourcePanel({
                   annotationsJson={selectedAnnotationsJson}
                   onAnnotationChanged={handleAnnotationChanged}
                   onStartAnnotate={onStartAnnotate}
+                  onStartAnnotateEdit={onStartAnnotateEdit}
                   converting={converting}
                   annotationRuns={annotationRuns}
                   totalPages={totalPages}
@@ -637,6 +679,7 @@ export default function SourcePanel({
         annotationsJson={selectedAnnotationsJson}
         onAnnotationChanged={handleAnnotationChanged}
         onStartAnnotate={onStartAnnotate}
+        onStartAnnotateEdit={onStartAnnotateEdit}
         converting={converting}
         annotationRuns={annotationRuns}
         totalPages={totalPages}

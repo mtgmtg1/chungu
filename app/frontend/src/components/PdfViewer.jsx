@@ -150,7 +150,25 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
   };
 
   /**
-   * [Flow: Step 1 (annotationsJson 변경 감지) -> Step 2 (annotation plugin이 준비되면 importAnnotations 호출)
+   * [Flow: Step 1 (기존 주석을 모두 삭제) -> Step 2 (새 주석 JSON을 importAnnotations로 로드)]
+   * importAnnotations가 기존 주석을 업데이트하지 않고 추가만 하므로,
+   * 편집 후 재import 시 기존 주석을 먼저 삭제하여 중복/미갱신을 방지한다.
+   * annotationsJson은 서버의 단일 진실원(AI + 사용자 주석 모두 포함)이므로
+   * 삭제 후 재import해도 데이터 손실이 없다.
+   */
+  const replaceAnnotations = async (api, items) => {
+    try {
+      if (typeof api.deleteAllAnnotations === "function") {
+        api.deleteAllAnnotations();
+      }
+    } catch (e) {
+      console.warn("[PdfViewer] deleteAllAnnotations failed:", e);
+    }
+    await importAnnotationsAsPromise(api, items);
+  };
+
+  /**
+   * [Flow: Step 1 (annotationsJson 변경 감지) -> Step 2 (annotation plugin이 준비되면 기존 주석 삭제 후 재import)
    *       -> Step 3 (중복 import 방지를 위해 마지막 import 문자열 기록)]
    */
   useEffect(() => {
@@ -161,7 +179,7 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
     if (currentJson === importedAnnotationsJsonRef.current) return;
     const runImport = async () => {
       try {
-        await importAnnotationsAsPromise(api, annotationsJson);
+        await replaceAnnotations(api, annotationsJson);
         importedAnnotationsJsonRef.current = currentJson;
       } catch (e) {
         console.error("[PdfViewer] importAnnotations failed:", e);

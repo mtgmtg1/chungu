@@ -9,7 +9,7 @@ export function enableDevMock(enabled) {
   devMockEnabled = enabled
 }
 
-async function getToken() {
+export async function getToken() {
   const { data } = await supabase.auth.getSession()
   return data.session?.access_token
 }

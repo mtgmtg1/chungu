@@ -14,7 +14,8 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **JSON 오버레이**: 원본 PDF 주석을 별도 파일로보내지 않고 JSON 오버레이로 표시; 원본 문서는 그대로 보존.
 - **자동 저장**: 원본 패널에서 사용자가 그린 주석을 자동 저장하며, 무한 파일 증식 및 404 깜빡임 문제를 방지.
 - **AI 주석 생성**: PDF 패널 하단 중앙 플로팅 FAB으로 AI 주석 생성 트리거 이동; Vision LLM이 mode/comment_mode를 동적으로 결정.
-- **버그 수정**: `pdf_annotate_converter.py`에서 `_matches_to_targets` 분리 후 정의되지 않은 `skipped` 변수를 참조하던 NameError 수정.
+- **실패 처리**: AI 주석 생성이 실패(`status === "error"`)하거나 처리 중(`status === "processing"`)인 파일의 파일탭(좌측 다중 파일 목록)에 재시도/취소 버튼 표시; `SourcePanel.jsx`에서 `onRetryAnnotation` / `onDeleteFile` 콜백으로 `JobResultPage`와 연결.
+- **버그 수정**: 병렬 AI 주석 생성 중에도 `converting` 상태로 FAB이 비활성화되지 않던 문제 수정.
 
 ### 마크다운 에디터
 

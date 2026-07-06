@@ -13,7 +13,7 @@ import {
   Wand2,
   WrapText } from
 "lucide-react";
-import { api } from "../api.js";
+import { getToken } from "../api.js";
 
 const turndown = new TurndownService({
   headingStyle: "atx",
@@ -28,12 +28,20 @@ const turndown = new TurndownService({
  * @returns {string}
  */
 function getSelectedMarkdown(editor) {
-  if (!editor) return "";
+  if (!editor) {
+    console.log("[AI] getSelectedMarkdown: no editor");
+    return "";
+  }
   const { selection } = editor.state;
-  if (selection.empty) return "";
+  if (selection.empty) {
+    console.log("[AI] getSelectedMarkdown: empty selection");
+    return "";
+  }
   const slice = selection.content();
   const html = editor.view.domSerializer.serializeFragment(slice.content, { document });
-  return turndown.turndown(html);
+  const markdown = turndown.turndown(html);
+  console.log("[AI] getSelectedMarkdown: html length=", html.length, "markdown length=", markdown.length);
+  return markdown;
 }
 
 /**
@@ -42,9 +50,13 @@ function getSelectedMarkdown(editor) {
  * @param {string} markdown
  */
 function replaceSelectionWithMarkdown(editor, markdown) {
-  if (!editor || !markdown) return;
+  if (!editor || !markdown) {
+    console.log("[AI] replaceSelectionWithMarkdown: skip", { hasEditor: !!editor, hasMarkdown: !!markdown });
+    return;
+  }
   const html = marked.parse(markdown || "");
   const { from, to } = editor.state.selection;
+  console.log("[AI] replaceSelectionWithMarkdown: inserting at", { from, to, htmlLength: html.length });
   editor.chain().focus().insertContentAt({ from, to }, html).run();
 }
 
@@ -53,12 +65,19 @@ export default function AiMenu({ editor, editable = true }) {
   const [open, setOpen] = useState(false);
   const [customPrompt, setCustomPrompt] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
+  const [token, setToken] = useState(null);
   const menuRef = useRef(null);
 
-  const { completion, complete, isLoading, error } = useCompletion({
+  // [Flow: Step 1 (마운트 시 Supabase 세션 토큰 획득) -> Step 2 (useCompletion의 Authorization 헤더에 사용)]
+  useEffect(() => {
+    getToken().then((t) => setToken(t || ""));
+  }, []);
+
+  const { complete, isLoading, error } = useCompletion({
     api: "/api/v1/ai/generate",
-    fetch: api.aiGenerateStream,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
     onFinish: (_prompt, completionText) => {
+      console.log("[AI] onFinish:", completionText.slice(0, 100));
       replaceSelectionWithMarkdown(editor, completionText);
       setOpen(false);
       setShowCustomInput(false);
@@ -66,6 +85,7 @@ export default function AiMenu({ editor, editable = true }) {
     },
     onError: (err) => {
       console.error("[AI] error:", err);
+      window.alert("AI 오류: " + err.message);
     }
   });
 
@@ -86,9 +106,17 @@ export default function AiMenu({ editor, editable = true }) {
    * @param {string} option
    */
   const handleCommand = async (option) => {
-    if (!editor || isLoading) return;
+    console.log("[AI] handleCommand:", option);
+    if (!editor || isLoading) {
+      console.log("[AI] skip: editor=", !!editor, "isLoading=", isLoading);
+      return;
+    }
     let prompt = getSelectedMarkdown(editor);
-    if (!prompt && option !== "continue") return;
+    console.log("[AI] prompt:", prompt.slice(0, 100));
+    if (!prompt && option !== "continue") {
+      console.log("[AI] empty prompt, skip");
+      return;
+    }
 
     setShowCustomInput(false);
 
@@ -98,16 +126,26 @@ export default function AiMenu({ editor, editable = true }) {
       if (!prompt.trim()) return;
     }
 
+    console.log("[AI] calling complete...");
     await complete(prompt, { body: { option } });
+    console.log("[AI] complete returned");
   };
 
   /**
    * [Flow: Step 1 (선택 마크다운 + 사용자 커스텀 명령 수집) -> Step 2 (useCompletion complete 호출)]
    */
   const handleCustom = async () => {
-    if (!editor || isLoading || !customPrompt.trim()) return;
+    console.log("[AI] handleCustom:", customPrompt);
+    if (!editor || isLoading || !customPrompt.trim()) {
+      console.log("[AI] custom skip: editor=", !!editor, "isLoading=", isLoading);
+      return;
+    }
     const prompt = getSelectedMarkdown(editor);
-    if (!prompt) return;
+    console.log("[AI] custom prompt:", prompt.slice(0, 100));
+    if (!prompt) {
+      console.log("[AI] custom empty prompt, skip");
+      return;
+    }
     await complete(prompt, { body: { option: "zap", command: customPrompt.trim() } });
   };
 

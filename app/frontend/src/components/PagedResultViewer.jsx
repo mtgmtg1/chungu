@@ -48,7 +48,7 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
     loadPage(currentPage);
   }, [currentPage, loadPage]);
 
-  // [Flow: Step 1 (페이지 마크다운 변경 시 pendingRef 갱신) -> Step 2 (1.5초 debounce 타이머 설정) -> Step 3 (타이머 완료 시 서버에 페이지 저장)]
+  // [Flow: Step 1 (페이지 마크다운 변경 시 pendingRef 갱신) -> Step 2 (1초 debounce 타이머 설정) -> Step 3 (타이머 완료 시 서버에 페이지 저장)]
   const saveCurrentPage = useCallback(async (updated) => {
     const markdownToSave = updated !== undefined ? updated : pendingMarkdownRef.current;
     setError("");
@@ -66,7 +66,7 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
     clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(() => {
       saveCurrentPage(pendingMarkdownRef.current);
-    }, 1500);
+    }, 1000);
   }, [saveCurrentPage]);
 
   useImperativeHandle(ref, () => ({

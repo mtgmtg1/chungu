@@ -1808,19 +1808,6 @@ def annotate_job(
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # 원자적으로 다음 인덱스를 할당한다. 동시에 여러 주석 작업이 실행되더라도
-    # 각각 고유한 파일명을 가지므로 덮어쓰기가 발생하지 않는다.
-    result = db.execute(
-        update(Job)
-        .where(Job.id == job_id)
-        .values(annotated_pdf_next_index=Job.annotated_pdf_next_index + 1)
-        .returning(Job.annotated_pdf_next_index)
-    )
-    db.commit()
-    annotation_index = result.scalar()
-    if not annotation_index:
-        raise HTTPException(status_code=500, detail="주석 인덱스 할당에 실패했습니다.")
-
     # 관리자 체크 (무제한 사용)
     if db_user.is_admin:
         # 관리자는 구독 체크 없이 바로 처리
@@ -1840,7 +1827,7 @@ def annotate_job(
         if advanced:
             units *= 2
         try:
-            result = subscription_service.reserve_usage(
+            sub_result = subscription_service.reserve_usage(
                 db,
                 db_user,
                 basic_pages=0,
@@ -1857,7 +1844,20 @@ def annotate_job(
         job.annotate_status = "processing"
         job.annotate_refundable = True
         job.annotate_reserved_pages = units
-        job.annotate_reserved_period_start = datetime.fromisoformat(result["period_start"])
+        job.annotate_reserved_period_start = datetime.fromisoformat(sub_result["period_start"])
+
+    # 구독 체크 통과 후 원자적으로 다음 인덱스를 할당한다.
+    # 동시에 여러 주석 작업이 실행되더라도 각각 고유한 파일명을 가지므로 덮어쓰기가 발생하지 않는다.
+    idx_result = db.execute(
+        update(Job)
+        .where(Job.id == job_id)
+        .values(annotated_pdf_next_index=Job.annotated_pdf_next_index + 1)
+        .returning(Job.annotated_pdf_next_index)
+    )
+    db.commit()
+    annotation_index = idx_result.scalar()
+    if not annotation_index:
+        raise HTTPException(status_code=500, detail="주석 인덱스 할당에 실패했습니다.")
 
     # processing entry를 annotated_pdf_files에 추가한다.
     # 동시 쓰기 안전성을 위해 SELECT FOR UPDATE로 행을 잠근다.

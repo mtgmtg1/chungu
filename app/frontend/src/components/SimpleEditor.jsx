@@ -181,7 +181,7 @@ ref)
     editable
   });
 
-  // [Flow: Step 1 (사용자 입력으로 Tiptap 업데이트 이벤트 발생) -> Step 2 (1.5초 debounce 타이머 설정) -> Step 3 (타이머 완료 시 getMarkdown으로 변환) -> Step 4 (prop 마크다운과 다를 때만 onChange 콜백 호출)]
+  // [Flow: Step 1 (사용자 입력으로 Tiptap 업데이트 이벤트 발생) -> Step 2 (1초 debounce 타이머 설정) -> Step 3 (타이머 완료 시 getMarkdown으로 변환) -> Step 4 (prop 마크다운과 다를 때만 onChange 콜백 호출)]
   useEffect(() => {
     if (!editor) return;
     const handleUpdate = () => {
@@ -191,7 +191,7 @@ ref)
         const updated = turndown.turndown(editor.getHTML());
         if (updated === lastMarkdownRef.current) return;
         onChangeRef.current(updated);
-      }, 1500);
+      }, 1000);
     };
     editor.on("update", handleUpdate);
     return () => {

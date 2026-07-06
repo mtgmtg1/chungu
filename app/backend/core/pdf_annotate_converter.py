@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import fitz  # PyMuPDF
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from .. import settings_store
 from ..config import settings

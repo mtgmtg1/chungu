@@ -89,7 +89,7 @@ export default function SourcePanel({
   /**
    * [Flow: Step 1 (PdfViewer ref로 exportAnnotations 호출) -> Step 2 (JSON 파싱)
    *       -> Step 3 (상위 onSaveAnnotations 콜백에 전달)]
-   * 주석 변경 이벤트 발생 시 2초 debounce 후 자동 저장한다.
+   * 주석 변경 이벤트 발생 시 1초 debounce 후 자동 저장한다.
    */
   const handleSaveAnnotations = useCallback(async () => {
     if (!pdfViewerRef.current || !onSaveAnnotations) return;
@@ -108,7 +108,7 @@ export default function SourcePanel({
   }, [onSaveAnnotations]);
 
   /**
-   * [Flow: Step 1 (주석 변경 이벤트 수신) -> Step 2 (2초 debounce 후 자동 저장 예약)]
+   * [Flow: Step 1 (주석 변경 이벤트 수신) -> Step 2 (1초 debounce 후 자동 저장 예약)]
    */
   const handleAnnotationChanged = useCallback(() => {
     if (autoSaveRef.current) {
@@ -116,7 +116,7 @@ export default function SourcePanel({
     }
     autoSaveRef.current = setTimeout(() => {
       handleSaveAnnotations();
-    }, 2000);
+    }, 1000);
   }, [handleSaveAnnotations]);
 
   /**

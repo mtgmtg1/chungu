@@ -16,7 +16,6 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 from sqlalchemy import select
-from sqlalchemy.orm.attributes import flag_modified
 
 from .. import settings_store
 from ..config import settings
@@ -519,7 +518,6 @@ def run(
                 "created_at": job.finished_at.isoformat() if job.finished_at else datetime.now(timezone.utc).isoformat(),
             }
         ]
-        flag_modified(job, "annotated_pdf_files")
         db.commit()
 
     next_index = annotation_index
@@ -627,7 +625,6 @@ def run(
                 db.rollback()
                 return {"job_id": job_id, "status": "cancelled", "matched_rows": 0}
             locked_job.annotated_pdf_files = files
-            flag_modified(locked_job, "annotated_pdf_files")
             locked_job.result_annotated_pdf_storage_path = storage_path
             locked_job.annotate_status = "done"
             locked_job.annotate_refundable = False
@@ -667,7 +664,6 @@ def _update_entry_status(db, job_id: str, annotation_index: int, status: str, re
         db.rollback()
         return
     locked_job.annotated_pdf_files = files
-    flag_modified(locked_job, "annotated_pdf_files")
     # 하위 호환: 단일 status 필드도 갱신
     locked_job.annotate_status = status
     if status == "error":

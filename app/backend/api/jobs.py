@@ -1238,6 +1238,7 @@ def _source_files(job: Job) -> list[dict]:
             }
         ]
 
+    shared_annotations_json_path = None
     if annotated_entries:
         annotated_entries = sorted(annotated_entries, key=lambda e: e.get("index", 0))
         # 신규 공유 annotations.json 경로를 사용하는 entry를 우선 선택한다.
@@ -1268,9 +1269,9 @@ def _source_files(job: Job) -> list[dict]:
                         item["annotations_json_url"] = annotations_json_url
                         break
 
-    # [Flow: user_annotations.json이 존재하면 원본 PDF 항목에 annotations_json_url을 덮어쓴다]
-    # 사용자가 직접 추가/편집한 주석은 AI 주석과 병합되어 user_annotations.json에 저장되므로,
-    # 이 URL이 있으면 우선적으로 사용해 원본 탭에서 두 주석을 모두 볼 수 있도록 한다.
+    # [Flow: user_annotations.json이 존재하면 AI 주석과 병합하여 원본 PDF 항목에 설정]
+    # 사용자가 직접 추가/편집한 주석은 user_annotations.json에만 저장되며,
+    # 여기서 AI 주석 JSON과 병합해 원본 탭에서 두 주석을 중복 없이 볼 수 있도록 한다.
     user_annotations_json_path = f"{job.id}/user_annotations.json"
     try:
         user_annotations_url = supabase_client.get_signed_download_url(
@@ -1279,9 +1280,14 @@ def _source_files(job: Job) -> list[dict]:
     except Exception:
         user_annotations_url = None
     if user_annotations_url:
-        for item in source_files:
-            if item.get("source_kind") == "original" and item.get("type") in ("pdf", "docx", "hwp"):
-                item["annotations_json_url"] = user_annotations_url
+        merged_url = _merge_annotation_jsons(
+            job.id, shared_annotations_json_path, user_annotations_json_path
+        )
+        if merged_url:
+            for item in source_files:
+                if item.get("source_kind") == "original" and item.get("type") in ("pdf", "docx", "hwp"):
+                    item["annotations_json_url"] = merged_url
+                    break
     return source_files
 
 
@@ -1328,6 +1334,52 @@ def _annotation_id(item: dict) -> str:
     if "annotation" in item and isinstance(item["annotation"], dict):
         return item["annotation"].get("id", "")
     return item.get("id", "")
+
+
+def _merge_annotation_jsons(
+    job_id: str,
+    ai_annotations_path: str | None,
+    user_annotations_path: str,
+) -> str | None:
+    """[Flow: Step 1 (AI 주석 JSON 다운로드) -> Step 2 (사용자 주석 JSON 다운로드)
+          -> Step 3 (위치 기반 중복 제거 후 병합) -> Step 4 (merged_annotations.json 업로드)
+          -> Step 5 (signed URL 반환)]
+
+    AI 주석 JSON과 사용자 주석 JSON을 병합하여 원본 PDF 탭에서 한 번에 표시한다.
+    동일한 pageIndex/rect/type/contents를 가진 주석은 _deduplicate_annotations로
+    하나만 남겨 색이 진해지는 중복 렌더링을 방지한다.
+    """
+    client = supabase_client.get_service_client()
+    merged: list[dict] = []
+    if ai_annotations_path:
+        try:
+            ai_bytes = client.storage.from_("results").download(ai_annotations_path)
+            ai_list = json.loads(ai_bytes.decode("utf-8"))
+            if isinstance(ai_list, list):
+                merged.extend(ai_list)
+        except Exception:
+            pass
+    try:
+        user_bytes = client.storage.from_("results").download(user_annotations_path)
+        user_list = json.loads(user_bytes.decode("utf-8"))
+        if isinstance(user_list, list):
+            merged.extend(user_list)
+    except Exception:
+        pass
+    merged = _deduplicate_annotations(merged)
+    merged_path = f"{job_id}/merged_annotations.json"
+    try:
+        client.storage.from_("results").upload(
+            merged_path,
+            json.dumps(merged, ensure_ascii=False).encode("utf-8"),
+            {"content-type": "application/json", "upsert": "true"},
+        )
+        return supabase_client.get_signed_download_url(
+            merged_path, bucket="results", expires_in=3600
+        )
+    except Exception as e:
+        logger.warning(f"[_merge_annotation_jsons] {job_id} 병합 업로드 실패: {e}")
+        return None
 
 
 def _annotation_inner(item: dict) -> dict:
@@ -2726,35 +2778,43 @@ def save_user_annotations(
         raise HTTPException(status_code=500, detail=f"주석 저장 실패: {e}")
 
 
+def _is_user_annotation(item: dict) -> bool:
+    """[Flow: Step 1 (annotation 내부 dict 추출) -> Step 2 (AI 주석 id prefix 확인)
+          -> Step 3 (_userEdited 플래그 확인) -> Step 4 (사용자 주석 여부 반환)]
+
+    AI 주석은 id가 'backend-'로 시작한다. 사용자가 직접 추가한 주석은 그렇지 않으며,
+    사용자가 AI 주석을 직접 편집한 경우(_userEdited=true)에도 사용자 주석으로 간주한다.
+    """
+    if not isinstance(item, dict):
+        return False
+    a = _annotation_inner(item)
+    annotation_id = a.get("id", "")
+    if annotation_id.startswith("backend-"):
+        return bool(a.get("_userEdited"))
+    return True
+
+
 def _save_user_annotations_json(job: Job, annotations: list, db: Session) -> dict:
-    """[Flow: Step 1 (기존 AI 주석 JSON 다운로드) -> Step 2 (사용자 주석과 병합)
-          -> Step 3 (results 버킷에 저장) -> Step 4 (preview 캐시 무효화)]
+    """[Flow: Step 1 (사용자 주석만 필터링) -> Step 2 (AI 주석 JSON 다운로드)
+          -> Step 3 (중복 제거 후 병합) -> Step 4 (results 버킷에 저장)
+          -> Step 5 (preview 캐시 무효화)]
 
     원본 PDF에 대한 사용자 주석을 JSON 형태로만 저장한다.
     별도의 주석 PDF 파일을 생성하지 않고, 원본 PDF 뷰어에서 annotations_json_url로 로드한다.
-    AI 주석이 이미 존재하면 사용자 주석과 병합하여 원본 탭에서 한 번에 볼 수 있도록 한다.
+    AI 주석과의 병합은 _source_files()에서 수행하며, 여기서는 사용자 주석만 저장해
+    동일한 주석이 반복 저장되면서 색이 진해지는 것을 방지한다.
     파일 경로는 고정: {job_id}/user_annotations.json
     """
     job_id = job.id
     storage_path = f"{job_id}/user_annotations.json"
-    ai_annotations_path = f"{job_id}/annotated.annotations.json"
     try:
         client = supabase_client.get_service_client()
-        deduped = _deduplicate_annotations(annotations)
-        # AI 주석이 있으면 사용자 주석과 병합한다.
-        try:
-            ai_bytes = client.storage.from_("results").download(ai_annotations_path)
-            ai_annotations = json.loads(ai_bytes.decode("utf-8"))
-            if not isinstance(ai_annotations, list):
-                ai_annotations = []
-        except Exception:
-            ai_annotations = []
-        user_annotation_ids = {_annotation_id(a) for a in deduped}
-        preserved_ai = [a for a in ai_annotations if _annotation_id(a) not in user_annotation_ids]
-        merged = preserved_ai + deduped
+        # AI 주석은 제외하고 사용자가 추가/편집한 주석만 저장한다.
+        user_annotations = [a for a in annotations if _is_user_annotation(a)]
+        user_annotations = _deduplicate_annotations(user_annotations)
         client.storage.from_("results").upload(
             storage_path,
-            json.dumps(merged, ensure_ascii=False).encode("utf-8"),
+            json.dumps(user_annotations, ensure_ascii=False).encode("utf-8"),
             {"content-type": "application/json", "upsert": "true"},
         )
         cache.invalidate_pattern(f"preview:{job_id}:*")

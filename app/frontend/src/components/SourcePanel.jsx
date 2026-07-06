@@ -64,7 +64,7 @@ function ImageList({ urls, t }) {
 /**
  * [Flow: Step 1 (FAB 클릭 또는 외부 클릭으로 open 상태 토글) -> Step 2 (instruction 입력 관리)
  *       -> Step 3 (제출 시 onStartAnnotate 콜백 호출) -> Step 4 (전송 후 팝업 닫기 및 초기화)]
- * PDF 패널 하단 중앙에 떠 있는 AI 주석 FAB입니다.
+ * PDF 패널 하단 우측에 떠 있는 AI 주석 FAB입니다.
  * 클릭하면 입력 카드 팝업이 부드러운 애니메이션으로 펼쳐집니다.
  */
 function AiAnnotationFab({ onStartAnnotate, disabled }) {
@@ -93,7 +93,7 @@ function AiAnnotationFab({ onStartAnnotate, disabled }) {
   };
 
   return (
-    <div ref={containerRef} className="absolute bottom-4 left-1/2 -translate-x-1/2 z-40">
+    <div ref={containerRef} className="absolute bottom-4 right-4 z-40">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -107,7 +107,7 @@ function AiAnnotationFab({ onStartAnnotate, disabled }) {
       </button>
 
       <div
-        className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-3 w-72 bg-white rounded-lg shadow-xl border border-outline-variant p-4 transition-all duration-300 ease-out origin-bottom ${
+        className={`absolute bottom-full right-0 mb-3 w-72 bg-white rounded-lg shadow-xl border border-outline-variant p-4 transition-all duration-300 ease-out origin-bottom-right ${
           open ? "opacity-100 scale-100 translate-y-0 pointer-events-auto" : "opacity-0 scale-95 translate-y-2 pointer-events-none"
         }`}
         data-oid="annotate-popup">
@@ -149,7 +149,7 @@ function AiAnnotationFab({ onStartAnnotate, disabled }) {
 }
 
 /**
- * [Flow: Step 1 (PDF 뷰어를 상대 위치 컨테이너로 감싸기) -> Step 2 (onStartAnnotate가 있으면 하단 중앙에 FAB 배치)]
+ * [Flow: Step 1 (PDF 뷰어를 상대 위치 컨테이너로 감싸기) -> Step 2 (onStartAnnotate가 있으면 하단 우측에 FAB 배치)]
  */
 function PdfViewerWithFab({
   url,
@@ -351,7 +351,10 @@ export default function SourcePanel({
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            onRetryAnnotation(f.source_index);
+                            // AI 주석은 하나의 공유 파일로 축소되므로, source_index 대신 0을
+                            // 전달해 모든 error run을 한 번에 재시도한다.
+                            const retryIndex = f.source_kind === "annotation" ? 0 : f.source_index;
+                            onRetryAnnotation(retryIndex);
                           }}
                           className="flex-shrink-0 flex items-center gap-1 px-1.5 py-1 rounded text-primary/70 hover:text-primary hover:bg-primary/10 transition-colors text-[10px]"
                           title={t("page:result.annotateRetry")}
@@ -420,7 +423,12 @@ export default function SourcePanel({
                   <div className="flex items-center gap-2">
                     {onRetryAnnotation && (
                       <button
-                        onClick={() => onRetryAnnotation(selected.source_index)}
+                        onClick={() => {
+                          // AI 주석은 공유 파일로 축소되어 있으므로 0을 전달해
+                          // 모든 error run을 한 번에 재시도한다.
+                          const retryIndex = selected.source_kind === "annotation" ? 0 : selected.source_index;
+                          onRetryAnnotation(retryIndex);
+                        }}
                         className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-white hover:opacity-90 transition-colors"
                       >
                         <RotateCw size={16} />

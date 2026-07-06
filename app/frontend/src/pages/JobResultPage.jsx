@@ -12,6 +12,8 @@ import {
   Loader2,
   PanelLeft,
   PanelLeftClose,
+  PanelRight,
+  PanelRightClose,
   RefreshCw,
   Trash2,
   XCircle } from
@@ -55,11 +57,19 @@ export default function JobResultPage() {
   const [selectedFileIndex, setSelectedFileIndex] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [now, setNow] = useState(Date.now());
   const pollRef = useRef(null);
   const editorRef = useRef(null);
   const pagedViewerRef = useRef(null);
-  const sourcePanelRef = useRef(null);
+  const [sourcePanelHandle, setSourcePanelHandle] = useState(null);
+  const sourcePanelRef = useCallback((node) => {
+    if (node) setSourcePanelHandle(node);
+  }, []);
+  const [rightPanelHandle, setRightPanelHandle] = useState(null);
+  const rightPanelRef = useCallback((node) => {
+    if (node) setRightPanelHandle(node);
+  }, []);
 
   const [previewMode, setPreviewMode] = useState("markdown"); // "markdown" | "xlsxBasic" | "xlsxAdvanced"
   const [basicUrl, setBasicUrl] = useState(null);
@@ -193,13 +203,23 @@ export default function JobResultPage() {
 
   // [Flow: Step 1 (사이드바 상태 변경 감지) -> Step 2 (접힌 상태면 왼쪽 원본 패널 collapse, 펼친 상태면 expand)]
   useEffect(() => {
-    if (!sourcePanelRef.current) return;
+    if (!sourcePanelHandle) return;
     if (sidebarOpen) {
-      sourcePanelRef.current.expand();
+      sourcePanelHandle.expand();
     } else {
-      sourcePanelRef.current.collapse();
+      sourcePanelHandle.collapse();
     }
-  }, [sidebarOpen]);
+  }, [sourcePanelHandle, sidebarOpen]);
+
+  // [Flow: Step 1 (우측 결과 패널 상태 변경 감지) -> Step 2 (접힌 상태면 우측 마크다운/엑셀 패널 collapse, 펼친 상태면 expand)]
+  useEffect(() => {
+    if (!rightPanelHandle) return;
+    if (rightPanelOpen) {
+      rightPanelHandle.expand();
+    } else {
+      rightPanelHandle.collapse();
+    }
+  }, [rightPanelHandle, rightPanelOpen]);
 
   async function loadPreview() {
     try {
@@ -547,7 +567,7 @@ export default function JobResultPage() {
           ref={sourcePanelRef}
           defaultSize={30}
           minSize={20}
-          maxSize={60}
+          maxSize={100}
           collapsible
           collapsedSize={0}
           className="flex flex-col h-full min-h-0 overflow-hidden"
@@ -571,7 +591,15 @@ export default function JobResultPage() {
         <PanelResizeHandle
           className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize"
           data-oid="result-resize-handle" />
-        <Panel className="flex flex-col h-full min-h-0 overflow-hidden" data-oid="result-content-panel">
+        <Panel
+          ref={rightPanelRef}
+          defaultSize={70}
+          minSize={0}
+          maxSize={80}
+          collapsible
+          collapsedSize={0}
+          className="flex flex-col h-full min-h-0 overflow-hidden"
+          data-oid="result-content-panel">
           {rightContent}
         </Panel>
       </PanelGroup>
@@ -679,11 +707,24 @@ export default function JobResultPage() {
           {job?.status === "done" && (sourceUrl || sourceFiles.length > 0) &&
           <button
             onClick={() => setSidebarOpen((v) => !v)}
+            title={sidebarOpen ? t("page:result.hideSourcePanel") : t("page:result.showSourcePanel")}
             className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
             data-oid="g85z5vd">
               {sidebarOpen ?
             <PanelLeftClose size={16} data-oid="tn5ebf8" /> :
             <PanelLeft size={16} data-oid="iknpeoy" />
+            }
+            </button>
+          }
+          {job?.status === "done" && !needsPagedMode(job) &&
+          <button
+            onClick={() => setRightPanelOpen((v) => !v)}
+            title={rightPanelOpen ? t("page:result.hideResultPanel") : t("page:result.showResultPanel")}
+            className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
+            data-oid="result-right-panel-toggle">
+              {rightPanelOpen ?
+            <PanelRightClose size={16} data-oid="result-right-panel-close-icon" /> :
+            <PanelRight size={16} data-oid="result-right-panel-open-icon" />
             }
             </button>
           }

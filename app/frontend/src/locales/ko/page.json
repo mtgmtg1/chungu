@@ -149,6 +149,8 @@
     "error": "실패",
     "hideSidebar": "원본/페이지 목록 숨기기",
     "showSidebar": "원본/페이지 목록 보이기",
+    "hideResultPanel": "결과 패널 숨기기",
+    "showResultPanel": "결과 패널 보이기",
     "md": ".md",
     "office": "Office",
     "excel": "Excel",

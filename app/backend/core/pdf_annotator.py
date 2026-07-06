@@ -153,6 +153,7 @@ def build_embedpdf_annotations(
     pdf_bytes: bytes,
     targets: list[AnnotationTarget],
     mode: str,
+    annotation_index: int = 0,
 ) -> list[dict]:
     """[Flow: Step 1 (AnnotationTarget 목록과 PDF 수신) -> Step 2 (페이지별 시각적 크기/회전 캡처)
           -> Step 3 (여백 주석 레이아웃 계산) -> Step 4 (EmbedPDF AnnotationTransferItem[] 배열 생성)
@@ -166,6 +167,8 @@ def build_embedpdf_annotations(
         pdf_bytes: 원본 PDF 바이트 (페이지 시각적 크기 계산용)
         targets: AnnotationTarget 목록
         mode: "highlight" | "margin_note" | "both"
+        annotation_index: 병렬 AI 주석 run을 구분하는 고유 인덱스. 주석 ID에 포함되어
+            병합/재시도/삭제 시 run 단위 식별이 가능하다.
 
     Returns:
         EmbedPDF importAnnotations()가 기대하는 AnnotationTransferItem[] 형식
@@ -215,7 +218,7 @@ def build_embedpdf_annotations(
         note_layouts = note_layouts_by_page.get(page.number, {})
 
         for idx, t in enumerate(page_targets):
-            base_id = f"backend-{page_no}-{idx}"
+            base_id = f"backend-{annotation_index}-{page_no}-{idx}"
             x0, y0, x1, y1 = t.bbox_pdf
 
             page_height = visual.height

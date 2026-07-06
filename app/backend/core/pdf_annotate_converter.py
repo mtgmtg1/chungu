@@ -91,6 +91,46 @@ def _annotation_display_name(job: Job, n: int) -> str:
     return f"{stem}_annotation{n}.pdf"
 
 
+def _annotation_id(item: dict) -> str:
+    """[Flow: Step 1 (EmbedPDF AnnotationTransferItem 형태 확인) -> Step 2 (annotation.id 추출)
+          -> Step 3 (ID 문자열 반환)]
+
+    EmbedPDF 주석 객체는 {"annotation": {...}} 또는 평면 dict 형태로 들어올 수 있다.
+    """
+    if not isinstance(item, dict):
+        return ""
+    if "annotation" in item and isinstance(item["annotation"], dict):
+        return item["annotation"].get("id", "")
+    return item.get("id", "")
+
+
+def _merge_annotations_for_run(
+    shared_annotations_json_path: str,
+    new_annotations: list[dict],
+    annotation_index: int,
+) -> list[dict]:
+    """[Flow: Step 1 (공유 annotations.json 다운로드) -> Step 2 (동일 run의 기존 주석 제거)
+          -> Step 3 (새 주석 추가) -> Step 4 (병합된 목록 반환)]
+
+    병렬 AI 주석 생성에서 공유 JSON을 안전하게 갱신하기 위해 사용한다.
+    실제 호출은 SELECT FOR UPDATE로 잠근 트랜잭션 안에서 이루어져야 한다.
+    동일 annotation_index가 생성했던 주석은 제거한 뒤 새 주석을 추가하여,
+    재시도 시 중복을 방지하고 멱등성을 보장한다.
+    """
+    prefix = f"backend-{annotation_index}-"
+    client = supabase_client.get_service_client()
+    try:
+        existing_bytes = client.storage.from_("results").download(shared_annotations_json_path)
+        existing = json.loads(existing_bytes.decode("utf-8"))
+        if not isinstance(existing, list):
+            existing = []
+    except Exception:
+        existing = []
+
+    filtered = [a for a in existing if not _annotation_id(a).startswith(prefix)]
+    return filtered + new_annotations
+
+
 @dataclass
 class AnnotateElement:
     """주석 대상이 될 수 있는 하나의 텍스트 요소 (표 행 또는 텍스트 블록)."""
@@ -768,51 +808,79 @@ def run(
             # 표시 기반으로 두고 embedpdf JSON(AnnotationTransferItem[])을 프론트에서
             # 오버레이한다. 단일 진실원이자 사용자 편집 가능. flatten 다운로드는
             # 프론트의 embedpdf export plugin(saveAsCopy)이 처리한다.
-            embedpdf_annotations = build_embedpdf_annotations(pdf_bytes, targets, mode)
-            storage_path = f"{job.id}/annotated_{next_index}.pdf"
-            annotations_json_storage_path = f"{job.id}/annotated_{next_index}.annotations.json"
-            display_name = _annotation_display_name(job, next_index)
+            # job당 하나의 공유 파일에 누적되며, run별로 고유 ID prefix를 가진다.
+            shared_storage_path = f"{job.id}/annotated.pdf"
+            shared_annotations_json_path = f"{job.id}/annotated.annotations.json"
+            display_name = _annotation_display_name(job, 1)
+
+            # [Flow: 기존 공유 PDF가 있으면 재사용하여 사용자 주석 보존]
+            # 사용자가 이미 AI 주석 PDF에 그린 주석을 덮어쓰지 않도록, Storage에
+            # 기존 PDF가 있으면 그것을 표시 기반으로 재사용한다. 텍스트 내용은
+            # 원본과 동일하므로 AI 주석 좌표 정렬에 영향을 주지 않는다.
             client = supabase_client.get_service_client()
-            client.storage.from_("results").upload(
-                storage_path,
-                pdf_bytes,
-                {"content-type": "application/pdf", "upsert": "true"},
-            )
-            client.storage.from_("results").upload(
-                annotations_json_storage_path,
-                json.dumps(embedpdf_annotations, ensure_ascii=False).encode("utf-8"),
-                {"content-type": "application/json", "upsert": "true"},
+            existing_pdf_bytes = None
+            should_upload_pdf = False
+            try:
+                existing_pdf_bytes = client.storage.from_("results").download(shared_storage_path)
+            except Exception:
+                existing_pdf_bytes = None
+            if existing_pdf_bytes:
+                pdf_bytes = existing_pdf_bytes
+                logger.info(f"[pdf_annotate] 기존 공유 PDF 재사용: {shared_storage_path}")
+            else:
+                should_upload_pdf = True
+
+            embedpdf_annotations = build_embedpdf_annotations(
+                pdf_bytes, targets, mode, annotation_index=next_index
             )
 
             # 동시 쓰기 안전성을 위해 SELECT FOR UPDATE로 행을 잠근다.
-            # 해당 index의 processing entry를 done 상태로 갱신한다.
+            # 공유 annotations.json에 새 주석을 병합하고, 공유 PDF/JSON을 업로드한다.
             locked_job = db.execute(
                 select(Job).where(Job.id == job_id).with_for_update()
             ).scalar_one()
             files = list(locked_job.annotated_pdf_files or [])
-            entry_found = False
+            entry_found = any(e.get("index") == next_index for e in files)
+            if not entry_found:
+                # 사용자가 취소하여 entry가 제거된 경우 업로드하지 않고 종료한다.
+                db.rollback()
+                return {"job_id": job_id, "status": "cancelled", "matched_rows": 0}
+
+            merged_annotations = _merge_annotations_for_run(
+                shared_annotations_json_path, embedpdf_annotations, next_index
+            )
+            if should_upload_pdf:
+                client.storage.from_("results").upload(
+                    shared_storage_path,
+                    pdf_bytes,
+                    {"content-type": "application/pdf", "upsert": "true"},
+                )
+            client.storage.from_("results").upload(
+                shared_annotations_json_path,
+                json.dumps(merged_annotations, ensure_ascii=False).encode("utf-8"),
+                {"content-type": "application/json", "upsert": "true"},
+            )
+
             for e in files:
                 if e.get("index") == next_index:
                     e["status"] = "done"
-                    e["storage_path"] = storage_path
-                    e["annotations_json_storage_path"] = annotations_json_storage_path
+                    e["storage_path"] = shared_storage_path
+                    e["annotations_json_storage_path"] = shared_annotations_json_path
                     e["filename"] = display_name
                     e["instruction"] = instruction
                     e["mode"] = mode
                     e["comment_mode"] = comment_mode
                     e["created_at"] = datetime.now(timezone.utc).isoformat()
-                    entry_found = True
+                    e["generated_annotation_ids"] = [
+                        _annotation_id(a) for a in embedpdf_annotations
+                    ]
                     break
-            if not entry_found:
-                # 사용자가 취소하여 entry가 제거된 경우 업로드된 결과 파일을 정리한다.
-                supabase_client.delete_storage_path("results", storage_path)
-                supabase_client.delete_storage_path("results", annotations_json_storage_path)
-                db.rollback()
-                return {"job_id": job_id, "status": "cancelled", "matched_rows": 0}
             locked_job.annotated_pdf_files = files
             flag_modified(locked_job, "annotated_pdf_files")
-            locked_job.result_annotated_pdf_storage_path = storage_path
-            locked_job.annotate_status = "done"
+            locked_job.result_annotated_pdf_storage_path = shared_storage_path
+            # 병렬 run 중 processing이 남아 있으면 전체 상태를 processing으로 유지한다.
+            has_processing = any(e.get("status") == "processing" for e in files)
+            locked_job.annotate_status = "processing" if has_processing else "done"
             locked_job.annotate_refundable = False
             locked_job.annotate_recovery_notes = []
             db.commit()
@@ -851,8 +919,15 @@ def _update_entry_status(db, job_id: str, annotation_index: int, status: str, re
         return
     locked_job.annotated_pdf_files = files
     flag_modified(locked_job, "annotated_pdf_files")
-    # 하위 호환: 단일 status 필드도 갱신
-    locked_job.annotate_status = status
+    # 하위 호환: 단일 status 필드도 갱신. 병렬 run이 있을 때는 전체 상태를 반영한다.
+    has_processing = any(e.get("status") == "processing" for e in files)
+    has_error = any(e.get("status") == "error" for e in files)
+    if has_processing:
+        locked_job.annotate_status = "processing"
+    elif has_error:
+        locked_job.annotate_status = "error"
+    else:
+        locked_job.annotate_status = "done" if files else ""
     if status == "error":
         locked_job.annotate_refundable = True
         locked_job.annotate_recovery_notes = recovery_notes or []

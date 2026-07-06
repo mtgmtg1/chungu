@@ -149,6 +149,8 @@
     "error": "エラー",
     "hideSidebar": "元ファイル/ページリストを非表示",
     "showSidebar": "元ファイル/ページリストを表示",
+    "hideResultPanel": "結果パネルを非表示",
+    "showResultPanel": "結果パネルを表示",
     "md": ".md",
     "office": "Office",
     "excel": "Excel",

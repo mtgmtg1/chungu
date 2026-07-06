@@ -149,6 +149,8 @@
     "error": "Error",
     "hideSidebar": "Hide source/page list",
     "showSidebar": "Show source/page list",
+    "hideResultPanel": "Hide result panel",
+    "showResultPanel": "Show result panel",
     "md": ".md",
     "office": "Office",
     "excel": "Excel",

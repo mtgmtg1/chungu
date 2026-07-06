@@ -24,7 +24,7 @@ from PIL import Image
 from .config import settings
 from .core import ocr_client, paddleocr_client
 from .core.ocr_layout import parse_layout_result
-from .core.pdf_annotator import AnnotationTarget, annotate_pdf
+from .core.pdf_annotator import AnnotationTarget, build_embedpdf_annotations
 from .core.pdf_coords import clamp_rect_to_page, px_bbox_to_pdf_rect
 from .core.prompts import build_element_highlight_prompt, build_vision_bbox_highlight_prompt
 
@@ -124,7 +124,8 @@ def run_pipeline_a(image_path: Path, instruction: str, mode: str, want_llm_comme
         targets.append(AnnotationTarget(page_no=1, bbox_pdf=rect_pdf, comment=comment))
 
     logger.info(f"[Pipeline A] 주석 적용: {len(targets)}개 타겟")
-    return annotate_pdf(pdf_bytes, targets, mode)
+    annotations = build_embedpdf_annotations(pdf_bytes, targets, mode)
+    return pdf_bytes, annotations
 
 
 # ---------------------------------------------------------------------------
@@ -194,8 +195,9 @@ def run_pipeline_b(image_path: Path, instruction: str, mode: str, want_llm_comme
     logger.info(f"[Pipeline B] 주석 적용: {len(targets)}개 타겟")
     if not targets:
         logger.warning("[Pipeline B] 매칭된 타겟이 없습니다. 빈 PDF를 반환합니다.")
-        return pdf_bytes
-    return annotate_pdf(pdf_bytes, targets, mode)
+        return pdf_bytes, []
+    annotations = build_embedpdf_annotations(pdf_bytes, targets, mode)
+    return pdf_bytes, annotations
 
 
 # ---------------------------------------------------------------------------
@@ -218,17 +220,20 @@ def main():
         print(f"Error: image not found: {image_path}")
         sys.exit(1)
 
-    out_a = Path("/tmp/annotate_pipeline_a_paddleocr.pdf")
-    out_b = Path("/tmp/annotate_pipeline_b_vision_llm.pdf")
+    out_a_pdf = Path("/tmp/annotate_pipeline_a_paddleocr.pdf")
+    out_a_json = Path("/tmp/annotate_pipeline_a_paddleocr.annotations.json")
+    out_b_pdf = Path("/tmp/annotate_pipeline_b_vision_llm.pdf")
+    out_b_json = Path("/tmp/annotate_pipeline_b_vision_llm.annotations.json")
 
     # Pipeline A: PaddleOCR 기반
     print(f"\n{'='*60}")
     print("Pipeline A: PaddleOCR + LLM text selection")
     print(f"{'='*60}")
     try:
-        pdf_a = run_pipeline_a(image_path, instruction, mode, want_llm_comment)
-        out_a.write_bytes(pdf_a)
-        print(f"[OK] Pipeline A 결과 저장: {out_a} ({len(pdf_a)} bytes)")
+        pdf_a, ann_a = run_pipeline_a(image_path, instruction, mode, want_llm_comment)
+        out_a_pdf.write_bytes(pdf_a)
+        out_a_json.write_text(json.dumps(ann_a, ensure_ascii=False, indent=2))
+        print(f"[OK] Pipeline A 결과 저장: {out_a_pdf} ({len(pdf_a)} bytes), {out_a_json} ({len(ann_a)} annotations)")
     except Exception as e:
         print(f"[FAIL] Pipeline A 오류: {e}")
         import traceback
@@ -239,9 +244,10 @@ def main():
     print("Pipeline B: Vision LLM direct bbox detection")
     print(f"{'='*60}")
     try:
-        pdf_b = run_pipeline_b(image_path, instruction, mode, want_llm_comment)
-        out_b.write_bytes(pdf_b)
-        print(f"[OK] Pipeline B 결과 저장: {out_b} ({len(pdf_b)} bytes)")
+        pdf_b, ann_b = run_pipeline_b(image_path, instruction, mode, want_llm_comment)
+        out_b_pdf.write_bytes(pdf_b)
+        out_b_json.write_text(json.dumps(ann_b, ensure_ascii=False, indent=2))
+        print(f"[OK] Pipeline B 결과 저장: {out_b_pdf} ({len(pdf_b)} bytes), {out_b_json} ({len(ann_b)} annotations)")
     except Exception as e:
         print(f"[FAIL] Pipeline B 오류: {e}")
         import traceback
@@ -249,8 +255,8 @@ def main():
 
     print(f"\n{'='*60}")
     print("완료. 결과 파일:")
-    print(f"  Pipeline A (PaddleOCR): {out_a}")
-    print(f"  Pipeline B (Vision LLM): {out_b}")
+    print(f"  Pipeline A (PaddleOCR): {out_a_pdf} + {out_a_json}")
+    print(f"  Pipeline B (Vision LLM): {out_b_pdf} + {out_b_json}")
     print(f"{'='*60}")
 
 

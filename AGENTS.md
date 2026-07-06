@@ -8,6 +8,18 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### AI 주석 — Callout (FreeTextCallout)
+
+- **여백 주석 → callout 전환**: 기존 `margin_note`/`both` 모드는 페이지 우측에 mediabox를 확장해 FREETEXT 박스를 배치했으나, JSON 오버레이 방식 전환 후 mediabox 확장이 빠져 여백 박스가 페이지 밖에 떠 있어 보이지 않는 버그가 있었다. 이를 embedpdf의 `FreeTextCallout`(텍스트 박스 + 화살표 리더 라인)로 대체 — 페이지 내 빈 모서리/외곽 여백에 텍스트 박스를 배치하고 화살표로 원본 요소를 가리킨다.
+- **`build_embedpdf_annotations()` 시그니처 변경**: 새 파라미터 `page_elements_bboxes: dict[int, list[tuple]]` 추가 (1-based page_no → PDF user-space bbox 목록). callout 텍스트 박스 배치 시 기존 OCR 요소와의 충돌 회피에 사용.
+- **callout 배치 알고리즘** (`pdf_annotator.py:_find_free_callout_slot()`): 페이지 4모서리 + 4외곽 여백 중심 후보 영역 중 기존 요소/대상/같은 페이지 선행 callout 박스와 충돌하지 않는 가장 가까운 빈 영역 선택. 전부 충돌하면 최소 겹침 후보로 폴백.
+- **calloutLine 계산** (`_compute_callout_line()`): `[arrowTip, knee, connectionPoint]` 3점으로 L자 리더 라인 생성. arrowTip은 대상 가장자리 중점, knee는 꺾임점, connectionPoint는 텍스트 박스 가장자리 중점(embedpdf `computeCalloutConnectionPoint` 로직과 동일). knee가 텍스트 박스 내부에 있으면 2점 직선 callout으로 폴백.
+- **EmbedPDF 호환 필드**: callout 주석에 `intent: "FreeTextCallout"`, `calloutLine`, `rectangleDifferences`(PDF /RD), `lineEnding: 4`(OpenArrow), `strokeColor`, `strokeWidth` 추가. `importAnnotations()`/`exportAnnotations()` round-trip 지원.
+- **코드 정리**: `annotate_pdf()`, `_extend_mediabox_for_visual_margins()`, `_layout_margin_notes()`, `_apply_target()` 및 관련 상수(`MARGIN_WIDTH_PT` 등) 제거 — 더 이상 PDF에 주석을 구워 넣거나 mediabox를 확장하지 않음.
+- **converter 연동**: `pdf_annotate_converter.py`에서 `elements`의 `bbox_px`를 PDF user-space로 변환해 `page_elements_bboxes`를 빌드하고 `build_embedpdf_annotations()`에 전달. 고급주석(Vision LLM) 경로에서는 `elements`가 비어 충돌 검사 없이 모서리에 배치.
+- **테스트 파일**: `test_annotate_compare.py`를 `build_embedpdf_annotations` 기반으로 업데이트 — PDF + annotations JSON을 분리 저장.
+- **핵심 파일**: `pdf_annotator.py`, `pdf_annotate_converter.py`, `test_annotate_compare.py`.
+
 ### 브랜딩 (로고)
 
 - **공식 로고 적용**: `proof-logo.png`(가로형, 16:9)를 앱 전반의 공식 로고로 사용. 원본(800×450, 77KB)을 400×225(32KB)로 리사이즈하여 `app/frontend/public/proof-logo.png`에 배치 — Vite가 루트 경로(`/proof-logo.png`)로 서빙.
@@ -34,7 +46,7 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 ### AI 주석 (PDF Annotation)
 
 - **비동기/원자적 인덱스**: 주석 생성 요청마다 고유 인덱스를 원자적으로 할당해 파일 덮어쓰기 및 동시 생성 충돌 방지.
-- **JSON 오버레이 단일 진실원**: 주석을 PDF에 구워 넣지 않고 embedpdf `AnnotationTransferItem[]` JSON 오버레이로만 표시. `pdf_annotate_converter.run()`은 깨끗한 보정 이미지 PDF를 표시 기반으로 업로드하고 `build_embedpdf_annotations()`로 JSON을 생성. flatten 다운로드는 embedpdf snippet 자체의 다운로드 UI가 처리.
+- **JSON 오버레이 단일 진실원**: 주석을 PDF에 구워 넣지 않고 embedpdf `AnnotationTransferItem[]` JSON 오버레이로만 표시. `pdf_annotate_converter.run()`은 깨끗한 보정 이미지 PDF를 표시 기반으로 업로드하고 `build_embedpdf_annotations()`로 JSON을 생성. 하이라이트는 `HIGHLIGHT`, 코멘트는 `FreeTextCallout`(텍스트 박스 + 화살표 리더 라인)로 생성 — 페이지 내 빈 모서리/외곽 여백에 배치. flatten 다운로드는 embedpdf snippet 자체의 다운로드 UI가 처리.
 - **원본 내장 주석 중복 방지**: 원본 PDF에 이미 내장된 하이라이트/코멘트 주석이 있으면, embedpdf가 이를 자동으로 렌더링하고 `exportAnnotations()`에 포함해 `user_annotations.json`이 반복 저장되면서 중복 증식하는 문제를 방지. `api/jobs.py:_source_files()`에서 원본 PDF의 내장 주석을 PyMuPDF로 추출하여 `user_annotations.json` 초기값으로 저장하고, 주석이 제거된 `clean.pdf`를 별도 Storage 경로(`{job_id}/clean.pdf`)에 업로드해 원본 대신 표시. `pdf_user_annotator.py`에 `extract_pdf_annotations()`와 `remove_pdf_annotations()` 추가.
 - **좌표 변환**: `_rect_to_embedpdf_rect()`가 PDF user-space(원점 좌하단, y↑)를 embedpdf device-space(원점 좌상단, y↓)로 변환할 때 `origin.y = page_height - y1`로 y축 flip. embedpdf가 annotation `rect.origin.y`를 CSS `top`으로 직접 렌더링하므로 flip이 필수.
 - **JSONB 변경 감지**: `annotated_pdf_files`는 SQLAlchemy JSONB 컬럼이며, dict/list를 직접 변경한 뒤 재할당해도 SQLAlchemy가 변경을 감지하지 못하는 경우가 있으므로, 해당 컬럼을 수정하는 모든 경로(`pdf_annotate_converter.py`, `api/jobs.py`)에서 `flag_modified(job, "annotated_pdf_files")`를 호출해야 한다. 이를 누락하면 주석 생성이 완료되어도 DB entry 상태가 `processing`으로 남는다.

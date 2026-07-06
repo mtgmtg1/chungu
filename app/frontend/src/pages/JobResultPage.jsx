@@ -595,7 +595,7 @@ export default function JobResultPage() {
           ref={rightPanelRef}
           defaultSize={70}
           minSize={0}
-          maxSize={80}
+          maxSize={100}
           collapsible
           collapsedSize={0}
           className="flex flex-col h-full min-h-0 overflow-hidden"
@@ -707,7 +707,7 @@ export default function JobResultPage() {
           {job?.status === "done" && (sourceUrl || sourceFiles.length > 0) &&
           <button
             onClick={() => setSidebarOpen((v) => !v)}
-            title={sidebarOpen ? t("page:result.hideSourcePanel") : t("page:result.showSourcePanel")}
+            title={sidebarOpen ? t("page:result.hideSidebar") : t("page:result.showSidebar")}
             className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
             data-oid="g85z5vd">
               {sidebarOpen ?

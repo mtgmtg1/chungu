@@ -726,6 +726,7 @@ def run(
 
             llm_mode: str | None = None
             llm_comment_mode: str | None = None
+            elements: list[AnnotateElement] = []  # callout 배치 시 충돌 회피용 (고급주석 경로에서는 미사용)
             if advanced:
                 # [Flow: 고급주석 — Vision LLM이 이미지를 직접 보고 정밀 bbox + 색상 + 코멘트 반환]
                 pdf_bytes = _images_to_pdf(image_paths)
@@ -804,9 +805,10 @@ def run(
                     t.comment = instruction
 
             # [Flow: 주석 표시 — embedpdf JSON 오버레이 방식]
-            # annotate_pdf()로 주석을 PDF에 구워 넣는 대신, 깨끗한 보정 이미지 PDF를
-            # 표시 기반으로 두고 embedpdf JSON(AnnotationTransferItem[])을 프론트에서
-            # 오버레이한다. 단일 진실원이자 사용자 편집 가능. flatten 다운로드는
+            # 깨끗한 보정 이미지 PDF를 표시 기반으로 두고 embedpdf JSON(AnnotationTransferItem[])을
+            # 프론트에서 오버레이한다. 하이라이트는 HIGHLIGHT, 코멘트는 FreeTextCallout(텍스트 박스 +
+            # 화살표 리더 라인)로 생성한다. callout 텍스트 박스는 기존 요소를 피해 페이지 내 빈
+            # 모서리/외곽 여백에 배치된다. 단일 진실원이자 사용자 편집 가능. flatten 다운로드는
             # 프론트의 embedpdf export plugin(saveAsCopy)이 처리한다.
             # job당 하나의 공유 파일에 누적되며, run별로 고유 ID prefix를 가진다.
             shared_storage_path = f"{job.id}/annotated.pdf"
@@ -830,8 +832,22 @@ def run(
             else:
                 should_upload_pdf = True
 
+            # [Flow: callout 배치용 페이지 요소 bbox — 기존 텍스트 요소를 피해 텍스트 박스 배치]
+            # elements의 bbox_px를 PDF user-space 좌표로 변환해 페이지별로 그룹화한다.
+            # 고급주석(Vision LLM) 경로에서는 elements가 비어 있어 충돌 검사 없이 모서리에 배치된다.
+            page_elements_bboxes: dict[int, list[tuple[float, float, float, float]]] = {}
+            for el in elements:
+                page_pt = page_point_sizes.get(el.page_no)
+                if page_pt:
+                    page_height_px = page_pt[1] * RENDER_DPI / 72.0
+                    rect_pdf = px_bbox_to_pdf_rect(el.bbox_px, dpi=RENDER_DPI, page_height_px=page_height_px)
+                else:
+                    rect_pdf = px_bbox_to_pdf_rect(el.bbox_px, dpi=RENDER_DPI)
+                page_elements_bboxes.setdefault(el.page_no, []).append(rect_pdf)
+
             embedpdf_annotations = build_embedpdf_annotations(
-                pdf_bytes, targets, mode, annotation_index=next_index
+                pdf_bytes, targets, mode, annotation_index=next_index,
+                page_elements_bboxes=page_elements_bboxes,
             )
 
             # 동시 쓰기 안전성을 위해 SELECT FOR UPDATE로 행을 잠근다.

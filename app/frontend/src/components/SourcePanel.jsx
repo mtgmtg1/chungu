@@ -2,7 +2,7 @@
 // processing/error 상태의 주석 항목은 URL 없이 상태 정보만 표시한다.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { FileText, ImageIcon, Volume2, Film, Trash2, Loader2, AlertCircle, RotateCw, Sparkles, Check, ChevronDown, ChevronUp, List } from "lucide-react";
+import { FileText, ImageIcon, Volume2, Film, Trash2, Loader2, AlertCircle, RotateCw, Sparkles, ChevronDown, ChevronUp, List, Check } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer from "./PdfViewer.jsx";
 import MediaPlayer from "./MediaPlayer.jsx";
@@ -63,18 +63,19 @@ function ImageList({ urls, t }) {
 }
 
 /**
- * [Flow: Step 1 (annotationRuns에서 processing/done/error 개수 집계)
+ * [Flow: Step 1 (annotationRuns에서 processing/error 항목만 필터링)
  *       -> Step 2 (processing이 있으면 스피너 + "N개 생성 중" 헤더 표시)
- *       -> Step 3 (각 run의 상태 아이콘 + instruction 텍스트를 리스트로 렌더링)]
+ *       -> Step 3 (각 run의 상태 아이콘 + instruction + 취소 버튼 렌더링)]
  * AI 주석 FAB 바로 위에 떠 있는 주석 생성 상태 카드입니다.
- * processing 또는 error 상태의 run이 있을 때만 노출되며, done만 있으면 숨김.
+ * 완료된(done) run은 숨기고, processing 또는 error 상태의 run만 노출합니다.
  */
-function AnnotationStatusCard({ runs, t }) {
+function AnnotationStatusCard({ runs, t, onCancelAnnotation }) {
   if (!runs || runs.length === 0) return null;
   const sorted = [...runs].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
-  const processingCount = sorted.filter((r) => r.status === "processing").length;
-  const errorCount = sorted.filter((r) => r.status === "error").length;
-  // processing 또는 error가 있을 때만 표시 (전부 done이면 FAB 위에 상태 카드 불필요)
+  const visibleRuns = sorted.filter((r) => r.status === "processing" || r.status === "error");
+  const processingCount = visibleRuns.filter((r) => r.status === "processing").length;
+  const errorCount = visibleRuns.filter((r) => r.status === "error").length;
+  // processing 또는 error가 있을 때만 표시 (done은 항상 숨김)
   if (processingCount === 0 && errorCount === 0) return null;
 
   const headerText = processingCount > 0
@@ -85,29 +86,25 @@ function AnnotationStatusCard({ runs, t }) {
     <div
       className="absolute bottom-full right-0 mb-2 w-64 bg-white rounded-lg shadow-lg border border-outline-variant p-3 transition-all duration-300 origin-bottom-right"
       data-oid="annotate-status-card">
-      <div className="flex items-center gap-2 mb-2 pb-2 border-b border-outline-variant h-5">
-        <span className="flex-shrink-0 inline-flex items-center justify-center w-3.5 h-3.5 overflow-hidden">
-          {processingCount > 0 ? (
-            <Loader2 size={14} className="text-primary animate-spin" />
-          ) : (
-            <AlertCircle size={14} className="text-error" />
-          )}
-        </span>
+      <div className="flex items-center gap-2 mb-2 pb-2 border-b border-outline-variant">
+        {processingCount > 0 ? (
+          <Loader2 size={14} className="text-primary animate-spin flex-shrink-0" />
+        ) : (
+          <AlertCircle size={14} className="text-error flex-shrink-0" />
+        )}
         <span className="text-xs font-bold text-on-surface truncate">{headerText}</span>
       </div>
       <ul className="space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar">
-        {sorted.map((r) => (
-          <li key={r.index ?? Math.random()} className="flex items-start gap-2 text-xs leading-tight min-h-[14px]">
-            <span className="flex-shrink-0 inline-flex items-center justify-center w-3 h-3 overflow-hidden mt-px">
+        {visibleRuns.map((r) => (
+          <li key={r.index ?? Math.random()} className="flex items-start gap-2 text-xs group">
+            <span className="flex-shrink-0 mt-0.5">
               {r.status === "processing" ? (
                 <Loader2 size={12} className="text-primary animate-spin" />
-              ) : r.status === "error" ? (
-                <AlertCircle size={12} className="text-error" />
               ) : (
-                <Check size={12} className="text-primary" />
+                <AlertCircle size={12} className="text-error" />
               )}
             </span>
-            <span className={`min-w-0 flex-1 ${
+            <span className={`min-w-0 flex-1 leading-tight ${
               r.status === "error" ? "text-error" : "text-on-surface-variant"
             }`}>
               {r.instruction
@@ -116,6 +113,20 @@ function AnnotationStatusCard({ runs, t }) {
                   : r.instruction
                 : t("page:result.annotateStatusNoInstruction")}
             </span>
+            {r.status === "processing" && onCancelAnnotation && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCancelAnnotation(r.index);
+                }}
+                className="flex-shrink-0 p-1 rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors"
+                title={t("page:result.annotateCancel")}
+                aria-label={t("page:result.annotateCancel")}
+                data-oid="annotate-cancel-btn">
+                <Trash2 size={12} />
+              </button>
+            )}
           </li>
         ))}
       </ul>
@@ -130,11 +141,19 @@ function AnnotationStatusCard({ runs, t }) {
  *       -> Step 6 (전송 후 팝업 닫기 및 초기화) -> Step 7 (annotationRuns가 있으면 FAB 위에 상태 카드 렌더링)]
  * PDF 패널 하단 우측에 떠 있는 AI 주석 FAB입니다.
  * 클릭하면 입력 카드 팝업이 부드러운 애니메이션으로 펼쳐지며,
- * 주석 생성 중에는 FAB 위에 현재 run들의 상태 리스트가 표시됩니다.
+ * 주석 생성/편집 중에는 FAB 위에 현재 run들의 상태 리스트가 표시됩니다.
  * 상단의 세그먼트 토글로 "새 주석 생성"과 "기존 주석 편집" 모드를 전환합니다.
  * 고급 옵션을 펼치면 처리할 페이지 범위를 지정할 수 있습니다 (기본값: 현재 보고 있는 페이지).
  */
-function AiAnnotationFab({ onStartAnnotate, onStartAnnotateEdit, disabled, annotationRuns, currentPage = 1, totalPages = 1 }) {
+function AiAnnotationFab({
+  onStartAnnotate,
+  onStartAnnotateEdit,
+  onCancelAnnotation,
+  disabled,
+  annotationRuns,
+  currentPage = 1,
+  totalPages = 1,
+}) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState("create"); // "create" | "edit"
@@ -184,8 +203,14 @@ function AiAnnotationFab({ onStartAnnotate, onStartAnnotateEdit, disabled, annot
 
   return (
     <div ref={containerRef} className="absolute bottom-4 right-4 z-40">
-      {/* 주석 생성 상태 카드 — FAB 바로 위 (팝업이 열려 있으면 숨김) */}
-      {!open && <AnnotationStatusCard runs={annotationRuns} t={t} />}
+      {/* 주석 생성 상태 카드 — FAB 바로 위 (작업 중일 때는 팝업 열려도 계속 표시) */}
+      {processingCount > 0 && (
+        <AnnotationStatusCard
+          runs={annotationRuns}
+          t={t}
+          onCancelAnnotation={onCancelAnnotation}
+        />
+      )}
 
       <button
         type="button"
@@ -211,25 +236,28 @@ function AiAnnotationFab({ onStartAnnotate, onStartAnnotateEdit, disabled, annot
           open ? "opacity-100 scale-100 translate-y-0 pointer-events-auto" : "opacity-0 scale-95 translate-y-2 pointer-events-none"
         }`}
         data-oid="annotate-popup">
-        {/* 모드 세그먼트 토글 — 새 주석 생성 / 기존 주석 편집 */}
-        <div className="flex mb-2 p-0.5 bg-surface-container-high rounded-lg" data-oid="annotate-mode-toggle">
+        {/* 모드 세그먼트 토글 */}
+        <div className="flex items-center bg-surface-container-high rounded-lg p-1 mb-3">
           <button
             type="button"
             onClick={() => setMode("create")}
-            className={`flex-1 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
+            className={`flex-1 text-xs font-bold py-1 rounded-md transition-colors ${
               mode === "create" ? "bg-white text-primary shadow-sm" : "text-on-surface-variant hover:text-on-surface"
-            }`}>
+            }`}
+            data-oid="annotate-mode-create">
             {t("page:result.annotateModeCreate")}
           </button>
           <button
             type="button"
             onClick={() => setMode("edit")}
-            className={`flex-1 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
+            className={`flex-1 text-xs font-bold py-1 rounded-md transition-colors ${
               mode === "edit" ? "bg-white text-primary shadow-sm" : "text-on-surface-variant hover:text-on-surface"
-            }`}>
+            }`}
+            data-oid="annotate-mode-edit">
             {t("page:result.annotateModeEdit")}
           </button>
         </div>
+
         <h4 className="font-bold text-sm text-on-surface mb-1">
           {titleText}
         </h4>
@@ -307,6 +335,7 @@ function PdfViewerWithFab({
   viewerRef,
   onStartAnnotate,
   onStartAnnotateEdit,
+  onCancelAnnotation,
   converting,
   annotationRuns,
   totalPages = 1,
@@ -351,6 +380,7 @@ function PdfViewerWithFab({
         <AiAnnotationFab
           onStartAnnotate={onStartAnnotate}
           onStartAnnotateEdit={onStartAnnotateEdit}
+          onCancelAnnotation={onCancelAnnotation}
           disabled={converting}
           annotationRuns={annotationRuns}
           currentPage={page}
@@ -375,6 +405,7 @@ export default function SourcePanel({
   onRetryAnnotation,
   onStartAnnotate,
   onStartAnnotateEdit,
+  onCancelAnnotation,
   converting = false,
   annotationRuns = [],
   totalPages = 1,
@@ -481,6 +512,7 @@ export default function SourcePanel({
           onAnnotationChanged={handleAnnotationChanged}
           onStartAnnotate={onStartAnnotate}
           onStartAnnotateEdit={onStartAnnotateEdit}
+          onCancelAnnotation={onCancelAnnotation}
           converting={converting}
           annotationRuns={annotationRuns}
           totalPages={totalPages}
@@ -542,10 +574,9 @@ export default function SourcePanel({
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            // AI 주석은 하나의 공유 파일로 축소되므로, source_index 대신 0을
-                            // 전달해 모든 error run을 한 번에 재시도한다.
-                            const retryIndex = f.source_kind === "annotation" ? 0 : f.source_index;
-                            onRetryAnnotation(retryIndex);
+                            // AI 주석은 하나의 공유 파일로 축소되므로 0을 전달해
+                            // 모든 error run을 한 번에 재시도한다.
+                            onRetryAnnotation(0);
                           }}
                           className="flex-shrink-0 flex items-center gap-1 px-1.5 py-1 rounded text-primary/70 hover:text-primary hover:bg-primary/10 transition-colors text-[10px]"
                           title={t("page:result.annotateRetry")}
@@ -617,8 +648,7 @@ export default function SourcePanel({
                         onClick={() => {
                           // AI 주석은 공유 파일로 축소되어 있으므로 0을 전달해
                           // 모든 error run을 한 번에 재시도한다.
-                          const retryIndex = selected.source_kind === "annotation" ? 0 : selected.source_index;
-                          onRetryAnnotation(retryIndex);
+                          onRetryAnnotation(0);
                         }}
                         className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-white hover:opacity-90 transition-colors"
                       >
@@ -646,6 +676,7 @@ export default function SourcePanel({
                   onAnnotationChanged={handleAnnotationChanged}
                   onStartAnnotate={onStartAnnotate}
                   onStartAnnotateEdit={onStartAnnotateEdit}
+                  onCancelAnnotation={onCancelAnnotation}
                   converting={converting}
                   annotationRuns={annotationRuns}
                   totalPages={totalPages}
@@ -679,7 +710,6 @@ export default function SourcePanel({
         annotationsJson={selectedAnnotationsJson}
         onAnnotationChanged={handleAnnotationChanged}
         onStartAnnotate={onStartAnnotate}
-        onStartAnnotateEdit={onStartAnnotateEdit}
         converting={converting}
         annotationRuns={annotationRuns}
         totalPages={totalPages}

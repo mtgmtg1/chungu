@@ -8,17 +8,6 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
-### AI 주석 — 기존 주석 LLM 재편집 (annotate-edit)
-
-- **기존 주석 재편집 모드**: AI 주석 FAB 다이얼로그 상단에 "새 주석 생성" / "기존 주석 편집" 세그먼트 토글 추가. 편집 모드에서 instruction(예: "색상을 빨간색으로", "코멘트를 간결하게")과 페이지 범위를 입력하면, 백엔드가 지정한 페이지의 기존 AI 주석(`backend-*` prefix, `_userEdited` 아님)만 추출해 LLM으로 색상/코멘트를 재편집한다. 기존 주석의 `id`/`rect`/`calloutLine`/`pageIndex`는 유지하고 `color`/`contents`만 갱신하여 embedpdf에서 같은 주석으로 인식되도록 한다. 사용자 수동 편집 주석과 다른 페이지의 주석은 건드리지 않는다.
-- **새 엔드포인트** `POST /api/jobs/{job_id}/annotate-edit` (`api/jobs.py:annotate_edit_job_endpoint`): instruction, page_range 수신. 과금은 지정한 페이지 수만큼(기존 annotate와 동일 단가). 원자적 `annotation_index` 할당 후 Celery task 큐잉. processing entry에 `edit: true` 플래그 저장.
-- **새 Celery task** `annotate_edit_job` (`workers/tasks.py`): `pdf_annotate_converter.run_edit()` 호출.
-- **`run_edit()`** (`core/pdf_annotate_converter.py`): 공유 `annotations.json` 다운로드 → page_range로 편집 대상 추출 → `build_annotation_edit_prompt()`로 LLM 호출 → 응답 `{edits: [{id, color, comment}]}` 파싱 → `HIGHLIGHT_COLOR_PALETTE` 기반 색상 이름→hex 매핑 → 기존 주석 `color`/`contents`만 덮어쓰고 `id`/`rect`/`calloutLine` 유지 → 병합(편집 대상이 아닌 주석 보존) → annotations.json 업로드. LLM이 일부 주석만 반환하면 미반환 주석은 기존 속성 유지(안전 폴백). `_annotation_inner()` 헬퍼를 converter에 추가.
-- **LLM 편집 프롬프트** `build_annotation_edit_prompt()` (`core/prompts.py`): 기존 주석 리스트 `[{id, type, color, comment, text}]` + instruction → `{edits: [{id, color, comment}]}` JSON 반환. 색상 이름(red/yellow/green/blue/orange/purple/pink/gray) 사용. instruction과 같은 언어로 코멘트 작성 지시.
-- **프론트 연동**: `SourcePanel.jsx:AiAnnotationFab`에 `mode` state("create"/"edit") 추가, 모드별 title/desc/placeholder 전환. `onStartAnnotateEdit` prop 추가. `JobResultPage.jsx:startAnnotateEdit()` → `api.annotateJobEdit()` 호출. 기존 폴링/상태 카드 재사용.
-- **i18n 키 추가** (ko/en/ja `page.json`): `annotateModeCreate`, `annotateModeEdit`, `annotateEditTitle`, `annotateEditDesc`, `annotateEditPlaceholder`.
-- **핵심 파일**: `api/jobs.py`, `workers/tasks.py`, `core/pdf_annotate_converter.py`, `core/prompts.py`, `api.js`, `SourcePanel.jsx`, `JobResultPage.jsx`.
-
 ### AI 주석 — 페이지 범위 지정 + 주석 편집 패널
 
 - **페이지 범위 지정**: AI 주석 생성 시 처리할 페이지를 지정할 수 있다. FAB 다이얼로그의 "고급 옵션" 토글을 펼치면 페이지 범위 입력 필드가 표시되며, `"1-5,7,10-12"` 형태로 입력한다. 빈 값이면 **현재 보고 있는 페이지만** 처리 (기본값). 이전에는 항상 전체 페이지를 처리해 LLM 프롬프트가 `MAX_ELEMENTS_FOR_LLM=400`으로 잘려 뒷부분 페이지의 요소가 무시되는 문제가 있었다.

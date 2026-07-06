@@ -98,6 +98,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ action, annotation_index: annotationIndex }),
     }),
+  cancelAnnotation: (id, annotationIndex) =>
+    request(`/api/jobs/${id}/annotate-cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ annotation_index: annotationIndex }),
+    }),
   saveUserAnnotations: (id, { source_index, annotations }) =>
     request(`/api/jobs/${id}/user-annotations`, {
       method: 'POST',

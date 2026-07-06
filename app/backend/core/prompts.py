@@ -412,58 +412,6 @@ def build_vision_bbox_highlight_prompt(
     )
 
 
-def build_annotation_edit_prompt(
-    annotations: list[dict],
-    instruction: str,
-) -> str:
-    """[Flow: Step 1 (기존 주석 목록 직렬화) -> Step 2 (편집 instruction 주입) -> Step 3 (LLM이 id별 새 색상/코멘트 반환)]
-
-    기존 AI 주석의 색상/코멘트를 사용자 instruction에 맞게 재편집하기 위한 프롬프트.
-    각 주석의 id, type, 현재 색상, 현재 코멘트, 원본 텍스트(있으면)를 LLM에 전달하면
-    LLM이 변경이 필요한 주석만 id 기준으로 새 color/comment를 반환한다.
-    bbox/위치는 유지하고 색상/코멘트만 갱신하므로, LLM은 위치 정보를 다루지 않는다.
-
-    Args:
-        annotations: 편집 대상 주석 목록. 각 항목은 {id, type, color, comment, text} 형태.
-        instruction: 사용자가 입력한 편집 조건 (예: "색상을 빨간색으로", "코멘트를 간결하게")
-
-    Returns:
-        LLM에 전달할 프롬프트 문자열. LLM은 JSON {edits: [{id, color, comment}]} 반환.
-    """
-    lines: list[str] = []
-    for a in annotations:
-        ann_id = a.get("id", "")
-        atype = "callout" if str(a.get("type", "")).lower() in ("freetext", "freetextcallout") else "highlight"
-        color = a.get("color", "")
-        comment = a.get("comment", "")
-        text = a.get("text", "")
-        text_part = f' | text="{text}"' if text else ""
-        lines.append(f'id={ann_id} | type={atype} | color={color} | comment="{comment}"{text_part}')
-    annotations_text = "\n".join(lines)
-
-    return (
-        "You are an assistant editing existing PDF annotations. Below is a list of existing annotations.\n"
-        "Each line is: id=... | type=highlight|callout | color=#RRGGBB | comment=\"...\" | text=\"...\"\n"
-        "- 'highlight' annotations mark a region of the document; 'text' is the highlighted content (if available).\n"
-        "- 'callout' annotations are comment boxes pointing to a region; 'comment' is the box text.\n\n"
-        f"--- Existing annotations ---\n{annotations_text}\n\n"
-        f"--- Edit instruction ---\n{instruction}\n\n"
-        "Apply the edit instruction to the annotations above. You may change the color and/or the comment text.\n"
-        "Available color names: red, yellow, green, blue, orange, purple, pink, gray. "
-        "If the instruction does not imply a color change, keep the original color. "
-        "If the instruction does not imply a comment change, keep the original comment. "
-        "Write/rewrite comments in the SAME language as the edit instruction. "
-        "Keep comments short (about 10-30 characters). "
-        "Only include annotations that actually need a change. If none need changing, return an empty edits array.\n\n"
-        "Output strictly in the following JSON format. Do not include explanations or code block markers (```).\n"
-        "{\n"
-        '  "edits": [\n'
-        '    {"id": "<annotation id>", "color": "<color name>", "comment": "..."}\n'
-        "  ]\n"
-        "}\n"
-    )
-
-
 def _format_timestamp(seconds: float) -> str:
     """Convert seconds to HH:MM:SS or MM:SS format."""
     m, s = divmod(int(seconds), 60)

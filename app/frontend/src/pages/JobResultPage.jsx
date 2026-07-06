@@ -433,6 +433,20 @@ export default function JobResultPage() {
     }
   }
 
+  // [Flow: Step 1 (annotationIndex 수신) -> Step 2 (cancel API 호출) -> Step 3 (job 상태 갱신)]
+  async function handleCancelAnnotation(annotationIndex) {
+    setConverting(true);
+    setError("");
+    try {
+      await api.cancelAnnotation(jobId, annotationIndex);
+      await loadJob();
+    } catch (e) {
+      setError(e.message || t("page:errors.unknown"));
+    } finally {
+      setConverting(false);
+    }
+  }
+
   async function handleXlsxAdvancedAction(action) {
     setConverting(true);
     setError("");
@@ -456,10 +470,9 @@ export default function JobResultPage() {
     const selected = sourceFiles[selectedFileIndex];
     if (!selected || selected.type !== "pdf") return;
     try {
-      // annotation PDF면 기존 항목을 덮어쓰고, 원본 PDF면 새 annotation 파일을 생성한다.
-      const source_index = selected.source_kind === "annotation" ? selected.source_index : -1;
+      // AI 주석은 원본 PDF 탭에 병합되므로, 항상 원본 PDF의 JSON overlay로 저장한다.
       await api.saveUserAnnotations(jobId, {
-        source_index,
+        source_index: -1,
         annotations,
       });
     } catch (e) {
@@ -610,12 +623,13 @@ export default function JobResultPage() {
             selectedFileIndex={selectedFileIndex}
             onFileSelect={handleFileSelect}
             onDeleteFile={openDeleteSourceFileModal}
-            onRetryAnnotation={(index) => handleAnnotateAction("retry", index)}
+            onRetryAnnotation={() => handleAnnotateAction("retry", 0)}
             currentPage={currentPage}
             totalPages={job?.total_pages || 1}
             onSaveAnnotations={handleSaveAnnotations}
             onStartAnnotate={startAnnotate}
             onStartAnnotateEdit={startAnnotateEdit}
+            onCancelAnnotation={handleCancelAnnotation}
             converting={converting}
             annotationRuns={job?.annotated_pdf_files || []}
             data-oid="result-source" />

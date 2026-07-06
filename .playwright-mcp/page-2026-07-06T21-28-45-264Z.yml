@@ -1,0 +1,17 @@
+- generic [ref=f3e2]:
+  - banner [ref=f3e4]:
+    - generic [ref=f3e5]:
+      - link "jobs" [ref=f3e6] [cursor=pointer]:
+        - /url: /jobs
+        - img [ref=f3e7]
+        - generic [ref=f3e9]: jobs
+      - heading "cf7c362ef4d14a2387a89f36397718ac" [level=1] [ref=f3e11]
+  - generic [ref=f3e41]:
+    - paragraph [ref=f3e42]:
+      - text: 이 사이트는 서비스 제공을 위해 쿠키를 사용합니다. 계속 사용하시면 쿠키 사용에 동의하시는 것입니다.
+      - link "자세히 보기" [ref=f3e43] [cursor=pointer]:
+        - /url: /privacy
+    - generic [ref=f3e44]:
+      - button "거절" [ref=f3e45] [cursor=pointer]
+      - button "필수만 허용" [ref=f3e46] [cursor=pointer]
+      - button "동의합니다" [ref=f3e47] [cursor=pointer]

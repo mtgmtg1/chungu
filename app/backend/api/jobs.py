@@ -1219,21 +1219,11 @@ def _source_files(job: Job) -> list[dict]:
             except Exception as e:
                 logger.warning(f"[source_files:{job.id}] searchable PDF URL 생성 실패: {e}")
 
-    # [Flow: user_annotations.json이 존재하면 원본 PDF 항목에 annotations_json_url을 설정]
-    user_annotations_json_path = f"{job.id}/user_annotations.json"
-    try:
-        user_annotations_url = supabase_client.get_signed_download_url(
-            user_annotations_json_path, bucket="results", expires_in=3600
-        )
-    except Exception:
-        user_annotations_url = None
-    if user_annotations_url:
-        for item in source_files:
-            if item.get("source_kind") == "original" and item.get("type") in ("pdf", "docx", "hwp"):
-                item["annotations_json_url"] = user_annotations_url
-
-    # 주석 PDF 추가 (processing/done/error 상태 모두 포함)
-    # 병렬 AI 주석 생성은 모두 동일한 공유 파일을 사용하므로, entry들을 하나의 source item으로 축소한다.
+    # [Flow: AI 주석을 원본 PDF 탭에 병합 — 별도 파일 탭을 생성하지 않는다]
+    # 병렬 AI 주석 생성은 모두 동일한 공유 파일/annotations.json을 사용하므로,
+    # 완료된 주석을 첫 번째 원본 PDF 항목에 annotations_json_url로 부착한다.
+    # processing/error 상태는 FAB 위 상태 카드에서만 표시하며, 원본 파일 탭에는
+    # 별도 항목을 추가하지 않는다.
     annotated_entries = list(job.annotated_pdf_files or [])
     if not annotated_entries and job.annotate_status == "done" and job.result_annotated_pdf_storage_path:
         # 하위 호환: 목록 컬럼 추가 전에 생성된 단일 주석 PDF
@@ -1250,80 +1240,48 @@ def _source_files(job: Job) -> list[dict]:
 
     if annotated_entries:
         annotated_entries = sorted(annotated_entries, key=lambda e: e.get("index", 0))
-        # 신규 공유 파일 경로를 사용하는 entry가 있으면 우선 선택한다.
-        # 레거시 항목과 섞여 있을 때도 단일 AI 주석 파일이 일관된 경로를 가리키도록 한다.
-        shared_path = f"{job.id}/annotated.pdf"
-        shared_entry = next(
-            (e for e in annotated_entries if e.get("storage_path") == shared_path),
+        # 신규 공유 annotations.json 경로를 사용하는 entry를 우선 선택한다.
+        shared_annotations_json_path = next(
+            (
+                e.get("annotations_json_storage_path")
+                for e in annotated_entries
+                if e.get("annotations_json_storage_path")
+            ),
             None,
         )
-        first_entry = shared_entry or annotated_entries[0]
-        shared_index = first_entry.get("index", 1)
-        shared_storage_path = first_entry.get("storage_path", "")
-        shared_annotations_json_path = first_entry.get("annotations_json_storage_path")
+        if not shared_annotations_json_path:
+            # 하위 호환 또는 초기 상태: 공유 경로로 폴백
+            shared_annotations_json_path = f"{job.id}/annotated.annotations.json"
+
         overall_status = _overall_annotation_status(annotated_entries)
+        if overall_status == "done" and shared_annotations_json_path:
+            try:
+                annotations_json_url = supabase_client.get_signed_download_url(
+                    shared_annotations_json_path, bucket="results", expires_in=3600
+                )
+            except Exception:
+                annotations_json_url = None
+            if annotations_json_url:
+                # 첫 번째 원본 PDF/DOCX/HWP 항목에 주석 JSON URL을 부착한다.
+                for item in source_files:
+                    if item.get("source_kind") == "original" and item.get("type") in ("pdf", "docx", "hwp"):
+                        item["annotations_json_url"] = annotations_json_url
+                        break
 
-        # 표시 파일명은 완료된 entry 중 하나의 filename을 우선 사용, 없으면 고정명
-        display_name = "AI 주석"
-        for e in annotated_entries:
-            if e.get("status") == "done" and e.get("filename"):
-                display_name = e.get("filename")
-                break
-        if not any(e.get("status") == "done" for e in annotated_entries):
-            display_name = first_entry.get("filename") or display_name
-
-        if overall_status == "processing":
-            source_files.append({
-                "name": display_name,
-                "type": "pdf",
-                "url": None,
-                "storage_path": None,
-                "page_num": 1,
-                "source_index": shared_index,
-                "source_kind": "annotation",
-                "status": "processing",
-                "instruction": "",
-                "mode": "",
-            })
-        elif overall_status == "error":
-            error_entries = [e for e in annotated_entries if e.get("status") == "error"]
-            latest_error = max(error_entries, key=lambda e: e.get("index", 0), default={})
-            source_files.append({
-                "name": f"{display_name} (실패)",
-                "type": "pdf",
-                "url": None,
-                "storage_path": None,
-                "page_num": 1,
-                "source_index": shared_index,
-                "source_kind": "annotation",
-                "status": "error",
-                "instruction": latest_error.get("instruction", ""),
-                "mode": latest_error.get("mode", ""),
-                "comment_mode": latest_error.get("comment_mode", ""),
-                "advanced": bool(latest_error.get("advanced", False)),
-                "recovery_notes": latest_error.get("recovery_notes", []),
-            })
-        else:
-            item = _build_source_file_item(
-                {
-                    "path": display_name,
-                    "storage_path": shared_storage_path,
-                    "type": "pdf",
-                    "bucket": "results",
-                },
-                shared_index,
-                source_kind="annotation",
-            )
-            if item:
-                if shared_annotations_json_path:
-                    try:
-                        item["annotations_json_url"] = supabase_client.get_signed_download_url(
-                            shared_annotations_json_path, bucket="results", expires_in=3600
-                        )
-                    except Exception:
-                        item["annotations_json_url"] = None
-                item["status"] = "done"
-                source_files.append(item)
+    # [Flow: user_annotations.json이 존재하면 원본 PDF 항목에 annotations_json_url을 덮어쓴다]
+    # 사용자가 직접 추가/편집한 주석은 AI 주석과 병합되어 user_annotations.json에 저장되므로,
+    # 이 URL이 있으면 우선적으로 사용해 원본 탭에서 두 주석을 모두 볼 수 있도록 한다.
+    user_annotations_json_path = f"{job.id}/user_annotations.json"
+    try:
+        user_annotations_url = supabase_client.get_signed_download_url(
+            user_annotations_json_path, bucket="results", expires_in=3600
+        )
+    except Exception:
+        user_annotations_url = None
+    if user_annotations_url:
+        for item in source_files:
+            if item.get("source_kind") == "original" and item.get("type") in ("pdf", "docx", "hwp"):
+                item["annotations_json_url"] = user_annotations_url
     return source_files
 
 
@@ -2273,155 +2231,6 @@ def annotate_job(
     return {"job_id": task.id, "status": "processing", "annotation_index": annotation_index}
 
 
-@router.post("/jobs/{job_id}/annotate-edit")
-def annotate_edit_job_endpoint(
-    job_id: str,
-    payload: dict = Body(...),
-    user: CurrentUser = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """[Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (instruction/page_range 파싱)
-          -> Step 3 (구독 체크 및 원자적 인덱스 할당) -> Step 4 (processing entry 추가)
-          -> Step 5 (Celery annotate_edit_job 큐잉) -> Step 6 (task_id 저장)]
-
-    기존 AI 주석의 색상/코멘트를 사용자 instruction에 맞게 LLM으로 재편집한다.
-    지정한 페이지 범위의 기존 AI 주석만 편집 대상이며, 사용자 수동 편집 주석은 보존된다.
-    과금은 지정한 페이지 수만큼 계산한다 (기존 annotate와 동일).
-    """
-    job = db.get(Job, job_id)
-    _require_job_access(job, user)
-    _require_job_not_expired(job)
-    if job.status != "done":
-        raise HTTPException(status_code=400, detail="Only completed jobs can be annotated")
-
-    instruction = str(payload.get("instruction", "")).strip()
-    if not instruction:
-        raise HTTPException(status_code=400, detail="instruction is required")
-
-    # [Flow: 페이지 범위 파싱 — 빈 값이면 None(전체 페이지), 지정하면 해당 페이지만 편집]
-    total_pages = job.total_pages if job.total_pages else (job.total_files or 1)
-    raw_page_range = payload.get("page_range")
-    if raw_page_range is not None and not isinstance(raw_page_range, str):
-        if isinstance(raw_page_range, list):
-            raw_page_range = ",".join(str(p) for p in raw_page_range)
-        else:
-            raw_page_range = str(raw_page_range)
-    page_range = _parse_page_range(raw_page_range, total_pages)
-    page_range_count = len(page_range) if page_range else total_pages
-
-    # 비회원 사용자 체크
-    if job.user_id is None:
-        raise HTTPException(status_code=402, detail="구독이 필요한 기능입니다.")
-
-    from ..db.models import User
-    db_user = db.get(User, job.user_id)
-    if db_user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # 관리자 체크 (무제한 사용)
-    if db_user.is_admin:
-        units = page_range_count
-        job.annotate_status = "processing"
-        job.annotate_refundable = False
-        job.annotate_reserved_pages = 0
-        job.annotate_reserved_period_start = None
-    else:
-        # 일반 사용자는 구독 체크 — 지정한 페이지 수만큼만 과금 (편집은 생성과 동일 단가)
-        units = page_range_count
-        try:
-            sub_result = subscription_service.reserve_usage(
-                db,
-                db_user,
-                basic_pages=0,
-                premium_pages=units,
-                media_seconds=0,
-            )
-        except ValueError as e:
-            raise HTTPException(status_code=402, detail=str(e))
-        job.annotate_status = "processing"
-        job.annotate_refundable = True
-        job.annotate_reserved_pages = units
-        job.annotate_reserved_period_start = datetime.fromisoformat(sub_result["period_start"])
-
-    # 원자적으로 다음 인덱스를 할당한다 (entry 추적용).
-    idx_result = db.execute(
-        update(Job)
-        .where(Job.id == job_id)
-        .values(annotated_pdf_next_index=Job.annotated_pdf_next_index + 1)
-        .returning(Job.annotated_pdf_next_index)
-    )
-    db.commit()
-    annotation_index = idx_result.scalar()
-    if not annotation_index:
-        raise HTTPException(status_code=500, detail="주석 인덱스 할당에 실패했습니다.")
-
-    shared_storage_path = f"{job.id}/annotated.pdf"
-    shared_annotations_json_path = f"{job.id}/annotated.annotations.json"
-
-    # processing entry를 annotated_pdf_files에 추가한다 (edit: true 플래그로 편집 run임을 표시).
-    locked_job = db.execute(
-        select(Job).where(Job.id == job_id).with_for_update()
-    ).scalar_one()
-    annotated_files = list(locked_job.annotated_pdf_files or [])
-    processing_entry = {
-        "index": annotation_index,
-        "status": "processing",
-        "instruction": instruction,
-        "edit": True,
-        "page_range": page_range,
-        "storage_path": shared_storage_path,
-        "annotations_json_storage_path": shared_annotations_json_path,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    annotated_files.append(processing_entry)
-    locked_job.annotated_pdf_files = annotated_files
-    flag_modified(locked_job, "annotated_pdf_files")
-    db.commit()
-
-    from ..workers import tasks
-    task = tasks.annotate_edit_job.delay(
-        job_id, instruction, page_range, annotation_index,
-    )
-    try:
-        locked_job = db.execute(
-            select(Job).where(Job.id == job_id).with_for_update()
-        ).scalar_one()
-        files = list(locked_job.annotated_pdf_files or [])
-        for e in files:
-            if e.get("index") == annotation_index:
-                e["task_id"] = task.id
-                e["premium_pages"] = units
-                e["period_start"] = (
-                    job.annotate_reserved_period_start.isoformat()
-                    if job.annotate_reserved_period_start
-                    else None
-                )
-                break
-        locked_job.annotated_pdf_files = files
-        flag_modified(locked_job, "annotated_pdf_files")
-        locked_job.annotate_job_id = task.id
-        db.commit()
-    except Exception:
-        db.rollback()
-        celery_app.control.revoke(task.id, terminate=True, signal="SIGTERM")
-        locked_job = db.execute(
-            select(Job).where(Job.id == job_id).with_for_update()
-        ).scalar_one()
-        files = list(locked_job.annotated_pdf_files or [])
-        for e in files:
-            if e.get("index") == annotation_index:
-                e["status"] = "error"
-                e["recovery_notes"] = [{"reason": "큐잉 실패"}]
-                break
-        locked_job.annotated_pdf_files = files
-        flag_modified(locked_job, "annotated_pdf_files")
-        locked_job.annotate_status = _overall_annotation_status(files)
-        locked_job.annotate_refundable = False
-        db.commit()
-        raise HTTPException(status_code=500, detail="주석 편집 큐잉에 실패했습니다. 다시 시도해주세요.")
-    return {"job_id": task.id, "status": "processing", "annotation_index": annotation_index}
-
-
 @router.post("/jobs/{job_id}/annotate-action")
 def annotate_action(
     job_id: str,
@@ -2561,6 +2370,203 @@ def annotate_action(
             "retried_indices": [e.get("index") for e, _ in tasks_to_track],
         }
     return {"job_id": None, "status": "processing", "annotation_index": annotation_index}
+
+
+@router.post("/jobs/{job_id}/annotate-cancel")
+def cancel_annotation_job(
+    job_id: str,
+    payload: dict = Body(...),
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """[Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (annotation_index로 entry 찾기)
+          -> Step 3 (Celery task 강제 종료) -> Step 4 (entry 제거) -> Step 5 (상태 갱신)]
+
+    진행 중인 AI 주석 작업을 취소한다. 이미 실행 중인 Celery worker를
+    terminate=True로 강제 종료하여 LLM 호출도 함께 중단한다.
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+
+    annotation_index = payload.get("annotation_index")
+    if not isinstance(annotation_index, int):
+        raise HTTPException(status_code=400, detail="annotation_index is required")
+
+    locked_job = db.execute(
+        select(Job).where(Job.id == job_id).with_for_update()
+    ).scalar_one()
+    files = list(locked_job.annotated_pdf_files or [])
+    target_entry = next((e for e in files if e.get("index") == annotation_index), None)
+    if target_entry is None:
+        raise HTTPException(status_code=404, detail="Annotation job not found")
+    if target_entry.get("status") != "processing":
+        raise HTTPException(status_code=400, detail="Only processing jobs can be cancelled")
+
+    task_id = target_entry.get("task_id")
+    if task_id:
+        try:
+            celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
+        except Exception as e:
+            logger.warning(f"[annotate-cancel] {job_id} task {task_id} revoke 실패: {e}")
+
+    files = [e for e in files if e.get("index") != annotation_index]
+    locked_job.annotated_pdf_files = files
+    flag_modified(locked_job, "annotated_pdf_files")
+    locked_job.annotate_status = _overall_annotation_status(files)
+    locked_job.annotate_refundable = False
+    db.commit()
+    cache.invalidate_pattern(f"preview:{job_id}:*")
+    return {"cancelled": True, "annotation_index": annotation_index}
+
+
+@router.post("/jobs/{job_id}/annotate-edit")
+def annotate_edit_job_endpoint(
+    job_id: str,
+    payload: dict = Body(...),
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """[Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (instruction/page_range 파싱)
+          -> Step 3 (구독 체크 및 원자적 인덱스 할당) -> Step 4 (processing entry 추가)
+          -> Step 5 (Celery annotate_edit_job 큐잉) -> Step 6 (task_id 저장)]
+
+    기존 AI 주석의 색상/코멘트를 사용자 instruction에 맞게 LLM으로 재편집한다.
+    지정한 페이지 범위의 기존 AI 주석만 편집 대상이며, 사용자 수동 편집 주석은 보존된다.
+    과금은 지정한 페이지 수만큼 계산한다 (기존 annotate와 동일 단가).
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+    if job.status != "done":
+        raise HTTPException(status_code=400, detail="Only completed jobs can be annotated")
+
+    instruction = str(payload.get("instruction", "")).strip()
+    if not instruction:
+        raise HTTPException(status_code=400, detail="instruction is required")
+
+    # [Flow: 페이지 범위 파싱 — 빈 값이면 None(전체 페이지), 지정하면 해당 페이지만 편집]
+    total_pages = job.total_pages if job.total_pages else (job.total_files or 1)
+    raw_page_range = payload.get("page_range")
+    if raw_page_range is not None and not isinstance(raw_page_range, str):
+        if isinstance(raw_page_range, list):
+            raw_page_range = ",".join(str(p) for p in raw_page_range)
+        else:
+            raw_page_range = str(raw_page_range)
+    page_range = _parse_page_range(raw_page_range, total_pages)
+    page_range_count = len(page_range) if page_range else total_pages
+
+    # 비회원 사용자 체크
+    if job.user_id is None:
+        raise HTTPException(status_code=402, detail="구독이 필요한 기능입니다.")
+
+    from ..db.models import User
+    db_user = db.get(User, job.user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # 관리자 체크 (무제한 사용)
+    if db_user.is_admin:
+        units = page_range_count
+        job.annotate_status = "processing"
+        job.annotate_refundable = False
+        job.annotate_reserved_pages = 0
+        job.annotate_reserved_period_start = None
+    else:
+        # 일반 사용자는 구독 체크 — 지정한 페이지 수만큼만 과금 (편집은 생성과 동일 단가)
+        units = page_range_count
+        try:
+            sub_result = subscription_service.reserve_usage(
+                db,
+                db_user,
+                basic_pages=0,
+                premium_pages=units,
+                media_seconds=0,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=402, detail=str(e))
+        job.annotate_status = "processing"
+        job.annotate_refundable = True
+        job.annotate_reserved_pages = units
+        job.annotate_reserved_period_start = datetime.fromisoformat(sub_result["period_start"])
+
+    # 원자적으로 다음 인덱스를 할당한다 (entry 추적용).
+    idx_result = db.execute(
+        update(Job)
+        .where(Job.id == job_id)
+        .values(annotated_pdf_next_index=Job.annotated_pdf_next_index + 1)
+        .returning(Job.annotated_pdf_next_index)
+    )
+    db.commit()
+    annotation_index = idx_result.scalar()
+    if not annotation_index:
+        raise HTTPException(status_code=500, detail="주석 인덱스 할당에 실패했습니다.")
+
+    shared_storage_path = f"{job.id}/annotated.pdf"
+    shared_annotations_json_path = f"{job.id}/annotated.annotations.json"
+
+    # processing entry를 annotated_pdf_files에 추가한다 (edit: true 플래그로 편집 run임을 표시).
+    locked_job = db.execute(
+        select(Job).where(Job.id == job_id).with_for_update()
+    ).scalar_one()
+    annotated_files = list(locked_job.annotated_pdf_files or [])
+    processing_entry = {
+        "index": annotation_index,
+        "status": "processing",
+        "instruction": instruction,
+        "edit": True,
+        "page_range": page_range,
+        "storage_path": shared_storage_path,
+        "annotations_json_storage_path": shared_annotations_json_path,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    annotated_files.append(processing_entry)
+    locked_job.annotated_pdf_files = annotated_files
+    flag_modified(locked_job, "annotated_pdf_files")
+    db.commit()
+
+    from ..workers import tasks
+    task = tasks.annotate_edit_job.delay(
+        job_id, instruction, page_range, annotation_index,
+    )
+    try:
+        locked_job = db.execute(
+            select(Job).where(Job.id == job_id).with_for_update()
+        ).scalar_one()
+        files = list(locked_job.annotated_pdf_files or [])
+        for e in files:
+            if e.get("index") == annotation_index:
+                e["task_id"] = task.id
+                e["premium_pages"] = units
+                e["period_start"] = (
+                    job.annotate_reserved_period_start.isoformat()
+                    if job.annotate_reserved_period_start
+                    else None
+                )
+                break
+        locked_job.annotated_pdf_files = files
+        flag_modified(locked_job, "annotated_pdf_files")
+        locked_job.annotate_job_id = task.id
+        db.commit()
+    except Exception:
+        db.rollback()
+        celery_app.control.revoke(task.id, terminate=True, signal="SIGTERM")
+        locked_job = db.execute(
+            select(Job).where(Job.id == job_id).with_for_update()
+        ).scalar_one()
+        files = list(locked_job.annotated_pdf_files or [])
+        for e in files:
+            if e.get("index") == annotation_index:
+                e["status"] = "error"
+                e["recovery_notes"] = [{"reason": "큐잉 실패"}]
+                break
+        locked_job.annotated_pdf_files = files
+        flag_modified(locked_job, "annotated_pdf_files")
+        locked_job.annotate_status = _overall_annotation_status(files)
+        locked_job.annotate_refundable = False
+        db.commit()
+        raise HTTPException(status_code=500, detail="주석 편집 큐잉에 실패했습니다. 다시 시도해주세요.")
+    return {"job_id": task.id, "status": "processing", "annotation_index": annotation_index}
 
 
 @router.post("/jobs/{job_id}/user-annotations")
@@ -2721,20 +2727,34 @@ def save_user_annotations(
 
 
 def _save_user_annotations_json(job: Job, annotations: list, db: Session) -> dict:
-    """[Flow: Step 1 (주석 JSON을 results 버킷에 저장) -> Step 2 (preview 캐시 무효화)]
+    """[Flow: Step 1 (기존 AI 주석 JSON 다운로드) -> Step 2 (사용자 주석과 병합)
+          -> Step 3 (results 버킷에 저장) -> Step 4 (preview 캐시 무효화)]
 
     원본 PDF에 대한 사용자 주석을 JSON 형태로만 저장한다.
     별도의 주석 PDF 파일을 생성하지 않고, 원본 PDF 뷰어에서 annotations_json_url로 로드한다.
+    AI 주석이 이미 존재하면 사용자 주석과 병합하여 원본 탭에서 한 번에 볼 수 있도록 한다.
     파일 경로는 고정: {job_id}/user_annotations.json
     """
     job_id = job.id
     storage_path = f"{job_id}/user_annotations.json"
+    ai_annotations_path = f"{job_id}/annotated.annotations.json"
     try:
         client = supabase_client.get_service_client()
         deduped = _deduplicate_annotations(annotations)
+        # AI 주석이 있으면 사용자 주석과 병합한다.
+        try:
+            ai_bytes = client.storage.from_("results").download(ai_annotations_path)
+            ai_annotations = json.loads(ai_bytes.decode("utf-8"))
+            if not isinstance(ai_annotations, list):
+                ai_annotations = []
+        except Exception:
+            ai_annotations = []
+        user_annotation_ids = {_annotation_id(a) for a in deduped}
+        preserved_ai = [a for a in ai_annotations if _annotation_id(a) not in user_annotation_ids]
+        merged = preserved_ai + deduped
         client.storage.from_("results").upload(
             storage_path,
-            json.dumps(deduped, ensure_ascii=False).encode("utf-8"),
+            json.dumps(merged, ensure_ascii=False).encode("utf-8"),
             {"content-type": "application/json", "upsert": "true"},
         )
         cache.invalidate_pattern(f"preview:{job_id}:*")

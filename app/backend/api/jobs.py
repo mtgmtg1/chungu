@@ -1952,12 +1952,13 @@ def _annotation_display_name(job: Job, n: int) -> str:
 
 
 def _create_user_annotated_pdf(job: Job, annotations: list, db: Session) -> dict:
-    """[Flow: Step 1 (원본 PDF storage_path 확인) -> Step 2 (원본 PDF 다운로드)
-          -> Step 3 (사용자 주석 PyMuPDF로 적용) -> Step 4 (원자적 다음 인덱스 할당)
-          -> Step 5 (results 버킷에 PDF + JSON 업로드) -> Step 6 (annotated_pdf_files에 entry 추가)
-          -> Step 7 (DB commit 및 preview 캐시 무효화)]
+    """[Flow: Step 1 (원본 PDF storage_path 확인) -> Step 2 (기존 user 모드 주석 PDF 확인)
+          -> Step 3a (있으면 해당 파일 덮어쓰기) -> Step 3b (없으면 원본 PDF 다운로드 후 새 파일 생성)
+          -> Step 4 (results 버킷에 PDF + JSON 업로드) -> Step 5 (DB commit 및 preview 캐시 무효화)]
 
-    사용자가 원본 PDF에 직접 추가한 주석을 받아 새로운 annotation PDF 파일을 생성한다.
+    사용자가 원본 PDF에 직접 추가한 주석을 받아 annotation PDF 파일을 생성/갱신한다.
+    이미 user 모드 주석 PDF가 존재하면 덮어쓰고, 없으면 새로 생성한다.
+    자동 저장이 반복되어도 파일이 계속 늘어나지 않도록 한다.
     """
     job_id = job.id
     original_path = job.pdf_storage_path
@@ -1966,24 +1967,59 @@ def _create_user_annotated_pdf(job: Job, annotations: list, db: Session) -> dict
 
     try:
         client = supabase_client.get_service_client()
-        pdf_bytes = client.storage.from_("pdfs").download(original_path)
-        new_pdf_bytes = pdf_user_annotator.apply_user_annotations(pdf_bytes, annotations)
 
-        # 원자적으로 다음 인덱스를 할당한다. 동시에 여러 주석 저장이 실행되더라도
-        # 각각 고유한 파일명을 가지므로 덮어쓰기가 발생하지 않는다.
-        result = db.execute(
-            update(Job)
-            .where(Job.id == job_id)
-            .values(annotated_pdf_next_index=Job.annotated_pdf_next_index + 1)
-            .returning(Job.annotated_pdf_next_index)
+        # [Flow: 기존 user 모드 주석 PDF가 있으면 재사용한다]
+        annotated_files = list(job.annotated_pdf_files or [])
+        existing_user_entry = next(
+            (e for e in annotated_files if e.get("mode") == "user"),
+            None,
         )
-        db.commit()
-        next_index = result.scalar()
-        if not next_index:
-            raise HTTPException(status_code=500, detail="Failed to allocate annotation index")
 
-        storage_path = f"{job_id}/annotated_{next_index}.pdf"
-        annotations_json_storage_path = f"{job_id}/annotated_{next_index}.annotations.json"
+        if existing_user_entry:
+            # [Flow: Step 3a (기존 user 주석 PDF 경로 재사용)]
+            storage_path = existing_user_entry.get("storage_path")
+            annotations_json_storage_path = existing_user_entry.get("annotations_json_storage_path")
+            if not storage_path:
+                raise HTTPException(status_code=500, detail="Invalid user annotation entry")
+            if not annotations_json_storage_path:
+                annotations_json_storage_path = f"{job_id}/annotated_{existing_user_entry.get('index', 1)}.annotations.json"
+            # 기존 주석 PDF를 다운로드하여 원본에 주석을 다시 적용하는 대신,
+            # 원본 PDF에 최신 주석을 적용하여 덮어쓴다 (사용자 주석은 원본 기준).
+            pdf_bytes = client.storage.from_("pdfs").download(original_path)
+            new_pdf_bytes = pdf_user_annotator.apply_user_annotations(pdf_bytes, annotations)
+        else:
+            # [Flow: Step 3b (원본 PDF 다운로드 후 새 주석 PDF 생성)]
+            pdf_bytes = client.storage.from_("pdfs").download(original_path)
+            new_pdf_bytes = pdf_user_annotator.apply_user_annotations(pdf_bytes, annotations)
+
+            # 원자적으로 다음 인덱스를 할당한다.
+            result = db.execute(
+                update(Job)
+                .where(Job.id == job_id)
+                .values(annotated_pdf_next_index=Job.annotated_pdf_next_index + 1)
+                .returning(Job.annotated_pdf_next_index)
+            )
+            db.commit()
+            next_index = result.scalar()
+            if not next_index:
+                raise HTTPException(status_code=500, detail="Failed to allocate annotation index")
+
+            storage_path = f"{job_id}/annotated_{next_index}.pdf"
+            annotations_json_storage_path = f"{job_id}/annotated_{next_index}.annotations.json"
+
+            entry = {
+                "index": next_index,
+                "storage_path": storage_path,
+                "annotations_json_storage_path": annotations_json_storage_path,
+                "filename": _annotation_display_name(job, next_index),
+                "instruction": "",
+                "mode": "user",
+                "comment_mode": "user",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            annotated_files.append(entry)
+            job.annotated_pdf_files = annotated_files
+            job.result_annotated_pdf_storage_path = storage_path
 
         client.storage.from_("results").upload(
             storage_path,
@@ -1996,20 +2032,11 @@ def _create_user_annotated_pdf(job: Job, annotations: list, db: Session) -> dict
             {"content-type": "application/json", "upsert": "true"},
         )
 
-        entry = {
-            "index": next_index,
-            "storage_path": storage_path,
-            "annotations_json_storage_path": annotations_json_storage_path,
-            "filename": _annotation_display_name(job, next_index),
-            "instruction": "",
-            "mode": "user",
-            "comment_mode": "user",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        annotated_files = list(job.annotated_pdf_files or [])
-        annotated_files.append(entry)
-        job.annotated_pdf_files = annotated_files
-        job.result_annotated_pdf_storage_path = storage_path
+        # 기존 entry의 annotations_json_storage_path가 비어 있었다면 갱신한다.
+        if existing_user_entry and not existing_user_entry.get("annotations_json_storage_path"):
+            existing_user_entry["annotations_json_storage_path"] = annotations_json_storage_path
+            job.annotated_pdf_files = annotated_files
+
         db.commit()
         cache.invalidate_pattern(f"preview:{job_id}:*")
         return {

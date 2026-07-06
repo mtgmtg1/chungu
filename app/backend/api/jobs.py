@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from pypdf import PdfReader
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from .. import settings_store
 from ..auth.supabase_auth import CurrentUser, get_current_admin, get_current_user
@@ -937,6 +938,7 @@ def _delete_annotation_file(job: Job, source_index: int, db: Session) -> dict:
         supabase_client.delete_storage_path("results", job.result_annotated_pdf_storage_path)
         job.result_annotated_pdf_storage_path = ""
         job.annotated_pdf_files = []
+        flag_modified(job, "annotated_pdf_files")
         cache.invalidate_pattern(f"preview:{job.id}:*")
         db.commit()
         return {"deleted": True, "source_kind": "annotation", "source_index": 0}
@@ -953,6 +955,7 @@ def _delete_annotation_file(job: Job, source_index: int, db: Session) -> dict:
             celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
         entries.pop(entry_idx)
         job.annotated_pdf_files = entries
+        flag_modified(job, "annotated_pdf_files")
         if not entries:
             job.result_annotated_pdf_storage_path = ""
         if job.user_id and job.annotate_refundable:
@@ -977,6 +980,7 @@ def _delete_annotation_file(job: Job, source_index: int, db: Session) -> dict:
         supabase_client.delete_storage_path("results", storage_path)
     entries.pop(entry_idx)
     job.annotated_pdf_files = entries
+    flag_modified(job, "annotated_pdf_files")
     if not entries:
         job.result_annotated_pdf_storage_path = ""
     cache.invalidate_pattern(f"preview:{job.id}:*")
@@ -1901,6 +1905,7 @@ def annotate_job(
     }
     annotated_files.append(processing_entry)
     locked_job.annotated_pdf_files = annotated_files
+    flag_modified(locked_job, "annotated_pdf_files")
     db.commit()
 
     from ..workers import tasks
@@ -1924,6 +1929,7 @@ def annotate_job(
                 )
                 break
         locked_job.annotated_pdf_files = files
+        flag_modified(locked_job, "annotated_pdf_files")
         locked_job.annotate_job_id = task.id
         db.commit()
     except Exception:
@@ -1940,6 +1946,7 @@ def annotate_job(
                 e["recovery_notes"] = [{"reason": "작업 큐잉 실패: task ID 저장 에러"}]
                 break
         locked_job.annotated_pdf_files = files
+        flag_modified(locked_job, "annotated_pdf_files")
         locked_job.annotate_status = "error"
         locked_job.annotate_refundable = False
         db.commit()
@@ -1991,6 +1998,7 @@ def annotate_action(
     entry["status"] = "processing"
     entry["recovery_notes"] = []
     job.annotated_pdf_files = entries
+    flag_modified(job, "annotated_pdf_files")
     job.annotate_status = "processing"
     job.annotate_refundable = False
     db.commit()
@@ -2014,6 +2022,7 @@ def annotate_action(
                 e["task_id"] = task.id
                 break
         locked_job.annotated_pdf_files = files
+        flag_modified(locked_job, "annotated_pdf_files")
         locked_job.annotate_job_id = task.id
         db.commit()
     except Exception:
@@ -2029,6 +2038,7 @@ def annotate_action(
                 e["recovery_notes"] = [{"reason": "재시도 작업 큐잉 실패: task ID 저장 에러"}]
                 break
         locked_job.annotated_pdf_files = files
+        flag_modified(locked_job, "annotated_pdf_files")
         locked_job.annotate_status = "error"
         locked_job.annotate_refundable = False
         db.commit()
@@ -2122,6 +2132,7 @@ def save_user_annotations(
         if entry.get("annotations_json_storage_path") != annotations_json_storage_path:
             entry["annotations_json_storage_path"] = annotations_json_storage_path
             job.annotated_pdf_files = entries
+            flag_modified(job, "annotated_pdf_files")
             db.commit()
         cache.invalidate_pattern(f"preview:{job_id}:*")
         return {
@@ -2235,6 +2246,7 @@ def _create_user_annotated_pdf(job: Job, annotations: list, db: Session) -> dict
             }
             annotated_files.append(entry)
             job.annotated_pdf_files = annotated_files
+            flag_modified(job, "annotated_pdf_files")
             job.result_annotated_pdf_storage_path = storage_path
 
         client.storage.from_("results").upload(
@@ -2252,6 +2264,7 @@ def _create_user_annotated_pdf(job: Job, annotations: list, db: Session) -> dict
         if existing_user_entry and not existing_user_entry.get("annotations_json_storage_path"):
             existing_user_entry["annotations_json_storage_path"] = annotations_json_storage_path
             job.annotated_pdf_files = annotated_files
+            flag_modified(job, "annotated_pdf_files")
 
         db.commit()
         cache.invalidate_pattern(f"preview:{job_id}:*")

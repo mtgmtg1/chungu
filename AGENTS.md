@@ -13,6 +13,7 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **비동기/원자적 인덱스**: 주석 생성 요청마다 고유 인덱스를 원자적으로 할당해 파일 덮어쓰기 및 동시 생성 충돌 방지.
 - **JSON 오버레이 단일 진실원**: 주석을 PDF에 구워 넣지 않고 embedpdf `AnnotationTransferItem[]` JSON 오버레이로만 표시. `pdf_annotate_converter.run()`은 깨끗한 보정 이미지 PDF를 표시 기반으로 업로드하고 `build_embedpdf_annotations()`로 JSON을 생성. flatten 다운로드는 embedpdf snippet 자체의 다운로드 UI가 처리.
 - **좌표 변환**: `_rect_to_embedpdf_rect()`가 PDF user-space(원점 좌하단, y↑)를 embedpdf device-space(원점 좌상단, y↓)로 변환할 때 `origin.y = page_height - y1`로 y축 flip. embedpdf가 annotation `rect.origin.y`를 CSS `top`으로 직접 렌더링하므로 flip이 필수.
+- **JSONB 변경 감지**: `annotated_pdf_files`는 SQLAlchemy JSONB 컬럼이며, dict/list를 직접 변경한 뒤 재할당해도 SQLAlchemy가 변경을 감지하지 못하는 경우가 있으므로, 해당 컬럼을 수정하는 모든 경로(`pdf_annotate_converter.py`, `api/jobs.py`)에서 `flag_modified(job, "annotated_pdf_files")`를 호출해야 한다. 이를 누락하면 주석 생성이 완료되어도 DB entry 상태가 `processing`으로 남는다.
 - **자동 저장**: 원본 패널에서 사용자가 그린 주석을 자동 저장하며, 무한 파일 증식 및 404 깜빡임 문제를 방지.
 - **AI 주석 생성**: PDF 패널 하단 중앙 플로팅 FAB으로 AI 주석 생성 트리거 이동; Vision LLM이 mode/comment_mode를 동적으로 결정.
 - **실패 처리**: AI 주석 생성이 실패(`status === "error"`)하거나 처리 중(`status === "processing"`)인 파일의 파일탭(좌측 다중 파일 목록)에 재시도/취소 버튼 표시; `SourcePanel.jsx`에서 `onRetryAnnotation` / `onDeleteFile` 콜백으로 `JobResultPage`와 연결.

@@ -18,7 +18,7 @@ from langgraph.types import interrupt
 from typing_extensions import TypedDict
 
 from .agent_engine import get_async_redis_checkpointer, setup_redis_checkpointer
-from .agent_llm import build_agent_llm
+from .agent_llm import build_agent_llm, parse_tool_calls_from_content
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +179,21 @@ def ask_user(question: str, options: list[str] | None = None) -> str:
     )
 
 
+@tool
+def finish(summary: str) -> str:
+    """[Flow: Step 1 (요약 메시지 수신) -> Step 2 (완료 상태 JSON 반환)]
+
+    작업을 완료하고 최종 요약을 반환한다.
+
+    Args:
+        summary: 사용자에게 표시할 요약 메시지.
+
+    Returns:
+        완료 결과 JSON 문자열.
+    """
+    return json.dumps({"ok": True, "action": "finish", "summary": summary}, ensure_ascii=False)
+
+
 TOOLS = [
     search_text,
     get_elements,
@@ -187,6 +202,7 @@ TOOLS = [
     remove_annotation,
     compare_elements,
     ask_user,
+    finish,
 ]
 
 
@@ -200,6 +216,7 @@ You have access to these tools:
 - remove_annotation: remove an existing AI annotation (requires approval).
 - compare_elements: compare elements across multiple pages/tables.
 - ask_user: ask the user a clarifying question or request approval.
+- finish: complete the task and return a summary.
 
 Workflow:
 1. Plan: break the user's instruction into steps. If the instruction is ambiguous, ask the user first.
@@ -213,6 +230,9 @@ Important rules:
 - For destructive actions (removing annotations) or ambiguous instructions, ask the user for approval.
 - Write comments in the same language as the user's instruction.
 - Always use the element_index returned by get_elements for add_highlight/add_callout.
+- Do not just describe the plan; invoke the tools to gather and annotate.
+- After gathering elements, you MUST call add_highlight/add_callout for every matching element.
+- When the task is complete, return a concise summary.
 """
 
 
@@ -225,9 +245,21 @@ def _plan_node(state: AnnotatorState) -> AnnotatorState:
     messages = state.get("messages", [])
     if not messages:
         instruction = state.get("instruction", "")
+        mode = state.get("mode", "both")
+        page_range = state.get("page_range")
+        prompt = f"User instruction: {instruction}\n"
+        prompt += f"Annotation mode: {mode}\n"
+        if page_range:
+            prompt += f"Target pages: {page_range}\n"
+        prompt += "\nPlease perform the annotation task using the available tools."
+        if mode in ("highlight", "both"):
+            prompt += " For each matching element, call add_highlight with a clear comment."
+        if mode in ("callout", "both"):
+            prompt += " For each matching element, call add_callout with a clear comment."
+        prompt += " Do not just summarize; invoke the tools to create the annotations."
         messages = [
             SystemMessage(content=PLAN_SYSTEM_PROMPT),
-            HumanMessage(content=f"User instruction: {instruction}\n\nPlease create a step-by-step plan."),
+            HumanMessage(content=prompt),
         ]
     # LLM 호출은 agent_node에서 tool binding으로 처리하므로, 여기서는 메시지 구성만 한다.
     return {"messages": messages}
@@ -235,13 +267,14 @@ def _plan_node(state: AnnotatorState) -> AnnotatorState:
 
 def _agent_node(state: AnnotatorState, llm) -> AnnotatorState:
     """[Flow: Step 1 (LLM에 도구 바인딩) -> Step 2 (메시지로부터 다음 행동 예측)
-          -> Step 3 (tool call 또는 최종 응답 반환)]
+          -> Step 3 (tool call 또는 최종 응답 반환, content 기반 fallback 파싱)]
 
     ReAct 스타일의 추론 노드. LLM이 도구를 호출하거나 최종 답변을 생성한다.
     """
     messages = state.get("messages", [])
-    model = llm.bind_tools(TOOLS)
+    model = llm.bind_tools(TOOLS, tool_choice="required")
     response = model.invoke(messages)
+    response = parse_tool_calls_from_content(response)
     return {"messages": [response]}
 
 
@@ -318,6 +351,10 @@ def _execute_node(state: AnnotatorState) -> AnnotatorState:
 def _do_search_text(elements: list[dict], query: str, page_no: int | None = None) -> str:
     """elements 목록에서 query를 포함하는 요소를 검색한다."""
     q = str(query).lower()
+    try:
+        page_no = int(page_no) if page_no is not None else None
+    except Exception:
+        page_no = None
     matches = []
     for i, el in enumerate(elements):
         if page_no is not None and el.get("page_no") != page_no:
@@ -330,8 +367,13 @@ def _do_search_text(elements: list[dict], query: str, page_no: int | None = None
 
 def _do_get_elements(elements: list[dict], page_no: int | None = None) -> str:
     """elements 목록에서 지정 페이지의 요소를 반환한다."""
+    try:
+        page_no = int(page_no) if page_no is not None else None
+    except Exception:
+        page_no = None
     filtered = elements if page_no is None else [el for el in elements if el.get("page_no") == page_no]
-    return json.dumps({"elements": filtered, "page_no": page_no}, ensure_ascii=False)
+    indexed = [{"element_index": i, **el} for i, el in enumerate(filtered)]
+    return json.dumps({"elements": indexed, "page_no": page_no}, ensure_ascii=False)
 
 
 def _do_compare_elements(elements: list[dict], description: str, page_nos: list[int]) -> str:
@@ -387,28 +429,36 @@ def _route_after_agent(state: AnnotatorState) -> str:
     """[Flow: Step 1 (마지막 메시지 확인) -> Step 2 (tool_calls 유무에 따라 분기)]
 
     agent 노드 이후의 조건부 라우팅. 마지막 메시지가 tool call을 포함하면 execute,
-    그렇지 않으면 finalize로 이동한다.
+    finish tool만 있으면 finalize로 이동한다.
     """
     messages = state.get("messages", [])
     last_message = messages[-1] if messages else None
-    if isinstance(last_message, AIMessage) and last_message.tool_calls:
-        return "execute"
-    return "finalize"
+    if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
+        return "finalize"
+    tool_names = {tc.get("name") for tc in last_message.tool_calls}
+    if tool_names == {"finish"}:
+        return "finalize"
+    return "execute"
 
 
 def _route_after_execute(state: AnnotatorState) -> str:
     """[Flow: Step 1 (pending_interrupt 및 tool_calls 확인) -> Step 2 (hitl/agent/finalize 분기)]
 
     execute 노드 이후의 조건부 라우팅. 승인 요청이 있으면 hitl,
-    추가 tool call이 있으면 agent, 없으면 finalize로 이동한다.
+    tool call 결과(ToolMessage)를 받으면 agent로 재추론, finish tool만 있으면 finalize로 이동한다.
     """
     if state.get("pending_interrupt"):
         return "hitl"
     messages = state.get("messages", [])
     last_message = messages[-1] if messages else None
-    if isinstance(last_message, AIMessage) and last_message.tool_calls:
-        return "execute"
-    return "finalize"
+    if isinstance(last_message, ToolMessage):
+        return "agent"
+    if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
+        return "finalize"
+    tool_names = {tc.get("name") for tc in last_message.tool_calls}
+    if tool_names == {"finish"}:
+        return "finalize"
+    return "execute"
 
 
 def _hitl_node(state: AnnotatorState) -> AnnotatorState:
@@ -467,35 +517,24 @@ def _finalize_node(state: AnnotatorState) -> AnnotatorState:
 
 
 def build_annotator_graph(
-    endpoint: str,
-    model: str,
-    api_key: str | None = None,
-    temperature: float = 0.3,
-    max_tokens: int = 4096,
+    llm: Any,
+    checkpointer: Any = None,
 ) -> Any:
-    """[Flow: Step 1 (LLM 인스턴스 생성) -> Step 2 (StateGraph 정의)
-          -> Step 3 (노드/엣지 연결) -> Step 4 (Redis 체크포인터로 컴파일)]
+    """[Flow: Step 1 (LLM 인스턴스 수신) -> Step 2 (StateGraph 정의)
+          -> Step 3 (노드/엣지 연결) -> Step 4 (체크포인터로 컴파일)]
 
     PDF AI 주석 에이전트 그래프를 생성한다.
 
     Args:
-        endpoint: OpenAI-compatible endpoint URL.
-        model: 모델 이름.
-        api_key: API 키.
-        temperature: 샘플링 온도.
-        max_tokens: 최대 생성 토큰 수.
+        llm: LangChain chat model 인스턴스 (build_agent_llm로 생성하거나 테스트용 FakeChatModel).
+        checkpointer: LangGraph checkpointer. None이면 InMemorySaver를 사용한다.
 
     Returns:
         compile()된 StateGraph.
     """
-    llm = build_agent_llm(
-        endpoint=endpoint,
-        model=model,
-        api_key=api_key,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        streaming=True,
-    )
+    if checkpointer is None:
+        from langgraph.checkpoint.memory import InMemorySaver
+        checkpointer = InMemorySaver()
 
     builder = StateGraph(AnnotatorState)
     builder.add_node("plan", _plan_node)
@@ -519,9 +558,7 @@ def build_annotator_graph(
     builder.add_edge("hitl", "agent")
     builder.add_edge("finalize", END)
 
-    saver = get_async_redis_checkpointer()
-    # 참고: 실제 사용 전 await setup_redis_checkpointer(saver) 필요
-    return builder.compile(checkpointer=saver)
+    return builder.compile(checkpointer=checkpointer)
 
 
 async def run_annotator_agent(
@@ -543,8 +580,20 @@ async def run_annotator_agent(
     """
     from .agent_engine import run_agent_graph
 
-    graph = build_annotator_graph(endpoint, model, api_key)
+    llm = build_agent_llm(endpoint, model, api_key)
+    graph = build_annotator_graph(llm, get_async_redis_checkpointer())
     await setup_redis_checkpointer(get_async_redis_checkpointer())
+
+    # [Flow: Step 1 (job_id로 PDF/이미지에서 elements 추출) -> Step 2 (page_range 필터링) -> Step 3 (에이전트 state에 주입)]
+    # NOTE: pdf_annotate_converter는 PyMuPDF/OCR/SQLAlchemy 등 무거운 의존성을 가지므로 함수 내부에서 lazy import한다.
+    from .pdf_annotate_converter import collect_elements_for_agent
+
+    try:
+        elements, pdf_bytes = collect_elements_for_agent(job_id, page_range=page_range)
+    except Exception as exc:
+        logger.exception("[run_annotator_agent] elements 추출 실패")
+        return {"status": "error", "error": f"elements 추출 실패: {exc}", "result": None}
+
     inputs: AnnotatorState = {
         "messages": [],
         "job_id": job_id,
@@ -553,7 +602,7 @@ async def run_annotator_agent(
         "comment_mode": comment_mode,
         "page_range": page_range,
         "language": language,
-        "elements": [],
+        "elements": elements,
         "selected_targets": [],
         "pending_removals": [],
         "recovery_notes": [],
@@ -562,4 +611,41 @@ async def run_annotator_agent(
         "pending_interrupt": None,
         "error": "",
     }
-    return await run_agent_graph(graph, inputs, thread_id)
+    result = await run_agent_graph(graph, inputs, thread_id)
+
+    # [Flow: Step 1 (agent가 선택한 selected_targets 확인) -> Step 2 (pdf_bytes 기준으로 EmbedPDF AnnotationTransferItem 생성)
+    #       -> Step 3 (final_annotations에 JSON 결과 저장)]
+    if result.get("status") == "done" and pdf_bytes:
+        from .pdf_annotator import build_embedpdf_annotations
+
+        raw_targets = (result.get("result") or {}).get("final_annotations") or []
+        targets = []
+        for t in raw_targets:
+            try:
+                targets.append(
+                    AnnotationTarget(
+                        page_no=int(t["page_no"]),
+                        bbox_pdf=tuple(t["bbox_pdf"]),
+                        comment=t.get("comment", ""),
+                        color=tuple(t["color"]) if t.get("color") else (1.0, 0.92, 0.3),
+                        callout_color=tuple(t["callout_color"]) if t.get("callout_color") else None,
+                        opacity=t.get("opacity"),
+                    )
+                )
+            except Exception as te:
+                logger.warning(f"[run_annotator_agent] target 변환 실패: {te} (target={t})")
+        if targets:
+            page_elements_bboxes: dict[int, list[tuple[float, float, float, float]]] = {}
+            for el in elements:
+                page_elements_bboxes.setdefault(el.get("page_no", 1), []).append(el.get("bbox_pdf", (0, 0, 0, 0)))
+            try:
+                annotations = build_embedpdf_annotations(
+                    pdf_bytes, targets, mode, page_elements_bboxes=page_elements_bboxes
+                )
+                result["result"]["final_annotations"] = annotations
+            except Exception as be:
+                logger.exception("[run_annotator_agent] build_embedpdf_annotations 실패")
+                result["result"]["final_annotations"] = raw_targets
+        else:
+            result["result"]["final_annotations"] = []
+    return result

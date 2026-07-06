@@ -26,7 +26,7 @@ from . import cache, ocr_client, paddleocr_client, supabase_client
 from .image_deskew import deskew_image
 from .ocr_layout import BBox, OcrRow, OcrTextBlock, parse_layout_result
 from .pdf_annotator import AnnotationTarget, build_embedpdf_annotations
-from .pdf_coords import clamp_rect_to_page, px_bbox_to_pdf_rect
+from .pdf_coords import PDF_POINTS_PER_INCH, clamp_rect_to_page, px_bbox_to_pdf_rect
 from .pdf_text_layer import (
     TextLayerSearcher,
     add_text_layer_from_ocr,
@@ -313,6 +313,85 @@ def _page_point_sizes(pdf_bytes: bytes) -> dict[int, tuple[float, float]]:
     finally:
         doc.close()
     return sizes
+
+
+def collect_elements_for_agent(
+    job_id: str,
+    page_range: list[int] | None = None,
+    dpi: int = RENDER_DPI,
+) -> tuple[list[dict], bytes | None]:
+    """[Flow: Step 1 (job_id로 Job 조회) -> Step 2 (searchable PDF 여부 확인)
+          -> Step 3 (searchable PDF 또는 PaddleOCR로 elements 추출)
+          -> Step 4 (page_range 필터링) -> Step 5 (픽셀 bbox를 PDF 포인트로 변환)
+          -> Step 6 (agent가 사용할 JSON serializable dict 목록 + 주석 베이스 PDF bytes 반환)]
+
+    LangGraph annotator agent가 사용할 텍스트 요소 목록을 추출한다.
+    PDF 좌표는 이미지 픽셀 좌표를 PDF 포인트로 변환해 state["elements"]에 저장한다.
+    함께 반환된 pdf_bytes는 agent가 최종 주석 JSON을 생성할 때 사용한다.
+    """
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+    finally:
+        db.close()
+    if job is None:
+        return [], None
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_dir = Path(tmpdir)
+        searchable_pdf_bytes: bytes | None = None
+        if job.searchable_pdf_storage_path:
+            try:
+                searchable_pdf_bytes = supabase_client.download_pdf(job.searchable_pdf_storage_path).read()
+                logger.info(f"[collect_elements_for_agent] searchable PDF 사용: {job.searchable_pdf_storage_path}")
+            except Exception as e:
+                logger.warning(f"[collect_elements_for_agent] searchable PDF 다운로드 실패: {e}")
+
+        if searchable_pdf_bytes:
+            elements, _corrected = _collect_page_elements_from_searchable_pdf(searchable_pdf_bytes, temp_dir, dpi=dpi)
+            pdf_bytes = searchable_pdf_bytes
+        else:
+            elements, corrected_images, layout_by_page = _collect_page_elements(job, temp_dir)
+            if not corrected_images:
+                return [], None
+            pdf_bytes = _images_to_pdf(corrected_images)
+            page_ocr_results = extract_page_ocr_results_from_layout(layout_by_page)
+            if page_ocr_results:
+                pdf_bytes = add_text_layer_from_ocr(
+                    pdf_bytes, page_ocr_results, dpi=dpi, language=job.language or "en"
+                )
+
+        if not elements:
+            return [], pdf_bytes
+
+        page_point_sizes = _page_point_sizes(pdf_bytes)
+        if page_range is not None:
+            page_set = set(page_range)
+            elements = [e for e in elements if e.page_no in page_set]
+            if not elements:
+                return [], pdf_bytes
+
+        results: list[dict] = []
+        for el in elements:
+            page_width_pt, page_height_pt = page_point_sizes.get(el.page_no, (0.0, 0.0))
+            page_height_px = page_height_pt * float(dpi) / PDF_POINTS_PER_INCH if page_height_pt else None
+            bbox_pdf = px_bbox_to_pdf_rect(el.bbox_px, dpi, page_height_px)
+            cell_bboxes_pdf = [
+                px_bbox_to_pdf_rect(b, dpi, page_height_px) for b in el.cell_bboxes
+            ]
+            results.append(
+                {
+                    "page_no": el.page_no,
+                    "bbox_px": el.bbox_px,
+                    "bbox_pdf": bbox_pdf,
+                    "kind": el.kind,
+                    "text": el.text,
+                    "word_bboxes": el.word_bboxes,
+                    "cell_texts": el.cell_texts,
+                    "cell_bboxes_pdf": cell_bboxes_pdf,
+                }
+            )
+        return results, pdf_bytes
 
 
 def _render_pdf_to_image_paths(

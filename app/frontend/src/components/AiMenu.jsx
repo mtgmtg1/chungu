@@ -17,7 +17,7 @@ import {
   Wand2,
   WrapText } from
 "lucide-react";
-import api from "../api.js";
+import { api } from "../api.js";
 import AgentApprovalModal from "./AgentApprovalModal.jsx";
 
 const turndown = new TurndownService({
@@ -196,9 +196,10 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
 
   const handleApprove = async (value) => {
     if (!run) return;
+    const resumeValue = value !== undefined && value !== null ? value : { approved: true };
     try {
       setIsLoading(true);
-      const res = await api.resumeAgent(run.run_id, { resumeValue: value });
+      const res = await api.resumeAgent(run.run_id, { resumeValue });
       setRun(res);
       if (res.status === "done") {
         applyAgentResult(editor, res.result, getSelectedMarkdown(editor));
@@ -218,7 +219,8 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
   };
 
   const handleReject = async (value) => {
-    await handleApprove({ approved: false, value });
+    const resumeValue = value !== undefined && value !== null ? value : { approved: false };
+    await handleApprove({ approved: false, value: resumeValue });
   };
 
   if (!editor || !editable) return null;

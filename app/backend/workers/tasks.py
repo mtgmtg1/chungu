@@ -18,9 +18,8 @@ from ..celery_app import celery
 from celery.signals import worker_ready
 from ..config import settings
 from ..core import archive_handler, converter, excel_writer, media_loader, merge, pdf_annotate_converter, pdf_text_layer, subscription_service, supabase_client, xlsx_advanced_converter
-from ..core.agent_engine import get_agent_status, resume_agent_graph, run_agent_graph
-from ..core.agent_annotator import build_annotator_graph, run_annotator_agent
-from ..core.agent_editor import build_editor_graph, run_editor_agent
+from ..core.agent_annotator import run_annotator_agent
+from ..core.agent_editor import run_editor_agent
 from ..core.ocr_client import has_pdf_text_layer
 from ..core.pipeline_docling import run_docling, run_hwp
 from ..core.pipeline_hybrid import run_hybrid
@@ -953,44 +952,32 @@ async def _run_agent(run_id: str) -> dict:
         api_key = payload.get("api_key") or ""
 
         if graph_name == "annotator":
-            graph = build_annotator_graph(endpoint, model, api_key)
-            inputs = {
-                "messages": [],
-                "job_id": payload.get("job_id", ""),
-                "instruction": payload.get("instruction", ""),
-                "mode": payload.get("mode", "both"),
-                "comment_mode": payload.get("comment_mode", "llm_summary"),
-                "page_range": payload.get("page_range"),
-                "language": payload.get("language", "en"),
-                "elements": [],
-                "selected_targets": [],
-                "pending_removals": [],
-                "recovery_notes": [],
-                "status": "running",
-                "final_annotations": None,
-                "pending_interrupt": None,
-                "error": "",
-            }
+            result = await run_annotator_agent(
+                job_id=payload.get("job_id", ""),
+                instruction=payload.get("instruction", ""),
+                mode=payload.get("mode", "both"),
+                comment_mode=payload.get("comment_mode", "llm_summary"),
+                page_range=payload.get("page_range"),
+                language=payload.get("language", "en"),
+                endpoint=endpoint,
+                model=model,
+                api_key=api_key,
+                thread_id=run.thread_id,
+            )
         elif graph_name == "editor":
-            graph = build_editor_graph(endpoint, model, api_key)
-            inputs = {
-                "messages": [],
-                "instruction": payload.get("instruction", ""),
-                "option": payload.get("option", "improve"),
-                "command": payload.get("command"),
-                "full_markdown": payload.get("full_markdown", ""),
-                "selected_markdown": payload.get("selected_markdown", ""),
-                "edits": [],
-                "questions": [],
-                "final_markdown": None,
-                "status": "running",
-                "pending_interrupt": None,
-                "error": "",
-            }
+            result = await run_editor_agent(
+                instruction=payload.get("instruction", ""),
+                option=payload.get("option", "improve"),
+                command=payload.get("command"),
+                full_markdown=payload.get("full_markdown", ""),
+                selected_markdown=payload.get("selected_markdown", ""),
+                endpoint=endpoint,
+                model=model,
+                api_key=api_key,
+                thread_id=run.thread_id,
+            )
         else:
             return {"error": f"Unknown graph_name: {graph_name}"}
-
-        result = await run_agent_graph(graph, inputs, run.thread_id)
 
         run.status = result.get("status", "error")
         run.result = result.get("result") or {}

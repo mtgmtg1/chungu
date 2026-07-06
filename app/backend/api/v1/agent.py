@@ -16,6 +16,7 @@ from ...celery_app import celery as celery_app
 from ...config import settings
 from ...core.agent_engine import (
     get_agent_status,
+    get_async_redis_checkpointer,
     make_thread_config,
     resume_agent_graph,
     serialize_interrupt,
@@ -24,11 +25,30 @@ from ...core.agent_engine import (
 )
 from ...core.agent_annotator import build_annotator_graph
 from ...core.agent_editor import build_editor_graph
+from ...core.agent_llm import build_agent_llm
 from ...db.models import AgentRun, ApiKey, Job
 from ...db.session import get_db
 from ...workers.tasks import agent_run_task
 
 router = APIRouter(prefix="/agent", tags=["agent"])
+
+
+def _load_graph(graph_name: str, payload: dict[str, Any]) -> Any:
+    """[Flow: Step 1 (payload에서 endpoint/model/api_key 추출) -> Step 2 (LLM 인스턴스 생성)
+          -> Step 3 (Redis 체크포인터 생성) -> Step 4 (graph_name에 맞는 그래프 빌드)]
+
+    API에서 재개/상태/스트리밍 시 동일한 LLM + 체크포인터로 그래프를 복원한다.
+    """
+    endpoint = payload.get("endpoint", settings.default_llm_endpoint)
+    model = payload.get("model", settings.default_llm_model)
+    api_key = payload.get("api_key", "")
+    llm = build_agent_llm(endpoint, model, api_key)
+    saver = get_async_redis_checkpointer()
+    if graph_name == "annotator":
+        return build_annotator_graph(llm, saver)
+    if graph_name == "editor":
+        return build_editor_graph(llm, saver)
+    raise HTTPException(status_code=400, detail="Unknown graph_name")
 
 
 class RunAgentRequest(BaseModel):
@@ -142,21 +162,7 @@ async def resume_agent(
     if user and not user.is_admin and run.user_id and run.user_id != user.id:
         raise HTTPException(status_code=403, detail="Not authorized for this run")
 
-    if run.graph_name == "annotator":
-        graph = build_annotator_graph(
-            run.payload.get("endpoint", settings.default_llm_endpoint),
-            run.payload.get("model", settings.default_llm_model),
-            run.payload.get("api_key", ""),
-        )
-    elif run.graph_name == "editor":
-        graph = build_editor_graph(
-            run.payload.get("endpoint", settings.default_llm_endpoint),
-            run.payload.get("model", settings.default_llm_model),
-            run.payload.get("api_key", ""),
-        )
-    else:
-        raise HTTPException(status_code=400, detail="Unknown graph_name")
-
+    graph = _load_graph(run.graph_name, run.payload)
     await setup_redis_checkpointer(graph.checkpointer)
     result = await resume_agent_graph(graph, body.resume_value, run.thread_id)
 
@@ -192,18 +198,7 @@ async def get_agent_run_status(
 
     # 체크포인터 기반 상태도 함께 조회
     try:
-        if run.graph_name == "annotator":
-            graph = build_annotator_graph(
-                run.payload.get("endpoint", settings.default_llm_endpoint),
-                run.payload.get("model", settings.default_llm_model),
-                run.payload.get("api_key", ""),
-            )
-        else:
-            graph = build_editor_graph(
-                run.payload.get("endpoint", settings.default_llm_endpoint),
-                run.payload.get("model", settings.default_llm_model),
-                run.payload.get("api_key", ""),
-            )
+        graph = _load_graph(run.graph_name, run.payload)
         await setup_redis_checkpointer(graph.checkpointer)
         checkpoint_status = await get_agent_status(graph, run.thread_id)
         if checkpoint_status.get("status") == "interrupted":
@@ -241,18 +236,7 @@ async def stream_agent_run(
     if user and not user.is_admin and run.user_id and run.user_id != user.id:
         raise HTTPException(status_code=403, detail="Not authorized for this run")
 
-    if run.graph_name == "annotator":
-        graph = build_annotator_graph(
-            run.payload.get("endpoint", settings.default_llm_endpoint),
-            run.payload.get("model", settings.default_llm_model),
-            run.payload.get("api_key", ""),
-        )
-    else:
-        graph = build_editor_graph(
-            run.payload.get("endpoint", settings.default_llm_endpoint),
-            run.payload.get("model", settings.default_llm_model),
-            run.payload.get("api_key", ""),
-        )
+    graph = _load_graph(run.graph_name, run.payload)
     await setup_redis_checkpointer(graph.checkpointer)
 
     # TODO: 현재는 체크포인터 상태를 재실행하는 것이 아니라, 이벤트를 스트리밍하는 형태.

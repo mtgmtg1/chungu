@@ -12,10 +12,11 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.tools import tool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
+from langgraph.types import interrupt
 from typing_extensions import TypedDict
 
 from .agent_engine import get_async_redis_checkpointer, setup_redis_checkpointer
-from .agent_llm import build_agent_llm
+from .agent_llm import build_agent_llm, parse_tool_calls_from_content
 
 logger = logging.getLogger(__name__)
 
@@ -108,12 +109,28 @@ def ask_user(question: str, options: list[str] | None = None) -> str:
     return json.dumps({"requires_approval": True, "question": question, "options": options}, ensure_ascii=False)
 
 
+@tool
+def finish(summary: str) -> str:
+    """[Flow: Step 1 (요약 메시지 수신) -> Step 2 (완료 상태 JSON 반환)]
+
+    작업을 완료하고 최종 요약을 반환한다.
+
+    Args:
+        summary: 사용자에게 표시할 요약 메시지.
+
+    Returns:
+        완료 결과 JSON 문자열.
+    """
+    return json.dumps({"ok": True, "action": "finish", "summary": summary}, ensure_ascii=False)
+
+
 TOOLS = [
     get_section,
     get_table,
     replace_selection,
     insert_at,
     ask_user,
+    finish,
 ]
 
 
@@ -125,6 +142,7 @@ You have access to these tools:
 - replace_selection: replace the user's selected text with new markdown.
 - insert_at: insert markdown at cursor, end, beginning, or a specific heading.
 - ask_user: ask a clarifying question or request approval.
+- finish: complete the task and return a summary.
 
 Workflow:
 1. Analyze the user's request and the document context.
@@ -136,6 +154,8 @@ Workflow:
 Rules:
 - For simple fixes (grammar, shorter, longer, small rewrites), proceed autonomously.
 - For structural changes, large additions, or deletions, ask the user first.
+- When you need to change text, ALWAYS use the replace_selection tool with the new markdown.
+- Do not just describe the edit; invoke the tool to apply it.
 - Always respond in Markdown.
 """
 
@@ -147,10 +167,17 @@ def _plan_node(state: EditorState) -> EditorState:
         instruction = state.get("instruction", "")
         option = state.get("option", "")
         command = state.get("command")
+        full_markdown = state.get("full_markdown", "")
+        selected_markdown = state.get("selected_markdown", "")
         prompt = f"User request option: {option}\n"
         if command:
             prompt += f"Custom command: {command}\n"
-        prompt += f"User instruction/text: {instruction}\n\nPlease create a step-by-step plan."
+        prompt += f"User instruction/text: {instruction}\n"
+        if full_markdown:
+            prompt += f"\nFull document markdown:\n```markdown\n{full_markdown[:2000]}\n```\n"
+        if selected_markdown:
+            prompt += f"\nSelected text to edit:\n```markdown\n{selected_markdown}\n```\n"
+        prompt += "\nPlease perform the requested edit using the replace_selection tool."
         messages = [
             SystemMessage(content=PLAN_SYSTEM_PROMPT),
             HumanMessage(content=prompt),
@@ -161,8 +188,9 @@ def _plan_node(state: EditorState) -> EditorState:
 def _agent_node(state: EditorState, llm) -> EditorState:
     """ReAct 스타일 추론 노드. LLM이 도구를 호출하거나 최종 답변을 생성한다."""
     messages = state.get("messages", [])
-    model = llm.bind_tools(TOOLS)
+    model = llm.bind_tools(TOOLS, tool_choice="required")
     response = model.invoke(messages)
+    response = parse_tool_calls_from_content(response)
     return {"messages": [response]}
 
 
@@ -214,7 +242,14 @@ def _execute_node(state: EditorState) -> EditorState:
         if parsed.get("requires_approval"):
             pending_interrupt = parsed
         elif name == "replace_selection":
-            edits.append({"type": "replace", "content": parsed.get("new_text", "")})
+            old_text = state.get("selected_markdown", "")
+            edits.append({"type": "replace", "old_text": old_text, "content": parsed.get("new_text", "")})
+            # ToolMessage 내용에 old_text를 포함해 LLM이 다음 추론에 참조할 수 있도록 한다.
+            result = json.dumps(
+                {"ok": True, "action": "replace_selection", "old_text": old_text, "new_text": parsed.get("new_text", "")},
+                ensure_ascii=False,
+            )
+            tool_messages[-1] = ToolMessage(content=str(result), tool_call_id=tool_id)
         elif name == "insert_at":
             edits.append({
                 "type": "insert",
@@ -259,23 +294,31 @@ def _do_get_table(markdown: str, table_index: int) -> str:
 
 
 def _route_after_agent(state: EditorState) -> str:
-    """agent 노드 이후: tool call이 있으면 execute, 없으면 finalize."""
+    """agent 노드 이후: tool call이 있으면 execute, finish tool이면 finalize."""
     messages = state.get("messages", [])
     last_message = messages[-1] if messages else None
-    if isinstance(last_message, AIMessage) and last_message.tool_calls:
-        return "execute"
-    return "finalize"
+    if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
+        return "finalize"
+    tool_names = {tc.get("name") for tc in last_message.tool_calls}
+    if tool_names == {"finish"}:
+        return "finalize"
+    return "execute"
 
 
 def _route_after_execute(state: EditorState) -> str:
-    """execute 노드 이후: 승인 요청이 있으면 hitl, 추가 tool call이 있으면 agent, 없으면 finalize."""
+    """execute 노드 이후: 승인 요청이 있으면 hitl, tool call 결과(ToolMessage)를 받으면 agent로 재추론, finish tool이면 finalize."""
     if state.get("pending_interrupt"):
         return "hitl"
     messages = state.get("messages", [])
     last_message = messages[-1] if messages else None
-    if isinstance(last_message, AIMessage) and last_message.tool_calls:
-        return "execute"
-    return "finalize"
+    if isinstance(last_message, ToolMessage):
+        return "agent"
+    if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
+        return "finalize"
+    tool_names = {tc.get("name") for tc in last_message.tool_calls}
+    if tool_names == {"finish"}:
+        return "finalize"
+    return "execute"
 
 
 def _hitl_node(state: EditorState) -> EditorState:
@@ -296,32 +339,54 @@ def _hitl_node(state: EditorState) -> EditorState:
 
 
 def _finalize_node(state: EditorState) -> EditorState:
-    """에이전트의 마지막 노드. 적용된 edits를 바탕으로 최종 결과를 생성한다."""
+    """[Flow: Step 1 (edits와 원본 full_markdown 확인) -> Step 2 (replace/insert edits를 순서대로 적용)
+          -> Step 3 (최종 final_markdown 및 요약 메시지 반환)]
+
+    에이전트의 마지막 노드. 적용된 edits를 바탕으로 최종 결과를 생성한다.
+    """
     edits = state.get("edits", [])
+    full_markdown = state.get("full_markdown", "")
+    final_markdown = full_markdown
+
+    for edit in edits:
+        edit_type = edit.get("type")
+        content = edit.get("content", "")
+        if not content:
+            continue
+        if edit_type == "replace":
+            old_text = edit.get("old_text", "")
+            if old_text and old_text in final_markdown:
+                final_markdown = final_markdown.replace(old_text, content, 1)
+        elif edit_type == "insert":
+            position = edit.get("position", "cursor")
+            if position == "beginning":
+                final_markdown = content + "\n\n" + final_markdown
+            elif position == "end":
+                final_markdown = final_markdown + "\n\n" + content
+            else:
+                final_markdown = final_markdown + "\n\n" + content
+
     summary = f"Applied {len(edits)} edit(s)."
     return {
         "messages": [AIMessage(content=summary)],
         "status": "done",
-        "final_markdown": state.get("full_markdown", ""),
+        "final_markdown": final_markdown,
     }
 
 
 def build_editor_graph(
-    endpoint: str,
-    model: str,
-    api_key: str | None = None,
-    temperature: float = 0.7,
-    max_tokens: int = 4096,
+    llm: Any,
+    checkpointer: Any = None,
 ) -> Any:
-    """마크다운 에디터 AI 에이전트 그래프를 생성한다."""
-    llm = build_agent_llm(
-        endpoint=endpoint,
-        model=model,
-        api_key=api_key,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        streaming=True,
-    )
+    """마크다운 에디터 AI 에이전트 그래프를 생성한다.
+
+    Args:
+        llm: LangChain chat model 인스턴스.
+        checkpointer: LangGraph checkpointer. None이면 InMemorySaver를 사용한다.
+    """
+    if checkpointer is None:
+        from langgraph.checkpoint.memory import InMemorySaver
+        checkpointer = InMemorySaver()
 
     builder = StateGraph(EditorState)
     builder.add_node("plan", _plan_node)
@@ -345,8 +410,7 @@ def build_editor_graph(
     builder.add_edge("hitl", "agent")
     builder.add_edge("finalize", END)
 
-    saver = get_async_redis_checkpointer()
-    return builder.compile(checkpointer=saver)
+    return builder.compile(checkpointer=checkpointer)
 
 
 async def run_editor_agent(
@@ -363,7 +427,8 @@ async def run_editor_agent(
     """마크다운 에디터 AI 에이전트를 실행한다."""
     from .agent_engine import run_agent_graph
 
-    graph = build_editor_graph(endpoint, model, api_key)
+    llm = build_agent_llm(endpoint, model, api_key)
+    graph = build_editor_graph(llm, get_async_redis_checkpointer())
     await setup_redis_checkpointer(get_async_redis_checkpointer())
     inputs: EditorState = {
         "messages": [],

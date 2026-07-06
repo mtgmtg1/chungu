@@ -8,7 +8,7 @@ import PdfViewer from "./PdfViewer.jsx";
 import MediaPlayer from "./MediaPlayer.jsx";
 import AnnotationListPanel from "./AnnotationListPanel.jsx";
 import AgentStatusCard from "./AgentStatusCard.jsx";
-import api from "../api.js";
+import { api } from "../api.js";
 
 function SourceIcon({ type }) {
   if (type === "pdf") return <FileText size={16} className="text-error flex-shrink-0" />;
@@ -221,8 +221,9 @@ function AiAnnotationFab({
   };
 
   const handleApprove = async (run, value) => {
+    const resumeValue = value !== undefined && value !== null ? value : { approved: true };
     try {
-      const res = await api.resumeAgent(run.run_id, { resumeValue: value });
+      const res = await api.resumeAgent(run.run_id, { resumeValue });
       setLocalAgentRuns((prev) => prev.map((r) => (r.run_id === res.run_id ? res : r)));
     } catch (err) {
       console.error("[AgentStatus] resume error:", err);
@@ -230,7 +231,8 @@ function AiAnnotationFab({
   };
 
   const handleReject = async (run, value) => {
-    await handleApprove(run, { approved: false, value });
+    const resumeValue = value !== undefined && value !== null ? value : { approved: false };
+    await handleApprove(run, { approved: false, value: resumeValue });
   };
 
   const handleCancel = async (run) => {
@@ -400,6 +402,7 @@ function PdfViewerWithFab({
   onCancelAnnotation,
   converting,
   annotationRuns,
+  agentRuns,
   totalPages = 1,
   showAnnotationPanel = false,
   onToggleAnnotationPanel,
@@ -445,6 +448,7 @@ function PdfViewerWithFab({
           onCancelAnnotation={onCancelAnnotation}
           disabled={converting}
           annotationRuns={annotationRuns}
+          agentRuns={agentRuns}
           currentPage={page}
           totalPages={totalPages}
         />
@@ -470,6 +474,7 @@ export default function SourcePanel({
   onCancelAnnotation,
   converting = false,
   annotationRuns = [],
+  agentRuns = [],
   totalPages = 1,
 }) {
   const { t } = useTranslation();
@@ -577,6 +582,7 @@ export default function SourcePanel({
           onCancelAnnotation={onCancelAnnotation}
           converting={converting}
           annotationRuns={annotationRuns}
+          agentRuns={agentRuns}
           totalPages={totalPages}
           showAnnotationPanel={showAnnotationPanel}
           onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}
@@ -741,6 +747,7 @@ export default function SourcePanel({
                   onCancelAnnotation={onCancelAnnotation}
                   converting={converting}
                   annotationRuns={annotationRuns}
+                  agentRuns={agentRuns}
                   totalPages={totalPages}
                   showAnnotationPanel={showAnnotationPanel}
                   onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}
@@ -774,6 +781,7 @@ export default function SourcePanel({
         onStartAnnotate={onStartAnnotate}
         converting={converting}
         annotationRuns={annotationRuns}
+        agentRuns={agentRuns}
         totalPages={totalPages}
         showAnnotationPanel={showAnnotationPanel}
         onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}

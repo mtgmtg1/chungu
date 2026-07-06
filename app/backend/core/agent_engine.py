@@ -70,6 +70,15 @@ async def run_agent_graph(
     config = make_thread_config(thread_id)
     try:
         final_state = await graph.ainvoke(inputs, config)
+        # LangGraph는 interrupt() 발생 시 예외를 던지지 않고 상태에 __interrupt__를 남긴다.
+        if final_state.get("__interrupt__"):
+            return {
+                "thread_id": config["configurable"]["thread_id"],
+                "status": "interrupted",
+                "result": final_state,
+                "pending_interrupt": final_state.get("pending_interrupt"),
+                "error": None,
+            }
         return {
             "thread_id": config["configurable"]["thread_id"],
             "status": "done",
@@ -78,9 +87,6 @@ async def run_agent_graph(
             "error": None,
         }
     except Exception as exc:
-        # GraphInterrupt 등 interrupt 예외는 LangGraph가 상태에 저장하므로
-        # 여기서는 interrupt 여부를 확인할 수 없다. ainvoke가 예외를 던지면
-        # 에러로 처리하고, 클라이언트는 get_status로 interrupt인지 확인할 수 있다.
         logger.exception("[agent_engine] 그래프 실행 중 예외: %s", exc)
         return {
             "thread_id": config["configurable"]["thread_id"],
@@ -109,6 +115,14 @@ async def resume_agent_graph(
     config = make_thread_config(thread_id)
     try:
         final_state = await graph.ainvoke(Command(resume=resume_value), config)
+        if final_state.get("__interrupt__"):
+            return {
+                "thread_id": thread_id,
+                "status": "interrupted",
+                "result": final_state,
+                "pending_interrupt": final_state.get("pending_interrupt"),
+                "error": None,
+            }
         return {
             "thread_id": thread_id,
             "status": "done",

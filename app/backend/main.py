@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # [Flow: Step 1 (DB 테이블 생성) -> Step 2 (관리자/설정 시드) -> Step 3 (라우터 등록) -> Step 4 (정적 프론트 서빙)]
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -22,6 +23,20 @@ from .db.session import Base, SessionLocal, engine
 STATIC_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
+def _make_idempotent(stmt: str) -> str:
+    """[Flow: Step 1 (CREATE TABLE/INDEX 및 ALTER TABLE ADD COLUMN 문 감지) -> Step 2 (IF NOT EXISTS 추가) -> Step 3 (변환된 SQL 반환)]
+
+    마이그레이션 SQL을 idempotent하게 변환하여 이미 적용된 스키마 변경에서 실패하지 않도록 한다.
+    """
+    # CREATE TABLE ... -> CREATE TABLE IF NOT EXISTS ...
+    stmt = re.sub(r"CREATE\s+TABLE\s+(?!IF\s+NOT\s+EXISTS\s+)(?!\s*IF\s+NOT\s+EXISTS\s+)", "CREATE TABLE IF NOT EXISTS ", stmt, flags=re.IGNORECASE)
+    # CREATE INDEX ... -> CREATE INDEX IF NOT EXISTS ...
+    stmt = re.sub(r"CREATE\s+INDEX\s+(?!IF\s+NOT\s+EXISTS\s+)", "CREATE INDEX IF NOT EXISTS ", stmt, flags=re.IGNORECASE)
+    # ALTER TABLE ... ADD COLUMN ... -> ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...
+    stmt = re.sub(r"ALTER\s+TABLE\s+(\S+)\s+ADD\s+COLUMN\s+(?!IF\s+NOT\s+EXISTS\s+)", r"ALTER TABLE \1 ADD COLUMN IF NOT EXISTS ", stmt, flags=re.IGNORECASE)
+    return stmt
+
+
 def _apply_migrations():
     """db/migrations/ 아래 SQL 파일을 실행하여 스키마를 최신 상태로 유지한다."""
     migrations_dir = Path(__file__).resolve().parent / "db" / "migrations"
@@ -42,6 +57,7 @@ def _apply_migrations():
                 stmt = statement.strip()
                 if not stmt:
                     continue
+                stmt = _make_idempotent(stmt)
                 conn.execute(text(stmt))
             conn.execute(text("INSERT INTO _migration_versions (filename) VALUES (:name)"), {"name": name})
 

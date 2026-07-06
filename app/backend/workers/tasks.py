@@ -9,6 +9,7 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 
 import fitz  # PyMuPDF
 from pypdf import PdfReader
@@ -20,6 +21,7 @@ from ..config import settings
 from ..core import archive_handler, converter, excel_writer, media_loader, merge, pdf_annotate_converter, pdf_text_layer, subscription_service, supabase_client, xlsx_advanced_converter
 from ..core.agent_annotator import run_annotator_agent
 from ..core.agent_editor import run_editor_agent
+from ..core.agent_engine import serialize_agent_state
 from ..core.ocr_client import has_pdf_text_layer
 from ..core.pipeline_docling import run_docling, run_hwp
 from ..core.pipeline_hybrid import run_hybrid
@@ -980,8 +982,8 @@ async def _run_agent(run_id: str) -> dict:
             return {"error": f"Unknown graph_name: {graph_name}"}
 
         run.status = result.get("status", "error")
-        run.result = result.get("result") or {}
-        run.pending_interrupt = result.get("pending_interrupt")
+        run.result = serialize_agent_state(result.get("result") or {})
+        run.pending_interrupt = serialize_agent_state(result.get("pending_interrupt"))
         run.error = result.get("error") or ""
         db.commit()
         return result
@@ -1002,8 +1004,13 @@ async def _run_agent(run_id: str) -> dict:
 
 @celery.task(name="backend.workers.tasks.agent_run_task")
 def agent_run_task(run_id: str) -> dict:
-    """LangGraph 에이전트 실행을 Celery worker에서 비동기로 실행한다."""
-    return _run_agent_async(run_id)
+    """[Flow: Step 1 (run_id로 에이전트 실행) -> Step 2 (결과는 DB에 저장) -> Step 3 (Celery backend용 직렬화 가능한 간단한 상태 반환)]
+
+    LangGraph 에이전트 실행을 Celery worker에서 비동기로 실행한다.
+    실제 상태/결과는 AgentRun DB 레코드에 저장되며, task 반환값은 Celery backend 직렬화를 위해 messages 같은 객체를 포함하지 않는다.
+    """
+    _run_agent_async(run_id)
+    return {"ok": True, "run_id": run_id}
 
 
 @celery.task(name="backend.workers.tasks.annotate_edit_job")

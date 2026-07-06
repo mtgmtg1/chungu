@@ -19,6 +19,7 @@ from ...core.agent_engine import (
     get_async_redis_checkpointer,
     make_thread_config,
     resume_agent_graph,
+    serialize_agent_state,
     serialize_interrupt,
     setup_redis_checkpointer,
     stream_agent_graph,
@@ -93,7 +94,7 @@ async def run_agent(
         생성된 run_id, thread_id, 초기 상태.
     """
     user, api_key = auth
-    user_id = user.id if user else None
+    user_id = user.user_id if user else None
 
     thread_id = body.thread_id or make_thread_config()["configurable"]["thread_id"]
 
@@ -109,7 +110,7 @@ async def run_agent(
         job = db.get(Job, job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
-        if user and not user.is_admin and job.user_id and job.user_id != user.id:
+        if user and not user.is_admin and job.user_id and job.user_id != user.user_id:
             raise HTTPException(status_code=403, detail="Not authorized for this job")
 
     run = AgentRun(
@@ -159,7 +160,7 @@ async def resume_agent(
     run = db.get(AgentRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="AgentRun not found")
-    if user and not user.is_admin and run.user_id and run.user_id != user.id:
+    if user and not user.is_admin and run.user_id and run.user_id != user.user_id:
         raise HTTPException(status_code=403, detail="Not authorized for this run")
 
     graph = _load_graph(run.graph_name, run.payload)
@@ -167,8 +168,8 @@ async def resume_agent(
     result = await resume_agent_graph(graph, body.resume_value, run.thread_id)
 
     run.status = result.get("status", "error")
-    run.result = result.get("result") or {}
-    run.pending_interrupt = result.get("pending_interrupt")
+    run.result = serialize_agent_state(result.get("result") or {})
+    run.pending_interrupt = serialize_agent_state(result.get("pending_interrupt"))
     run.error = result.get("error") or ""
     db.commit()
 
@@ -193,7 +194,7 @@ async def get_agent_run_status(
     run = db.get(AgentRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="AgentRun not found")
-    if user and not user.is_admin and run.user_id and run.user_id != user.id:
+    if user and not user.is_admin and run.user_id and run.user_id != user.user_id:
         raise HTTPException(status_code=403, detail="Not authorized for this run")
 
     # 체크포인터 기반 상태도 함께 조회
@@ -233,7 +234,7 @@ async def stream_agent_run(
     run = db.get(AgentRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="AgentRun not found")
-    if user and not user.is_admin and run.user_id and run.user_id != user.id:
+    if user and not user.is_admin and run.user_id and run.user_id != user.user_id:
         raise HTTPException(status_code=403, detail="Not authorized for this run")
 
     graph = _load_graph(run.graph_name, run.payload)

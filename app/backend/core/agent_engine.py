@@ -250,3 +250,26 @@ def serialize_interrupt(value: Any) -> Any:
         return value
     except (TypeError, ValueError):
         return str(value)
+
+
+def serialize_agent_state(value: Any) -> Any:
+    """[Flow: Step 1 (dict/list/dataclass/BaseMessage 판별) -> Step 2 (재귀적으로 JSON serializable 형태로 변환)]
+
+    LangGraph agent의 최종 상태를 DB(JSONB)나 Celery backend에 저장할 수 있도록 직렬화한다.
+    BaseMessage, dataclass(AnnotationTarget), bytes 등을 처리한다.
+    """
+    from dataclasses import asdict, is_dataclass
+
+    from langchain_core.messages import BaseMessage
+
+    if isinstance(value, dict):
+        return {k: serialize_agent_state(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [serialize_agent_state(v) for v in value]
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    if isinstance(value, BaseMessage):
+        return {"type": value.__class__.__name__, "content": getattr(value, "content", "")}
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value

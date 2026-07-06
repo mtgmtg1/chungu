@@ -218,8 +218,8 @@ def _build_and_upload_searchable_pdf(
     원본 PDF가 아닌 deskew 보정된 페이지 이미지로 새 PDF를 만들어 기울어진 스캔 문서도
     수평으로 정렬된 searchable PDF를 제공한다.
     """
-    from .core.image_deskew import deskew_image
-    from .core.ocr_client import render_pdf
+    from ..core.image_deskew import deskew_image
+    from ..core.ocr_client import render_pdf
 
     page_ocr_results = pdf_text_layer.extract_page_ocr_results_from_layout(layout_by_page)
     if not page_ocr_results:
@@ -314,7 +314,7 @@ def _image_to_searchable_pdf(
     단일 이미지를 deskew 보정 후 1페이지 PDF로 변환하고, PaddleOCR layout의 텍스트/bbox를
     투명 텍스트 레이어로 추가해 searchable PDF를 만든다.
     """
-    from .core.image_deskew import deskew_image
+    from ..core.image_deskew import deskew_image
 
     # Step 1: deskew 보정 적용
     deskewed_path, _applied = deskew_image(image_path)

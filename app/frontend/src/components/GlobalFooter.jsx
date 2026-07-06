@@ -13,7 +13,15 @@ export default function GlobalFooter() {
   return (
     <footer className="w-full py-8 border-t border-outline-variant/20" data-oid="global-footer">
       <div className="max-w-container-max mx-auto px-gutter flex flex-col md:flex-row justify-between items-center gap-4 text-label-sm text-outline" data-oid="global-footer-inner">
-        <div className="flex items-center gap-4" data-oid="global-footer-copyright">
+        <div className="flex items-center gap-2" data-oid="global-footer-copyright">
+          <img
+            src="/teamcat-logo.png"
+            alt="TeamCat"
+            style={{ height: "18px", width: "18px" }}
+            className="object-contain select-none inline-block align-middle"
+            draggable={false}
+            data-oid="global-footer-teamcat-logo"
+          />
           <p data-oid="global-footer-copy-text">{t("page:upload.copyright")}</p>
         </div>
         <div className="flex items-center gap-6" data-oid="global-footer-links">

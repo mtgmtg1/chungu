@@ -1247,6 +1247,7 @@ export default function PoetryProgress({ pct, statusLabel, progressText }) {
   }, [poems.length]);
 
   const poem = poems[slideIdx];
+  if (!poem) return null;
 
   return (
     <div

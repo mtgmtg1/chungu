@@ -18,6 +18,9 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
   - 사이드바(`SidebarLayout.jsx`): 펼침 48px, 접힘 42px
 - **Favicon**: `app/frontend/index.html`에 `<link rel="icon">` 및 `apple-touch-icon` 추가.
 - **원본 백업**: `proof-logo.original.png`를 루트에 보관(public 밖이므로 서빙되지 않음).
+- **회사 로고(teamcat)**: `teamcat-logo.png`(정사각형, 64×64, 6KB)를 `app/frontend/public/`에 배치. `GlobalFooter.jsx`의 copyright 텍스트(`© 2026 TeamCat`) 앞에 18×18px로 작게 표시.
+- **PoetryProgress guard clause**: `app/frontend/src/components/PoetryProgress.jsx`에서 `poems[slideIdx]`가 undefined일 때 `.title` 접근으로 발생하던 `TypeError` 수정 — `if (!poem) return null;` 추가 (i18n 로딩 중 빈 배열일 때 크래시 방지).
+- **tasks.py import 경로 수정**: `app/backend/workers/tasks.py`의 `_build_and_upload_searchable_pdf()`와 `_image_to_searchable_pdf()`에서 `from .core.*`을 `from ..core.*`로 수정 (workers 패키지 내부에서 core로의 상대 임포트 경로 오류).
 
 ### Searchable PDF (텍스트 레이어)
 

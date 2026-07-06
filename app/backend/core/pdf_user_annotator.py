@@ -281,3 +281,128 @@ def _parse_ink_list(ink_list: Any) -> list[list[fitz.Point]] | None:
         if len(points) >= 2:
             strokes.append(points)
     return strokes if strokes else None
+
+
+# [Flow: Step 1 (PyMuPDF 색상 튜플 수신) -> Step 2 (0-255 변환) -> Step 3 (hex 문자열 반환)]
+# PyMuPDF의 annot.colors는 stroke/fill 각각 (r, g, b) 0-1 튜플로 반환한다.
+EMBEDPDF_TYPE_MAP = {
+    fitz.PDF_ANNOT_HIGHLIGHT: HIGHLIGHT,
+    fitz.PDF_ANNOT_UNDERLINE: UNDERLINE,
+    fitz.PDF_ANNOT_SQUIGGLY: SQUIGGLY,
+    fitz.PDF_ANNOT_STRIKEOUT: STRIKEOUT,
+    fitz.PDF_ANNOT_FREETEXT: FREETEXT,
+    fitz.PDF_ANNOT_SQUARE: SQUARE,
+    fitz.PDF_ANNOT_CIRCLE: CIRCLE,
+    fitz.PDF_ANNOT_LINE: LINE,
+    fitz.PDF_ANNOT_INK: INK,
+    fitz.PDF_ANNOT_STAMP: STAMP,
+}
+
+
+def _fitz_color_to_hex(color: Any) -> str | None:
+    """[Flow: Step 1 (PyMuPDF 색상 튜플 수신) -> Step 2 (0-255 변환) -> Step 3 (hex 문자열 반환)]"""
+    if not isinstance(color, (tuple, list)) or len(color) < 3:
+        return None
+    try:
+        r, g, b = int(round(color[0] * 255)), int(round(color[1] * 255)), int(round(color[2] * 255))
+        return f"#{r:02X}{g:02X}{b:02X}"
+    except (TypeError, ValueError):
+        return None
+
+
+def _fitz_rect_to_embedpdf_rect(rect: fitz.Rect, page_height: float) -> dict:
+    """[Flow: Step 1 (PyMuPDF Rect 수신) -> Step 2 (EmbedPDF 좌표계로 변환)
+          -> Step 3 (origin/size 형태 반환)]
+
+    PyMuPDF Rect는 좌하단 원점, y가 위로 증가하는 PDF 좌표계를 사용한다.
+    EmbedPDF는 origin이 좌상단, y가 아래로 증가하는 device-space 좌표계를 사용하므로
+    y축을 page_height - y1로 flip해야 한다.
+    """
+    x0, y0, x1, y1 = rect.x0, rect.y0, rect.x1, rect.y1
+    return {
+        "origin": {"x": x0, "y": page_height - y1},
+        "size": {"width": max(0.0, x1 - x0), "height": max(0.0, y1 - y0)},
+    }
+
+
+def extract_pdf_annotations(pdf_bytes: bytes) -> list[dict]:
+    """[Flow: Step 1 (원본 PDF 열기) -> Step 2 (페이지별 내장 주석 순회)
+          -> Step 3 (EmbedPDF AnnotationTransferItem 형식으로 변환) -> Step 4 (목록 반환)]
+
+    원본 PDF에 이미 내장된 하이라이트/여백 주석 등을 EmbedPDF JSON 오버레이 형식으로
+    변환한다. 이를 통해 원본 주석을 embedpdf에서 오버레이로만 표시하고, PDF 자체에는
+    주석을 남기지 않아 중복 추가/누적 문제를 방지할 수 있다.
+
+    Args:
+        pdf_bytes: 원본 PDF 바이트
+
+    Returns:
+        EmbedPDF AnnotationTransferItem[] 형식의 주석 목록
+    """
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    annotations: list[dict] = []
+    for page in doc:
+        page_height = page.rect.height
+        for idx, annot in enumerate(page.annots()):
+            try:
+                annot_type = annot.type[0] if isinstance(annot.type, tuple) else annot.type
+                embed_type = EMBEDPDF_TYPE_MAP.get(annot_type)
+                if embed_type is None:
+                    continue
+                rect = _fitz_rect_to_embedpdf_rect(annot.rect, page_height)
+                colors = annot.colors or {}
+                stroke_color = _fitz_color_to_hex(colors.get("stroke")) if colors.get("stroke") else None
+                fill_color = _fitz_color_to_hex(colors.get("fill")) if colors.get("fill") else None
+                color = stroke_color or fill_color or "#FFEB3B"
+                opacity = getattr(annot, "opacity", 1.0)
+                if not isinstance(opacity, (int, float)):
+                    opacity = 1.0
+                info = annot.info or {}
+                contents = info.get("content", "") or ""
+                annotation = {
+                    "id": f"original-{page.number}-{idx}",
+                    "type": embed_type,
+                    "pageIndex": page.number,
+                    "rect": rect,
+                    "contents": contents,
+                    "opacity": opacity,
+                }
+                if embed_type in (HIGHLIGHT, UNDERLINE, SQUIGGLY, STRIKEOUT):
+                    annotation["segmentRects"] = [rect]
+                    annotation["strokeColor"] = color
+                    annotation["color"] = color
+                elif embed_type in (SQUARE, CIRCLE, INK, STAMP):
+                    annotation["color"] = color
+                    if fill_color:
+                        annotation["fillColor"] = fill_color
+                elif embed_type == LINE:
+                    annotation["color"] = color
+                    start = _parse_point(annot.vertices[0]) if annot.vertices else None
+                    end = _parse_point(annot.vertices[1]) if annot.vertices and len(annot.vertices) > 1 else None
+                    if start and end:
+                        annotation["start"] = {"x": start.x, "y": start.y}
+                        annotation["end"] = {"x": end.x, "y": end.y}
+                elif embed_type == FREETEXT:
+                    annotation["fontFamily"] = 4  # Helvetica
+                    annotation["fontSize"] = info.get("fontsize", 12) or 12
+                    annotation["fontColor"] = color
+                    annotation["textAlign"] = 0
+                    annotation["verticalAlign"] = 0
+                annotations.append({"annotation": annotation})
+            except Exception as e:
+                logger.warning(f"[extract_pdf_annotations] page={page.number} idx={idx} 변환 실패: {e}")
+                continue
+    return annotations
+
+
+def remove_pdf_annotations(pdf_bytes: bytes) -> bytes:
+    """[Flow: Step 1 (원본 PDF 열기) -> Step 2 (페이지별 내장 주석 삭제)
+          -> Step 3 (주석이 제거된 PDF bytes 반환)]"""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    for page in doc:
+        for annot in list(page.annots()):
+            try:
+                page.delete_annot(annot)
+            except Exception as e:
+                logger.warning(f"[remove_pdf_annotations] page={page.number} 주석 삭제 실패: {e}")
+    return doc.tobytes()

@@ -1107,6 +1107,7 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
                 "type": ftype,
                 "url": preview_url,
                 "storage_path": storage_path,
+                "bucket": bucket,
                 "page_num": idx + 1,
                 "result_markdown": info.get("result_markdown", ""),
                 "preview_url": preview_url,
@@ -1163,8 +1164,22 @@ def _source_files(job: Job) -> list[dict]:
         source_files = [item for item in results if item is not None]
 
     # [Flow: 원본 PDF에 대한 사용자 주석 JSON URL 설정]
-    # user_annotations.json이 존재하면 원본 PDF 항목에 annotations_json_url을 설정하여
-    # PdfViewer에서 주석을 로드할 수 있도록 한다.
+    # 원본 PDF에 내장된 주석이 있으면 clean PDF로 교체하고, 추출한 주석을 JSON 오버레이로
+    # 초기화한다. 이렇게 하면 embedpdf가 PDF 내장 주석을 중복 렌더링/저장하는 문제를
+    # 방지할 수 있다. docx/hwp는 여기서 PDF로 변환되지 않으므로 제외한다.
+    for item in source_files:
+        if item.get("source_kind") != "original" or item.get("type") != "pdf":
+            continue
+        clean_url, extracted_annotations = _ensure_clean_source_pdf(
+            job.id, item.get("storage_path"), item.get("bucket", "pdfs")
+        )
+        if clean_url:
+            item["url"] = clean_url
+            item["preview_url"] = clean_url
+        if extracted_annotations:
+            _initialize_user_annotations_json(job.id, extracted_annotations)
+
+    # [Flow: user_annotations.json이 존재하면 원본 PDF 항목에 annotations_json_url을 설정]
     user_annotations_json_path = f"{job.id}/user_annotations.json"
     try:
         user_annotations_url = supabase_client.get_signed_download_url(
@@ -1254,6 +1269,87 @@ def _source_files(job: Job) -> list[dict]:
             item["status"] = "done"
             source_files.append(item)
     return source_files
+
+
+def _ensure_clean_source_pdf(
+    job_id: str,
+    storage_path: str,
+    bucket: str = "pdfs",
+) -> tuple[str | None, list[dict] | None]:
+    """[Flow: Step 1 (clean PDF 존재 확인) -> Step 2 (없으면 원본 PDF 다운로드)
+          -> Step 3 (내장 주석 추출) -> Step 4 (주석이 있으면 clean PDF 생성/업로드)
+          -> Step 5 (clean PDF URL과 추출한 주석 반환)]
+
+    원본 PDF에 내장된 주석이 있으면, 주석을 제거한 clean PDF를 생성하고 추출한 주석을
+    EmbedPDF JSON 형식으로 반환한다. clean PDF가 이미 존재하면 URL만 반환한다.
+    """
+    clean_storage_path = f"{job_id}/clean.pdf"
+
+    # Step 1: clean PDF가 이미 존재하는지 확인
+    try:
+        client = supabase_client.get_service_client()
+        files = client.storage.from_(bucket).list(job_id)
+        if any(f.get("name") == "clean.pdf" for f in files):
+            url = supabase_client.get_signed_download_url(clean_storage_path, bucket=bucket, expires_in=3600)
+            return url, None
+    except Exception as e:
+        logger.warning(f"[_ensure_clean_source_pdf] {job_id} clean.pdf 존재 확인 실패: {e}")
+
+    # Step 2: 원본 PDF 다운로드
+    try:
+        client = supabase_client.get_service_client()
+        pdf_bytes = client.storage.from_(bucket).download(storage_path)
+    except Exception as e:
+        logger.warning(f"[_ensure_clean_source_pdf] {job_id} 원본 PDF 다운로드 실패: {e}")
+        return None, None
+
+    # Step 3: 내장 주석 추출
+    try:
+        annotations = pdf_user_annotator.extract_pdf_annotations(pdf_bytes)
+    except Exception as e:
+        logger.warning(f"[_ensure_clean_source_pdf] {job_id} 주석 추출 실패: {e}")
+        return None, None
+
+    if not annotations:
+        return None, []
+
+    # Step 4: clean PDF 생성 및 업로드
+    try:
+        clean_bytes = pdf_user_annotator.remove_pdf_annotations(pdf_bytes)
+        client = supabase_client.get_service_client()
+        client.storage.from_(bucket).upload(
+            clean_storage_path,
+            clean_bytes,
+            {"content-type": "application/pdf", "upsert": "true"},
+        )
+        url = supabase_client.get_signed_download_url(clean_storage_path, bucket=bucket, expires_in=3600)
+        return url, annotations
+    except Exception as e:
+        logger.warning(f"[_ensure_clean_source_pdf] {job_id} clean PDF 업로드 실패: {e}")
+        return None, None
+
+
+def _initialize_user_annotations_json(job_id: str, annotations: list[dict]) -> None:
+    """[Flow: Step 1 (user_annotations.json 존재 확인) -> Step 2 (없으면 초기 주석 저장)]
+
+    원본 PDF에서 추출한 내장 주석을 user_annotations.json에 초기값으로 저장한다.
+    이미 파일이 존재하면 덮어쓰지 않는다.
+    """
+    storage_path = f"{job_id}/user_annotations.json"
+    try:
+        client = supabase_client.get_service_client()
+        try:
+            client.storage.from_("results").download(storage_path)
+            return
+        except Exception:
+            pass
+        client.storage.from_("results").upload(
+            storage_path,
+            json.dumps(annotations, ensure_ascii=False).encode("utf-8"),
+            {"content-type": "application/json", "upsert": "true"},
+        )
+    except Exception as e:
+        logger.warning(f"[_initialize_user_annotations_json] {job_id} 초기 주석 저장 실패: {e}")
 
 
 def _detect_source_type(job: Job) -> str | None:

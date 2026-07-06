@@ -262,12 +262,13 @@ def _collect_page_elements_from_searchable_pdf(
     temp_dir: Path,
     dpi: int = RENDER_DPI,
 ) -> tuple[list[AnnotateElement], dict[int, Path]]:
-    """[Flow: Step 1 (searchable PDF 열기) -> Step 2 (페이지별 이미지 렌더링)
+    """[Flow: Step 1 (searchable PDF 열기) -> Step 2 (페이지별 이미지 렌더링 + deskew 보정)
           -> Step 3 (텍스트 레이어에서 텍스트 블록 추출) -> Step 4 (AnnotateElement 생성)]
 
     searchable PDF의 텍스트 레이어에서 이미 OCR이 완료된 텍스트/bbox를 추출해
     AnnotateElement 목록과 페이지 이미지를 반환한다. 별도 PaddleOCR 호출 없이
-    AI 주석 생성에 필요한 요소를 확보한다.
+    AI 주석 생성에 필요한 요소를 확보한다. 렌더링된 페이지 이미지에 deskew를 적용해
+    기울어진 스캔 문서도 수평으로 정렬된 주석 PDF 표시 이미지를 제공한다.
     """
     scale = dpi / 72.0
     elements: list[AnnotateElement] = []
@@ -277,14 +278,26 @@ def _collect_page_elements_from_searchable_pdf(
     try:
         for page in doc:
             page_no = page.number + 1
-            img_path = temp_dir / f"page-{page_no:04d}.png"
+            raw_img_path = temp_dir / f"page-raw-{page_no:04d}.png"
             try:
                 pix = page.get_pixmap(dpi=dpi)
-                pix.save(str(img_path))
-                corrected_images[page_no] = img_path
+                pix.save(str(raw_img_path))
             except Exception as e:
                 logger.warning(f"[_collect_page_elements_from_searchable_pdf] page={page_no} 이미지 렌더링 실패: {e}")
                 continue
+
+            # deskew 보정 적용
+            deskewed_path, _applied = deskew_image(raw_img_path, output_dir=temp_dir / "deskewed")
+            img_path = temp_dir / f"page-{page_no:04d}.png"
+            if deskewed_path != raw_img_path:
+                # deskew가 적용된 경우 최종 경로로 복사/이동
+                import shutil
+                shutil.move(str(deskewed_path), str(img_path))
+            else:
+                # deskew 미적용 시 원본을 최종 경로로 이동
+                import shutil
+                shutil.move(str(raw_img_path), str(img_path))
+            corrected_images[page_no] = img_path
 
             # 이미지 픽셀 높이 (y축 flip용: PDF 좌표계 y↑ → 이미지 좌표계 y↓)
             page_height_px = page.rect.height * scale

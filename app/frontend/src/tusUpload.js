@@ -21,6 +21,7 @@ export function uploadFileTUS(file, storagePath, onProgress) {
 
     const endpoint = `${window.location.origin}/supabase/storage/v1/upload/resumable`
 
+    // [Flow: fingerprint에 storagePath(job_id 포함)를 추가 -> 동일 파일이어도 job마다 고유 fingerprint -> 이전 job 업로드로 resume되는 것 방지]
     const upload = new tus.Upload(file, {
       endpoint,
       retryDelays: [0, 3000, 5000, 10000, 20000],
@@ -30,6 +31,14 @@ export function uploadFileTUS(file, storagePath, onProgress) {
       },
       uploadDataDuringCreation: true,
       removeFingerprintOnSuccess: true,
+      // fingerprint에 storagePath를 포함해 job마다 고유 키 생성.
+      // 기본 fingerprint는 file.name/size/lastModified/endpoint만 사용하므로
+      // 같은 파일을 재업로드하면 이전 job의 TUS upload URL로 resume되어
+      // 기존 작업 공간에 덮어쓰는 문제가 발생한다.
+      fingerprint: (f, options) =>
+        Promise.resolve(
+          ['tus-br', f.name, f.type, f.size, f.lastModified, options.endpoint, storagePath].join('-'),
+        ),
       metadata: {
         bucketName: 'pdfs',
         objectName: storagePath,

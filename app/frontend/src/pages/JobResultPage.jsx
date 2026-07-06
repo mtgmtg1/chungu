@@ -89,6 +89,8 @@ export default function JobResultPage() {
 
   const [downloadDropdownOpen, setDownloadDropdownOpen] = useState(false);
   const downloadDropdownTimerRef = useRef(null);
+  const [agentRuns, setAgentRuns] = useState([]);
+
 
   const openDropdown = (setter, timerRef) => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -359,22 +361,25 @@ export default function JobResultPage() {
     }
   }
 
-  // [Flow: Step 1 (instruction, pageRange 수신) -> Step 2 (AI 주석 API 호출) -> Step 3 (처리 상태면 폴링 활성화) -> Step 4 (job 상태 갱신)]
+  // [Flow: Step 1 (instruction, pageRange 수신) -> Step 2 (LangGraph annotator agent 실행) -> Step 3 (agentRun 상태 추가) -> Step 4 (job 상태 갱신)]
   async function startAnnotate(instruction, pageRange) {
     if (!instruction || !instruction.trim()) return;
     setConverting(true);
     setError("");
     try {
-      const res = await api.annotateJob(jobId, {
-        instruction: instruction.trim(),
-        mode: annotateMode,
-        commentMode: annotateCommentMode,
-        advanced: annotateAdvanced,
-        pageRange: pageRange || null,
+      const res = await api.runAgent({
+        graphName: "annotator",
+        payload: {
+          job_id: jobId,
+          instruction: instruction.trim(),
+          mode: annotateMode,
+          comment_mode: annotateCommentMode,
+          advanced: annotateAdvanced,
+          page_range: pageRange || null,
+          language: i18n.language || "en",
+        },
       });
-      if (res.status === "processing") {
-        setAnnotatePolling(true);
-      }
+      setAgentRuns((prev) => [...prev, res]);
       await loadJob();
     } catch (e) {
       const msg = e.message || t("page:errors.unknown");
@@ -389,20 +394,24 @@ export default function JobResultPage() {
     }
   }
 
-  // [Flow: Step 1 (instruction, pageRange 수신) -> Step 2 (AI 주석 편집 API 호출) -> Step 3 (처리 상태면 폴링 활성화) -> Step 4 (job 상태 갱신)]
-  // 기존 AI 주석의 색상/코멘트를 LLM으로 재편집한다. 지정한 페이지의 기존 주석만 편집 대상.
+  // [Flow: Step 1 (instruction, pageRange 수신) -> Step 2 (LangGraph annotator agent edit 모드 실행) -> Step 3 (agentRun 상태 추가) -> Step 4 (job 상태 갱신)]
   async function startAnnotateEdit(instruction, pageRange) {
     if (!instruction || !instruction.trim()) return;
     setConverting(true);
     setError("");
     try {
-      const res = await api.annotateJobEdit(jobId, {
-        instruction: instruction.trim(),
-        pageRange: pageRange || null,
+      const res = await api.runAgent({
+        graphName: "annotator",
+        payload: {
+          job_id: jobId,
+          instruction: instruction.trim(),
+          mode: "edit",
+          comment_mode: annotateCommentMode,
+          page_range: pageRange || null,
+          language: i18n.language || "en",
+        },
       });
-      if (res.status === "processing") {
-        setAnnotatePolling(true);
-      }
+      setAgentRuns((prev) => [...prev, res]);
       await loadJob();
     } catch (e) {
       const msg = e.message || t("page:errors.unknown");
@@ -632,6 +641,7 @@ export default function JobResultPage() {
             onCancelAnnotation={handleCancelAnnotation}
             converting={converting}
             annotationRuns={job?.annotated_pdf_files || []}
+            agentRuns={agentRuns}
             data-oid="result-source" />
         </Panel>
         <PanelResizeHandle

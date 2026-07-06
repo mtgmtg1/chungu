@@ -44,6 +44,7 @@ import {
 "lucide-react";
 import AiMenu from "./AiMenu.jsx";
 
+
 const turndown = new TurndownService({
   headingStyle: "atx",
   codeBlockStyle: "fenced",
@@ -459,7 +460,7 @@ ref)
         </ToolbarButton>
         <ToolbarDivider data-oid="k3gd.63" />
 
-        <AiMenu editor={editor} editable={editable} data-oid="ai-menu" />
+        <AiMenu editor={editor} editable={editable} fullMarkdown={markdown} data-oid="ai-menu" />
         <ToolbarDivider data-oid="ai-divider" />
 
         <ToolbarButton
@@ -495,7 +496,7 @@ ref)
               tippyOptions={{ duration: 100, placement: "top-start" }}
               className="flex items-center gap-1 px-2 py-1.5 bg-white rounded-lg shadow-lg border border-outline-variant z-50">
 
-              <AiMenu editor={editor} editable={editable} />
+              <AiMenu editor={editor} editable={editable} fullMarkdown={markdown} />
             </BubbleMenu>
           )}
         </EditorContent>

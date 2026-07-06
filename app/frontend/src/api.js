@@ -81,6 +81,18 @@ export const api = {
   convertJob: (id, format) =>
     request(`/api/jobs/${id}/convert`, { method: 'POST', body: JSON.stringify({ format }) }),
   downloadJob: (id, type) => request(`/api/jobs/${id}/download?type=${type}`),
+  runAgent: ({ graphName, payload, threadId }) =>
+    request('/api/v1/agent/run', {
+      method: 'POST',
+      body: JSON.stringify({ graph_name: graphName, payload, thread_id: threadId }),
+    }),
+  resumeAgent: (runId, { resumeValue }) =>
+    request(`/api/v1/agent/resume/${runId}`, {
+      method: 'POST',
+      body: JSON.stringify({ resume_value: resumeValue }),
+    }),
+  getAgentStatus: (runId) => request(`/api/v1/agent/status/${runId}`),
+  streamAgent: (runId) => `/api/v1/agent/stream/${runId}`,
   xlsxAdvancedAction: (id, action) =>
     request(`/api/jobs/${id}/xlsx-advanced-action`, { method: 'POST', body: JSON.stringify({ action }) }),
   annotateJob: (id, { instruction, mode, commentMode, advanced, pageRange }) =>

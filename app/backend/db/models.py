@@ -294,3 +294,29 @@ class SubscriptionUsage(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     user: Mapped["User"] = relationship("User", back_populates="subscription_usages")
+
+
+class AgentRun(Base):
+    """LangGraph 기반 에이전트 실행 기록.
+
+    PDF AI 주석과 마크다운 에디터 AI의 멀티스텝 실행 상태를 추적하고,
+    interrupt가 발생한 경우 사용자 승인/거절을 재개할 수 있도록 thread_id를 저장한다.
+    """
+
+    __tablename__ = "agent_runs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    job_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("jobs.id"), nullable=True, index=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    graph_name: Mapped[str] = mapped_column(String(32), default="")  # "annotator" | "editor"
+    thread_id: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="running")  # running | interrupted | done | error | cancelled
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    pending_interrupt: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    job: Mapped["Job | None"] = relationship("Job", lazy="selectin")
+    user: Mapped["User | None"] = relationship("User", lazy="selectin")

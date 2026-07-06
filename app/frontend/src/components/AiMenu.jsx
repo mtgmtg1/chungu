@@ -1,6 +1,9 @@
-// [Flow: Step 1 (Tiptap 에디터와 선택 영역 수신) -> Step 2 (선택 영역을 마크다운으로 직렬화) -> Step 3 (useCompletion으로 스트리밍 AI 요청) -> Step 4 (완료 시 마크다운 응답을 HTML로 변환해 선택 영역 대체) -> Step 5 (자동 저장 onChange 트리거)]
+// [Flow: Step 1 (Tiptap 에디터와 선택 영역, 전체 마크다운 수신)
+//       -> Step 2 (선택 영역을 마크다운으로 직렬화)
+//       -> Step 3 (Agent API로 멀티스텝 AI 실행 시작)
+//       -> Step 4 (폴링으로 상태 확인, interrupted면 승인 모달 표시)
+//       -> Step 5 (done이면 edits/final_markdown을 에디터에 적용) -> Step 6 (자동 저장 onChange 트리거)]
 import { useEffect, useRef, useState } from "react";
-import { useCompletion } from "ai/react";
 import { useTranslation } from "react-i18next";
 import { DOMSerializer } from "@tiptap/pm/model";
 import { marked } from "marked";
@@ -14,7 +17,8 @@ import {
   Wand2,
   WrapText } from
 "lucide-react";
-import { getToken } from "../api.js";
+import api from "../api.js";
+import AgentApprovalModal from "./AgentApprovalModal.jsx";
 
 const turndown = new TurndownService({
   headingStyle: "atx",
@@ -29,21 +33,13 @@ const turndown = new TurndownService({
  * @returns {string}
  */
 function getSelectedMarkdown(editor) {
-  if (!editor) {
-    console.log("[AI] getSelectedMarkdown: no editor");
-    return "";
-  }
+  if (!editor) return "";
   const { selection } = editor.state;
-  if (selection.empty) {
-    console.log("[AI] getSelectedMarkdown: empty selection");
-    return "";
-  }
+  if (selection.empty) return "";
   const slice = selection.content();
   const serializer = DOMSerializer.fromSchema(editor.schema);
   const html = serializer.serializeFragment(slice.content, { document });
-  const markdown = turndown.turndown(html);
-  console.log("[AI] getSelectedMarkdown: html length=", html.length, "markdown length=", markdown.length);
-  return markdown;
+  return turndown.turndown(html);
 }
 
 /**
@@ -52,44 +48,55 @@ function getSelectedMarkdown(editor) {
  * @param {string} markdown
  */
 function replaceSelectionWithMarkdown(editor, markdown) {
-  if (!editor || !markdown) {
-    console.log("[AI] replaceSelectionWithMarkdown: skip", { hasEditor: !!editor, hasMarkdown: !!markdown });
-    return;
-  }
+  if (!editor || !markdown) return;
   const html = marked.parse(markdown || "");
   const { from, to } = editor.state.selection;
-  console.log("[AI] replaceSelectionWithMarkdown: inserting at", { from, to, htmlLength: html.length });
   editor.chain().focus().insertContentAt({ from, to }, html).run();
 }
 
-export default function AiMenu({ editor, editable = true }) {
+/**
+ * [Flow: Step 1 (AgentRun의 edits/final_markdown 확인) -> Step 2 (replace/insert edits를 순서대로 적용)
+ *       -> Step 3 (에디터에 포커스 반환)]
+ * @param {import("@tiptap/core").Editor} editor
+ * @param {object} result
+ * @param {string} selectedMarkdown
+ */
+function applyAgentResult(editor, result, selectedMarkdown) {
+  if (!editor || !result) return;
+  const finalMarkdown = result?.final_markdown;
+  const edits = result?.edits || [];
+  if (finalMarkdown && !edits.length) {
+    replaceSelectionWithMarkdown(editor, finalMarkdown);
+    return;
+  }
+  for (const edit of edits) {
+    if (edit.type === "replace") {
+      replaceSelectionWithMarkdown(editor, edit.content);
+    } else if (edit.type === "insert") {
+      const html = marked.parse(edit.content || "");
+      if (edit.position === "end") {
+        editor.chain().focus().insertContentAt(editor.state.doc.content.size, html).run();
+      } else if (edit.position === "beginning") {
+        editor.chain().focus().insertContentAt(0, html).run();
+      } else {
+        // cursor 또는 기본 위치: 현재 선택 영역 끝
+        const { to } = editor.state.selection;
+        editor.chain().focus().insertContentAt(to, html).run();
+      }
+    }
+  }
+}
+
+export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [customPrompt, setCustomPrompt] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
-  const [token, setToken] = useState(null);
+  const [run, setRun] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
   const menuRef = useRef(null);
-
-  // [Flow: Step 1 (마운트 시 Supabase 세션 토큰 획득) -> Step 2 (useCompletion의 Authorization 헤더에 사용)]
-  useEffect(() => {
-    getToken().then((t) => setToken(t || ""));
-  }, []);
-
-  const { complete, isLoading, error } = useCompletion({
-    api: "/api/v1/ai/generate",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    onFinish: (_prompt, completionText) => {
-      console.log("[AI] onFinish:", completionText.slice(0, 100));
-      replaceSelectionWithMarkdown(editor, completionText);
-      setOpen(false);
-      setShowCustomInput(false);
-      setCustomPrompt("");
-    },
-    onError: (err) => {
-      console.error("[AI] error:", err);
-      window.alert("AI 오류: " + err.message);
-    }
-  });
+  const pollTimerRef = useRef(null);
 
   // [Flow: 메뉴 외부 클릭 시 드롭다운 닫기]
   useEffect(() => {
@@ -103,52 +110,115 @@ export default function AiMenu({ editor, editable = true }) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [open]);
 
+  // [Flow: Step 1 (run 상태가 running/processing/interrupted면 2초 폴링) -> Step 2 (done이면 결과 적용) -> Step 3 (error면 메시지 표시)]
+  useEffect(() => {
+    if (!run || !["running", "processing", "interrupted"].includes(run.status)) {
+      clearTimeout(pollTimerRef.current);
+      return;
+    }
+    const poll = async () => {
+      try {
+        const status = await api.getAgentStatus(run.run_id);
+        setRun(status);
+        if (status.status === "done") {
+          setIsLoading(false);
+          applyAgentResult(editor, status.result, getSelectedMarkdown(editor));
+          setOpen(false);
+          setShowCustomInput(false);
+          setCustomPrompt("");
+        } else if (status.status === "error") {
+          setIsLoading(false);
+          setError(status.error || "AI error");
+        } else {
+          pollTimerRef.current = setTimeout(poll, 2000);
+        }
+      } catch (err) {
+        console.error("[AI] poll error:", err);
+        setIsLoading(false);
+        setError(err.message);
+      }
+    };
+    pollTimerRef.current = setTimeout(poll, 2000);
+    return () => clearTimeout(pollTimerRef.current);
+  }, [run, editor]);
+
   /**
-   * [Flow: Step 1 (선택 마크다운 추출) -> Step 2 (continue는 커서 이전 텍스트 사용) -> Step 3 (useCompletion complete 호출)]
+   * [Flow: Step 1 (선택 마크다운 + option/command 수집) -> Step 2 (AgentRun 생성 API 호출) -> Step 3 (run 상태 설정 및 폴링 시작)]
    * @param {string} option
    */
-  const handleCommand = async (option) => {
-    console.log("[AI] handleCommand:", option);
-    if (!editor || isLoading) {
-      console.log("[AI] skip: editor=", !!editor, "isLoading=", isLoading);
-      return;
-    }
-    let prompt = getSelectedMarkdown(editor);
-    console.log("[AI] prompt:", prompt.slice(0, 100));
-    if (!prompt && option !== "continue") {
-      console.log("[AI] empty prompt, skip");
-      return;
-    }
-
-    setShowCustomInput(false);
+  const startAgent = async (option, command) => {
+    if (!editor || isLoading) return;
+    let selectedMarkdown = getSelectedMarkdown(editor);
+    if (!selectedMarkdown && option !== "continue") return;
 
     if (option === "continue") {
       const { from } = editor.state.selection;
-      prompt = editor.state.doc.textBetween(0, from, "\n");
-      if (!prompt.trim()) return;
+      selectedMarkdown = editor.state.doc.textBetween(0, from, "\n");
+      if (!selectedMarkdown.trim()) return;
     }
 
-    console.log("[AI] calling complete...");
-    await complete(prompt, { body: { option } });
-    console.log("[AI] complete returned");
+    setIsLoading(true);
+    setError("");
+    setShowCustomInput(false);
+    try {
+      const res = await api.runAgent({
+        graphName: "editor",
+        payload: {
+          instruction: selectedMarkdown,
+          option,
+          command,
+          full_markdown: fullMarkdown,
+          selected_markdown: selectedMarkdown,
+        },
+      });
+      setRun(res);
+      if (res.status === "done") {
+        applyAgentResult(editor, res.result, selectedMarkdown);
+        setIsLoading(false);
+        setOpen(false);
+        setCustomPrompt("");
+      } else if (res.status === "error") {
+        setError(res.error || "AI error");
+        setIsLoading(false);
+      }
+    } catch (err) {
+      console.error("[AI] startAgent error:", err);
+      setError(err.message);
+      setIsLoading(false);
+    }
   };
 
-  /**
-   * [Flow: Step 1 (선택 마크다운 + 사용자 커스텀 명령 수집) -> Step 2 (useCompletion complete 호출)]
-   */
-  const handleCustom = async () => {
-    console.log("[AI] handleCustom:", customPrompt);
-    if (!editor || isLoading || !customPrompt.trim()) {
-      console.log("[AI] custom skip: editor=", !!editor, "isLoading=", isLoading);
-      return;
+  const handleCommand = (option) => startAgent(option, null);
+  const handleCustom = () => {
+    if (!customPrompt.trim()) return;
+    startAgent("zap", customPrompt.trim());
+  };
+
+  const handleApprove = async (value) => {
+    if (!run) return;
+    try {
+      setIsLoading(true);
+      const res = await api.resumeAgent(run.run_id, { resumeValue: value });
+      setRun(res);
+      if (res.status === "done") {
+        applyAgentResult(editor, res.result, getSelectedMarkdown(editor));
+        setIsLoading(false);
+        setOpen(false);
+        setShowCustomInput(false);
+        setCustomPrompt("");
+      } else if (res.status === "error") {
+        setError(res.error || "AI error");
+        setIsLoading(false);
+      }
+    } catch (err) {
+      console.error("[AI] resume error:", err);
+      setError(err.message);
+      setIsLoading(false);
     }
-    const prompt = getSelectedMarkdown(editor);
-    console.log("[AI] custom prompt:", prompt.slice(0, 100));
-    if (!prompt) {
-      console.log("[AI] custom empty prompt, skip");
-      return;
-    }
-    await complete(prompt, { body: { option: "zap", command: customPrompt.trim() } });
+  };
+
+  const handleReject = async (value) => {
+    await handleApprove({ approved: false, value });
   };
 
   if (!editor || !editable) return null;
@@ -160,10 +230,9 @@ export default function AiMenu({ editor, editable = true }) {
         onClick={() => setOpen((v) => !v)}
         disabled={isLoading}
         className={`p-1.5 rounded-md transition-colors flex items-center gap-1 ${
-        open ? "bg-primary text-white" : "hover:bg-surface-container-high text-on-surface"
+          open ? "bg-primary text-white" : "hover:bg-surface-container-high text-on-surface"
         } disabled:opacity-40`}
         data-oid="ai-menu-toggle">
-
         {isLoading ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
         <span className="text-sm">AI</span>
       </button>
@@ -172,7 +241,6 @@ export default function AiMenu({ editor, editable = true }) {
         <div
           className="absolute top-full left-0 mt-1 w-56 bg-white rounded-lg shadow-lg border border-outline-variant p-2 z-50 flex flex-col gap-1"
           data-oid="ai-menu-dropdown">
-
           {isLoading ? (
             <div className="flex items-center gap-2 px-3 py-2 text-sm text-on-surface">
               <Loader2 className="animate-spin" size={16} />
@@ -210,17 +278,29 @@ export default function AiMenu({ editor, editable = true }) {
                     disabled={!customPrompt.trim()}
                     className="p-1 text-primary disabled:opacity-40"
                     data-oid="ai-custom-submit">
-
                     <Sparkles size={16} />
                   </button>
                 </div>
               )}
             </>
           )}
+          {error && (
+            <div className="px-3 py-2 text-xs text-error" data-oid="ai-menu-error">
+              {error}
+            </div>
+          )}
         </div>
       )}
-    </div>);
 
+      {run?.pending_interrupt && (
+        <AgentApprovalModal
+          interrupt={run.pending_interrupt}
+          onApprove={handleApprove}
+          onReject={handleReject}
+          onClose={() => setRun(null)} />
+      )}
+    </div>
+  );
 }
 
 function AiItem({ icon: Icon, label, onClick }) {
@@ -228,11 +308,10 @@ function AiItem({ icon: Icon, label, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-surface-container-high rounded text-on-surface"
+      className="flex items-center gap-2 px-3 py-2 text-sm text-on-surface hover:bg-surface-container-high rounded-md transition-colors"
       data-oid="ai-menu-item">
-
-      <Icon size={16} className="text-primary" />
-      {label}
-    </button>);
-
+      <Icon size={16} />
+      <span>{label}</span>
+    </button>
+  );
 }

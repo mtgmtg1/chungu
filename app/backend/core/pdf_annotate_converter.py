@@ -104,6 +104,18 @@ def _annotation_id(item: dict) -> str:
     return item.get("id", "")
 
 
+def _annotation_inner(item: dict) -> dict:
+    """[Flow: Step 1 (item이 dict인지 확인) -> Step 2 (annotation 내부 dict 추출) -> Step 3 (반환)]
+
+    EmbedPDF AnnotationTransferItem에서 내부 annotation dict를 추출한다 (평면 dict도 지원).
+    """
+    if not isinstance(item, dict):
+        return {}
+    if "annotation" in item and isinstance(item["annotation"], dict):
+        return item["annotation"]
+    return item
+
+
 def _merge_annotations_for_run(
     shared_annotations_json_path: str,
     new_annotations: list[dict],
@@ -429,6 +441,15 @@ def _color_name_to_rgb(color_name: str | None) -> tuple[float, float, float]:
         return HIGHLIGHT_COLOR_PALETTE[DEFAULT_HIGHLIGHT_COLOR_NAME]
     normalized = color_name.strip().lower().replace(" ", "_")
     return HIGHLIGHT_COLOR_PALETTE.get(normalized, HIGHLIGHT_COLOR_PALETTE[DEFAULT_HIGHLIGHT_COLOR_NAME])
+
+
+def _rgb_to_hex(rgb: tuple[float, float, float]) -> str:
+    """[Flow: Step 1 (0-1 float RGB 값을 0-255로 변환) -> Step 2 (16진수 문자열로 포맷)]
+
+    LLM 색상 이름을 HEX 색상 코드로 변환한다. embedpdf 주석의 color 필드는 HEX 형태를 사용한다.
+    """
+    r, g, b = rgb
+    return f"#{int(round(r * 255)):02x}{int(round(g * 255)):02x}{int(round(b * 255)):02x}"
 
 
 def _parse_opacity(value) -> float | None:
@@ -991,6 +1012,196 @@ def run(
 
     except Exception as e:
         logger.exception(f"[pdf_annotate_converter] {job_id} 주석 생성 실패: {e}")
+        tb = traceback.format_exc()
+        _update_entry_status(db, job_id, next_index, "error", recovery_notes=[{"reason": str(e), "traceback": tb[-2000:]}])
+        return {"job_id": job_id, "status": "error", "error": str(e)}
+    finally:
+        db.close()
+
+
+def run_edit(
+    job_id: str,
+    instruction: str,
+    page_range: list[int] | None,
+    annotation_index: int,
+) -> dict:
+    """[Flow: Step 1 (공유 annotations.json 다운로드) -> Step 2 (page_range로 편집 대상 AI 주석 추출)
+          -> Step 3 (LLM으로 색상/코멘트 재편집) -> Step 4 (기존 주석의 id/rect는 유지하고 속성만 갱신)
+          -> Step 5 (병합 후 annotations.json 업로드) -> Step 6 (entry 상태 done 갱신)]
+
+    기존 AI 주석의 색상/코멘트를 사용자 instruction에 맞게 LLM으로 재편집한다.
+    지정한 페이지 범위의 기존 AI 주석(backend-* prefix, _userEdited 아님)만 편집 대상으로 삼고,
+    사용자 수동 편집 주석과 다른 페이지의 주석은 건드리지 않는다.
+    기존 주석의 id/rect/calloutLine/pageIndex는 유지하고 color/contents만 갱신하여
+    embedpdf에서 같은 주석으로 인식되도록 한다.
+
+    Args:
+        job_id: 작업 ID
+        instruction: 사용자가 입력한 편집 조건 (예: "색상을 빨간색으로", "코멘트를 간결하게")
+        page_range: 편집 대상 1-based 페이지 번호 리스트. None이면 전체 페이지.
+        annotation_index: API 수준에서 원자적으로 할당된 고유 인덱스 (entry 추적용)
+    """
+    db = SessionLocal()
+    job = db.get(Job, job_id)
+    if job is None:
+        db.close()
+        return {"error": "job not found"}
+
+    next_index = annotation_index
+    endpoint = job.endpoint or settings_store.get_setting(db, "llm_endpoint") or settings.default_llm_endpoint
+    model = job.model or settings_store.get_setting(db, "llm_model") or settings.default_llm_model
+    api_key = settings_store.get_setting(db, "llm_api_key") or ""
+
+    try:
+        shared_annotations_json_path = f"{job.id}/annotated.annotations.json"
+        client = supabase_client.get_service_client()
+
+        # [Flow: Step 1 — 공유 annotations.json 다운로드]
+        try:
+            existing_bytes = client.storage.from_("results").download(shared_annotations_json_path)
+            existing = json.loads(existing_bytes.decode("utf-8"))
+            if not isinstance(existing, list):
+                existing = []
+        except Exception:
+            existing = []
+
+        if not existing:
+            _update_entry_status(db, job_id, next_index, "done", recovery_notes=[{"reason": "편집할 기존 주석이 없습니다"}])
+            return {"job_id": job_id, "status": "done", "edited_count": 0}
+
+        # [Flow: Step 2 — page_range로 편집 대상 AI 주석 추출]
+        # backend-* prefix 주석만 편집 대상 (사용자 주석 제외).
+        # _userEdited 주석은 사용자가 수동 편집한 것이므로 보존 (제외).
+        # page_range는 1-based, 주석의 pageIndex는 0-based이므로 +1 변환.
+        page_set = set(page_range) if page_range else None
+        editable: list[dict] = []
+        for item in existing:
+            aid = _annotation_id(item)
+            if not aid.startswith("backend-"):
+                continue
+            if _is_user_edited(item):
+                continue
+            ann = _annotation_inner(item)
+            page_index = ann.get("pageIndex")
+            if page_index is None:
+                continue
+            page_no = page_index + 1
+            if page_set is not None and page_no not in page_set:
+                continue
+            atype = str(ann.get("type", "")).lower()
+            intent = str(ann.get("intent", "")).lower()
+            is_callout = atype in ("freetext", "freetextcallout") or intent == "freetextcallout"
+            comment = ann.get("contents", "") or ""
+            color = ann.get("color", "") or ann.get("strokeColor", "") or ""
+            # callout 주석은 comment를 원본 텍스트로 전달해 LLM이 재작성 가능.
+            # 하이라이트 주석은 원본 텍스트 추출을 생략하고 comment만 전달 (색상 변경 중심).
+            text = comment if is_callout else ""
+            editable.append({
+                "id": aid,
+                "type": "callout" if is_callout else "highlight",
+                "color": color,
+                "comment": comment,
+                "text": text,
+                "_item": item,
+            })
+
+        if not editable:
+            _update_entry_status(db, job_id, next_index, "done", recovery_notes=[{"reason": "지정한 페이지에 편집할 AI 주석이 없습니다"}])
+            return {"job_id": job_id, "status": "done", "edited_count": 0}
+
+        # [Flow: Step 3 — LLM으로 색상/코멘트 재편집]
+        from .prompts import build_annotation_edit_prompt
+        prompt = build_annotation_edit_prompt(
+            [{"id": a["id"], "type": a["type"], "color": a["color"], "comment": a["comment"], "text": a["text"]} for a in editable],
+            instruction,
+        )
+        content, _ = ocr_client.call_text(prompt, endpoint, model, api_key, max_tokens=4000)
+        content = _strip_json_fence(content)
+        try:
+            data = json.loads(content)
+        except Exception as e:
+            raise ValueError(f"LLM 응답 JSON 파싱 실패: {e} (content={content[:200]})")
+        edits = data.get("edits", []) if isinstance(data, dict) else []
+        if not isinstance(edits, list):
+            edits = []
+
+        # 색상 이름 → hex 매핑 (HIGHLIGHT_COLOR_PALETTE 기반)
+        color_name_to_hex = {name: _rgb_to_hex(rgb) for name, rgb in HIGHLIGHT_COLOR_PALETTE.items()}
+        edits_by_id: dict[str, dict] = {}
+        for e in edits:
+            if not isinstance(e, dict) or "id" not in e:
+                continue
+            edits_by_id[str(e["id"])] = e
+
+        # [Flow: Step 4 — 기존 주석의 id/rect는 유지하고 color/contents만 갱신]
+        edited_count = 0
+        for a in editable:
+            edit = edits_by_id.get(a["id"])
+            if edit is None:
+                continue
+            ann = _annotation_inner(a["_item"])
+            new_color_name = str(edit.get("color", "")).strip().lower()
+            if new_color_name in color_name_to_hex:
+                new_hex = color_name_to_hex[new_color_name]
+                ann["color"] = new_hex
+                # callout 주석은 strokeColor(테두리/리더 라인 색)도 함께 갱신
+                if "strokeColor" in ann:
+                    ann["strokeColor"] = new_hex
+            new_comment = edit.get("comment")
+            if new_comment is not None and str(new_comment).strip():
+                ann["contents"] = str(new_comment).strip()
+            edited_count += 1
+
+        # [Flow: Step 5 — 병합: 편집 대상이 아닌 주석 보존, 편집 대상은 갱신된 버전으로 교체]
+        edited_ids = {a["id"] for a in editable}
+        editable_by_id = {a["id"]: a["_item"] for a in editable}
+        preserved: list[dict] = []
+        for item in existing:
+            aid = _annotation_id(item)
+            if aid in edited_ids:
+                preserved.append(editable_by_id[aid])
+            else:
+                preserved.append(item)
+
+        # 동시 쓰기 안전성을 위해 SELECT FOR UPDATE로 행 잠금
+        locked_job = db.execute(
+            select(Job).where(Job.id == job_id).with_for_update()
+        ).scalar_one()
+        files = list(locked_job.annotated_pdf_files or [])
+        entry_found = any(e.get("index") == next_index for e in files)
+        if not entry_found:
+            # 사용자가 취소하여 entry가 제거된 경우 업로드하지 않고 종료한다.
+            db.rollback()
+            return {"job_id": job_id, "status": "cancelled", "edited_count": 0}
+
+        client.storage.from_("results").upload(
+            shared_annotations_json_path,
+            json.dumps(preserved, ensure_ascii=False).encode("utf-8"),
+            {"content-type": "application/json", "upsert": "true"},
+        )
+
+        # [Flow: Step 6 — entry 상태 done 갱신]
+        for e in files:
+            if e.get("index") == next_index:
+                e["status"] = "done"
+                e["instruction"] = instruction
+                e["page_range"] = page_range
+                e["edited_count"] = edited_count
+                e["annotations_json_storage_path"] = shared_annotations_json_path
+                e["created_at"] = datetime.now(timezone.utc).isoformat()
+                break
+        locked_job.annotated_pdf_files = files
+        flag_modified(locked_job, "annotated_pdf_files")
+        has_processing = any(e.get("status") == "processing" for e in files)
+        locked_job.annotate_status = "processing" if has_processing else "done"
+        locked_job.annotate_refundable = False
+        db.commit()
+        cache.invalidate_pattern(f"preview:{job_id}:*")
+        logger.info(f"[pdf_annotate_edit] {job_id} 주석 편집 완료: {edited_count}개 갱신")
+        return {"job_id": job_id, "status": "done", "edited_count": edited_count}
+
+    except Exception as e:
+        logger.exception(f"[pdf_annotate_edit] {job_id} 주석 편집 실패: {e}")
         tb = traceback.format_exc()
         _update_entry_status(db, job_id, next_index, "error", recovery_notes=[{"reason": str(e), "traceback": tb[-2000:]}])
         return {"job_id": job_id, "status": "error", "error": str(e)}

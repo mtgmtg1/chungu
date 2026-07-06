@@ -18,12 +18,15 @@ from ..celery_app import celery
 from celery.signals import worker_ready
 from ..config import settings
 from ..core import archive_handler, converter, excel_writer, media_loader, merge, pdf_annotate_converter, pdf_text_layer, subscription_service, supabase_client, xlsx_advanced_converter
+from ..core.agent_engine import get_agent_status, resume_agent_graph, run_agent_graph
+from ..core.agent_annotator import build_annotator_graph, run_annotator_agent
+from ..core.agent_editor import build_editor_graph, run_editor_agent
 from ..core.ocr_client import has_pdf_text_layer
 from ..core.pipeline_docling import run_docling, run_hwp
 from ..core.pipeline_hybrid import run_hybrid
 from ..core.pipeline_media import run_media
 from ..core.pipeline_vision import run_vision
-from ..db.models import Job, User
+from ..db.models import AgentRun, Job, User
 from ..db.session import SessionLocal
 from .. import email_sender, settings_store
 
@@ -918,6 +921,117 @@ def annotate_pdf_job(
     return pdf_annotate_converter.run(
         job_id, instruction, mode, comment_mode, advanced=advanced,
         annotation_index=annotation_index, page_range=page_range,
+    )
+
+
+def _run_agent_async(run_id: str) -> dict:
+    """[Flow: Step 1 (DB에서 AgentRun 조회) -> Step 2 (graph_name에 따라 그래프 빌드)
+          -> Step 3 (체크포인터 초기화) -> Step 4 (그래프 실행) -> Step 5 (상태/결과 DB 저장)]
+
+    agent_run_task의 실제 비동기 실행 루틴. Celery 동기 task 내부에서
+    asyncio.run()으로 실행된다.
+    """
+    import asyncio
+    return asyncio.run(_run_agent(run_id))
+
+
+async def _run_agent(run_id: str) -> dict:
+    """AgentRun을 조회하고 지정된 에이전트 그래프를 실행한다."""
+    db = SessionLocal()
+    try:
+        run = db.get(AgentRun, run_id)
+        if run is None:
+            return {"error": "AgentRun not found"}
+
+        run.status = "running"
+        db.commit()
+
+        payload = run.payload or {}
+        graph_name = run.graph_name
+        endpoint = payload.get("endpoint") or settings.default_llm_endpoint
+        model = payload.get("model") or settings.default_llm_model
+        api_key = payload.get("api_key") or ""
+
+        if graph_name == "annotator":
+            graph = build_annotator_graph(endpoint, model, api_key)
+            inputs = {
+                "messages": [],
+                "job_id": payload.get("job_id", ""),
+                "instruction": payload.get("instruction", ""),
+                "mode": payload.get("mode", "both"),
+                "comment_mode": payload.get("comment_mode", "llm_summary"),
+                "page_range": payload.get("page_range"),
+                "language": payload.get("language", "en"),
+                "elements": [],
+                "selected_targets": [],
+                "pending_removals": [],
+                "recovery_notes": [],
+                "status": "running",
+                "final_annotations": None,
+                "pending_interrupt": None,
+                "error": "",
+            }
+        elif graph_name == "editor":
+            graph = build_editor_graph(endpoint, model, api_key)
+            inputs = {
+                "messages": [],
+                "instruction": payload.get("instruction", ""),
+                "option": payload.get("option", "improve"),
+                "command": payload.get("command"),
+                "full_markdown": payload.get("full_markdown", ""),
+                "selected_markdown": payload.get("selected_markdown", ""),
+                "edits": [],
+                "questions": [],
+                "final_markdown": None,
+                "status": "running",
+                "pending_interrupt": None,
+                "error": "",
+            }
+        else:
+            return {"error": f"Unknown graph_name: {graph_name}"}
+
+        result = await run_agent_graph(graph, inputs, run.thread_id)
+
+        run.status = result.get("status", "error")
+        run.result = result.get("result") or {}
+        run.pending_interrupt = result.get("pending_interrupt")
+        run.error = result.get("error") or ""
+        db.commit()
+        return result
+    except Exception as e:
+        logger.exception(f"[agent_run_task] {run_id} 실행 오류: {e}")
+        try:
+            run = db.get(AgentRun, run_id)
+            if run:
+                run.status = "error"
+                run.error = str(e)
+                db.commit()
+        except Exception:
+            pass
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+@celery.task(name="backend.workers.tasks.agent_run_task")
+def agent_run_task(run_id: str) -> dict:
+    """LangGraph 에이전트 실행을 Celery worker에서 비동기로 실행한다."""
+    return _run_agent_async(run_id)
+
+
+@celery.task(name="backend.workers.tasks.annotate_edit_job")
+def annotate_edit_job(
+    job_id: str, instruction: str, page_range: list[int] | None, annotation_index: int,
+) -> dict:
+    """[Flow: Step 1 (기존 AI 주석 추출) -> Step 2 (LLM으로 색상/코멘트 재편집) -> Step 3 (병합 업로드)]
+
+    기존 AI 주석의 색상/코멘트를 사용자 instruction에 맞게 LLM으로 재편집한다.
+    지정한 페이지 범위의 기존 AI 주석만 편집 대상으로 삼고, 사용자 수동 편집 주석과
+    다른 페이지의 주석은 건드리지 않는다. 기존 주석의 id/rect는 유지하고 속성만 갱신한다.
+    annotation_index는 API 수준에서 원자적으로 할당된 고유 인덱스로, entry 추적에 사용한다.
+    """
+    return pdf_annotate_converter.run_edit(
+        job_id, instruction, page_range, annotation_index,
     )
 
 

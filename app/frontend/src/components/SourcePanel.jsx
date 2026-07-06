@@ -7,6 +7,8 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer from "./PdfViewer.jsx";
 import MediaPlayer from "./MediaPlayer.jsx";
 import AnnotationListPanel from "./AnnotationListPanel.jsx";
+import AgentStatusCard from "./AgentStatusCard.jsx";
+import api from "../api.js";
 
 function SourceIcon({ type }) {
   if (type === "pdf") return <FileText size={16} className="text-error flex-shrink-0" />;
@@ -151,6 +153,7 @@ function AiAnnotationFab({
   onCancelAnnotation,
   disabled,
   annotationRuns,
+  agentRuns,
   currentPage = 1,
   totalPages = 1,
 }) {
@@ -160,7 +163,33 @@ function AiAnnotationFab({
   const [instruction, setInstruction] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [pageRange, setPageRange] = useState("");
+  const [localAgentRuns, setLocalAgentRuns] = useState(agentRuns || []);
   const containerRef = useRef(null);
+
+  // [Flow: Step 1 (부모로부터 agentRuns prop 수신) -> Step 2 (로컬 상태 동기화)]
+  useEffect(() => {
+    setLocalAgentRuns(agentRuns || []);
+  }, [agentRuns]);
+
+  // [Flow: Step 1 (running/interrupted agent run 폴링) -> Step 2 (상태 갱신) -> Step 3 (done/error면 중단)]
+  useEffect(() => {
+    const active = localAgentRuns.filter((r) => ["running", "processing", "interrupted"].includes(r.status));
+    if (active.length === 0) return;
+    const timers = [];
+    const poll = async (run) => {
+      try {
+        const status = await api.getAgentStatus(run.run_id);
+        setLocalAgentRuns((prev) => prev.map((r) => (r.run_id === status.run_id ? status : r)));
+        if (["running", "processing", "interrupted"].includes(status.status)) {
+          timers.push(setTimeout(() => poll(status), 3000));
+        }
+      } catch (err) {
+        console.error("[AgentStatus] poll error:", err);
+      }
+    };
+    active.forEach((run) => timers.push(setTimeout(() => poll(run), 3000)));
+    return () => timers.forEach(clearTimeout);
+  }, [localAgentRuns]);
 
   // [Flow: Step 1 (팝업이 열린 경우에만 이벤트 등록) -> Step 2 (컨테이너 외부 클릭 시 팝업 닫기)]
   useEffect(() => {
@@ -191,8 +220,31 @@ function AiAnnotationFab({
     setOpen(false);
   };
 
-  // processing 개수 — FAB 배지에 표시
-  const processingCount = (annotationRuns || []).filter((r) => r.status === "processing").length;
+  const handleApprove = async (run, value) => {
+    try {
+      const res = await api.resumeAgent(run.run_id, { resumeValue: value });
+      setLocalAgentRuns((prev) => prev.map((r) => (r.run_id === res.run_id ? res : r)));
+    } catch (err) {
+      console.error("[AgentStatus] resume error:", err);
+    }
+  };
+
+  const handleReject = async (run, value) => {
+    await handleApprove(run, { approved: false, value });
+  };
+
+  const handleCancel = async (run) => {
+    try {
+      // TODO: cancel API 추가 시 연결
+      setLocalAgentRuns((prev) => prev.filter((r) => r.run_id !== run.run_id));
+    } catch (err) {
+      console.error("[AgentStatus] cancel error:", err);
+    }
+  };
+
+  // processing 개수 — FAB 배지에 표시 (legacy + agent)
+  const processingCount = (annotationRuns || []).filter((r) => r.status === "processing").length +
+    (localAgentRuns || []).filter((r) => ["running", "processing"].includes(r.status)).length;
 
   // 모드별 표시 텍스트
   const titleText = mode === "edit" ? t("page:result.annotateEditTitle") : t("page:result.annotateTitle");
@@ -211,6 +263,16 @@ function AiAnnotationFab({
           onCancelAnnotation={onCancelAnnotation}
         />
       )}
+      {/* Agent 실행 상태 카드 */}
+      {(localAgentRuns || []).filter((r) => ["running", "processing", "interrupted"].includes(r.status)).map((run) => (
+        <AgentStatusCard
+          key={run.run_id}
+          run={run}
+          onApprove={(value) => handleApprove(run, value)}
+          onReject={(value) => handleReject(run, value)}
+          onCancel={() => handleCancel(run)}
+        />
+      ))}
 
       <button
         type="button"

@@ -53,23 +53,7 @@ export default function AiMenu({ editor, editable = true }) {
   const [open, setOpen] = useState(false);
   const [customPrompt, setCustomPrompt] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
-  const [hasSelection, setHasSelection] = useState(false);
   const menuRef = useRef(null);
-
-  // [Flow: Step 1 (Tiptap editor selection 변경 구독) -> Step 2 (hasSelection state 업데이트) -> Step 3 (버튼 disabled 상태 반영)]
-  useEffect(() => {
-    if (!editor) return;
-    const update = () => setHasSelection(!editor.state.selection.empty);
-    editor.on("selectionUpdate", update);
-    editor.on("focus", update);
-    editor.on("blur", () => setHasSelection(false));
-    update();
-    return () => {
-      editor.off("selectionUpdate", update);
-      editor.off("focus", update);
-      editor.off("blur", () => setHasSelection(false));
-    };
-  }, [editor]);
 
   const { completion, complete, isLoading, error } = useCompletion({
     api: "/api/v1/ai/generate",
@@ -134,7 +118,7 @@ export default function AiMenu({ editor, editable = true }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        disabled={!hasSelection || isLoading}
+        disabled={isLoading}
         className={`p-1.5 rounded-md transition-colors flex items-center gap-1 ${
         open ? "bg-primary text-white" : "hover:bg-surface-container-high text-on-surface"
         } disabled:opacity-40`}
@@ -152,19 +136,19 @@ export default function AiMenu({ editor, editable = true }) {
           {isLoading ? (
             <div className="flex items-center gap-2 px-3 py-2 text-sm text-on-surface">
               <Loader2 className="animate-spin" size={16} />
-              {t("page:editor.ai.thinking")}
+              {t("page:components.ai.thinking")}
             </div>
           ) : (
             <>
-              <AiItem icon={Wand2} label={t("page:editor.ai.improve")} onClick={() => handleCommand("improve")} />
-              <AiItem icon={CheckCheck} label={t("page:editor.ai.fix")} onClick={() => handleCommand("fix")} />
-              <AiItem icon={ArrowDownWideNarrow} label={t("page:editor.ai.shorter")} onClick={() => handleCommand("shorter")} />
-              <AiItem icon={WrapText} label={t("page:editor.ai.longer")} onClick={() => handleCommand("longer")} />
-              <AiItem icon={StepForward} label={t("page:editor.ai.continue")} onClick={() => handleCommand("continue")} />
+              <AiItem icon={Wand2} label={t("page:components.ai.improve")} onClick={() => handleCommand("improve")} />
+              <AiItem icon={CheckCheck} label={t("page:components.ai.fix")} onClick={() => handleCommand("fix")} />
+              <AiItem icon={ArrowDownWideNarrow} label={t("page:components.ai.shorter")} onClick={() => handleCommand("shorter")} />
+              <AiItem icon={WrapText} label={t("page:components.ai.longer")} onClick={() => handleCommand("longer")} />
+              <AiItem icon={StepForward} label={t("page:components.ai.continue")} onClick={() => handleCommand("continue")} />
               <div className="h-px bg-outline-variant my-1" />
               <AiItem
                 icon={Sparkles}
-                label={t("page:editor.ai.custom")}
+                label={t("page:components.ai.custom")}
                 onClick={() => setShowCustomInput((v) => !v)} />
 
               {showCustomInput && (
@@ -173,7 +157,7 @@ export default function AiMenu({ editor, editable = true }) {
                     type="text"
                     value={customPrompt}
                     onChange={(e) => setCustomPrompt(e.target.value)}
-                    placeholder={t("page:editor.ai.customPlaceholder")}
+                    placeholder={t("page:components.ai.customPlaceholder")}
                     className="flex-1 px-2 py-1 text-sm border border-outline-variant rounded focus:outline-none focus:border-primary bg-white"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") handleCustom();

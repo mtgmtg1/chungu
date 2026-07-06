@@ -2,6 +2,7 @@
 import { forwardRef, memo, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useEditor, EditorContent } from "@tiptap/react";
+import { BubbleMenu } from "@tiptap/react/menus";
 import { Node } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { Table } from "@tiptap/extension-table";
@@ -486,7 +487,18 @@ ref)
         <EditorContent
           editor={editor}
           className="prose max-w-none focus:outline-none"
-          data-oid="adafms." />
+          data-oid="adafms.">
+
+          {editor && (
+            <BubbleMenu
+              editor={editor}
+              tippyOptions={{ duration: 100, placement: "top-start" }}
+              className="flex items-center gap-1 px-2 py-1.5 bg-white rounded-lg shadow-lg border border-outline-variant z-50">
+
+              <AiMenu editor={editor} editable={editable} />
+            </BubbleMenu>
+          )}
+        </EditorContent>
 
       </div>
     </div>);

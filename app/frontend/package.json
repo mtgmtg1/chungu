@@ -11,6 +11,7 @@
   "dependencies": {
     "@embedpdf/react-pdf-viewer": "^2.14.4",
     "@supabase/supabase-js": "^2.49.1",
+    "@tiptap/extension-bubble-menu": "^3.27.1",
     "@tiptap/extension-highlight": "^3.27.1",
     "@tiptap/extension-image": "^3.27.1",
     "@tiptap/extension-link": "^3.27.1",

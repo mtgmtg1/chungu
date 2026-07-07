@@ -93,6 +93,11 @@ class Settings(BaseSettings):
     dev_bypass_user_id: str = "00000000-0000-0000-0000-000000000001"
     dev_bypass_password: str = "dev1234!"
 
+    # Node.js AI 백엔드 (Vercel AI SDK 5.x 기반 에이전트 채팅)
+    # FastAPI가 /api/ai/* 요청을 이 주소로 리버스 프록시한다.
+    # Vite dev server의 proxy와 동일한 역할을 프로덕션/단일 오리진 환경에서 수행한다.
+    ai_backend_url: str = "http://localhost:3001"
+
     # 경로
     data_dir: str = "/data"
 

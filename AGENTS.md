@@ -8,6 +8,24 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### AI agent 채팅 — Vercel ai-chatbot 템플릿 기반 UI 재작성 + FastAPI 리버스 프록시
+
+- **FastAPI `/api/ai/*` 리버스 프록시** (`app/backend/main.py`, `app/backend/config.py`): Vercel AI SDK 5.x `useChat`가 `POST /api/ai/chat`으로 스트리밍 요청을 보내는데, Vite dev server proxy는 로컬 개발에서만 동작하고 프로덕션/단일 오리진 환경에서는 FastAPI가 빌드된 SPA를 서빙하므로 `POST /api/ai/chat`이 SPA catch-all GET 라우트에 걸려 **405 Method Not Allowed**를 반환하던 버그 수정. FastAPI에 `/api/ai/{path:path}` 리버스 프록시 라우트를 SPA catch-all 앞에 추가해 Node.js AI 백엔드(`ai_backend_url`, 기본값 `http://localhost:3001`)로 httpx 스트리밍 relay. hop-by-hop 헤더 제외, 모든 HTTP 메서드 지원.
+- **`vite.config.js` `loadEnv` 버그 수정**: 기존 코드가 `process.env.VITE_DEV_BACKEND_URL`을 읽었으나 이는 쉘 환경변수이지 Vite env 파일의 변수가 아니어서 `.env.development`의 `VITE_DEV_BACKEND_URL`/`VITE_DEV_AI_BACKEND_URL`을 무시하고 항상 fallback 값(`192.168.1.50:28181`)을 사용하던 버그 수정. `loadEnv(mode, cwd/.., '')`로 envDir에서 env 파일을 로드.
+- **Vercel ai-chatbot 템플릿 구조 포팅** (`app/frontend/src/components/ai-chat/`): shadcn/ui 의존성 없이 Tailwind + MD3 토큰으로 자체 구현. 템플릿의 컴포넌트 구조(`messages.tsx`, `message.tsx`, `ai-elements/tool.tsx`, `ai-elements/prompt-input.tsx`, `greeting.tsx`, `suggested-actions.tsx`)를 그대로 재구현.
+  - **`Shimmer.jsx`**: "Thinking..." 그라데이션 스윕 애니메이션 (CSS `ai-chat-shimmer`).
+  - **`Greeting.jsx`**: 빈 상태 중앙 환영 메시지 ("도와드릴까요?").
+  - **`Tool.jsx`**: collapsible 도구 카드 + 상태 배지 (실행 중/완료/오류/거부). `Wrench` 아이콘 + 상태별 아이콘 + input/output JSON 토글.
+  - **`Message.jsx`**: `PreviewMessage` + `ThinkingMessage`. 어시스턴트=좌측 Sparkles 아바타 + 전체 폭 콘텐츠(풍선 없음), 사용자=우측 정렬 풍선(`rounded-2xl rounded-br-md` + 그라데이션). `marked`로 마크다운 렌더링 (GFM + breaks).
+  - **`Messages.jsx`**: 메시지 목록 + `useMessages` 훅(자동 스크롤, 맨 아래 감지) + scroll-to-bottom 버튼. 빈 상태면 `Greeting` 오버레이.
+  - **`PromptInput.jsx`**: textarea composer (자동 높이 조정, Enter=전송/Shift+Enter=줄바꿈, 중지 버튼). `rounded-2xl` + focus shadow.
+  - **`SuggestedActions.jsx`**: 컨텍스트별 제안 칩 (PDF=하이라이트/코멘트, 마크다운=글 다듬기/표 정리, 엑셀=셀 업데이트/행 추가).
+- **`AgentChatModal.jsx` 재작성**: 새 `ai-chat/` 컴포넌트 조합. 헤더에 컨텍스트 표시(sourceType · activeEditor), 배경 클릭으로 닫기, system 메시지 필터링, 빈 상태 시 `SuggestedActions` 표시.
+- **`AgentInputBar.jsx` 재작성**: 템플릿 composer 스타일 차용 (Sparkles 아이콘 + `rounded-2xl` + ArrowUp 버튼 + backdrop-blur).
+- **`index.css` 애니메이션/스타일 추가**: `ai-chat-shimmer`, `ai-chat-fade-up`, `ai-chat-greeting`, `ai-chat-tool-open` 애니메이션 + `.ai-chat-markdown` 마크다운 렌더링 스타일 (코드 블록, 표, 인용구 등).
+- **`AgentToolRenderer.jsx` deprecated**: 새 `Tool.jsx`로 대체. 더 이상 import되지 않음.
+- **핵심 파일**: `app/backend/main.py`, `app/backend/config.py`, `app/frontend/vite.config.js`, `app/frontend/src/components/ai-chat/`(신규 7파일), `app/frontend/src/components/AgentChatModal.jsx`, `app/frontend/src/components/AgentInputBar.jsx`, `app/frontend/src/index.css`.
+
 ### AI agent — LangGraph → Vercel AI SDK 5.x 마이그레이션 + 채팅 버그 4종 수정
 
 - **백엔드 마이그레이션** (`7cc6bf5`): LangGraph 기반 에이전트 런타임을 Vercel AI SDK 5.x (`ai@5.0.210`, `@ai-sdk/openai`) 기반 Node.js 백엔드(`app/ai-backend/`)로 교체. `streamText` + `tools` + `stopWhen: stepCountIs(N)` 로 단일 스트림 내 도구 루프를 처리하고, `toUIMessageStreamResponse()`로 프론트엔드에 스트리밍 응답을 전송. 도구 구현체(`tools/annotations.ts`, `tools/markdown.ts`, `tools/spreadsheet.ts`)는 Python FastAPI(`/api/v1/*`)를 호출해 기존 비즈니스 로직을 그대로 재사용.

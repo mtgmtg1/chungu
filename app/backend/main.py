@@ -4,8 +4,9 @@ import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+import httpx
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
@@ -100,6 +101,77 @@ if settings.dev_bypass_auth:
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+# [Flow: Step 1 (클라이언트의 /api/ai/* 요청 수신) -> Step 2 (Node.js AI 백엔드로 전달)
+#       -> Step 3 (스트리밍 응답을 그대로 클라이언트에 relay)]
+# Vercel AI SDK 5.x useChat이 POST /api/ai/chat으로 스트리밍 요청을 보낸다.
+# Vite dev server의 proxy가 로컬 개발에서 이 경로를 Node 백엔드로 전달하지만,
+# 프로덕션/단일 오리진 환경에서는 FastAPI가 빌드된 SPA를 서빙하므로
+# FastAPI 자체가 /api/ai/*를 Node AI 백엔드로 리버스 프록시해야 한다.
+# 그렇지 않으면 SPA catch-all GET 라우트가 POST 요청에 405를 반환한다.
+AI_BACKEND_URL = settings.ai_backend_url.rstrip("/")
+
+# 프록시 전달에서 제외할 hop-by-hop 헤더 (RFC 7230 6.1)
+_HOP_BY_HOP_HEADERS = {
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+    "te", "trailers", "transfer-encoding", "upgrade",
+}
+
+
+@app.api_route("/api/ai/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+async def proxy_ai_backend(path: str, request: Request):
+    """[Flow: Node.js AI 백엔드로 /api/ai/* 요청을 리버스 프록시한다]
+
+    Args:
+        path: /api/ai/ 이후의 하위 경로 (예: "chat").
+        request: 원본 FastAPI 요청 (메서드/헤더/본문 그대로 전달).
+
+    Returns:
+        Node AI 백엔드의 응답을 스트리밍으로 relay한 StreamingResponse.
+    """
+    target_url = f"{AI_BACKEND_URL}/api/ai/{path}"
+
+    # hop-by-hop 헤더를 제외한 요청 헤더를 그대로 전달한다.
+    forward_headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in _HOP_BY_HOP_HEADERS
+    }
+
+    # 요청 본문을 비동기로 읽어 Node 백엔드로 전달한다.
+    body = await request.body()
+
+    client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=None, write=30.0, pool=10.0))
+    upstream_req = client.build_request(
+        request.method,
+        target_url,
+        headers=forward_headers,
+        params=request.query_params,
+        content=body,
+    )
+    upstream_resp = await client.send(upstream_req, stream=True)
+
+    # 응답 헤더 중 hop-by-hop을 제외하고 그대로 전달한다.
+    response_headers = {
+        k: v for k, v in upstream_resp.headers.items()
+        if k.lower() not in _HOP_BY_HOP_HEADERS
+    }
+
+    async def relay_stream():
+        """Node AI 백엔드의 스트리밍 응답을 클라이언트로 relay하고 커넥션을 정리한다."""
+        try:
+            async for chunk in upstream_resp.aiter_raw():
+                yield chunk
+        finally:
+            await upstream_resp.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        relay_stream(),
+        status_code=upstream_resp.status_code,
+        headers=response_headers,
+        media_type=upstream_resp.headers.get("content-type"),
+    )
 
 
 # Docusaurus 문서 사이트 서빙 (빌드 산출물이 있을 때만)

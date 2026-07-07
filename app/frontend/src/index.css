@@ -187,3 +187,120 @@ body {
 .page-marker {
   pointer-events: none;
 }
+
+/* ============================================================
+   AI Chat — Vercel ai-chatbot 템플릿 스타일 포팅
+   ============================================================ */
+
+/* Shimmer: "Thinking..." 텍스트용 그라데이션 스윕 애니메이션 */
+@keyframes ai-chat-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.ai-chat-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(19, 27, 46, 0.25) 0%,
+    rgba(19, 27, 46, 0.7) 50%,
+    rgba(19, 27, 46, 0.25) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: ai-chat-shimmer 1.5s ease-in-out infinite;
+}
+
+/* 메시지 등장 애니메이션 (fade-up) */
+@keyframes ai-chat-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ai-chat-fade-up {
+  animation: ai-chat-fade-up 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Greeting 등장 애니메이션 */
+@keyframes ai-chat-greeting {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ai-chat-greeting {
+  animation: ai-chat-greeting 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Tool 카드 펼침/접힘 */
+@keyframes ai-chat-slide-in-top {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ai-chat-tool-open {
+  animation: ai-chat-slide-in-top 0.2s ease-out both;
+}
+
+/* 마크다운 렌더링 (메시지 본문) */
+.ai-chat-markdown {
+  font-size: 13px;
+  line-height: 1.65;
+  word-break: break-word;
+}
+.ai-chat-markdown > *:first-child { margin-top: 0; }
+.ai-chat-markdown > *:last-child { margin-bottom: 0; }
+.ai-chat-markdown p { margin: 0.4rem 0; }
+.ai-chat-markdown h1, .ai-chat-markdown h2, .ai-chat-markdown h3 {
+  font-weight: 600;
+  margin: 0.8rem 0 0.4rem;
+}
+.ai-chat-markdown h1 { font-size: 1.15rem; }
+.ai-chat-markdown h2 { font-size: 1.05rem; }
+.ai-chat-markdown h3 { font-size: 0.95rem; }
+.ai-chat-markdown ul, .ai-chat-markdown ol {
+  padding-left: 1.2rem;
+  margin: 0.4rem 0;
+}
+.ai-chat-markdown li { margin: 0.15rem 0; }
+.ai-chat-markdown code {
+  font-family: 'Geist Mono', monospace;
+  font-size: 12px;
+  background: rgba(19, 27, 46, 0.06);
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+}
+.ai-chat-markdown pre {
+  font-family: 'Geist Mono', monospace;
+  font-size: 12px;
+  background: #131b2e;
+  color: #dbe1ff;
+  padding: 0.75rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+.ai-chat-markdown pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+.ai-chat-markdown a {
+  color: #004ac6;
+  text-decoration: underline;
+}
+.ai-chat-markdown blockquote {
+  border-left: 3px solid #c3c6d7;
+  padding-left: 0.75rem;
+  margin: 0.4rem 0;
+  color: #434655;
+}
+.ai-chat-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5rem 0;
+  font-size: 12px;
+}
+.ai-chat-markdown th, .ai-chat-markdown td {
+  border: 1px solid #c3c6d7;
+  padding: 0.3rem 0.5rem;
+  text-align: left;
+}
+.ai-chat-markdown th { background: #f2f3ff; font-weight: 600; }

@@ -128,10 +128,8 @@ services:
       - LLM_API_KEY=${LLM_API_KEY:-not-needed}
       - CORS_ORIGIN=${CORS_ORIGIN:-*}
       # FastAPI에 도구 호출을 전달할 때 사용할 base URL (컨테이너 내부에서 api 서비스로)
+      # 런타임에 도구 호출 시 api를 찾으므로 startup 의존성은 없음 (순환 의존 방지)
       - PROOF_API_URL=http://api:28181
-    depends_on:
-      api:
-        condition: service_started
     networks:
       - default
     restart: unless-stopped

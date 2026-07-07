@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { marked } from "marked";
 import TurndownService from "turndown";
 import { useCompletion } from "@ai-sdk/react";
+import { getToken } from "../api.js";
 import {
   ArrowDownWideNarrow,
   CheckCheck,
@@ -67,6 +68,18 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
 
   const { completion, complete, isLoading, stop } = useCompletion({
     api: "/api/v1/ai/generate",
+    credentials: "include",
+    // [Flow: Step 1 (Supabase 세션 토큰 획득) -> Step 2 (JWT + dev API key 헤더 구성) -> Step 3 (fetch 래핑)]
+    fetch: async (url, init) => {
+      const token = await getToken();
+      const h = new Headers(init?.headers);
+      if (token && token.startsWith("eyJ")) h.set("Authorization", `Bearer ${token}`);
+      const devKey = import.meta.env.DEV
+        ? (import.meta.env.VITE_DEV_API_KEY || "chu_live_testkey12345")
+        : "";
+      if (devKey) h.set("X-Api-Key", devKey);
+      return fetch(url, { ...init, headers: h, credentials: "include" });
+    },
     onResponse: () => setError(""),
     onError: (err) => {
       setError(err.message || "AI error");

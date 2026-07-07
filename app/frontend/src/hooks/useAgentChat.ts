@@ -6,6 +6,7 @@
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from 'ai';
 import { useCallback, useMemo } from 'react';
+import { getToken } from '../api.js';
 
 export interface AgentContext {
   jobId?: string;
@@ -13,6 +14,23 @@ export interface AgentContext {
   currentPage?: number;
   selectedFileIndex?: number;
   activeEditor?: string;
+}
+
+/**
+ * [Flow: Step 1 (Supabase 세션 토큰 획득) -> Step 2 (JWT + dev API key 헤더 구성)]
+ *
+ * useChat의 DefaultChatTransport에 전달할 인증 헤더를 동적으로 생성한다.
+ * AI 백엔드가 FastAPI 도구 호출 시 이 헤더를 전달하므로 인증이 필요하다.
+ */
+async function buildAuthHeaders(): Promise<Record<string, string>> {
+  const token = await getToken();
+  const h: Record<string, string> = {};
+  if (token && token.startsWith('eyJ')) h['Authorization'] = `Bearer ${token}`;
+  const devKey = import.meta.env.DEV
+    ? (import.meta.env.VITE_DEV_API_KEY || 'chu_live_testkey12345')
+    : '';
+  if (devKey) h['X-Api-Key'] = devKey;
+  return h;
 }
 
 /**
@@ -35,6 +53,8 @@ export function useAgentChat(context: AgentContext) {
   const chat = useChat({
     transport: new DefaultChatTransport({
       api: '/api/ai/chat',
+      credentials: 'include',
+      headers: buildAuthHeaders,
     }),
     initialMessages,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,

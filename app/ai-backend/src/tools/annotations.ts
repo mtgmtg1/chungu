@@ -385,9 +385,14 @@ export function buildAnnotationTools(context: AnnotationContext) {
         try {
           const shouldMerge = merge !== false;
           let toSave = annotations;
-
+          // [Flow: Step 1 (저장할 source_index 결정)
+          //       -> Step 2 (merge면 기존 주석 읽어 병합) -> Step 3 (FastAPI로 저장)]
+          // annotated_pdf_files가 없는 job (AI 주석을 생성한 적 없는 원본 PDF)은
+          // source_index = -1로 보내야 _save_user_annotations_json이 호출된다.
+          // AI 주석 파일이 있는 job은 source_index 그대로 사용.
+          let saveSourceIndex = sourceIndex;
+          let usedFallback = false;
           if (shouldMerge) {
-            // [Flow: Step 1 (기존 주석 읽기) -> Step 2 (새 주석과 병합) -> Step 3 (저장)]
             try {
               const existing = await proofApi.getAnnotations(jobId, sourceIndex, undefined, authHeaders);
               const existingIds = new Set(existing.annotations.map((a) => {
@@ -395,7 +400,6 @@ export function buildAnnotationTools(context: AnnotationContext) {
                   ? (a as any).annotation : a;
                 return inner.id;
               }));
-              // 기존에 없는 새 주석만 추가 (ID 중복 방지)
               const newOnes = annotations.filter((a) => {
                 const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
                   ? (a as any).annotation : a;
@@ -403,17 +407,32 @@ export function buildAnnotationTools(context: AnnotationContext) {
               });
               toSave = [...existing.annotations, ...newOnes];
             } catch {
-              // 기존 주석 읽기 실패 시 전달받은 주석만 저장
+              // 기존 주석 파일이 없으면 source_index = -1로 fallback (원본 PDF에 JSON 저장)
+              saveSourceIndex = -1;
+              usedFallback = true;
               toSave = annotations;
             }
           }
 
-          await proofApi.saveAnnotations(jobId, sourceIndex, toSave as Array<Record<string, unknown>>, authHeaders);
+          try {
+            await proofApi.saveAnnotations(jobId, saveSourceIndex, toSave as Array<Record<string, unknown>>, authHeaders);
+          } catch (firstErr) {
+            // source_index=0으로 실패하면 -1로 재시도 (원본 PDF fallback)
+            if (saveSourceIndex >= 0) {
+              saveSourceIndex = -1;
+              usedFallback = true;
+              await proofApi.saveAnnotations(jobId, saveSourceIndex, toSave as Array<Record<string, unknown>>, authHeaders);
+            } else {
+              throw firstErr;
+            }
+          }
           return {
             saved: true,
             count: toSave.length,
             new_count: annotations.length,
             merged: shouldMerge,
+            source_index: saveSourceIndex,
+            used_fallback: usedFallback,
           };
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);

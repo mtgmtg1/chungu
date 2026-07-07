@@ -218,7 +218,9 @@
       "newChat": "새 대화",
       "noConversations": "이전 대화가 없습니다",
       "untitled": "제목 없음",
-      "regenerate": "재생성"
+      "regenerate": "재생성",
+      "runningCount": "{{count}}개 에이전트 실행 중",
+      "runningHint": "{{count}}개 에이전트 실행 중…"
     },
     "annotateTitle": "AI 주석 생성",
     "annotateDesc": "원본 스캔 PDF의 표에서 조건에 맞는 행을 형광펜으로 표시하거나 여백에 코멘트를 답니다. 예: \"80만원 이상 이체된 줄\"",

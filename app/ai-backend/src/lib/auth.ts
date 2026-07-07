@@ -32,9 +32,6 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     authHeaders['X-Api-Key'] = apiKey;
   }
 
-  // [debug] 인증 헤더 전달 상태 로깅
-  console.log(`[auth] ${req.method} ${req.path} | authorization=${authorization ? 'YES(' + authorization.slice(0, 20) + '...)' : 'NO'} | x-api-key=${apiKey ? 'YES' : 'NO'} | authHeaders keys=${Object.keys(authHeaders).join(',') || 'empty'}`);
-
   (req as any).authHeaders = authHeaders;
   next();
 }

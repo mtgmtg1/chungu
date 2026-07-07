@@ -218,7 +218,9 @@
       "newChat": "新規チャット",
       "noConversations": "過去の会話はありません",
       "untitled": "無題",
-      "regenerate": "再生成"
+      "regenerate": "再生成",
+      "runningCount": "{{count}}件のエージェント実行中",
+      "runningHint": "{{count}}件のエージェント実行中…"
     },
     "annotateTitle": "AI注釈の生成",
     "annotateDesc": "元のスキャンPDFの表で条件に合う行をハイライトしたり、余白にコメントを追加します。例:「80万円以上振込された行」",

@@ -94,6 +94,8 @@ export default function JobResultPage() {
 
   // AI 에이전트 채팅 모달 상태
   const [chatOpen, setChatOpen] = useState(false);
+  // 백그라운드에서 실행 중인 에이전트 수 (모달을 닫아도 스트리밍이 계속되는 세션 개수)
+  const [agentRunningCount, setAgentRunningCount] = useState(0);
 
   const openDropdown = (setter, timerRef) => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -1041,7 +1043,10 @@ export default function JobResultPage() {
 
       {job?.status === "done" && (
         <>
-          <AgentInputBar onOpenChat={() => setChatOpen(true)} />
+          <AgentInputBar
+            onOpenChat={() => setChatOpen(true)}
+            runningCount={agentRunningCount}
+          />
           <AgentChatModal
             isOpen={chatOpen}
             onClose={() => setChatOpen(false)}
@@ -1052,6 +1057,7 @@ export default function JobResultPage() {
               selectedFileIndex,
               activeEditor: previewMode,
             }}
+            onRunningCountChange={setAgentRunningCount}
           />
         </>
       )}

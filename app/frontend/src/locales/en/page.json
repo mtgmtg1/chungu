@@ -218,7 +218,9 @@
       "newChat": "New chat",
       "noConversations": "No previous conversations",
       "untitled": "Untitled",
-      "regenerate": "Regenerate"
+      "regenerate": "Regenerate",
+      "runningCount": "{{count}} agent(s) running",
+      "runningHint": "{{count}} agent(s) running…"
     },
     "annotateTitle": "Generate AI Annotations",
     "annotateDesc": "Highlight matching table rows or add margin comments on the original scanned PDF. e.g. \"rows with transfers over $800\"",

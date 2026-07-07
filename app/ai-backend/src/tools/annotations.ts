@@ -159,10 +159,11 @@ export function buildAnnotationTools(context: AnnotationContext) {
         dpi: z.number().min(150).max(300).optional().describe('렌더링 DPI (150~300, 생략 시 페이지 내 이미지 해상도에서 자동 추정)'),
       }),
       execute: async ({ page_no, dpi }) => {
-        console.log(`[view_page] start: job=${jobId} page=${page_no} dpi=${dpi}`);
         // [Flow: Step 1 (FastAPI에서 페이지 이미지 URL 획득) -> Step 2 (이미지 다운로드)
         //       -> Step 3 (base64 data URL 변환) -> Step 4 (vLLM vision 모델에 분석 요청)
         //       -> Step 5 (분석 텍스트 반환)]
+        // Vercel AI SDK가 tool 에러를 "An error occurred."로 마스킹하므로
+        // try/catch로 명확한 에러 메시지를 tool output에 포함한다.
         try {
           const { image_url, width, height, dpi: resolvedDpi } = await proofApi.getPageImage(
             jobId,
@@ -170,20 +171,16 @@ export function buildAnnotationTools(context: AnnotationContext) {
             dpi,
             authHeaders,
           );
-          console.log(`[view_page] got image_url: ${image_url?.slice(0, 80)}...`);
 
           const imageRes = await fetch(image_url);
           if (!imageRes.ok) {
-            console.error(`[view_page] image download failed: ${imageRes.status} ${imageRes.statusText}`);
             return { error: `Failed to download page image: ${imageRes.status}` };
           }
           const imageBuffer = Buffer.from(await imageRes.arrayBuffer());
-          console.log(`[view_page] image downloaded: ${imageBuffer.length} bytes`);
           const base64 = imageBuffer.toString('base64');
           const dataUrl = `data:image/png;base64,${base64}`;
 
           const model = buildModel();
-          console.log(`[view_page] calling vLLM vision...`);
           const { text } = await generateText({
             model: model as any,
             messages: [
@@ -199,11 +196,10 @@ export function buildAnnotationTools(context: AnnotationContext) {
               },
             ],
           });
-          console.log(`[view_page] vLLM analysis done: ${text?.slice(0, 100)}...`);
           return { page_no, dpi: resolvedDpi, width, height, analysis: text };
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          console.error(`[view_page] ERROR: ${msg}`, err instanceof Error ? err.stack : '');
+          console.error(`[view_page] job=${jobId} page=${page_no}: ${msg}`);
           return { error: `view_page failed: ${msg}` };
         }
       },

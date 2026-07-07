@@ -8,6 +8,18 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### AI agent — LangGraph → Vercel AI SDK 5.x 마이그레이션 + 채팅 버그 4종 수정
+
+- **백엔드 마이그레이션** (`7cc6bf5`): LangGraph 기반 에이전트 런타임을 Vercel AI SDK 5.x (`ai@5.0.210`, `@ai-sdk/openai`) 기반 Node.js 백엔드(`app/ai-backend/`)로 교체. `streamText` + `tools` + `stopWhen: stepCountIs(N)` 로 단일 스트림 내 도구 루프를 처리하고, `toUIMessageStreamResponse()`로 프론트엔드에 스트리밍 응답을 전송. 도구 구현체(`tools/annotations.ts`, `tools/markdown.ts`, `tools/spreadsheet.ts`)는 Python FastAPI(`/api/v1/*`)를 호출해 기존 비즈니스 로직을 그대로 재사용.
+- **ISSUE-001 — 인증 헤더 누락** (`75cffc7`): `useCompletion`/`useChat`가 `Authorization`/`X-Api-Key` 헤더를 전송하지 않아 AI 백엔드가 401을 반환하며 즉시 실패. `headers` 옵션으로 토큰/API key를 주입.
+- **ISSUE-002 — `useCompletion` body 구조 오류** (`87f743a`): Novel의 `useCompletion` 패턴을 참고해 `body`에 `prompt`만 보내던 것을, Vercel AI SDK가 기대하는 `{ messages, ...options }` 형태로 수정.
+- **ISSUE-003 — AgentInputBar focus로 인한 채팅 메시지 손실** (`f839280`): `AgentInputBar`가 input focus 시점에 채팅 모달을 열어 typed text가 유실되고 `AgentChatModal`이 빈 메시지를 전송하던 버그. submit 시점에 모달을 열고 `initialText`를 전달하도록 변경, `AgentChatModal`은 이미 열려 있어도 `initialText` 변경을 반영.
+- **ISSUE-004 — `@ai-sdk/react` 버전 불일치** (`54f96ba`, `e449fd1`): `package.json`에 `@ai-sdk/react: ^1.0.0`(v1 API)이 고정되어 `ai@5.0.210`(v5 API)와 짝이 맞지 않아 `chat.sendMessage is not a function` 런타임 에러로 전송 버튼이 무반응. `@ai-sdk/react`를 `2.0.212`(ai-v5 dist-tag)로 업그레이드.
+  - **`useAgentChat.ts` v5 API 재작성**: `sendMessage({ text })`, `parts` 기반 메시지 포맷, `transport`/`messages` 초기값 키 사용.
+  - **무한 루프/브라우저 프리징 수정**: 매 렌더마다 `new DefaultChatTransport(...)`가 재생성되고 `useChat` 반환 객체가 `useCallback` deps에 들어가 스트리밍 토큰 도착 시마다 `sendContextualMessage`가 재실행 → 렌더러 CPU 100%+ 무한 루프. `transport`를 `useMemo`로 안정화하고 `sendMessage` 호출을 `ref` 기반으로 변경, 불필요한 `sendAutomaticallyWhen` 제거.
+  - **`AgentToolRenderer.jsx` v5 tool part 포맷**: v1 형식(`part.toolInvocation`)을 기대하던 것을 v5 tool part(`type: "tool-${name}"`, `state`/`input`/`output`이 part에 직접 존재)로 수정.
+- **핵심 파일**: `app/ai-backend/`(신규), `app/frontend/src/hooks/useAgentChat.ts`, `app/frontend/src/components/AgentChatModal.jsx`, `app/frontend/src/components/AgentInputBar.jsx`, `app/frontend/src/components/AgentToolRenderer.jsx`, `app/frontend/src/components/AiMenu.jsx`, `app/frontend/package.json`.
+
 ### AI agent 개발/검증 및 프론트엔드 연동
 
 - **개발 환경 mock 모드 해제**: 로컬 백엔드의 `/api/dev/login` bypass가 405로 실패하면 프론트엔드가 mock 사용자로 전환되었는데, 이제는 API key 인증으로 백엔드와 직접 통신한다. `AuthContext.jsx`가 dev 모드에서 세션 대신 mock 사용자를 유지하면서 `api.js`가 `X-Api-Key` 헤더를 전송, `backend/api/auth.py`의 `get_current_user`가 `x-api-key` 헤더를 수락한다. `DevBypassBanner.jsx`도 API key 상태를 반영하도록 갱신.

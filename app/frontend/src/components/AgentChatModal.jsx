@@ -173,7 +173,6 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
   const jobId = context?.jobId;
   const {
     conversations,
-    currentConversation,
     currentId,
     createConversation,
     selectConversation,

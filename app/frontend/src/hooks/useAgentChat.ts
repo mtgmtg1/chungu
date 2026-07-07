@@ -44,7 +44,7 @@ export function useAgentChat(context: AgentContext) {
   const initialMessages = useMemo(() => {
     const system = {
       role: 'system' as const,
-      content: `Current PROOF context: ${JSON.stringify(context)}`,
+      parts: [{ type: 'text' as const, text: `Current PROOF context: ${JSON.stringify(context)}` }],
       id: 'context',
     };
     return [system];
@@ -67,7 +67,7 @@ export function useAgentChat(context: AgentContext) {
       // 현재 ai SDK 5.x에서는 transport를 직접 구현하거나, fetch wrapper를 사용해야 한다.
       // 단순화를 위해 sendMessage에 추가 메타데이터를 실어보내는 방식은 provider API에 따라 다르다.
       // 우선 text만 보내고, 백엔드에서 context는 initialMessages의 system message를 통해 추론한다.
-      return chat.sendMessage({ text });
+      return chat.append({ role: 'user', parts: [{ type: 'text', text }] });
     },
     [chat],
   );

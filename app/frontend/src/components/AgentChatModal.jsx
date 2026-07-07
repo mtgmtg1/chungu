@@ -25,17 +25,18 @@ export default function AgentChatModal({ isOpen, onClose, context, initialText }
   const { messages, input, setInput, status, sendContextualMessage } = useAgentChat(context);
   const inputRef = useRef(null);
   const messagesEndRef = useRef(null);
-  const [sentInitial, setSentInitial] = useState(false);
+  const [sentInitial, setSentInitial] = useState("");
 
-  // [Flow: Step 1 (isOpen이 true로 바뀔 때) -> Step 2 (입력창 포커스) -> Step 3 (initialText가 있으면 전송)]
+  // [Flow: Step 1 (isOpen이 true로 바뀌거나 initialText가 변경될 때)
+  //       -> Step 2 (입력창 포커스) -> Step 3 (아직 전송되지 않은 initialText가 있으면 전송)]
   useEffect(() => {
     if (!isOpen) {
-      setSentInitial(false);
+      setSentInitial("");
       return;
     }
     inputRef.current?.focus();
-    if (initialText && !sentInitial) {
-      setSentInitial(true);
+    if (initialText && initialText !== sentInitial) {
+      setSentInitial(initialText);
       setInput(initialText);
       sendContextualMessage(initialText);
     }

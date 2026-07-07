@@ -20,12 +20,10 @@ export default function AgentInputBar({ onOpenChat, initialText = "" }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onOpenChat?.(text.trim());
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    onOpenChat?.(trimmed);
     setText("");
-  };
-
-  const handleFocus = () => {
-    onOpenChat?.(text.trim());
   };
 
   return (
@@ -39,7 +37,6 @@ export default function AgentInputBar({ onOpenChat, initialText = "" }) {
           type="text"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          onFocus={handleFocus}
           placeholder={t("page:agent.inputPlaceholder", "AI에게 무엇을 도와드릴까요?")}
           className="flex-1 min-w-0 bg-transparent outline-none text-sm text-on-surface placeholder:text-on-surface-variant"
           data-oid="agent-input-field"

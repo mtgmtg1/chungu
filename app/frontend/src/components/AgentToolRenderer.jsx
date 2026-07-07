@@ -22,11 +22,15 @@ export default function AgentToolRenderer({ part, messageId }) {
     );
   }
 
-  if (part.type === "tool-invocation") {
-    const { state, toolName, args, result, error } = part.toolInvocation || {};
-    const isLoading = state === "call" || state === "partial-call";
-    const isSuccess = state === "result" && !error;
-    const isError = state === "result" && error;
+  // Vercel AI SDK 5.x의 tool part 타입은 `tool-${toolName}` (정적 도구) 또는
+  // `dynamic-tool` (동적 도구) 형태이며, state/input/output/errorText가 part에 직접 존재한다.
+  const isToolPart = part.type === "dynamic-tool" || part.type?.startsWith("tool-");
+  if (isToolPart) {
+    const toolName = part.type === "dynamic-tool" ? part.toolName : part.type.slice("tool-".length);
+    const { state, input, output, errorText } = part;
+    const isLoading = state === "input-streaming" || state === "input-available";
+    const isError = state === "output-error";
+    const isSuccess = state === "output-available";
 
     return (
       <div
@@ -47,21 +51,21 @@ export default function AgentToolRenderer({ part, messageId }) {
             {toolName}
           </span>
         </div>
-        {args && Object.keys(args).length > 0 && (
+        {input && Object.keys(input).length > 0 && (
           <div className="text-xs text-on-surface-variant mb-1.5 font-mono">
-            {JSON.stringify(args)}
+            {JSON.stringify(input)}
           </div>
         )}
         {isLoading && (
           <div className="text-xs text-on-surface-variant">{t("page:agent.toolRunning", "도구 실행 중...")}</div>
         )}
-        {isSuccess && result !== undefined && (
+        {isSuccess && output !== undefined && (
           <div className="text-xs text-on-surface-variant font-mono truncate">
-            {JSON.stringify(result)}
+            {JSON.stringify(output)}
           </div>
         )}
         {isError && (
-          <div className="text-xs text-error">{error}</div>
+          <div className="text-xs text-error">{errorText}</div>
         )}
       </div>
     );

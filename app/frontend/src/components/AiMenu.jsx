@@ -126,7 +126,9 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
     setError("");
     setShowCustomInput(false);
     try {
-      await complete({ prompt: selectedMarkdown, option, command });
+      // [Flow: useCompletion의 complete(prompt, { body }) 시그니처 사용
+      //       prompt 문자열은 body.prompt로, option/command는 body에 직접 추가된다]
+      await complete(selectedMarkdown, { body: { option, command } });
     } catch (err) {
       setError(err.message || "AI error");
     }

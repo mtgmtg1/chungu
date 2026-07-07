@@ -1,8 +1,8 @@
 // [Flow: Step 1 (context에서 job_id, source_type, page, editor 등 추출)
-//       -> Step 2 (context를 system 메시지로 변환) -> Step 3 (useChat 래핑)
+//       -> Step 2 (context를 transport body로 전송) -> Step 3 (useChat 래핑)
 //       -> Step 4 (tool call UI 상태 관리) -> Step 5 (send/clear/status 반환)]
 // Vercel AI SDK 5.x(@ai-sdk/react@2.x)의 useChat을 PROOF 에이전트에 맞게 래핑하는 커스텀 훅.
-// 현재 문서/페이지/에디터 컨텍스트를 초기 system message로 전달한다.
+// 현재 문서/페이지/에디터 컨텍스트를 매 요청의 body에 포함하여 전달한다.
 // 주의: @ai-sdk/react 5.x 계열(useChat v2)은 input/setInput/append를 더 이상 제공하지 않으므로
 // 입력값은 이 훅에서 직접 관리하고, 전송은 sendMessage({ text })로 수행한다.
 import { useChat } from '@ai-sdk/react';
@@ -36,8 +36,12 @@ async function buildAuthHeaders(): Promise<Record<string, string>> {
 }
 
 /**
- * [Flow: Step 1 (context 수신) -> Step 2 (system message 생성) -> Step 3 (useChat 설정)
+ * [Flow: Step 1 (context 수신) -> Step 2 (context ref 보관) -> Step 3 (useChat 설정)
  *       -> Step 4 (send/clear/status 반환)]
+ *
+ * context를 초기 system message 대신 transport body로 전송한다.
+ * 이렇게 하면 context가 나중에 로드되어도(preview 로드 후 sourceType 확정 등)
+ * 매 전송 시점의 최신 context가 백엔드에 전달된다.
  *
  * @param context 현재 Job/페이지/에디터 컨텍스트
  * @returns useChat 객체 + context
@@ -45,36 +49,28 @@ async function buildAuthHeaders(): Promise<Record<string, string>> {
 export function useAgentChat(context: AgentContext) {
   const [input, setInput] = useState('');
 
-  // 최초 마운트 시점의 context만 초기 system message로 사용한다.
-  // (매 렌더마다 새로운 context 객체가 들어와도 이미 시작된 채팅의 messages 배열은
-  //  useChat 내부 상태로 유지되며, 초기값 재계산으로 재구독되지 않는다.)
-  const initialMessages = useMemo(
-    () => [
-      {
-        id: 'context',
-        role: 'system' as const,
-        parts: [{ type: 'text' as const, text: `Current PROOF context: ${JSON.stringify(context)}` }],
-      },
-    ],
-    [], // eslint-disable-line react-hooks/exhaustive-deps
-  );
+  // 최신 context를 ref로 보관하여 transport body 함수가 항상 최신 값을 읽도록 한다.
+  // (useMemo deps에 context를 넣으면 transport가 재생성되어 채팅이 리셋되므로 ref 사용)
+  const contextRef = useRef(context);
+  contextRef.current = context;
 
   // transport를 매 렌더마다 새로 생성하면 참조가 계속 바뀌어 이를 참조하는 콜백들이
   // 불필요하게 재생성되고, 그 콜백에 의존하는 하위 useEffect가 스트리밍 토큰마다
   // 반복 실행되는 원인이 되므로 useMemo로 한 번만 생성한다.
+  // body 함수는 매 요청마다 호출되므로 contextRef.current를 읽어 최신 context를 전송한다.
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
         api: '/api/ai/chat',
         credentials: 'include',
         headers: buildAuthHeaders,
+        body: () => ({ context: contextRef.current }),
       }),
     [],
   );
 
   const chat = useChat({
     transport,
-    messages: initialMessages,
     // 도구 실행은 AI 백엔드의 streamText(stopWhen: stepCountIs(5))가 한 번의 스트림 안에서
     // 전부 처리하므로 클라이언트가 별도로 재요청할 필요가 없다. sendAutomaticallyWhen을
     // 설정하지 않아 불필요한 재전송/루프 가능성을 원천 차단한다.
@@ -87,7 +83,7 @@ export function useAgentChat(context: AgentContext) {
   chatRef.current = chat;
 
   const sendContextualMessage = useCallback((text: string) => {
-    // 우선 text만 보내고, 백엔드에서 context는 initialMessages의 system message를 통해 추론한다.
+    // context는 transport의 body 함수를 통해 매 요청마다 전송된다.
     return chatRef.current.sendMessage({ text });
   }, []);
 

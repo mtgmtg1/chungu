@@ -3036,8 +3036,8 @@ def get_job_elements(
             if sp:
                 storage_path = sp
                 break
-    if not storage_path and job.original_storage_path:
-        storage_path = job.original_storage_path
+    if not storage_path and job.pdf_storage_path:
+        storage_path = job.pdf_storage_path
         bucket = "pdfs"
 
     if not storage_path:
@@ -3112,8 +3112,8 @@ def search_job_text(
             if sp:
                 storage_path = sp
                 break
-    if not storage_path and job.original_storage_path:
-        storage_path = job.original_storage_path
+    if not storage_path and job.pdf_storage_path:
+        storage_path = job.pdf_storage_path
         bucket = "pdfs"
 
     if not storage_path:

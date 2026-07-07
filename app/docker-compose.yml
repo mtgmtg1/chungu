@@ -20,6 +20,9 @@ services:
         VITE_TURNSTILE_WORKER_URL: ${VITE_TURNSTILE_WORKER_URL:-}
     command: uvicorn backend.main:app --host 0.0.0.0 --port 28181
     env_file: .env
+    environment:
+      # Docker 네트워크 내부에서 ai-backend 컨테이너로 프록시
+      - AI_BACKEND_URL=http://ai-backend:3001
     ports:
       - "${APP_PORT:-28181}:28181"
     volumes:
@@ -27,6 +30,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      ai-backend:
+        condition: service_started
     networks:
       - default
       - supabase-network
@@ -106,6 +111,27 @@ services:
       - PADDLEOCR_API_URL=${PADDLEOCR_API_URL:-https://paddleocr.aistudio-app.com/api/v2/ocr/jobs}
     volumes:
       - appdata:/data
+    networks:
+      - default
+    restart: unless-stopped
+
+  # [Flow: FastAPI api 서비스가 /api/ai/* 요청을 이 컨테이너(3001)로 리버스 프록시한다]
+  # Vercel AI SDK 5.x 기반 Node.js AI 백엔드. streamText + tools로 에이전트 도구 루프를 처리.
+  ai-backend:
+    build:
+      context: .
+      dockerfile: ai-backend/Dockerfile
+    env_file: .env
+    environment:
+      - LLM_ENDPOINT=${LLM_ENDPOINT:-http://192.168.1.69:18080/v1}
+      - LLM_MODEL=${LLM_MODEL:-cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit}
+      - LLM_API_KEY=${LLM_API_KEY:-not-needed}
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      # FastAPI에 도구 호출을 전달할 때 사용할 base URL (컨테이너 내부에서 api 서비스로)
+      - PROOF_API_URL=http://api:28181
+    depends_on:
+      api:
+        condition: service_started
     networks:
       - default
     restart: unless-stopped

@@ -367,6 +367,61 @@ export function buildAnnotationTools(context: AnnotationContext) {
         return { saved: true, count: annotations.length, removals: removals.length };
       },
     }),
+
+    save_annotations: tool({
+      description: 'EmbedPDF AnnotationTransferItem[] 형식의 주석 JSON을 직접 전달하여 Storage에 저장하고 뷰어에 반영한다. add_highlight/add_callout + apply_annotations 대신 사용할 수 있으며, view_page나 read_job_json으로 얻은 정보를 바탕으로 정밀한 위치(rect)를 지정해 주석을 만들 때 유용하다.\n' +
+        '각 주석 항목의 구조: { annotation: { id, type (9=highlight, 3=freetext/callout), pageIndex (0-based), rect: {x, y, width, height}, color, strokeColor, opacity, contents, intent? ("FreeTextCallout"), lineEnding? (4=OpenArrow), segmentRects? } }\n' +
+        'rect 좌표계는 embedpdf device-space (원점 좌상단, y↓)이다. PDF user-space(y↑)에서 변환하려면 originY = pageHeight - y1 를 사용한다.',
+      inputSchema: z.object({
+        annotations: z.array(z.record(z.unknown()))
+          .describe('EmbedPDF AnnotationTransferItem[] 배열. 각 항목은 { annotation: { id, type, pageIndex, rect, color, ... } } 구조.'),
+        merge: z.boolean().optional()
+          .describe('true면 기존 주석과 병합 (기본값). false면 기존 주석을 모두 대체.'),
+      }),
+      execute: async ({ annotations, merge }) => {
+        if (!annotations || annotations.length === 0) {
+          return { saved: false, reason: 'No annotations provided' };
+        }
+        try {
+          const shouldMerge = merge !== false;
+          let toSave = annotations;
+
+          if (shouldMerge) {
+            // [Flow: Step 1 (기존 주석 읽기) -> Step 2 (새 주석과 병합) -> Step 3 (저장)]
+            try {
+              const existing = await proofApi.getAnnotations(jobId, sourceIndex, undefined, authHeaders);
+              const existingIds = new Set(existing.annotations.map((a) => {
+                const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
+                  ? (a as any).annotation : a;
+                return inner.id;
+              }));
+              // 기존에 없는 새 주석만 추가 (ID 중복 방지)
+              const newOnes = annotations.filter((a) => {
+                const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
+                  ? (a as any).annotation : a;
+                return !existingIds.has(inner.id);
+              });
+              toSave = [...existing.annotations, ...newOnes];
+            } catch {
+              // 기존 주석 읽기 실패 시 전달받은 주석만 저장
+              toSave = annotations;
+            }
+          }
+
+          await proofApi.saveAnnotations(jobId, sourceIndex, toSave as Array<Record<string, unknown>>, authHeaders);
+          return {
+            saved: true,
+            count: toSave.length,
+            new_count: annotations.length,
+            merged: shouldMerge,
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[save_annotations] job=${jobId}: ${msg}`);
+          return { error: `save_annotations failed: ${msg}` };
+        }
+      },
+    }),
   };
 }
 

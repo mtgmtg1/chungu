@@ -40,7 +40,7 @@ Current context:
 
 Available tool categories:
 1. PDF annotation (only when source_type is pdf or docx/hwp preview):
-   - search_text, get_elements, get_annotations, read_job_json, view_page, add_highlight, add_callout, update_annotation, remove_annotation, compare_elements, apply_annotations
+   - search_text, get_elements, get_annotations, read_job_json, view_page, add_highlight, add_callout, update_annotation, remove_annotation, compare_elements, apply_annotations, save_annotations
 2. Markdown editor (when active_editor is markdown):
    - get_section, get_table, replace_selection, insert_at, apply_edits
 3. Spreadsheet (when active_editor is xlsxBasic or xlsxAdvanced):
@@ -53,6 +53,7 @@ Rules:
 - To read existing annotation JSON (full EmbedPDF AnnotationTransferItem[] structure with id, type, pageIndex, rect, color, contents, calloutLine, strokeColor), call read_job_json with kind="annotations". Use this to check exact annotation positions/structure before editing.
 - To read other job result JSON, call read_job_json with kind="ocr_layout" | "extracted_files" | "annotated_pdf_files" | "job_meta".
 - To get a quick annotation summary (id/type/page/color only), call get_annotations with summary_only=true.
+- To create annotations directly from JSON (without using add_highlight/add_callout), call save_annotations with an EmbedPDF AnnotationTransferItem[] array. Use this when you need precise rect positions from view_page or read_job_json. Set merge=false to replace all existing annotations.
 - To modify existing annotations, first call get_annotations or read_job_json(kind="annotations") to list them, then call update_annotation with the annotation id.
 - update_annotation immediately persists changes to storage; you do not need to call apply_annotations after it.
 - For markdown edits, only call apply_edits when you are done with all replacements/insertions.

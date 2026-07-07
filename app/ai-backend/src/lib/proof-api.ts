@@ -251,6 +251,38 @@ export async function saveAnnotations(
 }
 
 /**
+ * [Flow: Step 1 (job_id, kind, source_index, page_no 수신) -> Step 2 (/api/jobs/{id}/result-json 조회)
+ *       -> Step 3 (결과 JSON 반환)]
+ *
+ * AI 에이전트의 read_job_json 도구가 호출하는 범용 결과 JSON 리더.
+ * kind: annotations | ocr_layout | extracted_files | annotated_pdf_files | job_meta
+ *
+ * @param jobId Job ID
+ * @param kind 읽을 결과 JSON 종류
+ * @param sourceIndex 주석 파일 인덱스 (kind=annotations일 때만)
+ * @param pageNo 1-based 페이지 번호 (kind=annotations일 때만 필터링)
+ * @param authHeaders 인증 헤더
+ * @returns { kind, data, total? }
+ */
+export async function getResultJson(
+  jobId: string,
+  kind: string,
+  sourceIndex: number = 0,
+  pageNo?: number,
+  authHeaders?: AuthHeaders,
+): Promise<{ kind: string; data: unknown; total?: number }> {
+  const params = new URLSearchParams({ kind });
+  if (sourceIndex !== undefined) params.set('source_index', String(sourceIndex));
+  if (pageNo !== undefined) params.set('page_no', String(pageNo));
+  return request<{ kind: string; data: unknown; total?: number }>(
+    `/api/jobs/${jobId}/result-json?${params.toString()}`,
+    'GET',
+    undefined,
+    authHeaders,
+  );
+}
+
+/**
  * [Flow: Step 1 (job_id 수신) -> Step 2 (/api/jobs/{id}/preview 조회) -> Step 3 (마크다운 반환)]
  *
  * @param jobId Job ID

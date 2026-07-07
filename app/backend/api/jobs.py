@@ -3469,6 +3469,118 @@ def get_job_page_image(
     }
 
 
+# [Flow: Step 1 (job 조회) -> Step 2 (kind에 따라 결과 JSON 소스 확보)
+#       -> Step 3 (Storage에서 다운로드 또는 DB 필드 직접 반환) -> Step 4 (JSON 반환)]
+# AI 에이전트의 read_job_json 도구가 호출하는 범용 결과 JSON 리더.
+# 주석 JSON, OCR 레이아웃, extracted_files, annotated_pdf_files 등을 읽을 수 있다.
+@router.get("/jobs/{job_id}/result-json")
+def get_job_result_json(
+    job_id: str,
+    kind: str = Query(..., description="읽을 결과 JSON 종류: annotations|ocr_layout|extracted_files|annotated_pdf_files|job_meta"),
+    source_index: int = Query(0, description="주석 파일 인덱스 (kind=annotations일 때만 사용)"),
+    page_no: int | None = Query(None, description="1-based 페이지 번호. kind=annotations일 때만 필터링에 사용"),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """[Flow: Step 1 (job 조회) -> Step 2 (kind별 결과 JSON 소스 확보)
+          -> Step 3 (Storage 다운로드 또는 DB 필드 반환) -> Step 4 (JSON 반환)]
+
+    AI 에이전트가 job의 다양한 결과 JSON을 읽을 때 사용한다.
+    - annotations: AI/사용자 주석 JSON (EmbedPDF AnnotationTransferItem[] 형식)
+    - ocr_layout: OCR 레이아웃 JSON (result_ocr_layout_storage_path)
+    - extracted_files: extracted_files JSONB (DB)
+    - annotated_pdf_files: annotated_pdf_files JSONB (DB)
+    - job_meta: job 메타데이터 요약 (상태, 페이지 수, 파일 수 등)
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+
+    if kind == "extracted_files":
+        return {"kind": "extracted_files", "data": job.extracted_files or []}
+
+    if kind == "annotated_pdf_files":
+        return {"kind": "annotated_pdf_files", "data": job.annotated_pdf_files or []}
+
+    if kind == "job_meta":
+        return {
+            "kind": "job_meta",
+            "data": {
+                "id": job.id,
+                "status": job.status,
+                "file_type": job.file_type,
+                "original_filename": job.original_filename,
+                "total_pages": job.total_pages,
+                "total_files": job.total_files,
+                "pipeline": job.pipeline,
+                "ocr_model": job.ocr_model,
+                "annotate_status": job.annotate_status,
+                "annotate_mode": job.annotate_mode,
+                "has_searchable_pdf": bool(job.searchable_pdf_storage_path),
+                "has_pdf": bool(job.pdf_storage_path),
+                "has_result_md": bool(job.result_md_storage_path),
+                "has_result_csv": bool(job.result_csv_storage_path),
+                "has_result_xlsx": bool(job.result_xlsx_storage_path),
+                "has_ocr_layout": bool(job.result_ocr_layout_storage_path),
+                "extracted_files_count": len(job.extracted_files or []),
+                "annotated_pdf_files_count": len(job.annotated_pdf_files or []),
+            },
+        }
+
+    if kind == "ocr_layout":
+        storage_path = job.result_ocr_layout_storage_path
+        if not storage_path:
+            raise HTTPException(status_code=404, detail="OCR layout JSON not found")
+        try:
+            client = supabase_client.get_service_client()
+            raw = client.storage.from_("results").download(storage_path)
+            data = json.loads(raw.decode("utf-8"))
+            return {"kind": "ocr_layout", "data": data}
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed to download OCR layout: {e}")
+
+    if kind == "annotations":
+        annotations_json_storage_path = _resolve_annotations_json_path(job, source_index)
+        if not annotations_json_storage_path:
+            raise HTTPException(status_code=404, detail="Annotation file not found")
+
+        client = supabase_client.get_service_client()
+        all_annotations: list[dict] = []
+        try:
+            existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
+            existing = json.loads(existing_bytes.decode("utf-8"))
+            if isinstance(existing, list):
+                all_annotations.extend(existing)
+        except Exception:
+            pass
+
+        user_annotations_json_path = f"{job.id}/user_annotations.json"
+        try:
+            user_bytes = client.storage.from_("results").download(user_annotations_json_path)
+            user_annotations = json.loads(user_bytes.decode("utf-8"))
+            if isinstance(user_annotations, list):
+                existing_ids = {_annotation_id(a) for a in all_annotations if _annotation_id(a)}
+                for a in user_annotations:
+                    aid = _annotation_id(a)
+                    if aid and aid in existing_ids:
+                        continue
+                    all_annotations.append(a)
+        except Exception:
+            pass
+
+        if page_no is not None:
+            filtered = []
+            for a in all_annotations:
+                inner = _annotation_inner(a)
+                if inner.get("pageIndex") == page_no - 1:
+                    filtered.append(a)
+            all_annotations = filtered
+
+        return {"kind": "annotations", "data": all_annotations, "total": len(all_annotations)}
+
+    raise HTTPException(status_code=400, detail=f"Unknown kind: {kind}. Supported: annotations|ocr_layout|extracted_files|annotated_pdf_files|job_meta")
+
+
 @router.get("/admin/jobs")
 def admin_list_jobs(
     admin: CurrentUser = Depends(get_current_admin),

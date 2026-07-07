@@ -126,29 +126,64 @@ export function buildAnnotationTools(context: AnnotationContext) {
       },
     }),
 
+    read_job_json: tool({
+      description: 'job의 다양한 결과 JSON을 읽는 범용 리더. kind로 읽을 데이터를 지정:\n' +
+        '- "annotations": AI/사용자 주석 JSON (EmbedPDF AnnotationTransferItem[] 전체 구조 — id, type, pageIndex, rect, color, contents, calloutLine, strokeColor 등)\n' +
+        '- "ocr_layout": OCR 레이아웃 JSON (텍스트 블록/표/이미지 위치 정보)\n' +
+        '- "extracted_files": 추출된 파일 목록 (마크다운/이미지/PDF 경로 등)\n' +
+        '- "annotated_pdf_files": 주석 PDF 파일 메타데이터 목록\n' +
+        '- "job_meta": job 상태 요약 (status, total_pages, file_type, has_pdf 등)\n' +
+        '기존 주석의 정확한 위치/구조를 확인하거나 OCR 결과를 분석할 때 사용한다.',
+      inputSchema: z.object({
+        kind: z.enum(['annotations', 'ocr_layout', 'extracted_files', 'annotated_pdf_files', 'job_meta'])
+          .describe('읽을 결과 JSON 종류'),
+        page_no: z.number().optional().describe('1-based 페이지 번호. kind=annotations일 때만 필터링에 사용'),
+      }),
+      execute: async ({ kind, page_no }) => {
+        try {
+          const result = await proofApi.getResultJson(jobId, kind, sourceIndex, page_no, authHeaders);
+          // 결과가 너무 크면 일부만 반환 (토큰 절약)
+          const data = result.data;
+          if (Array.isArray(data) && data.length > 80) {
+            return { kind, total: data.length, data: data.slice(0, 80), truncated: true };
+          }
+          return { kind, total: result.total ?? (Array.isArray(data) ? data.length : undefined), data };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[read_job_json] job=${jobId} kind=${kind}: ${msg}`);
+          return { error: `read_job_json failed: ${msg}` };
+        }
+      },
+    }),
+
     get_annotations: tool({
-      description: '기존 AI 주석 또는 사용자 주석의 목록을 반환한다. 주석의 ID, 종류, 색상, 코멘트, 페이지, 위치를 확인할 때 사용한다.',
+      description: '기존 AI 주석 또는 사용자 주석의 목록을 원본 JSON 구조 전체와 함께 반환한다. 주석의 ID, 종류, 색상, 코멘트, 페이지, 위치(bbox), calloutLine, strokeColor 등 모든 필드를 포함한다. 주석을 편집/삭제하거나 기존 주석과 충돌을 피할 때 사용한다.',
       inputSchema: z.object({
         page_no: z.number().optional().describe('1-based 페이지 번호. 생략 시 모든 페이지'),
+        summary_only: z.boolean().optional().describe('true면 요약 필드만 반환 (id/type/page_no/color/comment). 생략 시 원본 JSON 전체 반환'),
       }),
-      execute: async ({ page_no }) => {
+      execute: async ({ page_no, summary_only }) => {
         const { annotations, total } = await proofApi.getAnnotations(jobId, sourceIndex, page_no, authHeaders);
-        return {
-          annotations: annotations.slice(0, 50).map((a) => {
-            const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
-              ? (a as any).annotation
-              : a;
-            return {
-              id: inner.id,
-              type: inner.type,
-              page_no: (inner.pageIndex ?? 0) + 1,
-              color: inner.color,
-              opacity: inner.opacity,
-              comment: inner.contents,
-            };
-          }),
-          total,
-        };
+        const sliced = annotations.slice(0, 80);
+        if (summary_only) {
+          return {
+            annotations: sliced.map((a) => {
+              const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
+                ? (a as any).annotation
+                : a;
+              return {
+                id: inner.id,
+                type: inner.type,
+                page_no: (inner.pageIndex ?? 0) + 1,
+                color: inner.color,
+                comment: inner.contents,
+              };
+            }),
+            total,
+          };
+        }
+        // 원본 JSON 전체 구조 반환 — EmbedPDF AnnotationTransferItem[] 형식 그대로
+        return { annotations: sliced, total };
       },
     }),
 

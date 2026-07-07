@@ -207,6 +207,7 @@ function AiAnnotationFab({
     if (!instruction.trim()) return;
     // pageRange가 비어 있으면 현재 페이지를 기본값으로 전달
     const effectivePageRange = pageRange.trim() || String(currentPage);
+    console.log("[handleSubmit] mode=", mode, "onStartAnnotate=", typeof onStartAnnotate, "onStartAnnotateEdit=", typeof onStartAnnotateEdit);
     if (mode === "edit" && onStartAnnotateEdit) {
       await onStartAnnotateEdit(instruction, effectivePageRange);
     } else if (mode === "create" && onStartAnnotate) {

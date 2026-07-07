@@ -12,6 +12,17 @@ export default function DevBypassBanner({ mode }) {
     );
   }
 
+  if (mode === "apikey") {
+    return (
+      <div
+        className="bg-green-100 text-green-800 text-xs px-4 py-1 text-center"
+        data-oid="dev-bypass-banner"
+      >
+        [DEV] API key로 로컬 백엔드에 연결 중
+      </div>
+    );
+  }
+
   if (mode !== "mock") return null;
 
   return (

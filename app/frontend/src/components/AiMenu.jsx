@@ -90,13 +90,13 @@ function applyAgentResult(editor, result, selectedMarkdown) {
 export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const [customPrompt, setCustomPrompt] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [run, setRun] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const menuRef = useRef(null);
   const pollTimerRef = useRef(null);
+  const customInputRef = useRef(null);
 
   // [Flow: 메뉴 외부 클릭 시 드롭다운 닫기]
   useEffect(() => {
@@ -125,7 +125,7 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
           applyAgentResult(editor, status.result, getSelectedMarkdown(editor));
           setOpen(false);
           setShowCustomInput(false);
-          setCustomPrompt("");
+          if (customInputRef.current) customInputRef.current.value = "";
         } else if (status.status === "error") {
           setIsLoading(false);
           setError(status.error || "AI error");
@@ -149,7 +149,10 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
   const startAgent = async (option, command) => {
     if (!editor || isLoading) return;
     let selectedMarkdown = getSelectedMarkdown(editor);
-    if (!selectedMarkdown && option !== "continue") return;
+    if (!selectedMarkdown && option !== "continue") {
+      selectedMarkdown = fullMarkdown;
+    }
+    if (!selectedMarkdown.trim() && option !== "continue") return;
 
     if (option === "continue") {
       const { from } = editor.state.selection;
@@ -176,7 +179,7 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
         applyAgentResult(editor, res.result, selectedMarkdown);
         setIsLoading(false);
         setOpen(false);
-        setCustomPrompt("");
+        if (customInputRef.current) customInputRef.current.value = "";
       } else if (res.status === "error") {
         setError(res.error || "AI error");
         setIsLoading(false);
@@ -190,8 +193,9 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
 
   const handleCommand = (option) => startAgent(option, null);
   const handleCustom = () => {
-    if (!customPrompt.trim()) return;
-    startAgent("zap", customPrompt.trim());
+    const prompt = customInputRef.current?.value?.trim() || "";
+    if (!prompt) return;
+    startAgent("zap", prompt);
   };
 
   const handleApprove = async (value) => {
@@ -206,7 +210,7 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
         setIsLoading(false);
         setOpen(false);
         setShowCustomInput(false);
-        setCustomPrompt("");
+        if (customInputRef.current) customInputRef.current.value = "";
       } else if (res.status === "error") {
         setError(res.error || "AI error");
         setIsLoading(false);
@@ -265,8 +269,8 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
                 <div className="flex items-center gap-1 px-2">
                   <input
                     type="text"
-                    value={customPrompt}
-                    onChange={(e) => setCustomPrompt(e.target.value)}
+                    ref={customInputRef}
+                    defaultValue=""
                     placeholder={t("page:components.ai.customPlaceholder")}
                     className="flex-1 px-2 py-1 text-sm border border-outline-variant rounded focus:outline-none focus:border-primary bg-white"
                     onKeyDown={(e) => {
@@ -277,7 +281,7 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
                   <button
                     type="button"
                     onClick={handleCustom}
-                    disabled={!customPrompt.trim()}
+
                     className="p-1 text-primary disabled:opacity-40"
                     data-oid="ai-custom-submit">
                     <Sparkles size={16} />

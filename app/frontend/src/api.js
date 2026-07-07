@@ -3,7 +3,7 @@ import { supabase } from './supabase.js'
 import i18n from './i18n.js'
 import { mockRequest } from './dev/mockApi.js'
 
-let devMockEnabled = import.meta.env.DEV ?? false
+let devMockEnabled = false
 
 export function enableDevMock(enabled) {
   devMockEnabled = enabled
@@ -14,16 +14,21 @@ export async function getToken() {
   return data.session?.access_token
 }
 
+const DEV_API_KEY = import.meta.env.VITE_DEV_API_KEY || 'chu_live_testkey12345'
+
 async function request(path, options = {}) {
   if (devMockEnabled) {
     return mockRequest(path, options)
   }
   const token = await getToken()
   const headers = { ...(options.headers || {}) }
-  if (token) headers.Authorization = `Bearer ${token}`
+  // JWT 형식의 유효한 access_token일 때만 Bearer 헤더를 추가한다 (mock token은 제외)
+  if (token && token.startsWith('eyJ')) headers.Authorization = `Bearer ${token}`
+  if (DEV_API_KEY) headers['X-Api-Key'] = DEV_API_KEY
   if (options.body && !(options.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json'
   }
+  console.log('[REQUEST]', path, 'headers=', JSON.stringify(headers))
 
   const res = await fetch(path, { credentials: 'include', ...options, headers })
   const isJson = (res.headers.get('content-type') || '').includes('application/json')
@@ -38,7 +43,9 @@ async function request(path, options = {}) {
 async function authenticatedFetch(url, options = {}) {
   const token = await getToken()
   const headers = { ...(options.headers || {}) }
-  if (token) headers.Authorization = `Bearer ${token}`
+  // JWT 형식의 유효한 access_token일 때만 Bearer 헤더를 추가한다 (mock token은 제외)
+  if (token && token.startsWith('eyJ')) headers.Authorization = `Bearer ${token}`
+  if (DEV_API_KEY) headers['X-Api-Key'] = DEV_API_KEY
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json'
   }
@@ -66,6 +73,8 @@ export const api = {
     const params = new URLSearchParams()
     params.set('start_page', String(startPage))
     if (endPage) params.set('end_page', String(endPage))
+    // 개발 환경에서 브라우저/프록시 캐시로 인해 오래된 preview 응답이 재사용되는 것을 방지
+    if (import.meta.env.DEV) params.set('_t', String(Date.now()))
     return request(`/api/jobs/${id}/preview?${params.toString()}`)
   },
   previewJobPages: (id) => request(`/api/jobs/${id}/preview/pages`),

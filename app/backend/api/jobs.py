@@ -22,8 +22,20 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from .. import settings_store
+from ..auth.api_key_auth import require_api_key_or_session
 from ..auth.supabase_auth import CurrentUser, get_current_admin, get_current_user
 from ..celery_app import celery as celery_app
+
+
+def get_current_user_or_api_key(
+    auth: tuple[CurrentUser, Any] = Depends(require_api_key_or_session),
+) -> CurrentUser:
+    """[Flow: Step 1 (세션 또는 API key 인증) -> Step 2 (CurrentUser만 반환)]
+
+    웹 포털 세션과 API key를 모두 허용하면서 기존 CurrentUser 의존성과 호환되는
+    wrapper dependency.
+    """
+    return auth[0]
 from ..core import archive_handler, cache, converter, docling_client, hwp_converter, media_loader, office_converter, pdf_preview_converter, pdf_user_annotator, points_service, subscription_service, supabase_client
 
 
@@ -226,7 +238,7 @@ async def upload_job(
     docling_refinement: bool = Form(False),
     ocr_model: str = Form("premium"),
     ocr_engine: str = Form("easyocr"),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     if not files:
@@ -490,7 +502,7 @@ async def _analyze_extracted_files(extracted: list[Path]) -> tuple:
 @router.post("/jobs/init")
 async def init_job(
     payload: dict = Body(...),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """TUS 업로드용 임시 Job을 생성하고 Storage 업로드 경로를 반환한다."""
@@ -557,7 +569,7 @@ async def init_job(
 async def create_job(
     job_id: str,
     payload: dict = Body(...),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """TUS 업로드 완료 후 Storage의 파일을 분석하여 비용을 계산한다."""
@@ -745,7 +757,7 @@ async def create_job(
 def update_job(
     job_id: str,
     payload: dict,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     job = db.get(Job, job_id)
@@ -776,7 +788,7 @@ def update_job(
 @router.post("/jobs/{job_id}/confirm")
 def confirm_job(
     job_id: str,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     job = db.get(Job, job_id)
@@ -817,7 +829,7 @@ def confirm_job(
 
 @router.get("/jobs")
 def list_jobs(
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
     limit: int = 100,
 ):
@@ -830,7 +842,7 @@ def list_jobs(
 
 
 @router.get("/jobs/{job_id}")
-def get_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_job(job_id: str, user: CurrentUser = Depends(get_current_user_or_api_key), db: Session = Depends(get_db)):
     job = db.get(Job, job_id)
     _require_job_access(job, user)
     _require_job_not_expired(job)
@@ -885,7 +897,7 @@ def get_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: Sess
 
 
 @router.delete("/jobs/{job_id}")
-def delete_job(job_id: str, user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def delete_job(job_id: str, user: CurrentUser = Depends(get_current_user_or_api_key), db: Session = Depends(get_db)):
     job = db.get(Job, job_id)
     _require_job_access(job, user)
     try:
@@ -1005,7 +1017,7 @@ def delete_source_file(
     job_id: str,
     source_kind: str,
     source_index: int,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """결과 페이지의 원본 파일 목록에서 선택한 파일만 Storage와 DB에서 삭제한다.
@@ -1033,7 +1045,7 @@ def _convert_format_alias(fmt: str) -> str:
 def download_job(
     job_id: str,
     type: str = "xlsx",
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     job = db.get(Job, job_id)
@@ -1663,7 +1675,7 @@ def preview_job(
     job_id: str,
     start_page: int = Query(1, ge=1, description="시작 페이지 번호"),
     end_page: int | None = Query(None, ge=1, description="종료 페이지 번호(미지정 시 마지막 페이지)"),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """완료된 작업의 마크다운 결과를 페이지 단위로 조회한다."""
@@ -1736,7 +1748,7 @@ def preview_job(
 @router.get("/jobs/{job_id}/preview/pages")
 def preview_job_pages(
     job_id: str,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """완료된 작업의 페이지 목록 메타데이터를 반환한다."""
@@ -1777,7 +1789,7 @@ def preview_job_pages(
 def save_result_markdown(
     job_id: str,
     payload: dict = Body(...),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     job = db.get(Job, job_id)
@@ -1820,7 +1832,7 @@ def save_result_page(
     job_id: str,
     page_num: int,
     payload: dict = Body(...),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """특정 페이지의 마크다운만 갱신하고 전체 편집 마크다운을 다시 저장한다."""
@@ -1866,7 +1878,7 @@ def save_result_page(
 def convert_job(
     job_id: str,
     payload: dict = Body(...),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     job = db.get(Job, job_id)
@@ -1985,7 +1997,7 @@ def convert_job(
 async def save_edited_xlsx(
     job_id: str,
     file: UploadFile = File(...),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """사용자가 편집한 xlsx 파일을 업로드하고 Storage 경로를 저장한다."""
@@ -2014,7 +2026,7 @@ async def save_edited_xlsx(
 @router.get("/jobs/{job_id}/edited-xlsx-url")
 def get_edited_xlsx_url(
     job_id: str,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """저장된 편집 xlsx의 signed download URL을 반환한다."""
@@ -2034,7 +2046,7 @@ def get_edited_xlsx_url(
 def xlsx_advanced_action(
     job_id: str,
     payload: dict = Body(...),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """Excel 고급 변환 완전 실패 시 재시도 또는 포인트 환불을 처리한다."""
@@ -2088,7 +2100,7 @@ def xlsx_advanced_action(
 def annotate_job(
     job_id: str,
     payload: dict = Body(...),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """원본 PDF/이미지에서 조건에 맞는 텍스트 요소(표 행, 단락, 제목 등)를 하이라이트/여백 주석으로 표시한다 (xlsx_advanced와 동일한 과금/큐잉 패턴)."""
@@ -2287,7 +2299,7 @@ def annotate_job(
 def annotate_action(
     job_id: str,
     payload: dict = Body(...),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """PDF 주석 생성 실패 시 재시도를 처리한다 (구독제이므로 환불은 제공하지 않는다).
@@ -2428,7 +2440,7 @@ def annotate_action(
 def cancel_annotation_job(
     job_id: str,
     payload: dict = Body(...),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """[Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (annotation_index로 entry 찾기)
@@ -2476,7 +2488,7 @@ def cancel_annotation_job(
 def annotate_edit_job_endpoint(
     job_id: str,
     payload: dict = Body(...),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """[Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (instruction/page_range 파싱)
@@ -2625,7 +2637,7 @@ def annotate_edit_job_endpoint(
 def save_user_annotations(
     job_id: str,
     payload: dict = Body(...),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """[Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (source_index에 해당하는 주석 PDF 항목 찾기)
@@ -2938,7 +2950,7 @@ def _create_user_annotated_pdf(job: Job, annotations: list, db: Session) -> dict
 def job_action(
     job_id: str,
     payload: dict = Body(...),
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """문서 파싱 최종 실패 시 재시도 또는 포인트 환불을 처리한다."""

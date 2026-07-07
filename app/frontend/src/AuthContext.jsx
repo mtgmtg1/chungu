@@ -36,7 +36,7 @@ export function AuthProvider({ children }) {
 
     sessionPromise.then(async ({ data: { session: initialSession } }) => {
       let session = initialSession;
-      let mode = import.meta.env.DEV ? "mock" : null;
+      let mode = import.meta.env.DEV ? "apikey" : null;
 
       if (initialSession && import.meta.env.DEV) {
         // 실제 세션이 있으면 mock을 대체합니다.
@@ -72,11 +72,11 @@ export function AuthProvider({ children }) {
           console.warn("[DEV auto-login] 실패:", e.message);
         }
 
-        // 백엔드가 없거나 DEV_BYPASS_AUTH가 비활성화면 mock 사용자로 전환
+        // 백엔드 bypass가 없으면 API key 인증으로 mock 사용자 전환 (mock API는 사용하지 않음)
         if (!session) {
           session = MOCK_DEV_SESSION;
-          mode = "mock";
-          enableDevMock(true);
+          mode = "apikey";
+          enableDevMock(false);
         }
       }
 
@@ -93,7 +93,7 @@ export function AuthProvider({ children }) {
       (_event, session) => {
         // mock 모드에서는 Supabase의 null 세션(로그아웃) 이벤트만 무시합니다.
         // 수동 로그인 시 실제 세션으로 전환되어야 합니다.
-        if (devBypassModeRef.current === "mock" && !session) return;
+        if ((devBypassModeRef.current === "mock" || devBypassModeRef.current === "apikey") && !session) return;
         setSession(session);
         setUser(session?.user ?? null);
         if (!session) {

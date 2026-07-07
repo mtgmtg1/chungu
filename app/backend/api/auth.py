@@ -2,10 +2,11 @@
 # [Flow: Step 1 (현재 사용자 인증) -> Step 2 (DB에서 잔액/관리자 여부 조회) -> Step 3 (활성 API key 기준 rate limit 조회) -> Step 4 (프론트에 반환)]
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ..auth.api_key_auth import require_api_key_or_session
 from ..auth.supabase_auth import CurrentUser, get_current_user, SUPPORTED_LANGUAGES
 from ..core import subscription_service
 from ..core.rate_limit import get_daily_spent_points
@@ -20,7 +21,11 @@ class LanguageUpdate(BaseModel):
 
 
 @router.get("/me")
-def me(user: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def me(
+    auth: tuple[CurrentUser, ApiKey | None] = Depends(require_api_key_or_session),
+    db: Session = Depends(get_db),
+):
+    user, _api_key = auth
     active_key = (
         db.query(ApiKey)
         .filter(ApiKey.user_id == uuid.UUID(user.user_id), ApiKey.is_active.is_(True))

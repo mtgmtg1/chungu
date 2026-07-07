@@ -41,7 +41,7 @@ function downloadByUrl(url, filename) {
 export default function JobResultPage() {
   const { jobId } = useParams();
   const nav = useNavigate();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const statusLabel = (status) => t(`common:status.${status}`) || status;
   const [job, setJob] = useState(null);
   const [markdown, setMarkdown] = useState("");
@@ -364,6 +364,7 @@ export default function JobResultPage() {
   // [Flow: Step 1 (instruction, pageRange 수신) -> Step 2 (LangGraph annotator agent 실행) -> Step 3 (agentRun 상태 추가) -> Step 4 (job 상태 갱신)]
   async function startAnnotate(instruction, pageRange) {
     if (!instruction || !instruction.trim()) return;
+    console.log("[startAnnotate] instruction=", instruction, "i18n=", i18n);
     setConverting(true);
     setError("");
     try {

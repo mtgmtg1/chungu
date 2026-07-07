@@ -89,7 +89,17 @@ export default function AnnotationListPanel({ annotationsJson, viewerRef, onAnno
 
   // 주석 타입에 따른 라벨 — highlight / freetext / freetextcallout
   const typeLabel = (ann) => {
-    const type = (ann.type || "").toLowerCase();
+    let type = "";
+    const raw = ann.type;
+    if (typeof raw === "string") {
+      type = raw.toLowerCase();
+    } else if (typeof raw === "number") {
+      // EmbedPDF numeric annotation type mapping (9 = highlight, 2 = FreeText)
+      if (raw === 9) type = "highlight";
+      else if (raw === 2) type = "freetext";
+    }
+    const intent = (ann.intent || "").toLowerCase();
+    if (intent === "freetextcallout") type = "freetextcallout";
     if (type === "highlight") return t("page:result.annotationTypeHighlight");
     if (type === "freetext" || type === "freetextcallout") return t("page:result.annotationTypeCallout");
     return type || "annotation";

@@ -8,6 +8,18 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### AI agent 개발/검증 및 프론트엔드 연동
+
+- **개발 환경 mock 모드 해제**: 로컬 백엔드의 `/api/dev/login` bypass가 405로 실패하면 프론트엔드가 mock 사용자로 전환되었는데, 이제는 API key 인증으로 백엔드와 직접 통신한다. `AuthContext.jsx`가 dev 모드에서 세션 대신 mock 사용자를 유지하면서 `api.js`가 `X-Api-Key` 헤더를 전송, `backend/api/auth.py`의 `get_current_user`가 `x-api-key` 헤더를 수락한다. `DevBypassBanner.jsx`도 API key 상태를 반영하도록 갱신.
+- **API key 인증을 job 엔드포인트로 확장**: 기존 `/api/v1/agent/*`와 `/api/auth/me`만 API key를 지원했으나, `/api/jobs/*` 엔드포인트에도 `get_current_user_or_api_key` dependency를 추가해 웹 포털 세션과 API key를 모두 허용. 이로 인해 dev API key로 결과 페이지(`JobResultPage`)와 PDF 주석 UI를 확인할 수 있다.
+- **HITL editor agent 검증**: `/api/v1/agent/run`으로 `editor` 그래프를 실행, `ask_user` 호출 시 `AgentRun`이 `interrupted` 상태로 전환되고 `AgentApprovalModal`이 표시됨을 확인. `/api/v1/agent/resume/{run_id}`로 사용자 승인 값을 전달하면 실행이 재개되어 `final_markdown`이 에디터에 반영된다.
+- **Annotator agent end-to-end API 테스트**: `test_annotator.py` 스크립트로 테스트 PDF를 업로드하고 `AgentRun`을 직접 실행, `search_text` → `add_highlight` → `finish` 도구 체인이 동작하고 `final_annotations`에 highlight 항목이 생성되는 것을 확인.
+- **PDF 주석 UI 버그 수정**:
+  - `AnnotationListPanel.jsx`: EmbedPDF가 반환하는 numeric annotation type(예: `9` = highlight)에서 `(ann.type || "").toLowerCase()`가 `TypeError`를 내는 문제를 수정. 숫자형 type을 highlight/freetext로 매핑하고 `intent`도 함께 확인.
+  - `JobResultPage.jsx`: AI 주석 생성(`startAnnotate` / `startAnnotateEdit`) 시 `i18n.language`를 참조했지만 `useTranslation()`에서 `i18n`을 destructuring 하지 않아 `i18n is not defined` 오류가 발생했던 버그를 수정.
+- **개발 환경 UX 개선**: `api.js`의 `previewJob`이 dev 모드에서 브라우저/프록시 캐시로 인해 오래된 400 응답이 재사용되는 것을 방지하기 위해 `_t` 캐시 버스팅 파라미터를 추가. 임시 `/editor-test` 라우트는 제거.
+- **핵심 파일**: `app/backend/api/auth.py`, `app/backend/api/jobs.py`, `app/frontend/src/AuthContext.jsx`, `app/frontend/src/api.js`, `app/frontend/src/components/DevBypassBanner.jsx`, `app/frontend/src/components/AnnotationListPanel.jsx`, `app/frontend/src/pages/JobResultPage.jsx`, `app/frontend/src/components/SourcePanel.jsx`, `app/backend/tests/test_agent_graph.py`, `test_annotator.py`.
+
 ### AI 주석 — 페이지 범위 지정 + 주석 편집 패널
 
 - **페이지 범위 지정**: AI 주석 생성 시 처리할 페이지를 지정할 수 있다. FAB 다이얼로그의 "고급 옵션" 토글을 펼치면 페이지 범위 입력 필드가 표시되며, `"1-5,7,10-12"` 형태로 입력한다. 빈 값이면 **현재 보고 있는 페이지만** 처리 (기본값). 이전에는 항상 전체 페이지를 처리해 LLM 프롬프트가 `MAX_ELEMENTS_FOR_LLM=400`으로 잘려 뒷부분 페이지의 요소가 무시되는 문제가 있었다.

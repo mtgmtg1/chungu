@@ -3347,7 +3347,7 @@ def update_job_annotation(
     return {"ok": True, "annotation_id": annotation_id, "updated_fields": updated_fields}
 
 
-def _estimate_page_image_dpi(page: fitz.Page, doc: fitz.Document) -> int:
+def _estimate_page_image_dpi(page: "fitz.Page", doc: "fitz.Document") -> int:
     """[Flow: Step 1 (페이지 내 이미지 객체 추출) -> Step 2 (픽셀 크기 / 페이지 내 물리적 크기로 DPI 추정)
           -> Step 3 (최대 DPI 반환, 없으면 0)]
 

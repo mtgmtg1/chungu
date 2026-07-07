@@ -23,6 +23,8 @@ import PoetryProgress from "../components/PoetryProgress.jsx";
 import PagedResultViewer from "../components/PagedResultViewer.jsx";
 import SimpleEditor from "../components/SimpleEditor.jsx";
 import SpreadsheetEditor from "../components/SpreadsheetEditor.jsx";
+import AgentInputBar from "../components/AgentInputBar.jsx";
+import AgentChatModal from "../components/AgentChatModal.jsx";
 import { api } from "../api.js";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { SkeletonPageResult } from "../components/Skeleton.jsx";
@@ -89,8 +91,10 @@ export default function JobResultPage() {
 
   const [downloadDropdownOpen, setDownloadDropdownOpen] = useState(false);
   const downloadDropdownTimerRef = useRef(null);
-  const [agentRuns, setAgentRuns] = useState([]);
 
+  // AI 에이전트 채팅 모달 상태
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInitialText, setChatInitialText] = useState("");
 
   const openDropdown = (setter, timerRef) => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -361,27 +365,22 @@ export default function JobResultPage() {
     }
   }
 
-  // [Flow: Step 1 (instruction, pageRange 수신) -> Step 2 (LangGraph annotator agent 실행) -> Step 3 (agentRun 상태 추가) -> Step 4 (job 상태 갱신)]
+  // [Flow: Step 1 (instruction, pageRange 수신) -> Step 2 (직주석 파이프라인 실행) -> Step 3 (job 상태 갱신)]
+  // LangGraph 에이전트 대신 FastAPI의 직접 주석 파이프라인(/api/jobs/{id}/annotate)을 사용한다.
   async function startAnnotate(instruction, pageRange) {
     if (!instruction || !instruction.trim()) return;
-    console.log("[startAnnotate] instruction=", instruction, "i18n=", i18n);
     setConverting(true);
     setError("");
     try {
-      const res = await api.runAgent({
-        graphName: "annotator",
-        payload: {
-          job_id: jobId,
-          instruction: instruction.trim(),
-          mode: annotateMode,
-          comment_mode: annotateCommentMode,
-          advanced: annotateAdvanced,
-          page_range: pageRange || null,
-          language: i18n.language || "en",
-        },
+      await api.annotateJob(jobId, {
+        instruction: instruction.trim(),
+        mode: annotateMode,
+        commentMode: annotateCommentMode,
+        advanced: annotateAdvanced,
+        pageRange: pageRange || null,
       });
-      setAgentRuns((prev) => [...prev, res]);
       await loadJob();
+      setAnnotatePolling(true);
     } catch (e) {
       const msg = e.message || t("page:errors.unknown");
       if (msg.includes("구독이 필요") || msg.includes("subscription")) {
@@ -395,25 +394,18 @@ export default function JobResultPage() {
     }
   }
 
-  // [Flow: Step 1 (instruction, pageRange 수신) -> Step 2 (LangGraph annotator agent edit 모드 실행) -> Step 3 (agentRun 상태 추가) -> Step 4 (job 상태 갱신)]
+  // [Flow: Step 1 (instruction, pageRange 수신) -> Step 2 (주석 편집 파이프라인 실행) -> Step 3 (job 상태 갱신)]
   async function startAnnotateEdit(instruction, pageRange) {
     if (!instruction || !instruction.trim()) return;
     setConverting(true);
     setError("");
     try {
-      const res = await api.runAgent({
-        graphName: "annotator",
-        payload: {
-          job_id: jobId,
-          instruction: instruction.trim(),
-          mode: "edit",
-          comment_mode: annotateCommentMode,
-          page_range: pageRange || null,
-          language: i18n.language || "en",
-        },
+      await api.annotateJobEdit(jobId, {
+        instruction: instruction.trim(),
+        pageRange: pageRange || null,
       });
-      setAgentRuns((prev) => [...prev, res]);
       await loadJob();
+      setAnnotatePolling(true);
     } catch (e) {
       const msg = e.message || t("page:errors.unknown");
       if (msg.includes("구독이 필요") || msg.includes("subscription")) {
@@ -642,7 +634,6 @@ export default function JobResultPage() {
             onCancelAnnotation={handleCancelAnnotation}
             converting={converting}
             annotationRuns={job?.annotated_pdf_files || []}
-            agentRuns={agentRuns}
             data-oid="result-source" />
         </Panel>
         <PanelResizeHandle
@@ -1049,6 +1040,28 @@ export default function JobResultPage() {
       </div>
       }
 
+      {job?.status === "done" && (
+        <>
+          <AgentInputBar
+            onOpenChat={(text) => {
+              setChatInitialText(text || "");
+              setChatOpen(true);
+            }}
+          />
+          <AgentChatModal
+            isOpen={chatOpen}
+            onClose={() => setChatOpen(false)}
+            context={{
+              jobId,
+              sourceType,
+              currentPage,
+              selectedFileIndex,
+              activeEditor: previewMode,
+            }}
+            initialText={chatInitialText}
+          />
+        </>
+      )}
     </div>);
 
 }

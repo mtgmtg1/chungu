@@ -19,15 +19,12 @@ from ..celery_app import celery
 from celery.signals import worker_ready
 from ..config import settings
 from ..core import archive_handler, converter, excel_writer, media_loader, merge, pdf_annotate_converter, pdf_text_layer, subscription_service, supabase_client, xlsx_advanced_converter
-from ..core.agent_annotator import run_annotator_agent
-from ..core.agent_editor import run_editor_agent
-from ..core.agent_engine import serialize_agent_state
 from ..core.ocr_client import has_pdf_text_layer
 from ..core.pipeline_docling import run_docling, run_hwp
 from ..core.pipeline_hybrid import run_hybrid
 from ..core.pipeline_media import run_media
 from ..core.pipeline_vision import run_vision
-from ..db.models import AgentRun, Job, User
+from ..db.models import Job, User
 from ..db.session import SessionLocal
 from .. import email_sender, settings_store
 
@@ -923,94 +920,6 @@ def annotate_pdf_job(
         job_id, instruction, mode, comment_mode, advanced=advanced,
         annotation_index=annotation_index, page_range=page_range,
     )
-
-
-def _run_agent_async(run_id: str) -> dict:
-    """[Flow: Step 1 (DB에서 AgentRun 조회) -> Step 2 (graph_name에 따라 그래프 빌드)
-          -> Step 3 (체크포인터 초기화) -> Step 4 (그래프 실행) -> Step 5 (상태/결과 DB 저장)]
-
-    agent_run_task의 실제 비동기 실행 루틴. Celery 동기 task 내부에서
-    asyncio.run()으로 실행된다.
-    """
-    import asyncio
-    return asyncio.run(_run_agent(run_id))
-
-
-async def _run_agent(run_id: str) -> dict:
-    """AgentRun을 조회하고 지정된 에이전트 그래프를 실행한다."""
-    db = SessionLocal()
-    try:
-        run = db.get(AgentRun, run_id)
-        if run is None:
-            return {"error": "AgentRun not found"}
-
-        run.status = "running"
-        db.commit()
-
-        payload = run.payload or {}
-        graph_name = run.graph_name
-        endpoint = payload.get("endpoint") or settings.default_llm_endpoint
-        model = payload.get("model") or settings.default_llm_model
-        api_key = payload.get("api_key") or ""
-
-        if graph_name == "annotator":
-            result = await run_annotator_agent(
-                job_id=payload.get("job_id", ""),
-                instruction=payload.get("instruction", ""),
-                mode=payload.get("mode", "both"),
-                comment_mode=payload.get("comment_mode", "llm_summary"),
-                page_range=payload.get("page_range"),
-                language=payload.get("language", "en"),
-                endpoint=endpoint,
-                model=model,
-                api_key=api_key,
-                thread_id=run.thread_id,
-            )
-        elif graph_name == "editor":
-            result = await run_editor_agent(
-                instruction=payload.get("instruction", ""),
-                option=payload.get("option", "improve"),
-                command=payload.get("command"),
-                full_markdown=payload.get("full_markdown", ""),
-                selected_markdown=payload.get("selected_markdown", ""),
-                endpoint=endpoint,
-                model=model,
-                api_key=api_key,
-                thread_id=run.thread_id,
-            )
-        else:
-            return {"error": f"Unknown graph_name: {graph_name}"}
-
-        run.status = result.get("status", "error")
-        run.result = serialize_agent_state(result.get("result") or {})
-        run.pending_interrupt = serialize_agent_state(result.get("pending_interrupt"))
-        run.error = result.get("error") or ""
-        db.commit()
-        return result
-    except Exception as e:
-        logger.exception(f"[agent_run_task] {run_id} 실행 오류: {e}")
-        try:
-            run = db.get(AgentRun, run_id)
-            if run:
-                run.status = "error"
-                run.error = str(e)
-                db.commit()
-        except Exception:
-            pass
-        return {"error": str(e)}
-    finally:
-        db.close()
-
-
-@celery.task(name="backend.workers.tasks.agent_run_task")
-def agent_run_task(run_id: str) -> dict:
-    """[Flow: Step 1 (run_id로 에이전트 실행) -> Step 2 (결과는 DB에 저장) -> Step 3 (Celery backend용 직렬화 가능한 간단한 상태 반환)]
-
-    LangGraph 에이전트 실행을 Celery worker에서 비동기로 실행한다.
-    실제 상태/결과는 AgentRun DB 레코드에 저장되며, task 반환값은 Celery backend 직렬화를 위해 messages 같은 객체를 포함하지 않는다.
-    """
-    _run_agent_async(run_id)
-    return {"ok": True, "run_id": run_id}
 
 
 @celery.task(name="backend.workers.tasks.annotate_edit_job")

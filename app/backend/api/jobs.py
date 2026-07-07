@@ -3003,6 +3003,153 @@ def job_action(
     return {"job_id": job_id, "status": "queued"}
 
 
+# [Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (searchable PDF 다운로드)
+#       -> Step 3 (PyMuPDF로 페이지별 텍스트 블록 추출) -> Step 4 (요소 목록 반환)]
+# Node.js AI 백엔드의 PDF 주석 도구가 요소를 조회하기 위한 전용 엔드포인트.
+@router.get("/jobs/{job_id}/elements")
+def get_job_elements(
+    job_id: str,
+    page_no: int | None = None,
+    user: CurrentUser = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """[Flow: Step 1 (job 조회) -> Step 2 (searchable PDF 확보) -> Step 3 (텍스트 블록 추출)
+          -> Step 4 (page_no 필터링) -> Step 5 (요소 목록 반환)]
+
+    AI 에이전트가 PDF 주석을 추가할 때 참조할 페이지별 텍스트 요소를 반환한다.
+    각 요소는 page_no, bbox_pdf (PDF user-space 좌표), text 를 포함한다.
+    """
+    import fitz
+
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+
+    # searchable PDF 우선, 없으면 원본 PDF 사용
+    storage_path = job.searchable_pdf_storage_path
+    bucket = "pdfs"
+    if not storage_path:
+        # 다중 파일의 경우 첫 번째 PDF의 searchable path를 찾는다
+        files = job.extracted_files or []
+        for info in files:
+            sp = info.get("searchable_pdf_storage_path")
+            if sp:
+                storage_path = sp
+                break
+    if not storage_path and job.original_storage_path:
+        storage_path = job.original_storage_path
+        bucket = "pdfs"
+
+    if not storage_path:
+        raise HTTPException(status_code=404, detail="No PDF available for this job")
+
+    try:
+        client = supabase_client.get_service_client()
+        pdf_bytes = client.storage.from_(bucket).download(storage_path)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to download PDF: {e}")
+
+    elements: list[dict] = []
+    page_dimensions: dict[int, dict] = {}
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        for page in doc:
+            current_page_no = page.number + 1
+            page_dimensions[current_page_no] = {
+                "width": float(page.rect.width),
+                "height": float(page.rect.height),
+            }
+            if page_no is not None and current_page_no != page_no:
+                continue
+            blocks = page.get_text("blocks")
+            for block in blocks:
+                try:
+                    x0, y0, x1, y1, text, _block_no, _block_type = block
+                except Exception:
+                    continue
+                if not text or not text.strip():
+                    continue
+                elements.append({
+                    "page_no": current_page_no,
+                    "bbox_pdf": [float(x0), float(y0), float(x1), float(y1)],
+                    "text": text.strip(),
+                    "kind": "text",
+                })
+    finally:
+        doc.close()
+
+    return {"elements": elements, "total": len(elements), "page_dimensions": page_dimensions}
+
+
+# [Flow: Step 1 (job 조회) -> Step 2 (searchable PDF 다운로드) -> Step 3 (텍스트 검색)
+#       -> Step 4 (page_no 필터링) -> Step 5 (매치 목록 반환)]
+# Node.js AI 백엔드의 search_text 도구가 호출하는 엔드포인트.
+@router.get("/jobs/{job_id}/search-text")
+def search_job_text(
+    job_id: str,
+    query: str = Query(..., description="검색어 또는 정규식"),
+    page_no: int | None = None,
+    user: CurrentUser = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """[Flow: Step 1 (job 조회) -> Step 2 (searchable PDF 확보) -> Step 3 (PyMuPDF search)
+          -> Step 4 (page_no 필터링) -> Step 5 (매치 목록 반환)]
+
+    PDF 텍스트 레이어에서 키워드/정규식 검색을 수행한다.
+    """
+    import fitz
+
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+
+    storage_path = job.searchable_pdf_storage_path
+    bucket = "pdfs"
+    if not storage_path:
+        files = job.extracted_files or []
+        for info in files:
+            sp = info.get("searchable_pdf_storage_path")
+            if sp:
+                storage_path = sp
+                break
+    if not storage_path and job.original_storage_path:
+        storage_path = job.original_storage_path
+        bucket = "pdfs"
+
+    if not storage_path:
+        raise HTTPException(status_code=404, detail="No PDF available for this job")
+
+    try:
+        client = supabase_client.get_service_client()
+        pdf_bytes = client.storage.from_(bucket).download(storage_path)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to download PDF: {e}")
+
+    matches: list[dict] = []
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        for page in doc:
+            current_page_no = page.number + 1
+            if page_no is not None and current_page_no != page_no:
+                continue
+            # 정규식 검색과 일반 텍스트 검색 모두 지원
+            try:
+                rects = page.search_for(query)
+            except Exception:
+                # 정규식이 유효하지 않으면 일반 텍스트로 폴백
+                rects = page.search_for(query.replace("\\", ""))
+            for rect in rects:
+                matches.append({
+                    "page_no": current_page_no,
+                    "bbox_pdf": [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)],
+                    "text": page.get_textbox(rect).strip(),
+                })
+    finally:
+        doc.close()
+
+    return {"matches": matches, "total": len(matches)}
+
+
 @router.get("/admin/jobs")
 def admin_list_jobs(
     admin: CurrentUser = Depends(get_current_admin),

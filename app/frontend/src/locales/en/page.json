@@ -210,6 +210,12 @@
     "annotateProcessing": "Generating AI annotations…",
     "annotateDownload": "Download AI-annotated PDF",
     "annotateFailed": "Failed to generate AI annotations.",
+    "agent": {
+      "inputPlaceholder": "How can I help you?",
+      "chatTitle": "PROOF AI",
+      "emptyHint": "Ask for PDF annotations, markdown edits, or spreadsheet changes in natural language.",
+      "toolRunning": "Running tool…"
+    },
     "annotateTitle": "Generate AI Annotations",
     "annotateDesc": "Highlight matching table rows or add margin comments on the original scanned PDF. e.g. \"rows with transfers over $800\"",
     "annotateInstructionPlaceholder": "e.g. Rows in the account table with transfers of 800,000 or more",

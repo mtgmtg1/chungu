@@ -210,6 +210,12 @@
     "annotateProcessing": "AI 주석 생성 중…",
     "annotateDownload": "AI 주석 PDF 다운로드",
     "annotateFailed": "AI 주석 생성에 실패했습니다.",
+    "agent": {
+      "inputPlaceholder": "AI에게 무엇을 도와드릴까요?",
+      "chatTitle": "PROOF AI",
+      "emptyHint": "PDF 주석, 마크다운, 엑셀 작업을 자연어로 요청해보세요.",
+      "toolRunning": "도구 실행 중…"
+    },
     "annotateTitle": "AI 주석 생성",
     "annotateDesc": "원본 스캔 PDF의 표에서 조건에 맞는 행을 형광펜으로 표시하거나 여백에 코멘트를 답니다. 예: \"80만원 이상 이체된 줄\"",
     "annotateInstructionPlaceholder": "예: 계좌내역 표에서 80만원 이상 이체된 줄",

@@ -1,13 +1,14 @@
 // [Flow: Step 1 (Tiptap 에디터와 선택 영역, 전체 마크다운 수신)
 //       -> Step 2 (선택 영역을 마크다운으로 직렬화)
-//       -> Step 3 (Agent API로 멀티스텝 AI 실행 시작)
-//       -> Step 4 (폴링으로 상태 확인, interrupted면 승인 모달 표시)
-//       -> Step 5 (done이면 edits/final_markdown을 에디터에 적용) -> Step 6 (자동 저장 onChange 트리거)]
+//       -> Step 3 (useCompletion으로 /api/v1/ai/generate 스트리밍 호출)
+//       -> Step 4 (완료 시 결과를 에디터에 적용) -> Step 5 (자동 저장 onChange 트리거)]
+// 마크다운 에디터의 AI 텍스트 생성 메뉴. Vercel AI SDK의 useCompletion을 사용해
+// FastAPI /api/v1/ai/generate 엔드포인트에서 스트리밍 토큰을 받아 에디터에 반영한다.
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { DOMSerializer } from "@tiptap/pm/model";
 import { marked } from "marked";
 import TurndownService from "turndown";
+import { useCompletion } from "@ai-sdk/react";
 import {
   ArrowDownWideNarrow,
   CheckCheck,
@@ -17,8 +18,6 @@ import {
   Wand2,
   WrapText } from
 "lucide-react";
-import { api } from "../api.js";
-import AgentApprovalModal from "./AgentApprovalModal.jsx";
 
 const turndown = new TurndownService({
   headingStyle: "atx",
@@ -28,62 +27,32 @@ const turndown = new TurndownService({
 });
 
 /**
- * [Flow: Step 1 (Tiptap selection에서 content slice 추출) -> Step 2 (ProseMirror DOM serializer로 HTML 변환) -> Step 3 (turndown으로 마크다운 반환)]
- * @param {import("@tiptap/core").Editor} editor
- * @returns {string}
+ * [Flow: Step 1 (에디터에서 선택 영역 추출) -> Step 2 (HTML → 마크다운 변환) -> Step 3 (반환)]
  */
 function getSelectedMarkdown(editor) {
   if (!editor) return "";
-  const { selection } = editor.state;
-  if (selection.empty) return "";
-  const slice = selection.content();
-  const serializer = DOMSerializer.fromSchema(editor.schema);
-  const html = serializer.serializeFragment(slice.content, { document });
-  return turndown.turndown(html);
+  const { from, to } = editor.state.selection;
+  if (from === to) return "";
+  const slice = editor.state.doc.slice(from, to);
+  const serializer = editor.view.domSerializer || editor.schema.serializer;
+  const fragment = slice.content;
+  const div = document.createElement("div");
+  div.appendChild(serializer.serializeFragment(fragment));
+  return turndown.turndown(div.innerHTML);
 }
 
 /**
- * [Flow: Step 1 (마크다운 응답을 HTML로 변환) -> Step 2 (현재 선택 영역을 HTML로 대체) -> Step 3 (에디터에 포커스 반환)]
- * @param {import("@tiptap/core").Editor} editor
- * @param {string} markdown
+ * [Flow: Step 1 (AI 결과 마크다운을 HTML로 변환) -> Step 2 (에디터 선택 영역 또는 커서 위치에 삽입)
+ *       -> Step 3 (onChange 트리거로 자동 저장)]
  */
-function replaceSelectionWithMarkdown(editor, markdown) {
+function applyResultToEditor(editor, markdown, option) {
   if (!editor || !markdown) return;
   const html = marked.parse(markdown || "");
   const { from, to } = editor.state.selection;
-  editor.chain().focus().insertContentAt({ from, to }, html).run();
-}
-
-/**
- * [Flow: Step 1 (AgentRun의 edits/final_markdown 확인) -> Step 2 (replace/insert edits를 순서대로 적용)
- *       -> Step 3 (에디터에 포커스 반환)]
- * @param {import("@tiptap/core").Editor} editor
- * @param {object} result
- * @param {string} selectedMarkdown
- */
-function applyAgentResult(editor, result, selectedMarkdown) {
-  if (!editor || !result) return;
-  const finalMarkdown = result?.final_markdown;
-  const edits = result?.edits || [];
-  if (finalMarkdown && !edits.length) {
-    replaceSelectionWithMarkdown(editor, finalMarkdown);
-    return;
-  }
-  for (const edit of edits) {
-    if (edit.type === "replace") {
-      replaceSelectionWithMarkdown(editor, edit.content);
-    } else if (edit.type === "insert") {
-      const html = marked.parse(edit.content || "");
-      if (edit.position === "end") {
-        editor.chain().focus().insertContentAt(editor.state.doc.content.size, html).run();
-      } else if (edit.position === "beginning") {
-        editor.chain().focus().insertContentAt(0, html).run();
-      } else {
-        // cursor 또는 기본 위치: 현재 선택 영역 끝
-        const { to } = editor.state.selection;
-        editor.chain().focus().insertContentAt(to, html).run();
-      }
-    }
+  if (option === "continue") {
+    editor.chain().focus().insertContentAt(to, html).run();
+  } else {
+    editor.chain().focus().insertContentAt({ from, to }, html).run();
   }
 }
 
@@ -91,12 +60,27 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [showCustomInput, setShowCustomInput] = useState(false);
-  const [run, setRun] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const menuRef = useRef(null);
-  const pollTimerRef = useRef(null);
   const customInputRef = useRef(null);
+  const pendingOptionRef = useRef(null);
+
+  const { completion, complete, isLoading, stop } = useCompletion({
+    api: "/api/v1/ai/generate",
+    onResponse: () => setError(""),
+    onError: (err) => {
+      setError(err.message || "AI error");
+    },
+    onFinish: (_prompt, completionText) => {
+      // [Flow: Step 1 (스트리밍 완료) -> Step 2 (결과를 에디터에 적용) -> Step 3 (메뉴 닫기)]
+      if (editor && completionText) {
+        applyResultToEditor(editor, completionText, pendingOptionRef.current);
+      }
+      setOpen(false);
+      setShowCustomInput(false);
+      if (customInputRef.current) customInputRef.current.value = "";
+    },
+  });
 
   // [Flow: 메뉴 외부 클릭 시 드롭다운 닫기]
   useEffect(() => {
@@ -110,43 +94,8 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [open]);
 
-  // [Flow: Step 1 (run 상태가 running/processing/interrupted면 2초 폴링) -> Step 2 (done이면 결과 적용) -> Step 3 (error면 메시지 표시)]
-  useEffect(() => {
-    if (!run || !["running", "processing", "interrupted"].includes(run.status)) {
-      clearTimeout(pollTimerRef.current);
-      return;
-    }
-    const poll = async () => {
-      try {
-        const status = await api.getAgentStatus(run.run_id);
-        setRun(status);
-        if (status.status === "done") {
-          setIsLoading(false);
-          applyAgentResult(editor, status.result, getSelectedMarkdown(editor));
-          setOpen(false);
-          setShowCustomInput(false);
-          if (customInputRef.current) customInputRef.current.value = "";
-        } else if (status.status === "error") {
-          setIsLoading(false);
-          setError(status.error || "AI error");
-        } else {
-          pollTimerRef.current = setTimeout(poll, 2000);
-        }
-      } catch (err) {
-        console.error("[AI] poll error:", err);
-        setIsLoading(false);
-        setError(err.message);
-      }
-    };
-    pollTimerRef.current = setTimeout(poll, 2000);
-    return () => clearTimeout(pollTimerRef.current);
-  }, [run, editor]);
-
-  /**
-   * [Flow: Step 1 (선택 마크다운 + option/command 수집) -> Step 2 (AgentRun 생성 API 호출) -> Step 3 (run 상태 설정 및 폴링 시작)]
-   * @param {string} option
-   */
-  const startAgent = async (option, command) => {
+  // [Flow: Step 1 (선택 마크다운 + option/command 수집) -> Step 2 (useCompletion complete 호출)]
+  const startCompletion = async (option, command) => {
     if (!editor || isLoading) return;
     let selectedMarkdown = getSelectedMarkdown(editor);
     if (!selectedMarkdown && option !== "continue") {
@@ -160,71 +109,21 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
       if (!selectedMarkdown.trim()) return;
     }
 
-    setIsLoading(true);
+    pendingOptionRef.current = option;
     setError("");
     setShowCustomInput(false);
     try {
-      const res = await api.runAgent({
-        graphName: "editor",
-        payload: {
-          instruction: selectedMarkdown,
-          option,
-          command,
-          full_markdown: fullMarkdown,
-          selected_markdown: selectedMarkdown,
-        },
-      });
-      setRun(res);
-      if (res.status === "done") {
-        applyAgentResult(editor, res.result, selectedMarkdown);
-        setIsLoading(false);
-        setOpen(false);
-        if (customInputRef.current) customInputRef.current.value = "";
-      } else if (res.status === "error") {
-        setError(res.error || "AI error");
-        setIsLoading(false);
-      }
+      await complete({ prompt: selectedMarkdown, option, command });
     } catch (err) {
-      console.error("[AI] startAgent error:", err);
-      setError(err.message);
-      setIsLoading(false);
+      setError(err.message || "AI error");
     }
   };
 
-  const handleCommand = (option) => startAgent(option, null);
+  const handleCommand = (option) => startCompletion(option, null);
   const handleCustom = () => {
     const prompt = customInputRef.current?.value?.trim() || "";
     if (!prompt) return;
-    startAgent("zap", prompt);
-  };
-
-  const handleApprove = async (value) => {
-    if (!run) return;
-    const resumeValue = value !== undefined && value !== null ? value : { approved: true };
-    try {
-      setIsLoading(true);
-      const res = await api.resumeAgent(run.run_id, { resumeValue });
-      setRun(res);
-      if (res.status === "done") {
-        applyAgentResult(editor, res.result, getSelectedMarkdown(editor));
-        setIsLoading(false);
-        setOpen(false);
-        setShowCustomInput(false);
-        if (customInputRef.current) customInputRef.current.value = "";
-      } else if (res.status === "error") {
-        setError(res.error || "AI error");
-        setIsLoading(false);
-      }
-    } catch (err) {
-      console.error("[AI] resume error:", err);
-      setError(err.message);
-      setIsLoading(false);
-    }
-  };
-
-  const handleReject = async (value) => {
-    const resumeValue = value !== undefined && value !== null ? value : { approved: false };
-    await handleApprove({ approved: false, value: resumeValue });
+    startCompletion("zap", prompt);
   };
 
   if (!editor || !editable) return null;
@@ -248,9 +147,22 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
           className="absolute top-full left-0 mt-1 w-56 bg-white rounded-lg shadow-lg border border-outline-variant p-2 z-50 flex flex-col gap-1"
           data-oid="ai-menu-dropdown">
           {isLoading ? (
-            <div className="flex items-center gap-2 px-3 py-2 text-sm text-on-surface">
-              <Loader2 className="animate-spin" size={16} />
-              {t("page:components.ai.thinking")}
+            <div className="flex flex-col gap-2 px-3 py-2 text-sm text-on-surface">
+              <div className="flex items-center gap-2">
+                <Loader2 className="animate-spin" size={16} />
+                {t("page:components.ai.thinking")}
+              </div>
+              {completion && (
+                <div className="text-xs text-on-surface-variant max-h-32 overflow-y-auto whitespace-pre-wrap">
+                  {completion}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={stop}
+                className="text-xs text-error hover:underline">
+                {t("common:actions.cancel")}
+              </button>
             </div>
           ) : (
             <>
@@ -281,7 +193,6 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
                   <button
                     type="button"
                     onClick={handleCustom}
-
                     className="p-1 text-primary disabled:opacity-40"
                     data-oid="ai-custom-submit">
                     <Sparkles size={16} />
@@ -297,14 +208,6 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
           )}
         </div>
       )}
-
-      {run?.pending_interrupt && (
-        <AgentApprovalModal
-          interrupt={run.pending_interrupt}
-          onApprove={handleApprove}
-          onReject={handleReject}
-          onClose={() => setRun(null)} />
-      )}
     </div>
   );
 }
@@ -317,7 +220,7 @@ function AiItem({ icon: Icon, label, onClick }) {
       className="flex items-center gap-2 px-3 py-2 text-sm text-on-surface hover:bg-surface-container-high rounded-md transition-colors"
       data-oid="ai-menu-item">
       <Icon size={16} />
-      <span>{label}</span>
+      {label}
     </button>
   );
 }

@@ -7,7 +7,6 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer from "./PdfViewer.jsx";
 import MediaPlayer from "./MediaPlayer.jsx";
 import AnnotationListPanel from "./AnnotationListPanel.jsx";
-import AgentStatusCard from "./AgentStatusCard.jsx";
 import { api } from "../api.js";
 
 function SourceIcon({ type }) {
@@ -153,7 +152,6 @@ function AiAnnotationFab({
   onCancelAnnotation,
   disabled,
   annotationRuns,
-  agentRuns,
   currentPage = 1,
   totalPages = 1,
 }) {
@@ -163,33 +161,7 @@ function AiAnnotationFab({
   const [instruction, setInstruction] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [pageRange, setPageRange] = useState("");
-  const [localAgentRuns, setLocalAgentRuns] = useState(agentRuns || []);
   const containerRef = useRef(null);
-
-  // [Flow: Step 1 (부모로부터 agentRuns prop 수신) -> Step 2 (로컬 상태 동기화)]
-  useEffect(() => {
-    setLocalAgentRuns(agentRuns || []);
-  }, [agentRuns]);
-
-  // [Flow: Step 1 (running/interrupted agent run 폴링) -> Step 2 (상태 갱신) -> Step 3 (done/error면 중단)]
-  useEffect(() => {
-    const active = localAgentRuns.filter((r) => ["running", "processing", "interrupted"].includes(r.status));
-    if (active.length === 0) return;
-    const timers = [];
-    const poll = async (run) => {
-      try {
-        const status = await api.getAgentStatus(run.run_id);
-        setLocalAgentRuns((prev) => prev.map((r) => (r.run_id === status.run_id ? status : r)));
-        if (["running", "processing", "interrupted"].includes(status.status)) {
-          timers.push(setTimeout(() => poll(status), 3000));
-        }
-      } catch (err) {
-        console.error("[AgentStatus] poll error:", err);
-      }
-    };
-    active.forEach((run) => timers.push(setTimeout(() => poll(run), 3000)));
-    return () => timers.forEach(clearTimeout);
-  }, [localAgentRuns]);
 
   // [Flow: Step 1 (팝업이 열린 경우에만 이벤트 등록) -> Step 2 (컨테이너 외부 클릭 시 팝업 닫기)]
   useEffect(() => {
@@ -207,7 +179,6 @@ function AiAnnotationFab({
     if (!instruction.trim()) return;
     // pageRange가 비어 있으면 현재 페이지를 기본값으로 전달
     const effectivePageRange = pageRange.trim() || String(currentPage);
-    console.log("[handleSubmit] mode=", mode, "onStartAnnotate=", typeof onStartAnnotate, "onStartAnnotateEdit=", typeof onStartAnnotateEdit);
     if (mode === "edit" && onStartAnnotateEdit) {
       await onStartAnnotateEdit(instruction, effectivePageRange);
     } else if (mode === "create" && onStartAnnotate) {
@@ -221,33 +192,8 @@ function AiAnnotationFab({
     setOpen(false);
   };
 
-  const handleApprove = async (run, value) => {
-    const resumeValue = value !== undefined && value !== null ? value : { approved: true };
-    try {
-      const res = await api.resumeAgent(run.run_id, { resumeValue });
-      setLocalAgentRuns((prev) => prev.map((r) => (r.run_id === res.run_id ? res : r)));
-    } catch (err) {
-      console.error("[AgentStatus] resume error:", err);
-    }
-  };
-
-  const handleReject = async (run, value) => {
-    const resumeValue = value !== undefined && value !== null ? value : { approved: false };
-    await handleApprove(run, { approved: false, value: resumeValue });
-  };
-
-  const handleCancel = async (run) => {
-    try {
-      // TODO: cancel API 추가 시 연결
-      setLocalAgentRuns((prev) => prev.filter((r) => r.run_id !== run.run_id));
-    } catch (err) {
-      console.error("[AgentStatus] cancel error:", err);
-    }
-  };
-
-  // processing 개수 — FAB 배지에 표시 (legacy + agent)
-  const processingCount = (annotationRuns || []).filter((r) => r.status === "processing").length +
-    (localAgentRuns || []).filter((r) => ["running", "processing"].includes(r.status)).length;
+  // processing 개수 — FAB 배지에 표시
+  const processingCount = (annotationRuns || []).filter((r) => r.status === "processing").length;
 
   // 모드별 표시 텍스트
   const titleText = mode === "edit" ? t("page:result.annotateEditTitle") : t("page:result.annotateTitle");
@@ -266,16 +212,6 @@ function AiAnnotationFab({
           onCancelAnnotation={onCancelAnnotation}
         />
       )}
-      {/* Agent 실행 상태 카드 */}
-      {(localAgentRuns || []).filter((r) => ["running", "processing", "interrupted"].includes(r.status)).map((run) => (
-        <AgentStatusCard
-          key={run.run_id}
-          run={run}
-          onApprove={(value) => handleApprove(run, value)}
-          onReject={(value) => handleReject(run, value)}
-          onCancel={() => handleCancel(run)}
-        />
-      ))}
 
       <button
         type="button"
@@ -403,7 +339,6 @@ function PdfViewerWithFab({
   onCancelAnnotation,
   converting,
   annotationRuns,
-  agentRuns,
   totalPages = 1,
   showAnnotationPanel = false,
   onToggleAnnotationPanel,
@@ -449,7 +384,6 @@ function PdfViewerWithFab({
           onCancelAnnotation={onCancelAnnotation}
           disabled={converting}
           annotationRuns={annotationRuns}
-          agentRuns={agentRuns}
           currentPage={page}
           totalPages={totalPages}
         />
@@ -475,7 +409,6 @@ export default function SourcePanel({
   onCancelAnnotation,
   converting = false,
   annotationRuns = [],
-  agentRuns = [],
   totalPages = 1,
 }) {
   const { t } = useTranslation();
@@ -583,7 +516,6 @@ export default function SourcePanel({
           onCancelAnnotation={onCancelAnnotation}
           converting={converting}
           annotationRuns={annotationRuns}
-          agentRuns={agentRuns}
           totalPages={totalPages}
           showAnnotationPanel={showAnnotationPanel}
           onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}
@@ -748,7 +680,6 @@ export default function SourcePanel({
                   onCancelAnnotation={onCancelAnnotation}
                   converting={converting}
                   annotationRuns={annotationRuns}
-                  agentRuns={agentRuns}
                   totalPages={totalPages}
                   showAnnotationPanel={showAnnotationPanel}
                   onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}
@@ -782,7 +713,6 @@ export default function SourcePanel({
         onStartAnnotate={onStartAnnotate}
         converting={converting}
         annotationRuns={annotationRuns}
-        agentRuns={agentRuns}
         totalPages={totalPages}
         showAnnotationPanel={showAnnotationPanel}
         onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}

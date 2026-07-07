@@ -14,7 +14,11 @@ export async function getToken() {
   return data.session?.access_token
 }
 
-const DEV_API_KEY = import.meta.env.VITE_DEV_API_KEY || 'chu_live_testkey12345'
+// 개발 환경에서만 기본 dev API key를 사용하고, production에서는 빌드 시 명시적으로
+// 주입된 VITE_DEV_API_KEY가 없으면 헤더를 전송하지 않는다 (세션 인증만 사용).
+const DEV_API_KEY = import.meta.env.DEV
+  ? (import.meta.env.VITE_DEV_API_KEY || 'chu_live_testkey12345')
+  : (import.meta.env.VITE_DEV_API_KEY || '')
 
 async function request(path, options = {}) {
   if (devMockEnabled) {
@@ -28,7 +32,6 @@ async function request(path, options = {}) {
   if (options.body && !(options.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json'
   }
-  console.log('[REQUEST]', path, 'headers=', JSON.stringify(headers))
 
   const res = await fetch(path, { credentials: 'include', ...options, headers })
   const isJson = (res.headers.get('content-type') || '').includes('application/json')

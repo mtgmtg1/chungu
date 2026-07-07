@@ -2,9 +2,10 @@
 //       -> Step 3 (PDF 검색/요소/하이라이트/콜아웃/삭제/비교/저장 도구 생성) -> Step 4 (도구 객체 반환)]
 // PDF 주석 조작용 서버 사이드 도구. FastAPI에서 텍스트 레이어/요소를 조회하고,
 // 생성된 주석을 임시 상태에 쌓은 뒤 apply_annotations에서 Storage에 저장한다.
-import { tool } from 'ai';
+import { generateText, tool } from 'ai';
 import { z } from 'zod';
 import type { AuthHeaders } from '../lib/auth.js';
+import { buildModel } from '../lib/model.js';
 import * as proofApi from '../lib/proof-api.js';
 
 // 색상 이름 -> RGB[0-1] 매핑. Python pdf_annotator.py의 HIGHLIGHT_COLOR_PALETTE와 동기화해야 한다.
@@ -22,6 +23,24 @@ const COLOR_PALETTE: Record<string, [number, number, number]> = {
 const DEFAULT_HIGHLIGHT_COLOR: [number, number, number] = [1.0, 0.92, 0.3];
 const DEFAULT_CALLOUT_COLOR: [number, number, number] = [0.65, 0.35, 0.95];
 const DEFAULT_OPACITY = 0.5;
+
+/**
+ * [Flow: Step 1 (RGB[0-1] 값을 0-255로 변환) -> Step 2 (16진수 문자열로 변환) -> Step 3 (hex 조합)]
+ *
+ * FastAPI의 주석 API는 색상을 hex 문자열(예: #FFEE4D)로 저장하므로,
+ * AI 백엔드의 RGB[0-1] 팔레트를 hex로 변환한다.
+ *
+ * @param rgb RGB[0-1] 튜플
+ * @returns hex 색상 문자열
+ */
+function rgbToHex(rgb: [number, number, number]): string {
+  return (
+    '#' +
+    rgb
+      .map((c) => Math.round(Math.max(0, Math.min(1, c)) * 255).toString(16).padStart(2, '0'))
+      .join('')
+  );
+}
 
 interface AnnotationContext {
   jobId?: string;
@@ -104,6 +123,93 @@ export function buildAnnotationTools(context: AnnotationContext) {
           ? elements.filter((el) => Number(el.page_no) === page_no)
           : elements;
         return { elements: filtered.slice(0, 50), total: filtered.length };
+      },
+    }),
+
+    get_annotations: tool({
+      description: '기존 AI 주석 또는 사용자 주석의 목록을 반환한다. 주석의 ID, 종류, 색상, 코멘트, 페이지, 위치를 확인할 때 사용한다.',
+      inputSchema: z.object({
+        page_no: z.number().optional().describe('1-based 페이지 번호. 생략 시 모든 페이지'),
+      }),
+      execute: async ({ page_no }) => {
+        const { annotations, total } = await proofApi.getAnnotations(jobId, sourceIndex, page_no, authHeaders);
+        return {
+          annotations: annotations.slice(0, 50).map((a) => {
+            const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
+              ? (a as any).annotation
+              : a;
+            return {
+              id: inner.id,
+              type: inner.type,
+              page_no: (inner.pageIndex ?? 0) + 1,
+              color: inner.color,
+              opacity: inner.opacity,
+              comment: inner.contents,
+            };
+          }),
+          total,
+        };
+      },
+    }),
+
+    view_page: tool({
+      description: 'PDF의 특정 페이지를 이미지로 렌더링해 VLLM vision 모델이 직접 분석한다. 페이지의 텍스트, 레이아웃, 표, 주요 요소를 요약한 분석 결과를 반환한다. DPI는 페이지 내 raster 이미지의 실제 해상도를 추정해 자동 결정되며, 필요시 150~300 사이로 명시할 수 있다.',
+      inputSchema: z.object({
+        page_no: z.number().describe('1-based 페이지 번호'),
+        dpi: z.number().min(150).max(300).optional().describe('렌더링 DPI (150~300, 생략 시 페이지 내 이미지 해상도에서 자동 추정)'),
+      }),
+      execute: async ({ page_no, dpi }) => {
+        const { image_url, width, height, dpi: resolvedDpi } = await proofApi.getPageImage(
+          jobId,
+          page_no,
+          dpi,
+          authHeaders,
+        );
+
+        const imageRes = await fetch(image_url);
+        if (!imageRes.ok) {
+          return { error: `Failed to download page image: ${imageRes.status}` };
+        }
+        const imageBuffer = Buffer.from(await imageRes.arrayBuffer());
+        const base64 = imageBuffer.toString('base64');
+        const dataUrl = `data:image/png;base64,${base64}`;
+
+        const model = buildModel();
+        const { text } = await generateText({
+          model: model as any,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: `Analyze this PDF page (page ${page_no}) and describe its contents, layout, and any notable elements in the same language as the user's request.`,
+                },
+                { type: 'image', image: dataUrl },
+              ],
+            },
+          ],
+        });
+        return { page_no, dpi: resolvedDpi, width, height, analysis: text };
+      },
+    }),
+
+    update_annotation: tool({
+      description: '기존 주석의 색상, 코멘트, 투명도를 변경한다. get_annotations로 얻은 id를 사용한다.',
+      inputSchema: z.object({
+        annotation_id: z.string().describe('get_annotations 결과의 id'),
+        color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])
+          .optional()
+          .describe('변경할 색상 이름'),
+        comment: z.string().optional().describe('변경할 코멘트'),
+        opacity: z.number().min(0).max(1).optional().describe('변경할 투명도 (0.0~1.0)'),
+      }),
+      execute: async ({ annotation_id, color, comment, opacity }) => {
+        const payload: { color?: string; comment?: string; opacity?: number } = {};
+        if (color) payload.color = rgbToHex(COLOR_PALETTE[color] || DEFAULT_HIGHLIGHT_COLOR);
+        if (comment !== undefined) payload.comment = comment;
+        if (opacity !== undefined) payload.opacity = opacity;
+        return proofApi.updateAnnotation(jobId, annotation_id, sourceIndex, payload, authHeaders);
       },
     }),
 

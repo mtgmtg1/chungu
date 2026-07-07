@@ -3150,6 +3150,325 @@ def search_job_text(
     return {"matches": matches, "total": len(matches)}
 
 
+def _resolve_annotations_json_path(job: Job, source_index: int) -> str | None:
+    """[Flow: Step 1 (annotated_pdf_files 확인) -> Step 2 (source_index에 해당하는 entry 찾기)
+          -> Step 3 (annotations_json_storage_path 반환) -> Step 4 (공유 경로 폴백)]
+
+    AI 주석 run의 인덱스로부터 해당 run의 주석 JSON Storage 경로를 반환한다.
+    source_index 0은 하위 호환을 위해 첫 번째 AI 주석 run(인덱스 1)으로 매핑된다.
+    """
+    entries = list(job.annotated_pdf_files or [])
+    if not entries and job.result_annotated_pdf_storage_path and source_index == 0:
+        stem = Path(job.original_filename).stem if job.original_filename else "result"
+        entries = [
+            {
+                "index": 1,
+                "status": "done",
+                "storage_path": job.result_annotated_pdf_storage_path,
+                "annotations_json_storage_path": None,
+                "filename": f"{stem}_annotation1.pdf",
+            }
+        ]
+        source_index = 1
+
+    entry = next((e for e in entries if e.get("index") == source_index), None)
+    if entry is None:
+        return None
+    path = entry.get("annotations_json_storage_path")
+    if not path:
+        return f"{job.id}/annotated.annotations.json"
+    return path
+
+
+# [Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (source_index로 주석 JSON 경로 확보)
+#       -> Step 3 (AI 주석 JSON + 사용자 주석 JSON 병합) -> Step 4 (page_no 필터링) -> Step 5 (주석 목록 반환)]
+# Node.js AI 백엔드가 기존 주석을 조회하기 위한 전용 엔드포인트.
+@router.get("/jobs/{job_id}/annotations")
+def get_job_annotations(
+    job_id: str,
+    source_index: int = Query(0, description="주석 파일 인덱스"),
+    page_no: int | None = Query(None, description="1-based 페이지 번호. 생략 시 모든 페이지"),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """[Flow: Step 1 (job 조회) -> Step 2 (source_index로 주석 JSON 경로 확보)
+          -> Step 3 (AI 주석 JSON + 사용자 주석 JSON 병합) -> Step 4 (page_no 필터링)
+          -> Step 5 (EmbedPDF 형식 주석 목록 반환)]
+
+    AI 에이전트가 기존 주석 목록을 확인할 때 사용한다.
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+
+    annotations_json_storage_path = _resolve_annotations_json_path(job, source_index)
+    if not annotations_json_storage_path:
+        raise HTTPException(status_code=404, detail="Annotation file not found")
+
+    client = supabase_client.get_service_client()
+    all_annotations: list[dict] = []
+
+    try:
+        existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
+        existing = json.loads(existing_bytes.decode("utf-8"))
+        if isinstance(existing, list):
+            all_annotations.extend(existing)
+    except Exception:
+        pass
+
+    # 사용자가 직접 추가/편집한 주석도 병합
+    user_annotations_json_path = f"{job.id}/user_annotations.json"
+    try:
+        user_bytes = client.storage.from_("results").download(user_annotations_json_path)
+        user_annotations = json.loads(user_bytes.decode("utf-8"))
+        if isinstance(user_annotations, list):
+            existing_ids = {_annotation_id(a) for a in all_annotations if _annotation_id(a)}
+            for a in user_annotations:
+                aid = _annotation_id(a)
+                if aid and aid in existing_ids:
+                    continue
+                all_annotations.append(a)
+    except Exception:
+        pass
+
+    if page_no is not None:
+        filtered = []
+        for a in all_annotations:
+            inner = _annotation_inner(a)
+            if inner.get("pageIndex") == page_no - 1:
+                filtered.append(a)
+        all_annotations = filtered
+
+    return {"annotations": all_annotations, "total": len(all_annotations)}
+
+
+# [Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (source_index로 주석 JSON 경로 확보)
+# -> Step 3 (annotation_id로 주석 찾기) -> Step 4 (색상/코멘트/투명도 수정)
+# -> Step 5 (AI 주석이면 _userEdited 설정) -> Step 6 (Storage 저장 및 캐시 무효화)]
+@router.patch("/jobs/{job_id}/annotations/{annotation_id}")
+def update_job_annotation(
+    job_id: str,
+    annotation_id: str,
+    source_index: int = Query(0, description="주석 파일 인덱스"),
+    payload: dict = Body(...),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """[Flow: Step 1 (job 조회) -> Step 2 (source_index로 주석 JSON 경로 확보)
+          -> Step 3 (annotation_id로 주석 찾기) -> Step 4 (color/comment/opacity 수정)
+          -> Step 5 (AI 주석이면 _userEdited 설정) -> Step 6 (Storage 저장 및 preview 캐시 무효화)]
+
+    AI 에이전트가 기존 주석의 색상/코멘트/투명도를 변경할 때 사용한다.
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+
+    annotations_json_storage_path = _resolve_annotations_json_path(job, source_index)
+    if not annotations_json_storage_path:
+        raise HTTPException(status_code=404, detail="Annotation file not found")
+
+    client = supabase_client.get_service_client()
+    all_annotations: list[dict] = []
+    try:
+        existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
+        existing = json.loads(existing_bytes.decode("utf-8"))
+        if isinstance(existing, list):
+            all_annotations = existing
+    except Exception:
+        pass
+
+    user_annotations_json_path = f"{job.id}/user_annotations.json"
+    user_annotations: list[dict] = []
+    try:
+        user_bytes = client.storage.from_("results").download(user_annotations_json_path)
+        user_annotations = json.loads(user_bytes.decode("utf-8"))
+        if not isinstance(user_annotations, list):
+            user_annotations = []
+    except Exception:
+        user_annotations = []
+
+    target_index = -1
+    target_list = all_annotations
+    for i, a in enumerate(all_annotations):
+        if _annotation_id(a) == annotation_id:
+            target_index = i
+            target_list = all_annotations
+            break
+
+    if target_index == -1:
+        for i, a in enumerate(user_annotations):
+            if _annotation_id(a) == annotation_id:
+                target_index = i
+                target_list = user_annotations
+                break
+
+    if target_index == -1:
+        raise HTTPException(status_code=404, detail=f"Annotation {annotation_id} not found")
+
+    annotation = target_list[target_index]
+    inner = _annotation_inner(annotation)
+    updated_fields: list[str] = []
+
+    color = payload.get("color")
+    if isinstance(color, str):
+        inner["color"] = color
+        inner["strokeColor"] = color
+        updated_fields.append("color")
+
+    comment = payload.get("comment")
+    if isinstance(comment, str):
+        inner["contents"] = comment
+        updated_fields.append("comment")
+
+    opacity = payload.get("opacity")
+    if isinstance(opacity, (int, float)):
+        inner["opacity"] = float(opacity)
+        updated_fields.append("opacity")
+
+    if not updated_fields:
+        raise HTTPException(status_code=400, detail="No updatable fields provided")
+
+    if annotation_id.startswith("backend-"):
+        _mark_user_edited(annotation)
+
+    target_storage_path = (
+        annotations_json_storage_path
+        if target_list is all_annotations
+        else user_annotations_json_path
+    )
+    client.storage.from_("results").upload(
+        target_storage_path,
+        json.dumps(target_list, ensure_ascii=False).encode("utf-8"),
+        {"content-type": "application/json", "upsert": "true"},
+    )
+
+    cache.invalidate_pattern(f"preview:{job_id}:*")
+    return {"ok": True, "annotation_id": annotation_id, "updated_fields": updated_fields}
+
+
+def _estimate_page_image_dpi(page: fitz.Page, doc: fitz.Document) -> int:
+    """[Flow: Step 1 (페이지 내 이미지 객체 추출) -> Step 2 (픽셀 크기 / 페이지 내 물리적 크기로 DPI 추정)
+          -> Step 3 (최대 DPI 반환, 없으면 0)]
+
+    페이지에 내장된 raster 이미지의 실제 해상도를 추정한다. 텍스트/벡터 위주 페이지는
+    이미지가 없어 0을 반환하며, 이때는 기본 300dpi로 렌더링한다. 이미지가 포함된 페이지는
+    원본 이미지의 DPI를 넘지 않도록 렌더링하여 토큰을 낭비하지 않는다.
+    """
+    max_dpi = 0
+    try:
+        img_list = page.get_images(full=True)
+        for img in img_list:
+            xref = img[0]
+            base_image = doc.extract_image(xref)
+            if not base_image:
+                continue
+            pix_width = base_image.get("width", 0)
+            pix_height = base_image.get("height", 0)
+            if pix_width <= 0 or pix_height <= 0:
+                continue
+            img_rects = page.get_image_rects(xref)
+            if not img_rects:
+                continue
+            for rect in img_rects:
+                if rect.width <= 0 or rect.height <= 0:
+                    continue
+                width_in = rect.width / 72.0
+                height_in = rect.height / 72.0
+                dpi_x = pix_width / width_in if width_in > 0 else 0
+                dpi_y = pix_height / height_in if height_in > 0 else 0
+                max_dpi = max(max_dpi, int(dpi_x), int(dpi_y))
+    except Exception:
+        pass
+    return max_dpi
+
+
+# [Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (searchable PDF 또는 원본 PDF 다운로드)
+#       -> Step 3 (PyMuPDF로 페이지를 이미지로 렌더링) -> Step 4 (PNG로 Storage에 업로드)
+#       -> Step 5 (signed URL 반환)]
+# Node.js AI 백엔드의 VLLM이 PDF 특정 페이지를 시각적으로 볼 수 있도록 지원한다.
+@router.get("/jobs/{job_id}/page-image")
+def get_job_page_image(
+    job_id: str,
+    page_no: int = Query(..., description="1-based 페이지 번호", ge=1),
+    dpi: int | None = Query(None, description="렌더링 DPI (생략 시 페이지 내 이미지 해상도에서 자동 추정, 150~300)", ge=150, le=300),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """[Flow: Step 1 (job 조회) -> Step 2 (PDF 확보) -> Step 3 (페이지 이미지 렌더링)
+          -> Step 4 (PNG 업로드) -> Step 5 (signed URL 반환)]
+
+    VLLM/vision 모델이 PDF 특정 페이지를 직접 볼 수 있도록 페이지 이미지를 생성한다.
+    """
+    import fitz
+
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+
+    storage_path = job.searchable_pdf_storage_path
+    bucket = "pdfs"
+    if not storage_path:
+        files = job.extracted_files or []
+        for info in files:
+            sp = info.get("searchable_pdf_storage_path")
+            if sp:
+                storage_path = sp
+                break
+    if not storage_path and job.pdf_storage_path:
+        storage_path = job.pdf_storage_path
+        bucket = "pdfs"
+
+    if not storage_path:
+        raise HTTPException(status_code=404, detail="No PDF available for this job")
+
+    try:
+        client = supabase_client.get_service_client()
+        pdf_bytes = client.storage.from_(bucket).download(storage_path)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to download PDF: {e}")
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        if page_no < 1 or page_no > doc.page_count:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid page_no {page_no}. PDF has {doc.page_count} pages.",
+            )
+        page = doc[page_no - 1]
+        resolved_dpi = dpi
+        if resolved_dpi is None:
+            estimated = _estimate_page_image_dpi(page, doc)
+            resolved_dpi = 300 if estimated <= 0 else max(150, min(300, estimated))
+        pix = page.get_pixmap(dpi=resolved_dpi)
+        img_bytes = pix.tobytes("png")
+    finally:
+        doc.close()
+
+    output_path = f"{job_id}/page-images/page-{page_no}-{resolved_dpi}dpi.png"
+    try:
+        client.storage.from_("results").upload(
+            output_path,
+            img_bytes,
+            {"content-type": "image/png", "upsert": "true"},
+        )
+        signed_url = supabase_client.get_signed_download_url(
+            output_path, bucket="results", expires_in=3600
+        )
+        if not signed_url:
+            raise HTTPException(status_code=500, detail="Failed to generate signed URL")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload page image: {e}")
+
+    return {
+        "page_no": page_no,
+        "dpi": resolved_dpi,
+        "width": pix.width,
+        "height": pix.height,
+        "image_url": signed_url,
+    }
+
+
 @router.get("/admin/jobs")
 def admin_list_jobs(
     admin: CurrentUser = Depends(get_current_admin),

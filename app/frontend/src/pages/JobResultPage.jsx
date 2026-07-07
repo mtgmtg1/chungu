@@ -94,7 +94,6 @@ export default function JobResultPage() {
 
   // AI 에이전트 채팅 모달 상태
   const [chatOpen, setChatOpen] = useState(false);
-  const [chatInitialText, setChatInitialText] = useState("");
 
   const openDropdown = (setter, timerRef) => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -1042,12 +1041,7 @@ export default function JobResultPage() {
 
       {job?.status === "done" && (
         <>
-          <AgentInputBar
-            onOpenChat={(text) => {
-              setChatInitialText(text || "");
-              setChatOpen(true);
-            }}
-          />
+          <AgentInputBar onOpenChat={() => setChatOpen(true)} />
           <AgentChatModal
             isOpen={chatOpen}
             onClose={() => setChatOpen(false)}
@@ -1058,7 +1052,6 @@ export default function JobResultPage() {
               selectedFileIndex,
               activeEditor: previewMode,
             }}
-            initialText={chatInitialText}
           />
         </>
       )}

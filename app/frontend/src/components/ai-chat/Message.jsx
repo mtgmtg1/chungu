@@ -4,8 +4,9 @@
 // 어시스턴트 메시지는 좌측 Sparkles 아바타 + 전체 폭 콘텐츠,
 // 사용자 메시지는 우측 정렬 풍선으로 렌더링한다.
 import { memo, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { marked } from "marked";
-import { Sparkles } from "lucide-react";
+import { RefreshCw, Sparkles } from "lucide-react";
 import Shimmer from "./Shimmer.jsx";
 import Tool from "./Tool.jsx";
 
@@ -59,8 +60,12 @@ const MessageContent = memo(function MessageContent({ text, className = "", role
  * @param {Object} props
  * @param {Object} props.message - UIMessage (role, parts, id)
  * @param {boolean} props.isLoading - 스트리밍 중인지 여부
+ * @param {boolean} [props.isLastAssistant] - 마지막 어시스턴트 메시지인지 여부
+ * @param {() => void} [props.onRegenerate] - 마지막 어시스턴트 메시지 재생성 콜백
+ * @param {boolean} [props.canRegenerate] - 재생성 가능 여부
  */
-function PreviewMessage({ message, isLoading }) {
+function PreviewMessage({ message, isLoading, isLastAssistant, onRegenerate, canRegenerate }) {
+  const { t } = useTranslation();
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
 
@@ -137,7 +142,29 @@ function PreviewMessage({ message, isLoading }) {
               <Sparkles size={14} />
             </div>
           </div>
-          <div className="flex min-w-0 flex-1 flex-col gap-2">{content}</div>
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            {content}
+            {/* 마지막 어시스턴트 메시지 아래에 재생성 버튼 표시 */}
+            {isLastAssistant && onRegenerate && (
+              <div className="flex items-center">
+                <button
+                  type="button"
+                  onClick={onRegenerate}
+                  disabled={!canRegenerate}
+                  className={`flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium transition-colors ${
+                    canRegenerate
+                      ? "text-on-surface-variant hover:bg-surface-container-high"
+                      : "cursor-not-allowed text-on-surface-variant/30"
+                  }`}
+                  aria-label={t("page:agent.regenerate", "재생성")}
+                  data-oid="agent-message-regenerate"
+                >
+                  <RefreshCw size={12} />
+                  {t("page:agent.regenerate", "재생성")}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

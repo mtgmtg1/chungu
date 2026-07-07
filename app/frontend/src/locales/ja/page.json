@@ -214,7 +214,11 @@
       "inputPlaceholder": "AIに何を手伝いましょうか？",
       "chatTitle": "PROOF AI",
       "emptyHint": "PDF注釈、マークダウン編集、スプレッドシート操作を自然言語でリクエストできます。",
-      "toolRunning": "ツールを実行中…"
+      "toolRunning": "ツールを実行中…",
+      "newChat": "新規チャット",
+      "noConversations": "過去の会話はありません",
+      "untitled": "無題",
+      "regenerate": "再生成"
     },
     "annotateTitle": "AI注釈の生成",
     "annotateDesc": "元のスキャンPDFの表で条件に合う行をハイライトしたり、余白にコメントを追加します。例:「80万円以上振込された行」",

@@ -7,6 +7,7 @@
 // 입력값은 이 훅에서 직접 관리하고, 전송은 sendMessage({ text })로 수행한다.
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
+import type { UIMessage } from 'ai';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { getToken } from '../api.js';
 
@@ -35,18 +36,28 @@ async function buildAuthHeaders(): Promise<Record<string, string>> {
   return h;
 }
 
+export interface UseAgentChatOptions {
+  chatId?: string;
+  initialMessages?: UIMessage[];
+}
+
 /**
- * [Flow: Step 1 (context 수신) -> Step 2 (context ref 보관) -> Step 3 (useChat 설정)
- *       -> Step 4 (send/clear/status 반환)]
+ * [Flow: Step 1 (context + 옵션 수신) -> Step 2 (context ref 보관) -> Step 3 (useChat 설정)
+ *       -> Step 4 (send/clear/status/regenerate 반환)]
  *
  * context를 초기 system message 대신 transport body로 전송한다.
  * 이렇게 하면 context가 나중에 로드되어도(preview 로드 후 sourceType 확정 등)
  * 매 전송 시점의 최신 context가 백엔드에 전달된다.
  *
+ * 대화 이력 복원을 위해 chatId와 initialMessages를 받아 useChat에 전달한다.
+ * chatId가 변경되면 상위 컴포넌트에서 key prop으로 remount하여 새로운 대화를 시작해야 한다.
+ *
  * @param context 현재 Job/페이지/에디터 컨텍스트
+ * @param options 대화 ID 및 초기 메시지
  * @returns useChat 객체 + context
  */
-export function useAgentChat(context: AgentContext) {
+export function useAgentChat(context: AgentContext, options: UseAgentChatOptions = {}) {
+  const { chatId, initialMessages } = options;
   const [input, setInput] = useState('');
 
   // 최신 context를 ref로 보관하여 transport body 함수가 항상 최신 값을 읽도록 한다.
@@ -70,6 +81,8 @@ export function useAgentChat(context: AgentContext) {
   );
 
   const chat = useChat({
+    id: chatId || 'default',
+    messages: initialMessages,
     transport,
     // 도구 실행은 AI 백엔드의 streamText(stopWhen: stepCountIs(5))가 한 번의 스트림 안에서
     // 전부 처리하므로 클라이언트가 별도로 재요청할 필요가 없다. sendAutomaticallyWhen을

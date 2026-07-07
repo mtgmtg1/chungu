@@ -143,6 +143,91 @@ export async function getElements(
 }
 
 /**
+ * [Flow: Step 1 (job_id, source_index, page_no 수신) -> Step 2 (/api/jobs/{id}/annotations 조회)
+ *       -> Step 3 (주석 목록 반환)]
+ *
+ * @param jobId Job ID
+ * @param sourceIndex 주석 파일 인덱스 (기본 0)
+ * @param pageNo 1-based 페이지 번호 (optional)
+ * @param authHeaders 인증 헤더
+ */
+export async function getAnnotations(
+  jobId: string,
+  sourceIndex: number = 0,
+  pageNo?: number,
+  authHeaders?: AuthHeaders,
+): Promise<{
+  annotations: Array<Record<string, unknown>>;
+  total: number;
+}> {
+  const params = new URLSearchParams({ source_index: String(sourceIndex) });
+  if (pageNo !== undefined) params.set('page_no', String(pageNo));
+  const res = await request<{
+    annotations?: Array<Record<string, unknown>>;
+    total?: number;
+  }>(`/api/jobs/${jobId}/annotations?${params.toString()}`, 'GET', undefined, authHeaders);
+  return { annotations: res.annotations || [], total: res.total ?? 0 };
+}
+
+/**
+ * [Flow: Step 1 (job_id, page_no, dpi 수신) -> Step 2 (/api/jobs/{id}/page-image 조회)
+ *       -> Step 3 (이미지 URL 및 메타데이터 반환)]
+ *
+ * @param jobId Job ID
+ * @param pageNo 1-based 페이지 번호
+ * @param dpi 렌더링 DPI (기본 150)
+ * @param authHeaders 인증 헤더
+ */
+export async function getPageImage(
+  jobId: string,
+  pageNo: number,
+  dpi?: number,
+  authHeaders?: AuthHeaders,
+): Promise<{
+  page_no: number;
+  dpi: number;
+  width: number;
+  height: number;
+  image_url: string;
+}> {
+  const params = new URLSearchParams({ page_no: String(pageNo) });
+  if (dpi !== undefined) params.set('dpi', String(dpi));
+  return request<{
+    page_no: number;
+    dpi: number;
+    width: number;
+    height: number;
+    image_url: string;
+  }>(`/api/jobs/${jobId}/page-image?${params.toString()}`, 'GET', undefined, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (job_id, annotation_id, source_index, payload 수신)
+ *       -> Step 2 (/api/jobs/{id}/annotations/{annotation_id} 수정) -> Step 3 (수정 결과 반환)]
+ *
+ * @param jobId Job ID
+ * @param annotationId 주석 ID
+ * @param sourceIndex 주석 파일 인덱스 (기본 0)
+ * @param payload 수정할 필드 (color, comment, opacity)
+ * @param authHeaders 인증 헤더
+ */
+export async function updateAnnotation(
+  jobId: string,
+  annotationId: string,
+  sourceIndex: number = 0,
+  payload: { color?: string; comment?: string; opacity?: number } = {},
+  authHeaders?: AuthHeaders,
+): Promise<{ ok: boolean; annotation_id?: string; updated_fields?: string[] }> {
+  const params = new URLSearchParams({ source_index: String(sourceIndex) });
+  return request<{ ok: boolean; annotation_id?: string; updated_fields?: string[] }>(
+    `/api/jobs/${jobId}/annotations/${encodeURIComponent(annotationId)}?${params.toString()}`,
+    'PATCH',
+    payload,
+    authHeaders,
+  );
+}
+
+/**
  * [Flow: Step 1 (job_id, source_index, annotations 수신) -> Step 2 (/api/jobs/{id}/user-annotations 저장)
  *       -> Step 3 (저장 결과 반환)]
  *

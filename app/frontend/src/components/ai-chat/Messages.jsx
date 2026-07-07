@@ -63,12 +63,16 @@ function useMessages({ status }) {
  * @param {Array} props.messages - UIMessage 배열
  * @param {string} props.status - useChat status
  * @param {boolean} [props.isLoading] - 외부 로딩 상태
+ * @param {() => void} [props.onRegenerate] - 마지막 어시스턴트 메시지 재생성 콜백
+ * @param {boolean} [props.canRegenerate] - 재생성 가능 여부
  */
-export default function Messages({ messages, status, isLoading }) {
+export default function Messages({ messages, status, isLoading, onRegenerate, canRegenerate }) {
   const { containerRef, endRef, isAtBottom, scrollToBottom, handleScroll } = useMessages({ status });
 
   const showThinking =
     status === "submitted" && messages.at(-1)?.role !== "assistant";
+
+  const lastAssistantIndex = messages.map((m) => m.role).lastIndexOf("assistant");
 
   return (
     <div className="relative flex-1 bg-background">
@@ -93,6 +97,9 @@ export default function Messages({ messages, status, isLoading }) {
               key={message.id}
               message={message}
               isLoading={status === "streaming" && messages.length - 1 === index}
+              isLastAssistant={index === lastAssistantIndex}
+              onRegenerate={onRegenerate}
+              canRegenerate={canRegenerate}
             />
           ))}
 

@@ -32,8 +32,22 @@ services:
       - SANDBOX_BROWSERLESS_URL=${SANDBOX_BROWSERLESS_URL:-http://192.168.1.50:20047}
     ports:
       - "${APP_PORT:-28181}:28181"
+    # privileged: 호스트 containerd socket 에 접근하여 Kata VM 을 생성/관리하려면 필요.
+    # nerdctl 이 containerd shim 을 실행하고 Kata VM 프로세스를 제어해야 함.
+    privileged: true
     volumes:
-      - appdata:/data
+      # appdata volume 의 호스트 경로를 직접 마운트 — nerdctl 이 호스트 경로 기준으로
+      # Kata VM 에 bind mount 하므로 컨테이너 내부 /data 가 호스트 /data 와 동일해야 함.
+      - /var/lib/docker/volumes/chungu-app_appdata/_data:/data
+      # Kata Containers 샌드박스: 호스트 containerd socket + Kata 설정 공유
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock
+      - /opt/kata:/opt/kata:ro
+      - /etc/kata-containers:/etc/kata-containers:ro
+      - /usr/local/bin/containerd-shim-kata-clh-v2:/usr/local/bin/containerd-shim-kata-clh-v2:ro
+      - /usr/local/bin/containerd-shim-kata-clh-dense-v2:/usr/local/bin/containerd-shim-kata-clh-dense-v2:ro
+      - /var/lib/containerd:/var/lib/containerd:ro
+      - /opt/cni/bin:/opt/cni/bin:ro
+      - /var/lib/nerdctl:/var/lib/nerdctl
     depends_on:
       redis:
         condition: service_healthy

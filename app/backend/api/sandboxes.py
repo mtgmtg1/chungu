@@ -135,6 +135,70 @@ async def create_sandbox(
     return result
 
 
+@router.get("/stats")
+async def get_sandbox_stats(
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """[Flow: Step 1 (sandbox 통계 조회) -> Step 2 (상태별 카운트 + 디스크 사용량) -> Step 3 (결과 반환)]
+
+    관리자용 sandbox 통계 엔드포인트. 활성 sandbox 수, 누적 생성 수,
+    상태별 분포, 디스크 사용량을 반환한다.
+    """
+    # [Flow: Step 1 (sandbox 통계 조회) -> Step 2 (상태별 카운트 + 디스크 사용량) -> Step 3 (결과 반환)]
+    from sqlalchemy import func, case
+
+    # 상태별 카운트
+    status_counts = db.execute(
+        select(
+            Sandbox.status,
+            func.count(Sandbox.id).label("count"),
+        ).group_by(Sandbox.status)
+    ).all()
+
+    status_map = {row.status: row.count for row in status_counts}
+    total_created = sum(status_map.values())
+    active_count = status_map.get("running", 0) + status_map.get("creating", 0)
+
+    # 사용자별 활성 sandbox 수 (관리자만 조회 가능)
+    user_stats = []
+    if user.is_admin:
+        user_active = db.execute(
+            select(
+                Sandbox.user_id,
+                func.count(Sandbox.id).label("count"),
+            )
+            .where(Sandbox.status.in_(["running", "creating"]))
+            .group_by(Sandbox.user_id)
+        ).all()
+        user_stats = [{"user_id": str(row.user_id), "active_count": row.count} for row in user_active]
+
+    # 디스크 사용량 (sandbox_data_dir 의 전체 크기)
+    disk_usage = None
+    try:
+        import shutil
+        data_dir = settings.sandbox_data_dir
+        if Path(data_dir).exists():
+            total, used, free = shutil.disk_usage(data_dir)
+            disk_usage = {
+                "total_gb": round(total / (1024 ** 3), 1),
+                "used_gb": round(used / (1024 ** 3), 1),
+                "free_gb": round(free / (1024 ** 3), 1),
+            }
+    except Exception as e:
+        logger.warning(f"디스크 사용량 조회 실패: {e}")
+
+    return {
+        "active_count": active_count,
+        "total_created": total_created,
+        "status_breakdown": status_map,
+        "max_concurrent": settings.sandbox_max_concurrent,
+        "max_concurrent_dense": settings.sandbox_max_concurrent_dense,
+        "disk_usage": disk_usage,
+        "user_stats": user_stats if user.is_admin else None,
+    }
+
+
 @router.get("/{sandbox_id}")
 async def get_sandbox(
     sandbox_id: str,
@@ -444,68 +508,4 @@ async def list_sandboxes(
             for s in sandboxes
         ],
         "count": len(sandboxes),
-    }
-
-
-@router.get("/stats")
-async def get_sandbox_stats(
-    user: CurrentUser = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    """[Flow: Step 1 (sandbox 통계 조회) -> Step 2 (상태별 카운트 + 디스크 사용량) -> Step 3 (결과 반환)]
-
-    관리자용 sandbox 통계 엔드포인트. 활성 sandbox 수, 누적 생성 수,
-    상태별 분포, 디스크 사용량을 반환한다.
-    """
-    # [Flow: Step 1 (sandbox 통계 조회) -> Step 2 (상태별 카운트 + 디스크 사용량) -> Step 3 (결과 반환)]
-    from sqlalchemy import func, case
-
-    # 상태별 카운트
-    status_counts = db.execute(
-        select(
-            Sandbox.status,
-            func.count(Sandbox.id).label("count"),
-        ).group_by(Sandbox.status)
-    ).all()
-
-    status_map = {row.status: row.count for row in status_counts}
-    total_created = sum(status_map.values())
-    active_count = status_map.get("running", 0) + status_map.get("creating", 0)
-
-    # 사용자별 활성 sandbox 수 (관리자만 조회 가능)
-    user_stats = []
-    if user.is_admin:
-        user_active = db.execute(
-            select(
-                Sandbox.user_id,
-                func.count(Sandbox.id).label("count"),
-            )
-            .where(Sandbox.status.in_(["running", "creating"]))
-            .group_by(Sandbox.user_id)
-        ).all()
-        user_stats = [{"user_id": str(row.user_id), "active_count": row.count} for row in user_active]
-
-    # 디스크 사용량 (sandbox_data_dir 의 전체 크기)
-    disk_usage = None
-    try:
-        import shutil
-        data_dir = settings.sandbox_data_dir
-        if Path(data_dir).exists():
-            total, used, free = shutil.disk_usage(data_dir)
-            disk_usage = {
-                "total_gb": round(total / (1024 ** 3), 1),
-                "used_gb": round(used / (1024 ** 3), 1),
-                "free_gb": round(free / (1024 ** 3), 1),
-            }
-    except Exception as e:
-        logger.warning(f"디스크 사용량 조회 실패: {e}")
-
-    return {
-        "active_count": active_count,
-        "total_created": total_created,
-        "status_breakdown": status_map,
-        "max_concurrent": settings.sandbox_max_concurrent,
-        "max_concurrent_dense": settings.sandbox_max_concurrent_dense,
-        "disk_usage": disk_usage,
-        "user_stats": user_stats if user.is_admin else None,
     }

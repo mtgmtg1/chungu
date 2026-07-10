@@ -59,12 +59,15 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
   - `app/frontend/src/pages/JobResultPage.jsx`: sandboxId state, SandboxBrowser 패널 + 토글 버튼, AgentChatModal context에 sandboxId 전달.
   - `app/frontend/src/api.js`: sandbox API 메서드 12개 추가 (createSandbox, getSandbox, executeInSandbox, listSandboxFiles, readSandboxFile, writeSandboxFile, commitSandboxChanges, getSandboxDiff, collectSandboxResults, destroySandbox, getSandboxStats).
   - `app/frontend/src/locales/{ko,en,ja}/page.json`: sandbox i18n 키 22개 추가 (runInSandbox, sandboxStatus, fileBrowser, collectResults, stats 등).
+  - `app/frontend/src/components/UploadWidget.jsx`: 파일/폴더 입력을 `<label>` + `<input ref>` 패턴으로 리팩터링 (버튼 클릭 → 숨겨진 input click 간접 트리거 제거). `jobId`/`onProgress` props 추가로 기존 Job에 파일 추가 모드 지원.
+  - `app/frontend/src/api.js`: `initAddFiles`/`confirmAddFiles` 메서드 추가 (기존 Job 파일 추가 — 백엔드 엔드포인트 구현 필요).
 - **Phase 8: 운영 (자동 정리 + 통계)**:
   - `app/backend/workers/tasks.py`: `cleanup_expired_sandboxes` Celery task — 만료된 sandbox 자동 종료 + 결과 수집 (sandbox_default_timeout 초과 시).
   - `app/backend/celery_app.py`: beat_schedule에 10분 간격 cleanup-expired-sandboxes 등록.
   - `app/backend/api/sandboxes.py`: `/api/sandboxes/stats` 엔드포인트 — 상태별 카운트, 디스크 사용량, 사용자별 활성 sandbox 수 (관리자용).
 - **인프라 통합**:
-  - `app/docker-compose.yml`: backend 서비스에 SANDBOX_* 환경변수 6개, ai-backend 서비스에 BROWSERLESS_URL/BROWSERLESS_TOKEN 추가.
+  - `app/docker-compose.yml`: backend 서비스에 SANDBOX_* 환경변수 6개, ai-backend 서비스에 BROWSERLESS_URL/BROWSERLESS_TOKEN 추가. backend 서비스 `privileged: true` + 호스트 containerd socket/Kata 설정/nerdctl 볼륨 마운트 (Kata VM 생성/관리용). appdata volume 의 호스트 경로를 직접 마운트 (nerdctl bind mount 경로 일치).
+  - `app/Dockerfile.backend`: nerdctl 바이너리 설치 (호스트 containerd socket 통해 Kata VM 생성), git/curl 추가.
   - `app/.env.example`: sandbox 환경변수 10개 + browserless 환경변수 2개 추가.
 - **메모리 최적화 전략** (300+ VM 달성):
   - browserless 서버 공유 (a1, ~500MB/VM 절약).

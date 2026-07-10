@@ -116,7 +116,7 @@ class WorkspaceManager:
                 cwd=workspace_path, capture_output=True, check=True,
             )
             logger.info("git 초기화 완료: %s", workspace_path)
-        except subprocess.CalledProcessError as e:
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
             logger.warning("git 초기화 실패 (무시): %s", e)
 
     def download_job_files(

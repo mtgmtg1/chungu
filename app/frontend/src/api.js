@@ -68,6 +68,9 @@ export const api = {
   uploadJob: (formData) => request('/api/jobs/upload', { method: 'POST', body: formData }),
   initJob: (payload) => request('/api/jobs/init', { method: 'POST', body: JSON.stringify(payload) }),
   createJob: (jobId, payload) => request(`/api/jobs/${jobId}/create`, { method: 'POST', body: JSON.stringify(payload) }),
+  // 기존 Job 에 파일 추가 (initAddFiles → TUS 업로드 → confirmAddFiles)
+  initAddFiles: (jobId, payload) => request(`/api/jobs/${jobId}/init-add-files`, { method: 'POST', body: JSON.stringify(payload) }),
+  confirmAddFiles: (jobId, payload) => request(`/api/jobs/${jobId}/confirm-add-files`, { method: 'POST', body: JSON.stringify(payload) }),
   updateJob: (id, payload) => request(`/api/jobs/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   confirmJob: (id) => request(`/api/jobs/${id}/confirm`, { method: 'POST' }),
   getJob: (id) => request(`/api/jobs/${id}`),

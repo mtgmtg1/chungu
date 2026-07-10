@@ -79,3 +79,13 @@ Thumbs.db
 package-lock.json
 .gstack/
 .playwright-mcp/
+
+# Kata guest binaries (21MB+ — 호스트에서 추출, git 에 제외)
+infra/kata-guest/kata-agent
+infra/kata-guest/kata-agent.service.real
+
+# Backup files
+*.bak
+
+# Test artifacts
+dummy_test.txt

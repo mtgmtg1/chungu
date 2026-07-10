@@ -109,10 +109,9 @@ install_kata() {
     info "  다운로드: ${KATA_URL}"
     wget -q -O "${tmpdir}/${KATA_TARBALL}" "${KATA_URL}"
 
-    # /opt/kata 에 압축 해제
-    mkdir -p "${KATA_INSTALL_DIR}"
-    info "  압축 해제: ${KATA_INSTALL_DIR}"
-    tar --zstd -xf "${tmpdir}/${KATA_TARBALL}" -C "${KATA_INSTALL_DIR}"
+    # tarball 내부 경로가 ./opt/kata/ 임 — 루트(/)에 추출하면 /opt/kata/ 에 위치
+    info "  압축 해제: /opt/kata"
+    tar --zstd -xf "${tmpdir}/${KATA_TARBALL}" -C /
 
     # 바이너리 확인
     [[ -x "${KATA_INSTALL_DIR}/bin/cloud-hypervisor" ]] || error "cloud-hypervisor 바이너리 없음"

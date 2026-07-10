@@ -1,5 +1,5 @@
 // [Flow: Step 1 (onComplete 콜백 수신) -> Step 2 (파일/폴더 드래그앤드롭 + input 선택) -> Step 3 (중복 제거 후 파일 목록 관리) -> Step 4 (제출 시 initJob + TUS 업로드 + createJob) -> Step 5 (완료 시 onComplete(jobId) 호출)]
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { FileUp, Loader2, X } from "lucide-react";
@@ -14,18 +14,28 @@ import { useAuth } from "../AuthContext.jsx";
  * 완료된 jobId를 onComplete 콜백으로 전달합니다.
  *
  * @param {object} props
- * @param {(jobId: string) => void} props.onComplete - 업로드 및 createJob 완료 시 호출
+ * @param {(jobId: string) => void} props.onComplete - 업로드 및 createJob/confirm 완료 시 호출
  * @param {string} [props.submitLabel] - 제출 버튼에 표시할 텍스트 (미지정 시 "변환 시작")
+ * @param {string} [props.jobId] - 기존 Job에 파일을 추가하는 모드일 때 사용
+ * @param {(progress: object) => void} [props.onProgress] - 업로드 진행률 변경 시 호출
  */
-export default function UploadWidget({ onComplete, submitLabel }) {
+export default function UploadWidget({ onComplete, submitLabel, jobId, onProgress }) {
   const { t } = useTranslation();
   const { user } = useAuth();
   const nav = useNavigate();
+  const fileInputRef = useRef(null);
+  const folderInputRef = useRef(null);
   const [files, setFiles] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [doclingRefinement, setDoclingRefinement] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, percent: 0, fileName: "" });
+
+  // [Flow: Step 1 (새 진행률 상태 설정) -> Step 2 (상위 컴포넌트에 동일한 상태 전달)]
+  function updateProgress(next) {
+    setUploadProgress(next);
+    if (onProgress) onProgress(next);
+  }
 
   // [Flow: Step 1 (기존 파일 집합 생성) -> Step 2 (새 파일들의 이름+크기 중복 검사) -> Step 3 (중복이 아닌 파일만 병합)]
   function addFiles(newFiles) {
@@ -109,20 +119,23 @@ export default function UploadWidget({ onComplete, submitLabel }) {
         relative_path: f.webkitRelativePath || f.name,
       }));
 
-      const initRes = await api.initJob({
-        files: filesPayload,
-        docling_refinement: doclingRefinement,
-      });
+      const isAddMode = Boolean(jobId);
+      const initRes = isAddMode
+        ? await api.initAddFiles(jobId, { files: filesPayload })
+        : await api.initJob({
+            files: filesPayload,
+            docling_refinement: doclingRefinement,
+          });
 
       const uploadItems = files.map((f, i) => ({
         file: f,
         storagePath: initRes.upload_paths[i].storage_path,
       }));
 
-      setUploadProgress({ current: 0, total: files.length, percent: 0, fileName: files[0]?.name || "" });
+      updateProgress({ current: 0, total: files.length, percent: 0, fileName: files[0]?.name || "" });
 
       await uploadFilesTUS(uploadItems, (fileIndex, pct) => {
-        setUploadProgress({
+        updateProgress({
           current: fileIndex,
           total: files.length,
           percent: pct,
@@ -138,13 +151,18 @@ export default function UploadWidget({ onComplete, submitLabel }) {
         })),
       };
 
-      const res = await api.createJob(initRes.job_id, createPayload);
-      if (onComplete) onComplete(res.job_id);
+      if (isAddMode) {
+        await api.confirmAddFiles(jobId, createPayload);
+        if (onComplete) onComplete(jobId);
+      } else {
+        const res = await api.createJob(initRes.job_id, createPayload);
+        if (onComplete) onComplete(res.job_id);
+      }
     } catch (e) {
       setError(e.message);
     } finally {
       setSubmitting(false);
-      setUploadProgress({ current: 0, total: 0, percent: 0, fileName: "" });
+      updateProgress({ current: 0, total: 0, percent: 0, fileName: "" });
     }
   }
 
@@ -176,49 +194,39 @@ export default function UploadWidget({ onComplete, submitLabel }) {
             {t("page:upload.fileTypes")}
           </p>
           <div className="mt-6 flex items-center gap-3" data-oid="upload-widget-buttons">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                document.getElementById("upload-widget-file-input").click();
-              }}
-              className="px-5 py-2.5 bg-primary text-on-primary font-headline-md hover:bg-primary-container transition-all shadow-md"
+            <label
+              className="px-5 py-2.5 bg-primary text-on-primary font-headline-md hover:bg-primary-container transition-all shadow-md cursor-pointer"
               data-oid="upload-widget-select-files"
             >
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                accept={ACCEPT_TYPES}
+                onChange={(e) => { addFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
+                data-oid="upload-widget-file-input"
+              />
               {t("page:upload.selectFiles")}
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                document.getElementById("upload-widget-folder-input").click();
-              }}
-              className="px-5 py-2.5 border border-outline-variant text-on-surface font-headline-md hover:bg-surface-container transition-all"
+            </label>
+            <label
+              className="px-5 py-2.5 border border-outline-variant text-on-surface font-headline-md hover:bg-surface-container transition-all cursor-pointer"
               data-oid="upload-widget-select-folder"
             >
+              <input
+                ref={folderInputRef}
+                type="file"
+                webkitdirectory=""
+                directory=""
+                multiple
+                className="hidden"
+                accept={ACCEPT_TYPES}
+                onChange={(e) => { addFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
+                data-oid="upload-widget-folder-input"
+              />
               {t("page:upload.selectFolder")}
-            </button>
+            </label>
           </div>
-          <input
-            id="upload-widget-file-input"
-            type="file"
-            multiple
-            className="hidden"
-            accept={ACCEPT_TYPES}
-            onChange={(e) => { addFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
-            data-oid="upload-widget-file-input"
-          />
-          <input
-            id="upload-widget-folder-input"
-            type="file"
-            webkitdirectory=""
-            directory=""
-            multiple
-            className="hidden"
-            accept={ACCEPT_TYPES}
-            onChange={(e) => { addFiles(Array.from(e.target.files || [])); e.target.value = ""; }}
-            data-oid="upload-widget-folder-input"
-          />
         </div>
       </div>
 

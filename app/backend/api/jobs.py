@@ -3320,11 +3320,12 @@ def search_job_text(
 
 def _resolve_annotations_json_path(job: Job, source_index: int) -> str | None:
     """[Flow: Step 1 (annotated_pdf_files 확인) -> Step 2 (source_index 0이면 1로 매핑)
-          -> Step 3 (source_index에 해당하는 entry 찾기) -> Step 4 (annotations_json_storage_path 반환)
-          -> Step 5 (공유 경로 폴백)]
+          -> Step 3 (source_index에 해당하는 entry 찾기) -> Step 4 (유효한 JSON 경로가 없으면 최신 완료 run으로 폴백)
+          -> Step 5 (annotations_json_storage_path 반환) -> Step 6 (공유 경로 폴백)]
 
     AI 주석 run의 인덱스로부터 해당 run의 주석 JSON Storage 경로를 반환한다.
     source_index 0은 하위 호환을 위해 첫 번째 AI 주석 run(인덱스 1)으로 매핑된다.
+    요청한 run이 아직 진행 중이거나 JSON 경로가 없으면, 완료된 가장 최근 run으로 폴백한다.
     """
     entries = list(job.annotated_pdf_files or [])
     if source_index == 0:
@@ -3342,11 +3343,21 @@ def _resolve_annotations_json_path(job: Job, source_index: int) -> str | None:
         ]
 
     entry = next((e for e in entries if e.get("index") == source_index), None)
+    if entry is None or not entry.get("annotations_json_storage_path"):
+        # 요청한 run이 없거나 JSON이 없으면, 완료된 최신 run으로 폴백
+        fallback = next(
+            (e for e in reversed(entries) if e.get("status") == "done" and e.get("annotations_json_storage_path")),
+            None,
+        )
+        if fallback is not None:
+            entry = fallback
+            source_index = fallback.get("index", source_index)
+
     if entry is None:
         return None
     path = entry.get("annotations_json_storage_path")
     if not path:
-        return f"{job.id}/annotated.annotations.json"
+        return f"{job.id}/annotated_{source_index}.annotations.json"
     return path
 
 

@@ -88,6 +88,26 @@ class SandboxManager:
             "/data", "/var/lib/docker/volumes/chungu-app_appdata/_data", 1
         )
 
+    def _wait_for_container_running(self, container_name: str, timeout: int = 30) -> str:
+        """컨테이너가 running 상태가 될 때까지 폴링한다.
+
+        [Flow: nerdctl inspect 폴링 -> running 확인 또는 타임아웃]
+
+        매개변수:
+            container_name: 컨테이너 이름
+            timeout: 최대 대기 시간 (초)
+
+        반환값:
+            "running" 또는 "starting" (타임아웃 시)
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            status_result = self.get_status(container_name)
+            if status_result.get("status") == "running":
+                return "running"
+            time.sleep(2)
+        return "starting"
+
     def create_sandbox(
         self,
         job_id: str,
@@ -166,11 +186,17 @@ class SandboxManager:
 
             container_id = result.stdout.strip()
 
-            # Step 3: VM 부팅 대기 (vsock 통신 가능할 때까지)
-            communicator = VsockCommunicator(sandbox_id, container_name)
-            ready = communicator.wait_for_ready(timeout=30)
+            # Step 3: VM 부팅 대기 — nerdctl inspect 로 컨테이너가 running 상태가 될 때까지 폴링
+            # vsock 통신이 불가능한 환경에서도 nerdctl exec 로 명령 실행이 가능하므로
+            # 컨테이너 상태 기반으로 running 여부 판단.
+            status = self._wait_for_container_running(container_name, timeout=30)
 
-            status = "running" if ready else "starting"
+            # vsock 통신 시도 (선택적 — 실패해도 nerdctl exec 로 동작 가능)
+            try:
+                communicator = VsockCommunicator(sandbox_id, container_name)
+                communicator.wait_for_ready(timeout=5)
+            except Exception:
+                pass  # vsock 실패는 무시 — nerdctl exec 폴백 사용
 
             logger.info("sandbox 생성 완료: id=%s, container=%s, status=%s", sandbox_id, container_id[:12], status)
 

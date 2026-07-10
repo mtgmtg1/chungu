@@ -219,12 +219,17 @@ async def get_sandbox(
     if str(sandbox.user_id) != user.user_id and not user.is_admin:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # 컨테이너 상태 갱신
+    # 컨테이너 실제 상태 조회 및 DB 동기화
+    # starting 상태에서도 컨테이너가 running 이면 DB 를 갱신해야 함.
     mgr = _get_sandbox_mgr()
-    if sandbox.container_name and sandbox.status == "running":
+    if sandbox.container_name and sandbox.status in ("running", "starting", "creating"):
         status_result = mgr.get_status(sandbox.container_name)
-        if status_result.get("status") not in ("running", "starting"):
-            sandbox.status = status_result.get("status", "stopped")
+        actual_status = status_result.get("status", "unknown")
+        if actual_status == "running" and sandbox.status != "running":
+            sandbox.status = "running"
+            db.commit()
+        elif actual_status not in ("running", "starting", "unknown"):
+            sandbox.status = actual_status
             db.commit()
 
     return {
@@ -259,6 +264,19 @@ async def execute_command(
 
     if str(sandbox.user_id) != user.user_id and not user.is_admin:
         raise HTTPException(status_code=403, detail="Access denied")
+
+    # starting 상태일 때 컨테이너 실제 상태를 확인하여 DB 동기화
+    if sandbox.status in ("starting", "creating"):
+        mgr = _get_sandbox_mgr()
+        status_result = mgr.get_status(sandbox.container_name)
+        if status_result.get("status") == "running":
+            sandbox.status = "running"
+            db.commit()
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Sandbox is not running yet (status={sandbox.status})",
+            )
 
     if sandbox.status != "running":
         raise HTTPException(status_code=409, detail=f"Sandbox is not running (status={sandbox.status})")

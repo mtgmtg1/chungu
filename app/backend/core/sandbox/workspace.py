@@ -59,10 +59,28 @@ class WorkspaceManager:
         # Step 3: git 초기화
         self._init_git(workspace_path)
 
+        # Step 4: git 초기화 후 생성된 .git 디렉토리 소유자 변경
+        # _create_directory_structure 에서 chown 을 먼저 하지만, git init/commit 이
+        # root 권한으로 실행되어 .git 내부 파일이 root 소유가 되므로 다시 변경.
+        try:
+            import os
+            for item in workspace_path.rglob("*"):
+                os.chown(item, 1000, 1000)
+            os.chown(workspace_path, 1000, 1000)
+        except PermissionError:
+            logger.warning("workspace 소유자 재변경 실패 (권한 없음): %s", workspace_path)
+        except Exception as e:
+            logger.warning("workspace 소유자 재변경 중 오류: %s", e)
+
         return workspace_path
 
     def _create_directory_structure(self, workspace_path: Path) -> None:
         """workspace 디렉토리 구조를 생성한다.
+
+        [Flow: 디렉토리 생성 -> .gitignore 작성 -> 소유자를 agent(1000:1000)로 변경]
+
+        Kata VM 컨테이너는 --user 1000:1000 으로 실행되므로,
+        workspace 디렉토리의 소유자를 1000:1000 으로 변경해야 쓰기 가능.
 
         매개변수:
             workspace_path: workspace 루트 경로
@@ -82,6 +100,18 @@ class WorkspaceManager:
                 "# Node.js\nnode_modules/\nnpm-debug.log*\n",
                 encoding="utf-8",
             )
+
+        # 소유자를 agent(UID 1000, GID 1000)로 변경
+        # backend 컨테이너는 privileged 모드로 실행되므로 chown 가능
+        try:
+            import os
+            for item in workspace_path.rglob("*"):
+                os.chown(item, 1000, 1000)
+            os.chown(workspace_path, 1000, 1000)
+        except PermissionError:
+            logger.warning("workspace 소유자 변경 실패 (권한 없음): %s", workspace_path)
+        except Exception as e:
+            logger.warning("workspace 소유자 변경 중 오류: %s", e)
 
     def _init_git(self, workspace_path: Path) -> None:
         """workspace 에 git 저장소를 초기화한다.

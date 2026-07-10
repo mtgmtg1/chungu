@@ -357,14 +357,39 @@ export function buildAnnotationTools(context: AnnotationContext) {
         if (pending.length === 0 && removals.length === 0) {
           return { saved: false, reason: 'No pending annotations or removals' };
         }
-        const { pageDimensions } = await loadElements();
-        // [Flow: Step 1 (pending 주석을 embedpdf AnnotationTransferItem[] 형식으로 변환)
-        //       -> Step 2 (FastAPI /user-annotations 로 저장) -> Step 3 (결과 반환)]
-        const annotations = pending.map((p) =>
-          _buildAnnotationItem(p, pageDimensions),
-        );
-        await proofApi.saveAnnotations(jobId, sourceIndex, annotations, authHeaders);
-        return { saved: true, count: annotations.length, removals: removals.length };
+        try {
+          const { pageDimensions } = await loadElements();
+          // [Flow: Step 1 (pending 주석을 embedpdf AnnotationTransferItem[] 형식으로 변환)
+          //       -> Step 2 (FastAPI /user-annotations 로 저장) -> Step 3 (결과 반환)]
+          const annotations = pending.map((p) =>
+            _buildAnnotationItem(p, pageDimensions),
+          );
+
+          // annotated_pdf_files가 없는 원본 PDF(아직 AI 주석이 생성된 적 없는 문서)에서는
+          // source_index=0으로 저장 시 404가 발생하므로, source_index=-1로 fallback하여
+          // {job_id}/user_annotations.json에 저장한다.
+          let saveSourceIndex = sourceIndex;
+          try {
+            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, authHeaders);
+          } catch (firstErr) {
+            if (saveSourceIndex >= 0) {
+              saveSourceIndex = -1;
+              await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, authHeaders);
+            } else {
+              throw firstErr;
+            }
+          }
+          return {
+            saved: true,
+            count: annotations.length,
+            removals: removals.length,
+            source_index: saveSourceIndex,
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[apply_annotations] job=${jobId}: ${msg}`);
+          return { error: `apply_annotations failed: ${msg}` };
+        }
       },
     }),
 

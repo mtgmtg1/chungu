@@ -163,27 +163,33 @@ export function buildAnnotationTools(context: AnnotationContext) {
         summary_only: z.boolean().optional().describe('true면 요약 필드만 반환 (id/type/page_no/color/comment). 생략 시 원본 JSON 전체 반환'),
       }),
       execute: async ({ page_no, summary_only }) => {
-        const { annotations, total } = await proofApi.getAnnotations(jobId, sourceIndex, page_no, authHeaders);
-        const sliced = annotations.slice(0, 80);
-        if (summary_only) {
-          return {
-            annotations: sliced.map((a) => {
-              const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
-                ? (a as any).annotation
-                : a;
-              return {
-                id: inner.id,
-                type: inner.type,
-                page_no: (inner.pageIndex ?? 0) + 1,
-                color: inner.color,
-                comment: inner.contents,
-              };
-            }),
-            total,
-          };
+        try {
+          const { annotations, total } = await proofApi.getAnnotations(jobId, sourceIndex, page_no, authHeaders);
+          const sliced = annotations.slice(0, 80);
+          if (summary_only) {
+            return {
+              annotations: sliced.map((a) => {
+                const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
+                  ? (a as any).annotation
+                  : a;
+                return {
+                  id: inner.id,
+                  type: inner.type,
+                  page_no: (inner.pageIndex ?? 0) + 1,
+                  color: inner.color,
+                  comment: inner.contents,
+                };
+              }),
+              total,
+            };
+          }
+          // 원본 JSON 전체 구조 반환 — EmbedPDF AnnotationTransferItem[] 형식 그대로
+          return { annotations: sliced, total };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[get_annotations] job=${jobId} page_no=${page_no}: ${msg}`);
+          return { error: `get_annotations failed: ${msg}` };
         }
-        // 원본 JSON 전체 구조 반환 — EmbedPDF AnnotationTransferItem[] 형식 그대로
-        return { annotations: sliced, total };
       },
     }),
 

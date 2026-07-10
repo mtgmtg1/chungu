@@ -326,15 +326,16 @@ def collect_elements_for_agent(
     job_id: str,
     page_range: list[int] | None = None,
     dpi: int = RENDER_DPI,
-) -> tuple[list[dict], bytes | None]:
+) -> tuple[list[dict], bytes | None, dict[int, dict]]:
     """[Flow: Step 1 (job_id로 Job 조회) -> Step 2 (searchable PDF 여부 확인)
           -> Step 3 (searchable PDF 또는 PaddleOCR로 elements 추출)
           -> Step 4 (page_range 필터링) -> Step 5 (픽셀 bbox를 PDF 포인트로 변환)
-          -> Step 6 (agent가 사용할 JSON serializable dict 목록 + 주석 베이스 PDF bytes 반환)]
+          -> Step 6 (agent가 사용할 JSON serializable dict 목록 + 주석 베이스 PDF bytes + OCR layout 반환)]
 
     LangGraph annotator agent가 사용할 텍스트 요소 목록을 추출한다.
     PDF 좌표는 이미지 픽셀 좌표를 PDF 포인트로 변환해 state["elements"]에 저장한다.
     함께 반환된 pdf_bytes는 agent가 최종 주석 JSON을 생성할 때 사용한다.
+    layout_by_page는 agent 도구에서 재사용할 수 있도록 Storage에 저장할 수 있다.
     """
     db = SessionLocal()
     try:
@@ -342,8 +343,9 @@ def collect_elements_for_agent(
     finally:
         db.close()
     if job is None:
-        return [], None
+        return [], None, {}
 
+    layout_by_page: dict[int, dict] = {}
     with tempfile.TemporaryDirectory() as tmpdir:
         temp_dir = Path(tmpdir)
         searchable_pdf_bytes: bytes | None = None
@@ -360,7 +362,7 @@ def collect_elements_for_agent(
         else:
             elements, corrected_images, layout_by_page = _collect_page_elements(job, temp_dir, page_range=page_range)
             if not corrected_images:
-                return [], None
+                return [], None, layout_by_page
             pdf_bytes = _images_to_pdf(corrected_images)
             page_ocr_results = extract_page_ocr_results_from_layout(layout_by_page)
             if page_ocr_results:
@@ -369,7 +371,7 @@ def collect_elements_for_agent(
                 )
 
         if not elements:
-            return [], pdf_bytes
+            return [], pdf_bytes, layout_by_page
 
         page_point_sizes = _page_point_sizes(pdf_bytes)
         if page_range is not None:
@@ -398,7 +400,58 @@ def collect_elements_for_agent(
                     "cell_bboxes_pdf": cell_bboxes_pdf,
                 }
             )
-        return results, pdf_bytes
+        return results, pdf_bytes, layout_by_page
+
+
+def build_agent_elements_from_ocr_layout(
+    layout_by_page: dict[int, dict],
+    pdf_bytes: bytes,
+    page_range: list[int] | None = None,
+    dpi: int = RENDER_DPI,
+) -> list[dict]:
+    """[Flow: Step 1 (page_range 필터링) -> Step 2 (pdf_bytes에서 페이지 크기 추출)
+          -> Step 3 (layout_by_page 파싱) -> Step 4 (표 행 + 텍스트 블록 → PDF 좌표 변환)
+          -> Step 5 (agent용 요소 목록 반환)]
+
+    이미 확보된 OCR layout_by_page로부터 AI 에이전트가 사용할 페이지 요소 목록을 생성한다.
+    collect_elements_for_agent()와 동일한 좌표 변환 및 텍스트 추출 로직을 재사용한다.
+
+    Args:
+        layout_by_page: page_no(1-based) → PaddleOCR layout 원본 dict
+        pdf_bytes: 페이지 크기를 알기 위한 PDF bytes
+        page_range: 1-based 페이지 번호 리스트. None이면 모든 페이지
+        dpi: 렌더링 DPI
+
+    Returns:
+        agent용 요소 dict 목록 (page_no, bbox_pdf, text, kind)
+    """
+    page_point_sizes = _page_point_sizes(pdf_bytes)
+    page_set = set(page_range) if page_range is not None else None
+    results: list[dict] = []
+    for page_no, layout_raw in layout_by_page.items():
+        if page_set is not None and page_no not in page_set:
+            continue
+        page_width_pt, page_height_pt = page_point_sizes.get(page_no, (0.0, 0.0))
+        page_height_px = page_height_pt * float(dpi) / PDF_POINTS_PER_INCH if page_height_pt else None
+        layout = parse_layout_result(layout_raw, page_no=page_no)
+        for table in layout.tables:
+            for row in table.rows:
+                if not any(cell.strip() for cell in row.cell_texts):
+                    continue
+                results.append({
+                    "page_no": page_no,
+                    "bbox_pdf": px_bbox_to_pdf_rect(row.bbox_px, dpi, page_height_px),
+                    "text": _row_to_text(row),
+                    "kind": "table_row",
+                })
+        for tb in layout.text_blocks:
+            results.append({
+                "page_no": page_no,
+                "bbox_pdf": px_bbox_to_pdf_rect(tb.bbox_px, dpi, page_height_px),
+                "text": _text_block_to_text(tb),
+                "kind": "text",
+            })
+    return results
 
 
 def _render_pdf_to_image_paths(
@@ -915,6 +968,7 @@ def run(
             llm_mode: str | None = None
             llm_comment_mode: str | None = None
             elements: list[AnnotateElement] = []  # callout 배치 시 충돌 회피용 (고급주석 경로에서는 미사용)
+            layout_by_page: dict[int, dict] = {}
             if advanced:
                 # [Flow: 고급주석 — Vision LLM이 이미지를 직접 보고 정밀 bbox + 색상 + 코멘트 반환]
                 pdf_bytes = _images_to_pdf(image_paths)
@@ -962,6 +1016,23 @@ def run(
                             pdf_bytes, page_ocr_results, dpi=RENDER_DPI, language=language
                         )
                         page_point_sizes = _page_point_sizes(pdf_bytes)
+
+                # [Flow: OCR layout 저장 — agent의 get_elements/search_text가 재사용할 수 있도록]
+                if layout_by_page:
+                    try:
+                        data = json.dumps(layout_by_page, ensure_ascii=False, default=str).encode("utf-8")
+                        storage_path = f"{job.id}/ocr_layout.json"
+                        client = supabase_client.get_service_client()
+                        client.storage.from_("results").upload(
+                            storage_path,
+                            data,
+                            {"content-type": "application/json", "upsert": "true"},
+                        )
+                        job.result_ocr_layout_storage_path = storage_path
+                        db.commit()
+                        logger.info(f"[pdf_annotate] {job.id} OCR layout 저장 완료: {storage_path}")
+                    except Exception as e:
+                        logger.warning(f"[pdf_annotate] {job.id} OCR layout 저장 실패: {e}")
 
                 # [Flow: elements를 페이지 범위로 필터링 — LLM에 지정 페이지 요소만 전달]
                 if page_range is not None:

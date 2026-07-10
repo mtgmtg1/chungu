@@ -3003,6 +3003,29 @@ def job_action(
     return {"job_id": job_id, "status": "queued"}
 
 
+def _upload_ocr_layout(db: Session, job: Job, layout_by_page: dict[int, dict]) -> None:
+    """[Flow: Step 1 (layout_by_page를 JSON 직렬화) -> Step 2 (results 버킷에 업로드)
+          -> Step 3 (Job DB에 경로 저장)]
+
+    OCR로 확보한 layout_by_page를 Storage에 저장해 이후 get_elements/search_text 호출이
+    PaddleOCR을 재실행하지 않도록 한다.
+    """
+    try:
+        data = json.dumps(layout_by_page, ensure_ascii=False, default=str).encode("utf-8")
+        storage_path = f"{job.id}/ocr_layout.json"
+        client = supabase_client.get_service_client()
+        client.storage.from_("results").upload(
+            storage_path,
+            data,
+            {"content-type": "application/json", "upsert": "true"},
+        )
+        job.result_ocr_layout_storage_path = storage_path
+        db.commit()
+        logger.info(f"[get_job_elements] {job.id} OCR layout 저장 완료: {storage_path}")
+    except Exception as e:
+        logger.warning(f"[get_job_elements] {job.id} OCR layout 저장 실패: {e}")
+
+
 # [Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (searchable PDF 다운로드)
 #       -> Step 3 (PyMuPDF로 페이지별 텍스트 블록 추출) -> Step 4 (요소 목록 반환)]
 # Node.js AI 백엔드의 PDF 주석 도구가 요소를 조회하기 위한 전용 엔드포인트.
@@ -3079,38 +3102,66 @@ def get_job_elements(
         doc.close()
 
     # [Flow: 텍스트 레이어가 없는 스캔 PDF(searchable_pdf_storage_path 미생성)에서는 위 블록 추출이
-    # 항상 빈 리스트를 반환한다. 이 경우 AI 하이라이트 주석 생성 파이프라인과 동일하게
-    # PaddleOCR 기반 collect_elements_for_agent()로 요소를 재추출해 폴백한다.]
+    # 항상 빈 리스트를 반환한다. 이 경우 1) 저장된 OCR layout이 있으면 재사용하고,
+    # 2) 없으면 PaddleOCR 기반 collect_elements_for_agent()로 요소를 재추출해 폴백한다.]
+    ocr_page_range = [page_no] if page_no is not None else None
     if not elements:
-        try:
-            from ..core.pdf_annotate_converter import collect_elements_for_agent
+        # 1) 저장된 OCR layout 재사용
+        if job.result_ocr_layout_storage_path:
+            try:
+                from ..core.pdf_annotate_converter import build_agent_elements_from_ocr_layout
 
-            ocr_page_range = [page_no] if page_no is not None else None
-            ocr_elements, ocr_pdf_bytes = collect_elements_for_agent(job_id, page_range=ocr_page_range)
-        except Exception as e:
-            logger.warning(f"[get_job_elements] {job_id} OCR 폴백 실패: {e}")
-            ocr_elements, ocr_pdf_bytes = [], None
-
-        if ocr_elements:
-            elements = [
-                {
-                    "page_no": el["page_no"],
-                    "bbox_pdf": list(el["bbox_pdf"]),
-                    "text": el["text"],
-                    "kind": el.get("kind", "text"),
-                }
-                for el in ocr_elements
-            ]
-            if ocr_pdf_bytes:
-                ocr_doc = fitz.open(stream=ocr_pdf_bytes, filetype="pdf")
-                try:
-                    for page in ocr_doc:
-                        page_dimensions[page.number + 1] = {
-                            "width": float(page.rect.width),
-                            "height": float(page.rect.height),
+                layout_raw = client.storage.from_("results").download(job.result_ocr_layout_storage_path)
+                layout_by_page = json.loads(layout_raw.decode("utf-8"))
+                ocr_elements = build_agent_elements_from_ocr_layout(layout_by_page, pdf_bytes, page_range=ocr_page_range)
+                if ocr_elements:
+                    elements = [
+                        {
+                            "page_no": el["page_no"],
+                            "bbox_pdf": list(el["bbox_pdf"]),
+                            "text": el["text"],
+                            "kind": el.get("kind", "text"),
                         }
-                finally:
-                    ocr_doc.close()
+                        for el in ocr_elements
+                    ]
+                    logger.info(f"[get_job_elements] {job_id} 저장된 OCR layout 사용: {len(elements)}개 요소")
+            except Exception as e:
+                logger.warning(f"[get_job_elements] {job_id} 저장된 OCR layout 사용 실패: {e}")
+
+        # 2) OCR layout이 없거나 실패하면 PaddleOCR 폴백
+        if not elements:
+            try:
+                from ..core.pdf_annotate_converter import collect_elements_for_agent
+
+                ocr_elements, ocr_pdf_bytes, layout_by_page = collect_elements_for_agent(job_id, page_range=ocr_page_range)
+            except Exception as e:
+                logger.warning(f"[get_job_elements] {job_id} OCR 폴백 실패: {e}")
+                ocr_elements, ocr_pdf_bytes, layout_by_page = [], None, {}
+
+            if ocr_elements:
+                elements = [
+                    {
+                        "page_no": el["page_no"],
+                        "bbox_pdf": list(el["bbox_pdf"]),
+                        "text": el["text"],
+                        "kind": el.get("kind", "text"),
+                    }
+                    for el in ocr_elements
+                ]
+                if ocr_pdf_bytes:
+                    ocr_doc = fitz.open(stream=ocr_pdf_bytes, filetype="pdf")
+                    try:
+                        for page in ocr_doc:
+                            page_dimensions[page.number + 1] = {
+                                "width": float(page.rect.width),
+                                "height": float(page.rect.height),
+                            }
+                    finally:
+                        ocr_doc.close()
+
+                # 다음 호출을 위해 OCR layout을 Storage에 저장
+                if layout_by_page:
+                    _upload_ocr_layout(db, job, layout_by_page)
 
     return {"elements": elements, "total": len(elements), "page_dimensions": page_dimensions}
 
@@ -3182,17 +3233,37 @@ def search_job_text(
         doc.close()
 
     # [Flow: 텍스트 레이어가 없는 스캔 PDF에서는 위 search_for가 항상 매치 0개를 반환한다.
-    # get_job_elements와 동일하게 PaddleOCR 기반 collect_elements_for_agent()로 폴백해
+    # 1) 저장된 OCR layout이 있으면 재사용하고, 2) 없으면 PaddleOCR 폴백으로
     # 요소 텍스트에 대해 대소문자 무관 정규식 매칭을 수행한다.]
+    ocr_page_range = [page_no] if page_no is not None else None
     if not matches:
-        try:
-            from ..core.pdf_annotate_converter import collect_elements_for_agent
+        ocr_elements: list[dict] = []
+        # 1) 저장된 OCR layout 재사용
+        if job.result_ocr_layout_storage_path:
+            try:
+                from ..core.pdf_annotate_converter import build_agent_elements_from_ocr_layout
 
-            ocr_page_range = [page_no] if page_no is not None else None
-            ocr_elements, _ocr_pdf_bytes = collect_elements_for_agent(job_id, page_range=ocr_page_range)
-        except Exception as e:
-            logger.warning(f"[search_job_text] {job_id} OCR 폴백 실패: {e}")
-            ocr_elements = []
+                layout_raw = client.storage.from_("results").download(job.result_ocr_layout_storage_path)
+                layout_by_page = json.loads(layout_raw.decode("utf-8"))
+                ocr_elements = build_agent_elements_from_ocr_layout(layout_by_page, pdf_bytes, page_range=ocr_page_range)
+                if ocr_elements:
+                    logger.info(f"[search_job_text] {job_id} 저장된 OCR layout 사용: {len(ocr_elements)}개 요소")
+            except Exception as e:
+                logger.warning(f"[search_job_text] {job_id} 저장된 OCR layout 사용 실패: {e}")
+
+        # 2) OCR layout이 없거나 실패하면 PaddleOCR 폴백
+        if not ocr_elements:
+            try:
+                from ..core.pdf_annotate_converter import collect_elements_for_agent
+
+                ocr_elements, _ocr_pdf_bytes, layout_by_page = collect_elements_for_agent(job_id, page_range=ocr_page_range)
+            except Exception as e:
+                logger.warning(f"[search_job_text] {job_id} OCR 폴백 실패: {e}")
+                ocr_elements, layout_by_page = [], {}
+
+            # 다음 호출을 위해 OCR layout 저장
+            if layout_by_page:
+                _upload_ocr_layout(db, job, layout_by_page)
 
         try:
             pattern = _re.compile(query, _re.IGNORECASE)

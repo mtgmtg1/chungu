@@ -34,6 +34,31 @@ MAX_PAGE_SIDE_MM = 350
 MM_PER_PT = 0.3528
 MAX_RETRY_COUNT = 3
 
+
+def _upload_ocr_layout(db, job: Job, layout_by_page: dict[int, dict]) -> None:
+    """[Flow: Step 1 (layout_by_page를 JSON 직렬화) -> Step 2 (results 버킷에 업로드)
+          -> Step 3 (Job DB에 경로 저장)]
+
+    PaddleOCR로 확보한 layout_by_page를 Storage에 저장해 AI agent의 get_elements/search_text가
+    재실행하지 않도록 한다.
+    """
+    if not layout_by_page:
+        return
+    try:
+        data = json.dumps(layout_by_page, ensure_ascii=False, default=str).encode("utf-8")
+        storage_path = f"{job.id}/ocr_layout.json"
+        client = supabase_client.get_service_client()
+        client.storage.from_("results").upload(
+            storage_path,
+            data,
+            {"content-type": "application/json", "upsert": "true"},
+        )
+        job.result_ocr_layout_storage_path = storage_path
+        db.commit()
+        logger.info(f"[run_job:{job.id}] OCR layout 저장 완료: {storage_path}")
+    except Exception as e:
+        logger.warning(f"[run_job:{job.id}] OCR layout 저장 실패: {e}")
+
 # [Flow: Step 1 (worker_ready 시그널 수신) -> Step 2 (DB에서 중단된 job 조회) -> Step 3 (retry_count < 3인 job 재시도) -> Step 4 (>= 3인 job error로 변경)]
 @worker_ready.connect
 def recover_stuck_jobs(sender=None, **kwargs):
@@ -212,15 +237,20 @@ def _build_and_upload_searchable_pdf(
 ) -> None:
     """[Flow: Step 1 (원본 PDF를 페이지별 이미지로 렌더링 + deskew 보정) -> Step 2 (보정된 이미지로 새 PDF 생성)
           -> Step 3 (layout_by_page에서 OCR 결과 추출) -> Step 4 (새 PDF에 투명 텍스트 레이어 추가)
-          -> Step 5 (searchable PDF Storage 업로드) -> Step 6 (Job DB 저장)]
+          -> Step 5 (searchable PDF Storage 업로드) -> Step 6 (OCR layout Storage 업로드) -> Step 7 (Job DB 저장)]
 
     PaddleOCR이 반환한 페이지별 layout로부터 텍스트/bbox를 추출해 deskew 보정된 PDF에
     투명 텍스트 레이어를 입히고, 그 결과를 Storage에 업로드한다.
     원본 PDF가 아닌 deskew 보정된 페이지 이미지로 새 PDF를 만들어 기울어진 스캔 문서도
     수평으로 정렬된 searchable PDF를 제공한다.
+    동시에 OCR layout을 Storage에 저장해 AI agent의 get_elements/search_text가 재사용할 수 있게 한다.
     """
     from ..core.image_deskew import deskew_image
     from ..core.ocr_client import render_pdf
+
+    # OCR layout을 먼저 Storage에 저장해 agent 도구가 재사용할 수 있게 한다.
+    if layout_by_page:
+        _upload_ocr_layout(db, job, layout_by_page)
 
     page_ocr_results = pdf_text_layer.extract_page_ocr_results_from_layout(layout_by_page)
     if not page_ocr_results:

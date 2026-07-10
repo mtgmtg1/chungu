@@ -3078,6 +3078,40 @@ def get_job_elements(
     finally:
         doc.close()
 
+    # [Flow: 텍스트 레이어가 없는 스캔 PDF(searchable_pdf_storage_path 미생성)에서는 위 블록 추출이
+    # 항상 빈 리스트를 반환한다. 이 경우 AI 하이라이트 주석 생성 파이프라인과 동일하게
+    # PaddleOCR 기반 collect_elements_for_agent()로 요소를 재추출해 폴백한다.]
+    if not elements:
+        try:
+            from ..core.pdf_annotate_converter import collect_elements_for_agent
+
+            ocr_page_range = [page_no] if page_no is not None else None
+            ocr_elements, ocr_pdf_bytes = collect_elements_for_agent(job_id, page_range=ocr_page_range)
+        except Exception as e:
+            logger.warning(f"[get_job_elements] {job_id} OCR 폴백 실패: {e}")
+            ocr_elements, ocr_pdf_bytes = [], None
+
+        if ocr_elements:
+            elements = [
+                {
+                    "page_no": el["page_no"],
+                    "bbox_pdf": list(el["bbox_pdf"]),
+                    "text": el["text"],
+                    "kind": el.get("kind", "text"),
+                }
+                for el in ocr_elements
+            ]
+            if ocr_pdf_bytes:
+                ocr_doc = fitz.open(stream=ocr_pdf_bytes, filetype="pdf")
+                try:
+                    for page in ocr_doc:
+                        page_dimensions[page.number + 1] = {
+                            "width": float(page.rect.width),
+                            "height": float(page.rect.height),
+                        }
+                finally:
+                    ocr_doc.close()
+
     return {"elements": elements, "total": len(elements), "page_dimensions": page_dimensions}
 
 
@@ -3146,6 +3180,33 @@ def search_job_text(
                 })
     finally:
         doc.close()
+
+    # [Flow: 텍스트 레이어가 없는 스캔 PDF에서는 위 search_for가 항상 매치 0개를 반환한다.
+    # get_job_elements와 동일하게 PaddleOCR 기반 collect_elements_for_agent()로 폴백해
+    # 요소 텍스트에 대해 대소문자 무관 정규식 매칭을 수행한다.]
+    if not matches:
+        try:
+            from ..core.pdf_annotate_converter import collect_elements_for_agent
+
+            ocr_page_range = [page_no] if page_no is not None else None
+            ocr_elements, _ocr_pdf_bytes = collect_elements_for_agent(job_id, page_range=ocr_page_range)
+        except Exception as e:
+            logger.warning(f"[search_job_text] {job_id} OCR 폴백 실패: {e}")
+            ocr_elements = []
+
+        try:
+            pattern = _re.compile(query, _re.IGNORECASE)
+        except _re.error:
+            pattern = _re.compile(_re.escape(query), _re.IGNORECASE)
+        for el in ocr_elements:
+            text = el.get("text") or ""
+            if not pattern.search(text):
+                continue
+            matches.append({
+                "page_no": el["page_no"],
+                "bbox_pdf": list(el["bbox_pdf"]),
+                "text": text.strip(),
+            })
 
     return {"matches": matches, "total": len(matches)}
 

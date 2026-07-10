@@ -14,7 +14,8 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
   sourceType,
   sourceFiles,
   imageUrls,
-  onSaveAnnotations
+  onSaveAnnotations,
+  onUpload
 }, ref) {
   const { t } = useTranslation();
   const [currentPage, setCurrentPage] = useState(pages[0]?.page_num || 1);
@@ -88,15 +89,6 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const hasSourcePanel =
-  sourceType === "pdf" ||
-  sourceType === "docx" ||
-  sourceType === "hwp" ||
-  sourceType === "images" ||
-  sourceType === "audio" ||
-  sourceType === "video" ||
-  (sourceFiles && sourceFiles.length > 0);
-
   const renderMarkdownArea = () => {
     if (loadingPage) {
       return (
@@ -133,53 +125,44 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
       </div>
       }
 
-      {hasSourcePanel ?
       <PanelGroup
         direction="horizontal"
         className="flex-1 overflow-hidden"
         data-oid="wbpjin7">
 
-          <Panel
+        <Panel
           defaultSize={45}
           minSize={25}
           maxSize={70}
           className="overflow-hidden"
           data-oid="_4r5fdj">
 
-            <SourcePanel
-              sourceFiles={sourceFiles}
-              sourceUrl={sourceUrl}
-              sourceType={sourceType}
-              imageUrls={imageUrls}
-              currentPage={currentPage}
-              onSaveAnnotations={onSaveAnnotations}
-              data-oid="8kmamif" />
+          <SourcePanel
+            sourceFiles={sourceFiles}
+            sourceUrl={sourceUrl}
+            sourceType={sourceType}
+            imageUrls={imageUrls}
+            currentPage={currentPage}
+            onSaveAnnotations={onSaveAnnotations}
+            onUpload={onUpload}
+            data-oid="8kmamif" />
 
-          </Panel>
-          <PanelResizeHandle
+        </Panel>
+        <PanelResizeHandle
           className="w-1 bg-outline-variant/50 hover:bg-primary/30 transition-colors"
           data-oid="rn4azy0" />
 
-          <Panel
+        <Panel
           defaultSize={55}
           minSize={30}
           maxSize={75}
           className="flex flex-col bg-white overflow-hidden"
           data-oid="ue-8gmm">
 
-            {renderMarkdownArea()}
-
-          </Panel>
-        </PanelGroup> :
-
-      <div
-        className="flex-1 flex flex-col bg-white overflow-hidden"
-        data-oid="8m4s7e_">
-
           {renderMarkdownArea()}
 
-        </div>
-      }
+        </Panel>
+      </PanelGroup>
     </div>);
 
 }));

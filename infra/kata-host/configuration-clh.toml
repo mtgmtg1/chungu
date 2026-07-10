@@ -1,0 +1,90 @@
+# Kata Containers + Cloud Hypervisor 설정 (PROOF 에이전트 샌드박스)
+#
+# [Flow: 기본 VMM 설정 -> 메모리/CPU 정책 -> virtio-fs DAX -> 보안 설정]
+#
+# 이 파일은 /etc/kata-containers/configuration-clh.toml 에 복사하여 사용한다.
+# containerd-shim-kata-clh-v2 래퍼 스크립트가 KATA_CONF_FILE 로 이 파일을 지정한다.
+
+# --- 런타임 설정 ---
+[runtime]
+# sandbox cgroup만 사용하여 프로세스 관리 단순화
+sandbox_cgroup_only = true
+
+# --- Cloud Hypervisor VMM 설정 ---
+[hypervisor.cloud-hypervisor]
+# Cloud Hypervisor 바이너리 경로
+path = "/opt/kata/bin/cloud-hypervisor"
+
+# KVM 가속 활성화 (베어메탈이므로 nested virtualization 불필요)
+enable_kvm = true
+
+# CPU 설정: 기본 1 vCPU, 최대 4 vCPU (hot-add)
+# 고밀도 모드에서는 default_vcpus=1 로 대기 상태 CPU 절약
+default_vcpus = 1
+default_maxvcpus = 4
+
+# 메모리 설정: 기본 2GB, 최대 8GB (virtio-mem 동적 확장)
+# 고밀도 모드에서는 default_memory=512 로 대기 상태 메모리 절약
+default_memory = 2048
+default_maxmemory = 8192
+
+# virtio-mem 방식으로 동적 메모리 추가/회수
+# Cloud Hypervisor 의 virtio-mem 은 ACPI hotplug 와 달리 세밀한 단위로 메모리 추가/제거 가능
+hotplug_method = "virtio-mem"
+
+# 게스트가 해제한 메모리를 호스트로 회수 (Cloud Hypervisor 전용)
+# balloon 장치에 f_reporting=on 설정하여 free page reporting 활성화
+reclaim_guest_freed_memory = true
+
+# 메모리 사전 할당 비활성화 (밀도 향상)
+# 활성화 시 모든 VM 메모리를 즉시 할당/lock 하여 밀도 급감
+enable_mem_prealloc = false
+
+# hugepages 비활성화 (유연성 우선, KSM 4KB 페이지 병합과 충돌)
+enable_hugepages = false
+
+# --- virtio-fs 설정 (DAX 활성화) ---
+# virtio-fs: 호스트 디렉토리를 게스트에 공유하는 파일시스템
+shared_fs = "virtio-fs"
+
+# virtiofsd 데몬 경로
+virtio_fs_daemon = "/opt/kata/libexec/virtiofsd"
+
+# cache=auto: 메타데이터/경로 조회 캐시는 만료(기본 1초), 데이터는 파일 열려 있는 동안 캐시
+# 호스트 파일 변경 시 일관성 보장 + 성능 트레이드오프
+virtio_fs_cache = "auto"
+
+# DAX 캐시 크기 (MiB): 1024 = 1GB
+# DAX 는 host buffer cache 페이지를 guest 주소 공간에 직접 매핑하여
+# guest page cache 중복 복사본을 제거한다.
+# 실제 추가 물리 메모리 사용 ≈ 0 (host buffer cache 페이지를 공유)
+# /dev/shm 에 가상 매핑 영역 할당 (150 VM × 1GB = 150GB /dev/shm 필요)
+virtio_fs_cache_size = 1024
+
+# --- 보안 설정 ---
+# annotation 주입 차단 (GHSA-rr59-xxvx-96qr virtiofsd 인자 주입 공격 대응)
+enable_annotations = []
+
+# 게스트 seccomp 활성화: 호스트 seccomp 프로필을 게스트에 전달
+# 시스템 파괴 시스콜(mount, init_module, reboot 등)을 게스트에서도 차단
+disable_guest_seccomp = false
+
+# 호스트 블록 디바이스 핫플러그 허용 (virtio-blk 볼륨 마운트용)
+disable_block_device_use = false
+
+# privileged 컨테이너에서도 호스트 디바이스 노출 차단
+privileged_without_host_devices = true
+
+# --- 게스트 이미지 ---
+# 커스텀 rootfs 이미지 (PROOF 에이전트 실행 환경)
+# 빌드 스크립트에서 생성: /opt/kata/share/kata-containers/proof-agent.img
+# image = "/opt/kata/share/kata-containers/proof-agent.img"
+
+# 게스트 커널 (Kata 번들)
+kernel = "/opt/kata/share/kata-containers/vmlinux.container"
+
+# 커널 파라미터
+kernel_params = "console=hvc0 quiet"
+
+# --- 디버그 설정 (프로덕션에서는 비활성화) ---
+enable_debug = false

@@ -195,4 +195,37 @@ export const api = {
 
   // AI 마크다운 에디터 스트리밍
   aiGenerateStream: (url, options) => authenticatedFetch(url, options),
+
+  // Kata Containers 샌드박스 (에이전트 격리 실행 환경)
+  createSandbox: (jobId, resourceLimits, denseMode) =>
+    request('/api/sandboxes', {
+      method: 'POST',
+      body: JSON.stringify({ job_id: jobId, resource_limits: resourceLimits, dense_mode: denseMode }),
+    }),
+  getSandbox: (sandboxId) => request(`/api/sandboxes/${sandboxId}`),
+  executeInSandbox: (sandboxId, command, timeout) =>
+    request(`/api/sandboxes/${sandboxId}/execute`, {
+      method: 'POST',
+      body: JSON.stringify({ command, timeout }),
+    }),
+  listSandboxFiles: (sandboxId, path) =>
+    request(`/api/sandboxes/${sandboxId}/files?path=${encodeURIComponent(path)}`),
+  readSandboxFile: (sandboxId, path) =>
+    request(`/api/sandboxes/${sandboxId}/files/read?path=${encodeURIComponent(path)}`),
+  writeSandboxFile: (sandboxId, path, content) =>
+    request(`/api/sandboxes/${sandboxId}/files/write`, {
+      method: 'POST',
+      body: JSON.stringify({ path, content }),
+    }),
+  commitSandboxChanges: (sandboxId, message) =>
+    request(`/api/sandboxes/${sandboxId}/commit`, {
+      method: 'POST',
+      body: JSON.stringify({ message }),
+    }),
+  getSandboxDiff: (sandboxId, cached) =>
+    request(`/api/sandboxes/${sandboxId}/diff?cached=${cached}`),
+  collectSandboxResults: (sandboxId) =>
+    request(`/api/sandboxes/${sandboxId}/collect`, { method: 'POST' }),
+  destroySandbox: (sandboxId) => request(`/api/sandboxes/${sandboxId}`, { method: 'DELETE' }),
+  getSandboxStats: () => request('/api/sandboxes/stats'),
 }

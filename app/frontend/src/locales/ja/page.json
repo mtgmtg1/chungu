@@ -192,6 +192,8 @@
     "sourceImages": "元の画像",
     "sourceFile": "元のファイル",
     "sourceFiles": "元ファイル一覧",
+    "uploadNewFiles": "新しいファイルをアップロード",
+    "emptySourceFiles": "元ファイルがありません",
     "deleteSourceFileTitle": "元ファイルを削除しますか？",
     "deleteSourceFileDesc": "{{filename}} を削除すると元に戻せません。変換結果はそのまま残ります。",
     "editMode": "編集モード",
@@ -686,6 +688,30 @@
     "pause": "一時停止",
     "mute": "ミュート",
     "unmute": "ミュート解除",
-    "fullscreen": "全画面"
+    "fullscreen": "全画面",
+    "sandbox": {
+      "runInSandbox": "エージェントで実行",
+      "sandboxStatus": "サンドボックス状態",
+      "creating": "サンドボックス作成中…",
+      "running": "実行中",
+      "stopped": "停止",
+      "error": "エラー",
+      "destroy": "サンドボックス終了",
+      "destroyConfirm": "サンドボックスを終了しますか？未収集のファイルは失われます。",
+      "fileBrowser": "ファイルブラウザ",
+      "loading": "読み込み中…",
+      "empty": "ファイルがありません",
+      "loadFailed": "ファイル一覧の読み込みに失敗しました",
+      "readFailed": "ファイルの読み込みに失敗しました",
+      "refresh": "更新",
+      "collectResults": "結果収集",
+      "collecting": "結果収集中…",
+      "collectSuccess": "{{count}}件のファイルを保存しました",
+      "collectFailed": "結果収集に失敗しました",
+      "stats": "サンドボックス統計",
+      "activeCount": "アクティブサンドボックス",
+      "totalCreated": "累計作成数",
+      "diskUsage": "ディスク使用量"
+    }
   }
 }

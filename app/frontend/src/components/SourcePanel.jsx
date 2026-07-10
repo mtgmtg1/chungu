@@ -2,7 +2,7 @@
 // processing/error 상태의 주석 항목은 URL 없이 상태 정보만 표시한다.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { FileText, ImageIcon, Volume2, Film, Trash2, Loader2, AlertCircle, RotateCw, Sparkles, ChevronDown, ChevronUp, List, Check } from "lucide-react";
+import { FileText, FileUp, ImageIcon, Volume2, Film, Trash2, Loader2, AlertCircle, RotateCw, Sparkles, ChevronDown, ChevronUp, List, Check } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer from "./PdfViewer.jsx";
 import MediaPlayer from "./MediaPlayer.jsx";
@@ -407,6 +407,7 @@ export default function SourcePanel({
   onStartAnnotate,
   onStartAnnotateEdit,
   onCancelAnnotation,
+  onUpload,
   converting = false,
   annotationRuns = [],
   totalPages = 1,
@@ -422,7 +423,7 @@ export default function SourcePanel({
   const [selectedAnnotationsJson, setSelectedAnnotationsJson] = useState(null);
   const [showAnnotationPanel, setShowAnnotationPanel] = useState(false);
 
-  const selectedFile = files.length > 1 ? (files[selectedIndex] || files[0]) : files[0];
+  const selectedFile = files[selectedIndex] || files[0];
 
   /**
    * [Flow: Step 1 (PdfViewer ref로 exportAnnotations 호출) -> Step 2 (JSON 파싱)
@@ -501,13 +502,230 @@ export default function SourcePanel({
     };
   }, [selectedFile?.annotations_json_url]);
 
-  if (files.length === 1) {
-    const file = files[0];
-    if (file.type === "pdf") {
+  // [Flow: Step 1 (파일이 0개면 안내 문구) -> Step 2 (파일이 있으면 목록 항목 렌더링) -> Step 3 (업로드 버튼이 있으면 하단에 추가)]
+  function renderFileList() {
+    return (
+      <div className="overflow-y-auto custom-scrollbar p-2 space-y-1 h-full">
+        {files.length === 0 && (
+          <div className="p-4 text-center text-sm text-on-surface-variant" data-oid="source-panel-empty">
+            {t("page:result.emptySourceFiles")}
+          </div>
+        )}
+        {files.map((f, idx) => (
+          <div
+            key={idx}
+            className={`w-full flex items-center justify-between gap-2 p-2 rounded text-xs transition-colors group ${
+              selectedIndex === idx
+                ? "bg-primary-container/20 text-primary font-bold"
+                : "text-on-surface hover:bg-surface-container-high"
+            }`}
+            data-oid={`source-file-item-${idx}`}
+          >
+            <button
+              onClick={() => setSelectedIndex(idx)}
+              className="flex items-center gap-2 text-left flex-1 min-w-0"
+            >
+              {f.status === "processing" ? (
+                <Loader2 size={16} className="text-primary animate-spin flex-shrink-0" />
+              ) : f.status === "error" ? (
+                <AlertCircle size={16} className="text-error flex-shrink-0" />
+              ) : (
+                <SourceIcon type={f.type} />
+              )}
+              <span className="flex flex-col items-start min-w-0">
+                <span className="truncate">{f.name}</span>
+                {f.status === "error" && (
+                  <span className="text-error text-[10px] leading-none mt-0.5">
+                    {t("page:result.annotateFailed")}
+                  </span>
+                )}
+              </span>
+            </button>
+            <div className="flex-shrink-0 flex items-center gap-1">
+              {f.status === "error" && onRetryAnnotation && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    // AI 주석은 하나의 공유 파일로 축소되므로 0을 전달해
+                    // 모든 error run을 한 번에 재시도한다.
+                    onRetryAnnotation(0);
+                  }}
+                  className="flex-shrink-0 flex items-center gap-1 px-1.5 py-1 rounded text-primary/70 hover:text-primary hover:bg-primary/10 transition-colors text-[10px]"
+                  title={t("page:result.annotateRetry")}
+                  aria-label={t("page:result.annotateRetry")}
+                >
+                  <RotateCw size={14} />
+                  <span>{t("page:result.annotateRetry")}</span>
+                </button>
+              )}
+              {f.status === "error" && onDeleteFile && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteFile(f.source_index, f.source_kind);
+                  }}
+                  className="flex-shrink-0 flex items-center gap-1 px-1.5 py-1 rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors text-[10px]"
+                  title={t("page:result.annotateCancel")}
+                  aria-label={t("page:result.annotateCancel")}
+                >
+                  <Trash2 size={14} />
+                  <span>{t("page:result.annotateCancel")}</span>
+                </button>
+              )}
+              {f.status === "processing" && onDeleteFile && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteFile(f.source_index, f.source_kind);
+                  }}
+                  className="flex-shrink-0 p-1 rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors"
+                  title={t("page:result.annotateCancel")}
+                  aria-label={t("page:result.annotateCancel")}
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+              {f.status !== "error" && f.status !== "processing" && onDeleteFile && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteFile(f.source_index, f.source_kind);
+                  }}
+                  className="flex-shrink-0 p-1 rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors"
+                  title={t("common:delete")}
+                  aria-label={t("common:delete")}
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+        {onUpload && (
+          <div className="p-2" data-oid="source-panel-upload-btn-wrap">
+            <button
+              type="button"
+              onClick={onUpload}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-outline-variant text-on-surface-variant hover:text-primary hover:border-primary hover:bg-primary/5 transition-colors text-xs"
+              data-oid="source-panel-upload-btn"
+            >
+              <FileUp size={16} />
+              {t("page:result.uploadNewFiles")}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // [Flow: Step 1 (선택된 파일이 없으면 sourceUrl/sourceType 기반 원본 확인) -> Step 2 (sourceUrl도 없으면 업로드 안내) -> Step 3 (PDF/docx/hwp면 PdfViewerWithFab) -> Step 4 (그 외 미디어는 SingleFilePreview)]
+  function renderPreview() {
+    if (!selectedFile) {
+      if (sourceType === "pdf" && sourceUrl) {
+        return (
+          <PdfViewerWithFab
+            viewerRef={pdfViewerRef}
+            url={sourceUrl}
+            page={currentPage}
+            annotationsJson={selectedAnnotationsJson}
+            onAnnotationChanged={handleAnnotationChanged}
+            onStartAnnotate={onStartAnnotate}
+            onStartAnnotateEdit={onStartAnnotateEdit}
+            onCancelAnnotation={onCancelAnnotation}
+            converting={converting}
+            annotationRuns={annotationRuns}
+            totalPages={totalPages}
+            showAnnotationPanel={showAnnotationPanel}
+            onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}
+          />
+        );
+      }
+      if ((sourceType === "docx" || sourceType === "hwp") && sourceUrl) {
+        return (
+          <div className="flex flex-col h-full w-full min-h-0 overflow-hidden">
+            <PdfViewer
+              ref={pdfViewerRef}
+              url={sourceUrl}
+              page={currentPage}
+              annotationsJson={selectedAnnotationsJson}
+              onAnnotationChanged={handleAnnotationChanged}
+            />
+          </div>
+        );
+      }
+      if (sourceType === "images" && imageUrls?.length) {
+        return <ImageList urls={imageUrls} t={t} />;
+      }
+      if ((sourceType === "audio" || sourceType === "video") && sourceUrl) {
+        return <MediaPlayer sourceType={sourceType} url={sourceUrl} filename={filename} />;
+      }
+
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center h-full w-full text-on-surface-variant text-sm p-4 gap-3" data-oid="source-panel-empty-preview">
+          <FileText size={32} className="text-outline" />
+          <span>{t("page:result.emptySourceFiles")}</span>
+          {onUpload && (
+            <button
+              type="button"
+              onClick={onUpload}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white hover:opacity-90 transition-colors"
+              data-oid="source-panel-empty-upload-btn"
+            >
+              <FileUp size={16} />
+              {t("page:result.uploadNewFiles")}
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    if (selectedFile.status === "processing") {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center h-full w-full text-on-surface-variant text-sm p-4 gap-3" data-oid="source-panel-processing-preview">
+          <Loader2 size={32} className="text-primary animate-spin" />
+          <span>{t("page:result.annotateProcessingItem", { instruction: selectedFile.instruction || "" })}</span>
+        </div>
+      );
+    }
+
+    if (selectedFile.status === "error") {
+      return (
+        <div className="flex-1 flex flex-col items-center justify-center h-full w-full text-error text-sm p-4 gap-3" data-oid="source-panel-error-preview">
+          <AlertCircle size={32} className="text-error" />
+          <span>{t("page:result.annotateErrorItem", { instruction: selectedFile.instruction || "" })}</span>
+          <div className="flex items-center gap-2">
+            {onRetryAnnotation && (
+              <button
+                onClick={() => {
+                  // AI 주석은 공유 파일로 축소되어 있으므로 0을 전달해
+                  // 모든 error run을 한 번에 재시도한다.
+                  onRetryAnnotation(0);
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-white hover:opacity-90 transition-colors"
+              >
+                <RotateCw size={16} />
+                {t("page:result.annotateRetry")}
+              </button>
+            )}
+            {onDeleteFile && (
+              <button
+                onClick={() => onDeleteFile(selectedFile.source_index, selectedFile.source_kind)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-error text-error hover:bg-error/10 transition-colors"
+              >
+                <Trash2 size={16} />
+                {t("page:result.annotateCancel")}
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (selectedFile.type === "pdf") {
       return (
         <PdfViewerWithFab
           viewerRef={pdfViewerRef}
-          url={file.url}
+          url={selectedFile.url}
           page={currentPage}
           annotationsJson={selectedAnnotationsJson}
           onAnnotationChanged={handleAnnotationChanged}
@@ -522,225 +740,51 @@ export default function SourcePanel({
         />
       );
     }
-    return <SingleFilePreview file={file} filename={filename || file.name} annotationsJson={selectedAnnotationsJson} pdfViewerRef={pdfViewerRef} onAnnotationChanged={handleAnnotationChanged} />;
-  }
 
-  if (files.length > 1) {
-    const selected = files[selectedIndex] || files[0];
-    return (
-      <div className="flex flex-col h-full overflow-hidden bg-surface-container-low">
-        <div className="flex-1 overflow-hidden flex min-h-0">
-          <PanelGroup
-            direction="horizontal"
-            className="flex-1 flex min-h-0"
-          >
-            <Panel
-              defaultSize={35}
-              minSize={20}
-              maxSize={60}
-              className="border-r border-outline-variant overflow-hidden flex flex-col"
-            >
-              <div className="overflow-y-auto custom-scrollbar p-2 space-y-1 h-full">
-                {files.map((f, idx) => (
-                  <div
-                    key={idx}
-                    className={`w-full flex items-center justify-between gap-2 p-2 rounded text-xs transition-colors group ${
-                      selectedIndex === idx
-                        ? "bg-primary-container/20 text-primary font-bold"
-                        : "text-on-surface hover:bg-surface-container-high"
-                    }`}
-                  >
-                    <button
-                      onClick={() => setSelectedIndex(idx)}
-                      className="flex items-center gap-2 text-left flex-1 min-w-0"
-                    >
-                      {f.status === "processing" ? (
-                        <Loader2 size={16} className="text-primary animate-spin flex-shrink-0" />
-                      ) : f.status === "error" ? (
-                        <AlertCircle size={16} className="text-error flex-shrink-0" />
-                      ) : (
-                        <SourceIcon type={f.type} />
-                      )}
-                      <span className="flex flex-col items-start min-w-0">
-                        <span className="truncate">{f.name}</span>
-                        {f.status === "error" && (
-                          <span className="text-error text-[10px] leading-none mt-0.5">
-                            {t("page:result.annotateFailed")}
-                          </span>
-                        )}
-                      </span>
-                    </button>
-                    <div className="flex-shrink-0 flex items-center gap-1">
-                      {f.status === "error" && onRetryAnnotation && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            // AI 주석은 하나의 공유 파일로 축소되므로 0을 전달해
-                            // 모든 error run을 한 번에 재시도한다.
-                            onRetryAnnotation(0);
-                          }}
-                          className="flex-shrink-0 flex items-center gap-1 px-1.5 py-1 rounded text-primary/70 hover:text-primary hover:bg-primary/10 transition-colors text-[10px]"
-                          title={t("page:result.annotateRetry")}
-                          aria-label={t("page:result.annotateRetry")}
-                        >
-                          <RotateCw size={14} />
-                          <span>{t("page:result.annotateRetry")}</span>
-                        </button>
-                      )}
-                      {f.status === "error" && onDeleteFile && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteFile(f.source_index, f.source_kind);
-                          }}
-                          className="flex-shrink-0 flex items-center gap-1 px-1.5 py-1 rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors text-[10px]"
-                          title={t("page:result.annotateCancel")}
-                          aria-label={t("page:result.annotateCancel")}
-                        >
-                          <Trash2 size={14} />
-                          <span>{t("page:result.annotateCancel")}</span>
-                        </button>
-                      )}
-                      {f.status === "processing" && onDeleteFile && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteFile(f.source_index, f.source_kind);
-                          }}
-                          className="flex-shrink-0 p-1 rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors"
-                          title={t("page:result.annotateCancel")}
-                          aria-label={t("page:result.annotateCancel")}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                      {f.status !== "error" && f.status !== "processing" && onDeleteFile && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteFile(f.source_index, f.source_kind);
-                          }}
-                          className="flex-shrink-0 p-1 rounded text-error/70 hover:text-error hover:bg-error/10 transition-colors"
-                          title={t("common:delete")}
-                          aria-label={t("common:delete")}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Panel>
-            <PanelResizeHandle className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize" />
-            <Panel className="overflow-hidden min-h-0 flex flex-col">
-              {selected.status === "processing" ? (
-                <div className="flex-1 flex flex-col items-center justify-center h-full w-full text-on-surface-variant text-sm p-4 gap-3">
-                  <Loader2 size={32} className="text-primary animate-spin" />
-                  <span>{t("page:result.annotateProcessingItem", { instruction: selected.instruction || "" })}</span>
-                </div>
-              ) : selected.status === "error" ? (
-                <div className="flex-1 flex flex-col items-center justify-center h-full w-full text-error text-sm p-4 gap-3">
-                  <AlertCircle size={32} className="text-error" />
-                  <span>{t("page:result.annotateErrorItem", { instruction: selected.instruction || "" })}</span>
-                  <div className="flex items-center gap-2">
-                    {onRetryAnnotation && (
-                      <button
-                        onClick={() => {
-                          // AI 주석은 공유 파일로 축소되어 있으므로 0을 전달해
-                          // 모든 error run을 한 번에 재시도한다.
-                          onRetryAnnotation(0);
-                        }}
-                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-white hover:opacity-90 transition-colors"
-                      >
-                        <RotateCw size={16} />
-                        {t("page:result.annotateRetry")}
-                      </button>
-                    )}
-                    {onDeleteFile && (
-                      <button
-                        onClick={() => onDeleteFile(selected.source_index, selected.source_kind)}
-                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg border border-error text-error hover:bg-error/10 transition-colors"
-                      >
-                        <Trash2 size={16} />
-                        {t("page:result.annotateCancel")}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ) : selected.type === "pdf" ? (
-                <PdfViewerWithFab
-                  viewerRef={pdfViewerRef}
-                  url={selected.preview_url || selected.url}
-                  page={currentPage}
-                  annotationsJson={selectedAnnotationsJson}
-                  onAnnotationChanged={handleAnnotationChanged}
-                  onStartAnnotate={onStartAnnotate}
-                  onStartAnnotateEdit={onStartAnnotateEdit}
-                  onCancelAnnotation={onCancelAnnotation}
-                  converting={converting}
-                  annotationRuns={annotationRuns}
-                  totalPages={totalPages}
-                  showAnnotationPanel={showAnnotationPanel}
-                  onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}
-                />
-              ) : selected.type === "docx" || selected.type === "hwp" ? (
-                <PdfViewer
-                  ref={pdfViewerRef}
-                  url={selected.preview_url || selected.url}
-                  page={currentPage}
-                  annotationsJson={selectedAnnotationsJson}
-                  onAnnotationChanged={handleAnnotationChanged}
-                />
-              ) : (
-                <SingleFilePreview file={selected} filename={selected.name} annotationsJson={selectedAnnotationsJson} pdfViewerRef={pdfViewerRef} onAnnotationChanged={handleAnnotationChanged} />
-              )}
-            </Panel>
-          </PanelGroup>
-        </div>
-      </div>
-    );
-  }
-
-  if (sourceType === "pdf" && sourceUrl) {
-    return (
-      <PdfViewerWithFab
-        viewerRef={pdfViewerRef}
-        url={sourceUrl}
-        page={currentPage}
-        annotationsJson={selectedAnnotationsJson}
-        onAnnotationChanged={handleAnnotationChanged}
-        onStartAnnotate={onStartAnnotate}
-        converting={converting}
-        annotationRuns={annotationRuns}
-        totalPages={totalPages}
-        showAnnotationPanel={showAnnotationPanel}
-        onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}
-      />
-    );
-  }
-  if ((sourceType === "docx" || sourceType === "hwp") && sourceUrl) {
-    return (
-      <div className="flex flex-col h-full w-full min-h-0 overflow-hidden">
-        <PdfViewer
-          ref={pdfViewerRef}
-          url={sourceUrl}
+    if (selectedFile.type === "docx" || selectedFile.type === "hwp") {
+      return (
+        <PdfViewerWithFab
+          viewerRef={pdfViewerRef}
+          url={selectedFile.preview_url || selectedFile.url}
           page={currentPage}
           annotationsJson={selectedAnnotationsJson}
           onAnnotationChanged={handleAnnotationChanged}
+          onStartAnnotate={onStartAnnotate}
+          onStartAnnotateEdit={onStartAnnotateEdit}
+          onCancelAnnotation={onCancelAnnotation}
+          converting={converting}
+          annotationRuns={annotationRuns}
+          totalPages={totalPages}
+          showAnnotationPanel={showAnnotationPanel}
+          onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}
         />
-      </div>
-    );
+      );
+    }
+
+    return <SingleFilePreview file={selectedFile} filename={filename || selectedFile.name} annotationsJson={selectedAnnotationsJson} pdfViewerRef={pdfViewerRef} onAnnotationChanged={handleAnnotationChanged} />;
   }
-  if (sourceType === "images" && imageUrls?.length) {
-    return <ImageList urls={imageUrls} t={t} />;
-  }
-  if ((sourceType === "audio" || sourceType === "video") && sourceUrl) {
-    return <MediaPlayer sourceType={sourceType} url={sourceUrl} filename={filename} />;
-  }
+
+  // [Flow: Step 1 (원본 파일 목록 패널을 항상 렌더링) -> Step 2 (선택된 파일 미리보기를 우측에 렌더링)]
   return (
-    <div className="flex-1 flex items-center justify-center h-full w-full text-on-surface-variant text-sm p-4">
-      {t("page:components.cannotDisplaySource")}
+    <div className="flex flex-col h-full overflow-hidden bg-surface-container-low" data-oid="source-panel">
+      <div className="flex-1 overflow-hidden flex min-h-0">
+        <PanelGroup direction="horizontal" className="flex-1 flex min-h-0">
+          <Panel
+            defaultSize={files.length > 1 ? 35 : 25}
+            minSize={15}
+            maxSize={60}
+            className="border-r border-outline-variant overflow-hidden flex flex-col"
+          >
+            {renderFileList()}
+          </Panel>
+          <PanelResizeHandle className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize" />
+          <Panel className="overflow-hidden min-h-0 flex flex-col">
+            {renderPreview()}
+          </Panel>
+        </PanelGroup>
+      </div>
     </div>
   );
 }
+
+

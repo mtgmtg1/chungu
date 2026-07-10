@@ -12,7 +12,9 @@ import type { Request, Response } from 'express';
 import { getAuthHeaders } from '../lib/auth.js';
 import { buildModel } from '../lib/model.js';
 import { buildAnnotationTools } from '../tools/annotations.js';
+import { createBrowserlessTools } from '../tools/browserless.js';
 import { buildMarkdownTools } from '../tools/markdown.js';
+import { createSandboxTools } from '../tools/sandbox.js';
 import { buildSpreadsheetTools } from '../tools/spreadsheet.js';
 
 /**
@@ -45,6 +47,10 @@ Available tool categories:
    - get_section, get_table, replace_selection, insert_at, apply_edits
 3. Spreadsheet (when active_editor is xlsxBasic or xlsxAdvanced):
    - get_sheet, update_cell, add_row, delete_row, apply_changes
+4. Sandbox (when user asks to run code or process files in isolation):
+   - create_sandbox, execute_in_sandbox, read_sandbox_file, write_sandbox_file, list_sandbox_files, commit_sandbox_changes, get_sandbox_diff, collect_sandbox_results, destroy_sandbox
+5. Web browsing (when user asks to capture or extract web content):
+   - browse_web, convert_web_to_pdf, extract_web_text
 
 Rules:
 - Always use the provided tools to make changes; do not just describe them.
@@ -98,6 +104,8 @@ export async function chatHandler(req: Request, res: Response) {
       ...buildAnnotationTools(toolContext),
       ...buildMarkdownTools(toolContext),
       ...buildSpreadsheetTools(toolContext),
+      ...createSandboxTools(toolContext),
+      ...createBrowserlessTools(),
     },
     stopWhen: stepCountIs(30),
   });

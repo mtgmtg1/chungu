@@ -1,0 +1,27 @@
+# containerd 설정 — Kata Containers RuntimeClass 등록
+#
+# [Flow: 기본 containerd 설정 -> kata-clh (기본 모드) -> kata-clh-dense (고밀도 300+ VM)]
+#
+# 이 파일은 containerd config default 출력에 추가하여 사용한다.
+# install-kata.sh 스크립트가 자동으로 /etc/containerd/config.toml 에 이 섹션을 추가한다.
+
+# --- SystemdCgroup 활성화 ---
+# (기본 config.toml 에서 sed 로 수정: SystemdCgroup = false -> true)
+# [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+#   [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+#     SystemdCgroup = true
+
+# --- Kata Cloud Hypervisor (기본 모드: 150 VM, 2GB/VM, DAX 1GB) ---
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata-clh]
+  runtime_type = "io.containerd.kata-clh.v2"
+
+# --- Kata Cloud Hypervisor (고밀도 모드: 300+ VM, 512MB/VM, DAX 256MB) ---
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata-clh-dense]
+  runtime_type = "io.containerd.kata-clh-dense.v2"
+
+# --- containerd 1.7.x 호환 (구버전 형식) ---
+# containerd 1.7.x 를 사용하는 경우 위 대신 아래 형식 사용:
+# [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-clh]
+#   runtime_type = "io.containerd.kata-clh.v2"
+# [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.kata-clh-dense]
+#   runtime_type = "io.containerd.kata-clh-dense.v2"

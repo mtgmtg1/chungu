@@ -1,0 +1,56 @@
+# Kata Containers + Cloud Hypervisor 고밀도 모드 설정 (300+ VM)
+#
+# [Flow: 기본 512MB 메모리 -> virtio-mem 동적 확장 -> DAX 256MB -> KSM 최적화]
+#
+# 이 파일은 /etc/kata-containers/configuration-clh-dense.toml 에 복사하여 사용한다.
+# kata-clh-dense RuntimeClass 로 고밀도 워크로드에만 적용한다.
+# 문서 처리 등 가벼운 작업에 적합, 대용량 이미지/비디오 처리는 기본 모드 권장.
+
+# --- 런타임 설정 ---
+[runtime]
+sandbox_cgroup_only = true
+
+# --- Cloud Hypervisor VMM 설정 ---
+[hypervisor.cloud-hypervisor]
+path = "/opt/kata/bin/cloud-hypervisor"
+enable_kvm = true
+
+# CPU: 기본 1 vCPU, 최대 2 vCPU (고밀도 모드는 최대 축소)
+default_vcpus = 1
+default_maxvcpus = 2
+
+# 메모리: 기본 512MB (대기 상태), 최대 4GB (virtio-mem 작업 시 확장)
+# 300 VM × 512MB = 150GB → KSM 40% 적용 시 ~90GB
+default_memory = 512
+default_maxmemory = 4096
+
+# virtio-mem 으로 동적 메모리 추가/회수
+hotplug_method = "virtio-mem"
+reclaim_guest_freed_memory = true
+enable_mem_prealloc = false
+enable_hugepages = false
+
+# --- virtio-fs 설정 (DAX 256MB — 고밀도 모드) ---
+shared_fs = "virtio-fs"
+virtio_fs_daemon = "/opt/kata/libexec/virtiofsd"
+
+# cache=auto: 메타데이터 캐시 + 파일 열려 있는 동안 데이터 캐시
+virtio_fs_cache = "auto"
+
+# DAX 256MB 윈도우 (300 VM × 256MB = 75GB /dev/shm)
+# DAX 는 guest page cache 중복을 제거하므로 256MB 여도 효과적
+# host buffer cache 페이지를 직접 매핑, 추가 물리 메모리 ≈ 0
+virtio_fs_cache_size = 256
+
+# --- 보안 설정 (기본 모드와 동일) ---
+enable_annotations = []
+disable_guest_seccomp = false
+disable_block_device_use = false
+privileged_without_host_devices = true
+
+# --- 게스트 이미지 ---
+# image = "/opt/kata/share/kata-containers/proof-agent.img"
+kernel = "/opt/kata/share/kata-containers/vmlinux.container"
+kernel_params = "console=hvc0 quiet"
+
+enable_debug = false

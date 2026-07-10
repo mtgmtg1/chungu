@@ -31,5 +31,10 @@ celery.conf.update(
             "task": "backend.workers.tasks.auto_recharge_retry",
             "schedule": 86400.0,  # 1일 간격
         },
+        # 만료된 Kata 샌드박스 자동 정리 (10분 간격)
+        "cleanup-expired-sandboxes": {
+            "task": "backend.workers.tasks.cleanup_expired_sandboxes",
+            "schedule": 600.0,
+        },
     },
 )

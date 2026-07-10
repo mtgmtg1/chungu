@@ -14,6 +14,7 @@ from . import settings_store
 from .api import admin, auth, jobs, on_premise, payments, subscriptions
 from .api.dev_auth import router as dev_auth_router
 from .api.gdpr import router as gdpr_router
+from .api.sandboxes import router as sandboxes_router
 from .api.supabase_proxy import router as supabase_proxy_router
 from .api.v1 import router as v1_router
 from .auth.security import hash_password
@@ -94,6 +95,7 @@ app.include_router(on_premise.router)
 app.include_router(supabase_proxy_router)
 app.include_router(gdpr_router)
 app.include_router(v1_router)
+app.include_router(sandboxes_router)
 if settings.dev_bypass_auth:
     app.include_router(dev_auth_router)
 

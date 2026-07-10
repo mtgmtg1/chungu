@@ -1007,3 +1007,71 @@ def auto_recharge_retry() -> dict:
         return {"error": str(e)}
     finally:
         db.close()
+
+
+@celery.task(name="backend.workers.tasks.cleanup_expired_sandboxes")
+def cleanup_expired_sandboxes() -> dict:
+    """[Flow: Step 1 (만료된 sandbox 조회) -> Step 2 (각 sandbox 종료 + 결과 수집) -> Step 3 (workspace 정리)]
+
+    만료된 Kata 샌드박스를 자동으로 종료하고 결과 파일을 수집한다.
+    Celery beat 에 의해 주기적으로 실행된다 (기본 10분 간격).
+    보존 기간(sandbox_default_timeout, 기본 30분)을 초과한 sandbox 가 대상이다.
+    """
+    # [Flow: Step 1 (만료된 sandbox 조회) -> Step 2 (각 sandbox 종료 + 결과 수집) -> Step 3 (workspace 정리)]
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select as sa_select, update as sa_update
+    from ..db.models import Sandbox
+    from ..core.sandbox import SandboxManager
+
+    db = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        timeout_seconds = settings.sandbox_default_timeout
+        cutoff = now - timedelta(seconds=timeout_seconds)
+
+        # 만료된 sandbox 조회 (created_at 이 cutoff 보다 오래됨, status 가 running/creating)
+        expired = db.execute(
+            sa_select(Sandbox).where(
+                Sandbox.status.in_(["creating", "running"]),
+                Sandbox.created_at < cutoff,
+            )
+        ).scalars().all()
+
+        if not expired:
+            return {"cleaned": 0, "errors": 0}
+
+        manager = SandboxManager()
+        cleaned = 0
+        errors = 0
+
+        for sandbox in expired:
+            try:
+                logger.info(f"[cleanup_expired_sandboxes] sandbox {sandbox.id} 만료, 종료 시도")
+                # 결과 수집 시도 (실패해도 종료는 진행)
+                try:
+                    manager.collect_results(sandbox.id)
+                except Exception as collect_err:
+                    logger.warning(f"[cleanup_expired_sandboxes] {sandbox.id} 결과 수집 실패: {collect_err}")
+
+                # sandbox 종료
+                manager.destroy(sandbox.id)
+
+                # DB 상태 업데이트
+                db.execute(
+                    sa_update(Sandbox)
+                    .where(Sandbox.id == sandbox.id)
+                    .values(status="expired", updated_at=now)
+                )
+                cleaned += 1
+            except Exception as e:
+                logger.error(f"[cleanup_expired_sandboxes] sandbox {sandbox.id} 종료 실패: {e}")
+                errors += 1
+
+        db.commit()
+        logger.info(f"[cleanup_expired_sandboxes] 완료: cleaned={cleaned}, errors={errors}")
+        return {"cleaned": cleaned, "errors": errors}
+    except Exception as e:
+        logger.exception(f"[cleanup_expired_sandboxes] 태스크 오류: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()

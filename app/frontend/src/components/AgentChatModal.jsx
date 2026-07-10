@@ -167,8 +167,9 @@ function ChatSession({ context, chatId, initialMessages, isVisible, onMessagesCh
  * @param {() => void} props.onClose - 모달 닫기 콜백
  * @param {import("../hooks/useAgentChat.ts").AgentContext} props.context - 현재 Job/페이지/에디터 컨텍스트
  * @param {(count: number) => void} [props.onRunningCountChange] - 실행 중 에이전트 수 변경 시 호출
+ * @param {() => void} [props.onAgentComplete] - 에이전트 세션이 streaming → ready/error로 전환될 때 호출 (상위에서 job/preview 재로드 용)
  */
-export default function AgentChatModal({ isOpen, onClose, context, onRunningCountChange }) {
+export default function AgentChatModal({ isOpen, onClose, context, onRunningCountChange, onAgentComplete }) {
   const { t } = useTranslation();
   const jobId = context?.jobId;
   const {
@@ -186,6 +187,10 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
   // [Flow: onRunningCountChange를 ref에 보관하여 effect 안정화]
   const onRunningCountChangeRef = useRef(onRunningCountChange);
   onRunningCountChangeRef.current = onRunningCountChange;
+
+  // [Flow: onAgentComplete를 ref에 보관 — 에이전트 완료 시 상위에서 job/preview 재로드]
+  const onAgentCompleteRef = useRef(onAgentComplete);
+  onAgentCompleteRef.current = onAgentComplete;
 
   // [Flow: 실행 중 에이전트 수를 상위에 보고]
   useEffect(() => {
@@ -213,6 +218,7 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
   }, [isOpen, currentId, conversations, createConversation, selectConversation]);
 
   // [Flow: 세션 status 변경 핸들러 — streaming/submitted이면 streamingIds에 추가, ready/error면 제거]
+  // [Flow: ready/error 전환 시(에이전트 완료) onAgentComplete 호출하여 상위에서 데이터 재로드]
   const handleStatusChange = useCallback((id, status) => {
     const isStreaming = status === "streaming" || status === "submitted";
     setStreamingIds((prev) => {
@@ -225,6 +231,8 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
       if (!isStreaming && has) {
         const next = new Set(prev);
         next.delete(id);
+        // 에이전트가 스트리밍을 마치고 ready/error로 전환되면 상위에 완료 알림
+        onAgentCompleteRef.current?.();
         return next;
       }
       return prev;

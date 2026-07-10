@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
   ArrowLeft,
+  Box,
   FileCode,
   FileDown,
   FileSpreadsheet,
@@ -25,6 +26,8 @@ import SimpleEditor from "../components/SimpleEditor.jsx";
 import SpreadsheetEditor from "../components/SpreadsheetEditor.jsx";
 import AgentInputBar from "../components/AgentInputBar.jsx";
 import AgentChatModal from "../components/AgentChatModal.jsx";
+import SandboxBrowser from "../components/SandboxBrowser.jsx";
+import UploadPopup from "../components/UploadPopup.jsx";
 import { api } from "../api.js";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { SkeletonPageResult } from "../components/Skeleton.jsx";
@@ -96,6 +99,11 @@ export default function JobResultPage() {
   const [chatOpen, setChatOpen] = useState(false);
   // 백그라운드에서 실행 중인 에이전트 수 (모달을 닫아도 스트리밍이 계속되는 세션 개수)
   const [agentRunningCount, setAgentRunningCount] = useState(0);
+  // Kata 샌드박스 상태 (에이전트 격리 실행 환경)
+  const [sandboxId, setSandboxId] = useState(null);
+  const [sandboxPanelOpen, setSandboxPanelOpen] = useState(false);
+  // 새 파일 업로드 팝업 상태
+  const [uploadPopupOpen, setUploadPopupOpen] = useState(false);
 
   const openDropdown = (setter, timerRef) => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -293,6 +301,10 @@ export default function JobResultPage() {
 
   const autoSaveMarkdownRef = useRef(autoSaveMarkdown);
   autoSaveMarkdownRef.current = autoSaveMarkdown;
+
+  // [Flow: loadJob을 ref에 보관 — 에이전트 완료 콜백에서 항상 최신 클로저로 job/preview 재로드]
+  const loadJobRef = useRef(loadJob);
+  loadJobRef.current = loadJob;
 
   const handleMarkdownChange = useCallback((updated) => {
     autoSaveMarkdownRef.current(updated);
@@ -595,16 +607,9 @@ export default function JobResultPage() {
       : <div className="h-full flex items-center justify-center" data-oid="xlsx-advanced-loading"><Loader2 className="animate-spin text-primary" size={24} /></div>;
   };
 
-  // [Flow: Step 1 (원본 파일/URL 존재 여부 확인) -> Step 2 (원본이 없으면 전체 너비로 우측 콘텐츠만 표시) -> Step 3 (원본이 있으면 좌측 SourcePanel + 우측 콘텐츠 분할, 사이드바 상태에 따라 collapse/expand)]
+  // [Flow: Step 1 (항상 좌측 SourcePanel + 우측 콘텐츠 분할 구조 생성) -> Step 2 (SourcePanel에 업로드 버튼 콜백 전달) -> Step 3 (사이드바 상태에 따라 collapse/expand)]
   const renderResultArea = () => {
     const rightContent = renderRightContent();
-    if (!sourceUrl && sourceFiles.length === 0) {
-      return (
-        <div className="flex-1 flex flex-col bg-white overflow-hidden min-h-0" data-oid="result-fullwidth">
-          {rightContent}
-        </div>
-      );
-    }
 
     return (
       <PanelGroup direction="horizontal" className="flex-1 flex min-h-0" data-oid="result-split">
@@ -633,6 +638,7 @@ export default function JobResultPage() {
             onStartAnnotate={startAnnotate}
             onStartAnnotateEdit={startAnnotateEdit}
             onCancelAnnotation={handleCancelAnnotation}
+            onUpload={() => setUploadPopupOpen(true)}
             converting={converting}
             annotationRuns={job?.annotated_pdf_files || []}
             data-oid="result-source" />
@@ -753,7 +759,7 @@ export default function JobResultPage() {
             {markdownSaveMessage}
           </span>
           }
-          {job?.status === "done" && (sourceUrl || sourceFiles.length > 0) &&
+          {job?.status === "done" &&
           <button
             onClick={() => setSidebarOpen((v) => !v)}
             title={sidebarOpen ? t("page:result.hideSidebar") : t("page:result.showSidebar")}
@@ -927,6 +933,7 @@ export default function JobResultPage() {
         sourceFiles={sourceFiles}
         imageUrls={imageUrls}
         onSaveAnnotations={handleSaveAnnotations}
+        onUpload={() => setUploadPopupOpen(true)}
         data-oid="x.dznfp" />
 
       }
@@ -996,6 +1003,12 @@ export default function JobResultPage() {
       </div>
       }
 
+      <UploadPopup
+        open={uploadPopupOpen}
+        onClose={() => setUploadPopupOpen(false)}
+        data-oid="result-upload-popup"
+      />
+
       {deleteSourceFileModal &&
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-oid="delete-source-modal-overlay">
         <div className="bg-white rounded-lg shadow-lg border border-outline-variant p-6 w-full max-w-sm" data-oid="delete-source-modal">
@@ -1056,9 +1069,33 @@ export default function JobResultPage() {
               currentPage,
               selectedFileIndex,
               activeEditor: previewMode,
+              sandboxId,
             }}
             onRunningCountChange={setAgentRunningCount}
+            onAgentComplete={() => loadJobRef.current()}
           />
+          {/* 샌드박스 파일 브라우저 (에이전트가 sandbox 를 생성한 경우 표시) */}
+          {sandboxId && sandboxPanelOpen && (
+            <div className="fixed bottom-20 right-4 w-96 h-80 z-40 shadow-2xl">
+              <SandboxBrowser sandboxId={sandboxId} />
+              <button
+                onClick={() => setSandboxPanelOpen(false)}
+                className="absolute top-2 right-2 p-1 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700"
+              >
+                <XCircle className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+          {/* 샌드박스 패널 토글 버튼 (sandbox 가 있을 때만 표시) */}
+          {sandboxId && !sandboxPanelOpen && (
+            <button
+              onClick={() => setSandboxPanelOpen(true)}
+              className="fixed bottom-20 right-4 z-40 px-3 py-2 rounded-lg bg-blue-600 text-white shadow-lg hover:bg-blue-700 flex items-center gap-2 text-sm"
+            >
+              <Box className="w-4 h-4" />
+              {t("page:sandbox.fileBrowser")}
+            </button>
+          )}
         </>
       )}
     </div>);

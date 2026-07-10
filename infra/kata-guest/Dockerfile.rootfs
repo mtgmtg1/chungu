@@ -1,0 +1,114 @@
+# PROOF 에이전트 게스트 rootfs 이미지 빌드용 Dockerfile
+#
+# [Flow: Stage 1 (Debian 기반 패키지 설치) -> Stage 2 (Python/Node.js 환경) -> Stage 3 (rootfs export)]
+#
+# 이 Dockerfile 은 컨테이너 이미지 자체가 아니라 Kata 게스트 VM 의 rootfs 를 빌드하기 위해 사용한다.
+# 빌드 후 docker export 로 파일시스템을 추출하여 ext4 이미지로 변환한다.
+#
+# 사용법:
+#   docker build -t proof-agent-rootfs -f Dockerfile.rootfs .
+#   docker export $(docker create proof-agent-rootfs) | sudo tar -x -C /tmp/rootfs
+#   sudo mkfs.ext4 -d /tmp/rootfs /opt/kata/share/kata-containers/proof-agent.img 3G
+
+FROM debian:12-slim
+
+# ========================================
+# Stage 1: 시스템 패키지 설치 (문서/오디오/이미지 처리)
+# ========================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # --- 기본 도구 ---
+    git curl wget jq unzip unrar-free p7zip-full \
+    ca-certificates locales xsltproc libxml2-utils \
+    build-essential gcc make cmake pkg-config \
+    # --- 문서 처리 ---
+    libreoffice-writer libreoffice-calc libreoffice-impress \
+    libreoffice-l10n-ko libreoffice-l10n-ja libreoffice-l10n-zh-cn \
+    libreoffice-help-ko \
+    pandoc poppler-utils \
+    tesseract-ocr tesseract-ocr-kor tesseract-ocr-eng \
+    tesseract-ocr-jpn tesseract-ocr-chi-sim tesseract-ocr-chi-tra \
+    # --- 오디오/비디오 처리 ---
+    ffmpeg \
+    # --- 이미지 처리 ---
+    imagemagick ghostscript \
+    # --- 폰트 (한글/중문/일문 렌더링 필수) ---
+    fonts-noto-cjk fonts-nanum fonts-unfonts-core \
+    fonts-noto-color-emoji fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+
+# ========================================
+# Stage 2: 로케일 설정
+# ========================================
+RUN sed -i 's/^# *\(ko_KR.UTF-8\)/\1/' /etc/locale.gen && \
+    sed -i 's/^# *\(ja_JP.UTF-8\)/\1/' /etc/locale.gen && \
+    sed -i 's/^# *\(zh_CN.UTF-8\)/\1/' /etc/locale.gen && \
+    locale-gen
+ENV LANG=ko_KR.UTF-8
+ENV LC_ALL=ko_KR.UTF-8
+
+# ========================================
+# Stage 3: Python 환경 (문서/오디오/이미지 처리 라이브러리)
+# ========================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv python3-dev \
+    libgl1-mesa-glx libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir --break-system-packages \
+    # --- 문서 처리 ---
+    markitdown pymupdf pdf2image \
+    # --- 오디오 처리 ---
+    faster-whisper pydub librosa \
+    # --- 이미지 처리 ---
+    Pillow opencv-python-headless \
+    # --- 유틸리티 ---
+    requests httpx websockets \
+    # --- browserless 원격 연결 ---
+    pyppeteer
+
+# Whisper small 모델 사전 다운로드 (런타임 다운로드 방지)
+RUN python3 -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')" 2>/dev/null || true
+
+# ========================================
+# Stage 4: Node.js 환경
+# ========================================
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# browserless 원격 연결용 puppeteer-core (로컬 Chrome 설치 불필요)
+RUN npm install -g puppeteer-core
+
+# ========================================
+# Stage 5: 비특권 사용자 생성
+# ========================================
+RUN useradd -m -s /bin/bash -u 1000 agent && \
+    mkdir -p /workspace /home/agent/.config && \
+    chown agent:agent /workspace /home/agent/.config
+
+# sudo 설치하지 않음 (root 전환 불가)
+
+# ========================================
+# Stage 6: 에이전트 런타임 스크립트
+# ========================================
+COPY entrypoint.sh /opt/agent-runner/entrypoint.sh
+COPY browserless-helper.py /opt/agent-runner/browserless-helper.py
+COPY browserless-helper.js /opt/agent-runner/browserless-helper.js
+RUN chmod +x /opt/agent-runner/entrypoint.sh /opt/agent-runner/browserless-helper.py && \
+    chown -R agent:agent /opt/agent-runner
+
+# ========================================
+# Stage 7: 환경 변수
+# ========================================
+ENV BROWSERLESS_URL=http://192.168.1.50:20047
+ENV PYTHONUNBUFFERED=1
+ENV NODE_ENV=production
+
+# 작업 디렉토리
+WORKDIR /workspace
+
+# 비특권 사용자로 실행
+USER agent
+
+# 엔트리포인트
+ENTRYPOINT ["/opt/agent-runner/entrypoint.sh"]

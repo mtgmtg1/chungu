@@ -98,6 +98,17 @@ class Settings(BaseSettings):
     # Vite dev server의 proxy와 동일한 역할을 프로덕션/단일 오리진 환경에서 수행한다.
     ai_backend_url: str = "http://localhost:3001"
 
+    # Kata Containers 샌드박스 (에이전트 격리 실행 환경)
+    sandbox_enabled: bool = False  # Kata 호스트 서버에 설치된 후 활성화
+    sandbox_data_dir: str = "/data/jobs"  # workspace 루트 (virtio-fs 마운트 대상)
+    sandbox_runtime: str = "io.containerd.kata-clh.v2"  # 기본 모드 RuntimeClass
+    sandbox_runtime_dense: str = "io.containerd.kata-clh-dense.v2"  # 고밀도 모드 (300+ VM)
+    sandbox_image: str = "proof-agent:latest"  # containerd 에 로드된 에이전트 이미지
+    sandbox_default_timeout: int = 1800  # sandbox 기본 타임아웃 (초, 30분)
+    sandbox_max_concurrent: int = 150  # 기본 모드 동시 VM 상한
+    sandbox_max_concurrent_dense: int = 300  # 고밀도 모드 동시 VM 상한
+    sandbox_browserless_url: str = "http://192.168.1.50:20047"  # a1 기존 browserless 서버
+
     # 경로
     data_dir: str = "/data"
 

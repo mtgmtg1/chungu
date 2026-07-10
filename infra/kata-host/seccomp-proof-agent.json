@@ -1,0 +1,167 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "defaultErrnoRet": 1,
+  "architectures": [
+    "SCMP_ARCH_X86_64",
+    "SCMP_ARCH_X86"
+  ],
+  "syscalls": [
+    {
+      "comment": "파일 조작 — 허용 (에이전트는 workspace 내 파일 읽기/쓰기 필요)",
+      "names": [
+        "read", "write", "open", "openat", "close", "stat", "fstat", "lstat",
+        "newfstatat", "lseek", "access", "faccessat", "faccessat2",
+        "readlink", "readlinkat", "realpath",
+        "dup", "dup2", "dup3", "fcntl", "fcntl64",
+        "fchmod", "fchmodat", "fchown", "fchownat", "chmod", "chown",
+        "umask", "getumask",
+        "truncate", "ftruncate", "fallocate",
+        "link", "linkat", "unlink", "unlinkat",
+        "symlink", "symlinkat", "readlink", "readlinkat",
+        "rename", "renameat", "renameat2",
+        "mkdir", "mkdirat", "rmdir",
+        "getdents", "getdents64",
+        "getcwd", "chdir", "fchdir",
+        "pipe", "pipe2",
+        "select", "pselect6", "poll", "ppoll",
+        "epoll_create", "epoll_create1", "epoll_ctl", "epoll_wait", "epoll_pwait",
+        "eventfd", "eventfd2",
+        "inotify_init", "inotify_init1", "inotify_add_watch", "inotify_rm_watch",
+        "copy_file_range", "sendfile", "sendfile64",
+        "splice", "tee"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "프로세스/스레드 조작 — 허용 (에이전트는 코드 실행/프로세스 생성 필요)",
+      "names": [
+        "execve", "execveat", "execv", "execvp", "execvpe",
+        "fork", "vfork", "clone", "clone3",
+        "exit", "exit_group", "wait4", "waitid", "waitpid",
+        "getpid", "getppid", "gettid", "getpgid", "setpgid",
+        "getuid", "geteuid", "getgid", "getegid",
+        "getresuid", "getresgid",
+        "setuid", "setgid", "setreuid", "setregid", "setresuid", "setresgid",
+        "setgroups", "setgroups32",
+        "prlimit64", "getrlimit", "setrlimit",
+        "getpriority", "setpriority", "nice",
+        "sched_yield", "sched_getaffinity", "sched_setaffinity",
+        "sched_getparam", "sched_setparam",
+        "sched_getscheduler", "sched_setscheduler",
+        "sched_get_priority_max", "sched_get_priority_min",
+        "prctl",
+        "arch_prctl",
+        "set_tid_address", "set_robust_list", "get_robust_list",
+        "futex",
+        "get_thread_area", "set_thread_area"
+      ],
+      "action": "SCMP_ACT_ALLOW",
+      "comment_note": "clone 는 CLONE_NEWUSER 플래그를 제한할 수 없으므로 AppArmor/capabilities 로 보완"
+    },
+    {
+      "comment": "네트워크 — 허용 (browserless, 아웃바운드, FastAPI 접근)",
+      "names": [
+        "socket", "socketpair", "socketcall",
+        "bind", "listen", "accept", "accept4",
+        "connect", "getsockname", "getpeername",
+        "send", "recv", "sendto", "recvfrom", "sendmsg", "recvmsg",
+        "sendmmsg", "recvmmsg",
+        "shutdown", "setsockopt", "getsockopt",
+        "gethostname", "getdomainname",
+        "gethostbyname", "gethostbyaddr",
+        "ioctl"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "메모리 관리 — 허용",
+      "names": [
+        "mmap", "mmap2", "munmap", "mprotect", "mremap", "madvise",
+        "mincore", "msync", "mlock", "munlock", "mlockall", "munlockall",
+        "brk", "sbrk",
+        "migrate_pages", "move_pages",
+        "process_vm_readv", "process_vm_writev"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "시그널 — 허용",
+      "names": [
+        "rt_sigaction", "rt_sigprocmask", "rt_sigpending", "rt_sigtimedwait",
+        "rt_sigqueueinfo", "rt_tgsigqueueinfo", "rt_sigreturn",
+        "kill", "tgkill", "tkill", "pidfd_send_signal",
+        "sigaction", "sigprocmask", "sigpending", "sigsuspend", "sigreturn",
+        "signalfd", "signalfd4"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "시간/클록 — 허용",
+      "names": [
+        "clock_gettime", "clock_getres", "clock_settime",
+        "gettimeofday", "settimeofday",
+        "time", "stime",
+        "nanosleep", "clock_nanosleep",
+        "times", "adjtimex",
+        "timer_create", "timer_settime", "timer_gettime", "timer_getoverrun", "timer_delete",
+        "timerfd_create", "timerfd_settime", "timerfd_gettime"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "IPC/공유 메모리 — 허용 (Python/Node.js 멀티프로세싱용)",
+      "names": [
+        "shmget", "shmctl", "shmat", "shmdt",
+        "semget", "semctl", "semop",
+        "msgget", "msgctl", "msgsnd", "msgrcv"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "기타 허용 시스콜",
+      "names": [
+        "uname", "getrandom", "getauxval",
+        "sysinfo", "getpagesize",
+        "personality",
+        "readahead",
+        "sync", "syncfs", "fdatasync", "fsync",
+        "fadvise64", "fadvise64_64",
+        "madvise",
+        "userfaultfd",
+        "membarrier",
+        "rseq"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "시스템 파괴 시스콜 — 차단 (EPERM 반환)",
+      "names": [
+        "mount", "umount", "umount2",
+        "pivot_root", "chroot",
+        "init_module", "finit_module", "delete_module",
+        "reboot", "kexec_load", "kexec_file_load",
+        "swapon", "swapoff",
+        "iopl", "ioperm",
+        "kcmp",
+        "perf_event_open",
+        "bpf",
+        "lookup_dcookie",
+        "perf_event_open2",
+        "pkey_alloc", "pkey_free", "pkey_mprotect",
+        "seccomp",
+        "setns",
+        "unshare",
+        "sethostname", "setdomainname",
+        "acct",
+        "syslog",
+        "vmsplice",
+        "move_mount",
+        "open_tree",
+        "fsopen", "fspick", "fsconfig", "fsmount",
+        "mount_setattr"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1
+    }
+  ]
+}

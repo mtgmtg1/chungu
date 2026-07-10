@@ -192,6 +192,8 @@
     "sourceImages": "원본 이미지",
     "sourceFile": "원본 파일",
     "sourceFiles": "원본 파일 목록",
+    "uploadNewFiles": "새 파일 업로드",
+    "emptySourceFiles": "원본 파일이 없습니다",
     "deleteSourceFileTitle": "원본 파일 삭제",
     "deleteSourceFileDesc": "{{filename}} 파일을 삭제하면 복구할 수 없습니다. 변환 결과는 그대로 유지됩니다.",
     "editMode": "편집 모드",
@@ -1799,6 +1801,30 @@
     "pause": "일시정지",
     "mute": "음소거",
     "unmute": "음소거 해제",
-    "fullscreen": "전체 화면"
+    "fullscreen": "전체 화면",
+    "sandbox": {
+      "runInSandbox": "에이전트로 실행",
+      "sandboxStatus": "샌드박스 상태",
+      "creating": "샌드박스 생성 중…",
+      "running": "실행 중",
+      "stopped": "종료됨",
+      "error": "오류",
+      "destroy": "샌드박스 종료",
+      "destroyConfirm": "샌드박스를 종료하시겠습니까? 수집하지 않은 파일은 손실됩니다.",
+      "fileBrowser": "파일 브라우저",
+      "loading": "로드 중…",
+      "empty": "파일이 없습니다",
+      "loadFailed": "파일 목록을 불러오지 못했습니다",
+      "readFailed": "파일을 읽지 못했습니다",
+      "refresh": "새로고침",
+      "collectResults": "결과 수집",
+      "collecting": "결과 수집 중…",
+      "collectSuccess": "{{count}}개 파일이 저장되었습니다",
+      "collectFailed": "결과 수집에 실패했습니다",
+      "stats": "샌드박스 통계",
+      "activeCount": "활성 샌드박스",
+      "totalCreated": "누적 생성",
+      "diskUsage": "디스크 사용량"
+    }
   }
 }

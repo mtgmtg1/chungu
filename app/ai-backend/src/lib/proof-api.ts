@@ -363,3 +363,190 @@ export async function saveXlsx(
     authHeaders,
   );
 }
+
+// ========================================
+// Sandbox API 메서드
+// ========================================
+
+/**
+ * [Flow: Step 1 (job_id, resource_limits 수신) -> Step 2 (POST /api/sandboxes) -> Step 3 (sandbox 정보 반환)]
+ *
+ * @param jobId Job ID
+ * @param resourceLimits 리소스 제한 (cpu, memory_mb)
+ * @param denseMode 고밀도 모드 여부
+ * @param authHeaders 인증 헤더
+ * @returns sandbox 정보 (sandbox_id, status, workspace)
+ */
+export async function createSandbox(
+  jobId: string,
+  resourceLimits?: { cpu?: number; memory_mb?: number },
+  denseMode?: boolean,
+  authHeaders?: AuthHeaders,
+): Promise<{
+  sandbox_id: string;
+  status: string;
+  workspace: string;
+  error?: string;
+}> {
+  const body: Record<string, unknown> = { job_id: jobId, dense_mode: denseMode || false };
+  if (resourceLimits) body.resource_limits = resourceLimits;
+  return request('/api/sandboxes', 'POST', body, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (sandbox_id, command 수신) -> Step 2 (POST /api/sandboxes/{id}/execute) -> Step 3 (실행 결과 반환)]
+ *
+ * @param sandboxId sandbox ID
+ * @param command 셸 명령어
+ * @param timeout 타임아웃 (초)
+ * @param authHeaders 인증 헤더
+ * @returns 실행 결과 (exit_code, stdout, stderr)
+ */
+export async function executeInSandbox(
+  sandboxId: string,
+  command: string,
+  timeout?: number,
+  authHeaders?: AuthHeaders,
+): Promise<{
+  exit_code: number;
+  stdout: string;
+  stderr: string;
+  error?: string;
+}> {
+  const body: Record<string, unknown> = { command };
+  if (timeout) body.timeout = timeout;
+  return request(`/api/sandboxes/${sandboxId}/execute`, 'POST', body, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (sandbox_id 수신) -> Step 2 (GET /api/sandboxes/{id}) -> Step 3 (상태 반환)]
+ *
+ * @param sandboxId sandbox ID
+ * @param authHeaders 인증 헤더
+ * @returns sandbox 상태
+ */
+export async function getSandboxStatus(
+  sandboxId: string,
+  authHeaders?: AuthHeaders,
+): Promise<Record<string, unknown>> {
+  return request(`/api/sandboxes/${sandboxId}`, 'GET', undefined, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (sandbox_id, path 수신) -> Step 2 (GET /api/sandboxes/{id}/files) -> Step 3 (파일 목록 반환)]
+ *
+ * @param sandboxId sandbox ID
+ * @param path 조회할 경로
+ * @param authHeaders 인증 헤더
+ * @returns 파일 목록
+ */
+export async function listSandboxFiles(
+  sandboxId: string,
+  path: string,
+  authHeaders?: AuthHeaders,
+): Promise<{ files: Array<{ name: string; size: number; type: string }>; error?: string }> {
+  const params = new URLSearchParams({ path });
+  return request(`/api/sandboxes/${sandboxId}/files?${params}`, 'GET', undefined, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (sandbox_id, path 수신) -> Step 2 (GET /api/sandboxes/{id}/files/read) -> Step 3 (파일 내용 반환)]
+ *
+ * @param sandboxId sandbox ID
+ * @param path 파일 경로
+ * @param authHeaders 인증 헤더
+ * @returns 파일 내용
+ */
+export async function readSandboxFile(
+  sandboxId: string,
+  path: string,
+  authHeaders?: AuthHeaders,
+): Promise<{ content: string; size: number; error?: string }> {
+  const params = new URLSearchParams({ path });
+  return request(`/api/sandboxes/${sandboxId}/files/read?${params}`, 'GET', undefined, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (sandbox_id, path, content 수신) -> Step 2 (POST /api/sandboxes/{id}/files/write) -> Step 3 (쓰기 결과 반환)]
+ *
+ * @param sandboxId sandbox ID
+ * @param path 파일 경로
+ * @param content 파일 내용
+ * @param authHeaders 인증 헤더
+ * @returns 쓰기 결과
+ */
+export async function writeSandboxFile(
+  sandboxId: string,
+  path: string,
+  content: string,
+  authHeaders?: AuthHeaders,
+): Promise<{ status: string; path: string; error?: string }> {
+  return request(`/api/sandboxes/${sandboxId}/files/write`, 'POST', { path, content }, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (sandbox_id, message 수신) -> Step 2 (POST /api/sandboxes/{id}/commit) -> Step 3 (commit 결과 반환)]
+ *
+ * @param sandboxId sandbox ID
+ * @param message commit 메시지
+ * @param authHeaders 인증 헤더
+ * @returns commit 결과
+ */
+export async function commitSandboxChanges(
+  sandboxId: string,
+  message: string,
+  authHeaders?: AuthHeaders,
+): Promise<{ status: string; commit: string; error?: string }> {
+  return request(`/api/sandboxes/${sandboxId}/commit`, 'POST', { message }, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (sandbox_id 수신) -> Step 2 (GET /api/sandboxes/{id}/diff) -> Step 3 (diff 반환)]
+ *
+ * @param sandboxId sandbox ID
+ * @param cached staged 변경사항만 여부
+ * @param authHeaders 인증 헤더
+ * @returns git diff
+ */
+export async function getSandboxDiff(
+  sandboxId: string,
+  cached: boolean,
+  authHeaders?: AuthHeaders,
+): Promise<{ diff: string; error?: string }> {
+  const params = new URLSearchParams({ cached: String(cached) });
+  return request(`/api/sandboxes/${sandboxId}/diff?${params}`, 'GET', undefined, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (sandbox_id 수신) -> Step 2 (POST /api/sandboxes/{id}/collect) -> Step 3 (수집 결과 반환)]
+ *
+ * @param sandboxId sandbox ID
+ * @param authHeaders 인증 헤더
+ * @returns 수집 결과
+ */
+export async function collectSandboxResults(
+  sandboxId: string,
+  authHeaders?: AuthHeaders,
+): Promise<{
+  uploaded: number;
+  failed: number;
+  total_scanned: number;
+  files: Array<{ path: string; storage_path: string; size: number }>;
+  error?: string;
+}> {
+  return request(`/api/sandboxes/${sandboxId}/collect`, 'POST', undefined, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (sandbox_id 수신) -> Step 2 (DELETE /api/sandboxes/{id}) -> Step 3 (종료 결과 반환)]
+ *
+ * @param sandboxId sandbox ID
+ * @param authHeaders 인증 헤더
+ * @returns 종료 결과
+ */
+export async function destroySandbox(
+  sandboxId: string,
+  authHeaders?: AuthHeaders,
+): Promise<{ status: string; container: string; error?: string }> {
+  return request(`/api/sandboxes/${sandboxId}`, 'DELETE', undefined, authHeaders);
+}

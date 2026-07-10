@@ -320,3 +320,32 @@ class AgentRun(Base):
 
     job: Mapped["Job | None"] = relationship("Job", lazy="selectin")
     user: Mapped["User | None"] = relationship("User", lazy="selectin")
+
+
+class Sandbox(Base):
+    """Kata Containers 기반 에이전트 샌드박스 실행 기록.
+
+    각 sandbox 는 1개의 Kata VM 에 대응하며,
+    workspace (/data/jobs/{job_id}) 를 virtio-fs 로 VM 내부 /workspace 에 마운트한다.
+    """
+
+    __tablename__ = "sandboxes"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    job_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("jobs.id"), nullable=True, index=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    container_name: Mapped[str] = mapped_column(String(128), default="")
+    container_id: Mapped[str] = mapped_column(String(64), default="")
+    runtime: Mapped[str] = mapped_column(String(32), default="io.containerd.kata-clh.v2")
+    status: Mapped[str] = mapped_column(String(20), default="creating", index=True)
+    # creating | running | stopped | error | destroyed
+    workspace_path: Mapped[str] = mapped_column(Text, default="")
+    resource_limits: Mapped[dict] = mapped_column(JSON, default=lambda: {"cpu": 1, "memory_mb": 2048})
+    dense_mode: Mapped[bool] = mapped_column(Boolean, default=False)
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    destroyed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    job: Mapped["Job | None"] = relationship("Job", lazy="selectin")
+    user: Mapped["User | None"] = relationship("User", lazy="selectin")

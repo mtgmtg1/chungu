@@ -23,6 +23,13 @@ services:
     environment:
       # Docker 네트워크 내부에서 ai-backend 컨테이너로 프록시
       - AI_BACKEND_URL=http://ai-backend:3001
+      # Kata Containers 샌드박스 (에이전트 격리 실행 환경)
+      - SANDBOX_ENABLED=${SANDBOX_ENABLED:-false}
+      - SANDBOX_DATA_DIR=${SANDBOX_DATA_DIR:-/data/jobs}
+      - SANDBOX_RUNTIME=${SANDBOX_RUNTIME:-io.containerd.kata-clh.v2}
+      - SANDBOX_RUNTIME_DENSE=${SANDBOX_RUNTIME_DENSE:-io.containerd.kata-clh-dense.v2}
+      - SANDBOX_IMAGE=${SANDBOX_IMAGE:-proof-agent:latest}
+      - SANDBOX_BROWSERLESS_URL=${SANDBOX_BROWSERLESS_URL:-http://192.168.1.50:20047}
     ports:
       - "${APP_PORT:-28181}:28181"
     volumes:
@@ -130,6 +137,9 @@ services:
       # FastAPI에 도구 호출을 전달할 때 사용할 base URL (컨테이너 내부에서 api 서비스로)
       # 런타임에 도구 호출 시 api를 찾으므로 startup 의존성은 없음 (순환 의존 방지)
       - PROOF_API_URL=http://api:28181
+      # browserless 원격 브라우저 서버 (a1 기존 구동 중, sandbox VM 공유)
+      - BROWSERLESS_URL=${BROWSERLESS_URL:-http://192.168.1.50:20047}
+      - BROWSERLESS_TOKEN=${BROWSERLESS_TOKEN:-}
     networks:
       - default
     restart: unless-stopped

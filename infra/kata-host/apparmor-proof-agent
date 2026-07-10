@@ -1,0 +1,212 @@
+# PROOF 에이전트 AppArmor 프로필 — 시스템 파괴 방지
+#
+# [Flow: 기본 추상화 포함 -> workspace/tmp 쓰기 허용 -> 시스템 바이너리 실행 허용 -> 위험 경로 차단]
+#
+# 이 파일은 /etc/apparmor.d/proof-agent 에 복사 후 apparmor_parser 로 로드한다.
+# install-kata.sh 스크립트가 자동으로 배포/로드한다.
+#
+# 적용 대상: Kata VM 내부의 에이전트 프로세스 (UID 1000, agent 사용자)
+
+#include <tunables/global>
+
+profile proof-agent flags=(attach_disconnected) {
+  #include <abstractions/base>
+  #include <abstractions/python>
+  #include <abstractions/nodejs>
+
+  # ========================================
+  # 쓰기 허용 영역 (read-write)
+  # ========================================
+
+  # /workspace — 에이전트 작업 공간 (결과 파일 + git repo)
+  /workspace/** rw,
+  /workspace/ rw,
+
+  # /tmp — 임시 파일
+  /tmp/** rw,
+  /tmp/ rw,
+
+  # /home/agent — 사용자 홈 디렉토리
+  /home/agent/** rw,
+  /home/agent/ rw,
+
+  # /dev/shm — 공유 메모리 (Python/Node.js 멀티프로세싱)
+  /dev/shm/** rw,
+
+  # /run — 런타임 파일 (소켓 등)
+  /run/** rw,
+
+  # ========================================
+  # 시스템 바이너리 실행 허용 (read-only, execute)
+  # ========================================
+
+  # 기본 시스템 바이너리
+  /bin/** rix,
+  /usr/bin/** rix,
+  /usr/local/bin/** rix,
+  /usr/sbin/** rix,
+  /sbin/** rix,
+
+  # 라이브러리 (read-only)
+  /usr/lib/** r,
+  /lib/** r,
+  /lib64/** r,
+  /usr/lib64/** r,
+
+  # Python 런타임
+  /usr/bin/python3 rix,
+  /usr/bin/python3.11 rix,
+  /usr/lib/python3*/** r,
+  /usr/local/lib/python3*/** r,
+
+  # Node.js 런타임
+  /usr/bin/node rix,
+  /usr/lib/node_modules/** r,
+  /usr/local/lib/node_modules/** r,
+
+  # 문서 처리 도구
+  /usr/bin/soffice rix,
+  /usr/bin/lowrite rix,
+  /usr/bin/pandoc rix,
+  /usr/bin/pdftotext rix,
+  /usr/bin/pdftoppm rix,
+  /usr/bin/pdfinfo rix,
+  /usr/bin/tesseract rix,
+
+  # 오디오/비디오 처리
+  /usr/bin/ffmpeg rix,
+  /usr/bin/ffprobe rix,
+
+  # 이미지 처리
+  /usr/bin/magick rix,
+  /usr/bin/convert rix,
+  /usr/bin/gs rix,
+
+  # 개발 도구
+  /usr/bin/git rix,
+  /usr/bin/gcc rix,
+  /usr/bin/g++ rix,
+  /usr/bin/make rix,
+  /usr/bin/cmake rix,
+
+  # 압축 도구
+  /usr/bin/unzip rix,
+  /usr/bin/unrar rix,
+  /usr/bin/7z rix,
+  /usr/bin/tar rix,
+  /usr/bin/gzip rix,
+  /usr/bin/zstd rix,
+
+  # ========================================
+  # 읽기 전용 리소스
+  # ========================================
+
+  # /proc — 제한적 접근
+  /proc/*/status r,
+  /proc/*/maps r,
+  /proc/*/cmdline r,
+  /proc/*/fd/ r,
+  /proc/meminfo r,
+  /proc/cpuinfo r,
+  /proc/stat r,
+  /proc/uptime r,
+  /proc/loadavg r,
+  /proc/version r,
+  /proc/filesystems r,
+  /proc/mounts r,
+  /proc/self/** r,
+  /proc/thread-self/** r,
+
+  # /sys — 제한적 접근
+  /sys/** r,
+
+  # 폰트 (read-only)
+  /usr/share/fonts/** r,
+  /usr/local/share/fonts/** r,
+
+  # Tesseract traineddata (read-only)
+  /usr/share/tesseract-ocr/*/tessdata/** r,
+
+  # ========================================
+  # 위험 경로 접근 차단 (deny)
+  # ========================================
+
+  # 블록 디바이스 (디스크 파괴 방지)
+  deny /dev/sda* rw,
+  deny /dev/sdb* rw,
+  deny /dev/nvme* rw,
+  deny /dev/vd* rw,
+  deny /dev/xvd* rw,
+  deny /dev/loop* rw,
+  deny /dev/dm-* rw,
+  deny /dev/md* rw,
+
+  # 커널 메모리 (커널 익스플로잇 방지)
+  deny /dev/mem rw,
+  deny /dev/kmem rw,
+  deny /dev/port rw,
+  deny /proc/kcore r,
+  deny /proc/kallsyms r,
+  deny /proc/kmsg r,
+  deny /proc/modules r,
+
+  # 커널 파라미터 변경 (sysctl 차단)
+  deny /proc/sys/kernel/** w,
+  deny /proc/sys/vm/** w,
+  deny /proc/sys/net/** w,
+  deny /proc/sysrq-trigger w,
+
+  # 펌웨어/하드웨어 접근
+  deny /sys/firmware/** w,
+  deny /sys/kernel/** w,
+  deny /sys/module/** w,
+
+  # 커널 모듈 로드
+  deny /lib/modules/** w,
+
+  # 시스템 서비스 조작
+  deny /etc/systemd/** w,
+  deny /usr/lib/systemd/** w,
+
+  # 부트로더
+  deny /boot/** rw,
+  deny /etc/grub* rw,
+  deny /etc/default/grub rw,
+
+  # 다른 사용자 홈 디렉토리
+  deny /root/** rw,
+  deny /home/*/** rw,
+
+  # ========================================
+  # 네트워크 — 허용 (browserless, 아웃바운드, FastAPI)
+  # ========================================
+
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network netlink raw,
+
+  # ========================================
+  # capabilities — 최소 허용
+  # ========================================
+
+  # 파일 소유권 변경 (에이전트가 생성한 파일)
+  capability chown,
+  capability dac_override,
+  capability fowner,
+  capability fsetid,
+  capability setgid,
+  capability setuid,
+  capability net_bind_service,
+
+  # 위험 capabilities 는 명시적으로 부여하지 않음 (기본적으로 차단):
+  # - sys_admin (mount, pivot_root)
+  # - sys_rawio (커널 메모리 접근)
+  # - sys_module (커널 모듈 로드)
+  # - sys_ptrace (프로세스 추적)
+  # - sys_boot (재부팅)
+  # - mac_admin (MAC 설정 변경)
+  # - mknod (디바이스 노드 생성)
+  # - audit_write, audit_control
+}

@@ -8,6 +8,67 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### Kata Containers + Cloud Hypervisor 기반 에이전트 샌드박스 (격리 실행 환경)
+
+- **목표**: PROOF 결과 페이지의 문서/이미지/오디오/비디오 파일들을 격리된 Kata Containers microVM 내부의 `/workspace`로 마운트하여, 에이전트가 자유롭게 코드 작성/실행할 수 있도록 함. 300+ 동시 VM 목표 (고밀도 모드). 상세 계획은 `KATA_SANDBOX_PLAN.md` 참조.
+- **Phase 1: 호스트 환경 구성** (`infra/kata-host/` — 7파일):
+  - `install-kata.sh`: Kata 3.31 + Cloud Hypervisor 설치, THP 비활성화 (KSM 4KB 페이지 병합률 확보), KSM 극대화 (pages_to_scan=5000), zRAM 128GB 압축 스왑, /dev/shm 160GB (기본 모드) / 75GB (고밀도 모드), disable-thp systemd 서비스.
+  - `configuration-clh.toml`: 기본 모드 (150 VM, default_memory=2048MB, DAX 1GB 윈도우, virtio-mem 동적 확장 최대 8GB, cache=auto, reclaim_guest_freed_memory=true).
+  - `configuration-clh-dense.toml`: 고밀도 모드 (300+ VM, default_memory=512MB, DAX 256MB 윈도우, virtio-mem 최대 4GB).
+  - `containerd-config.toml`: RuntimeClass 등록 (kata-clh, kata-clh-dense).
+  - `seccomp-proof-agent.json`: 시스템 파괴 시스콜 차단 (mount, init_module, pivot_root, reboot, bpf, perf_event_open 등).
+  - `apparmor-proof-agent`: 위험 경로 접근 차단 (/dev/sda, /proc/kcore, /sys/firmware 등), /workspace·/tmp·/home/agent만 read-write.
+  - `kata-opa-policy.rego`: Kata Agent Policy (OPA/Rego) — CreateContainer 이미지 화이트리스트, ExecProcess 명령어 블랙리스트, CLONE_NEWUSER 제한 (Layer 5 심화 보안).
+- **Phase 2: 게스트 rootfs 빌드** (`infra/kata-guest/` — 5파일):
+  - `Dockerfile.rootfs`: Debian 12 slim + LibreOffice/Pandoc/Poppler/Tesseract(kor/eng/jpn/chi-sim/chi-tra)/MarkItDown/PyMuPDF + FFmpeg/faster-whisper(small 모델 사전 다운로드)/pydub/librosa + ImageMagick/Ghostscript/Pillow/OpenCV/@napi-rs/canvas + Noto CJK/Nanum/Unfonts/Liberation 폰트 + Python 3.11/Node.js 20/git + 비특권 사용자 agent(UID 1000, sudo 불가). Chrome/Puppeteer 제외 (browserless 서버 공유로 ~500MB/VM 절약).
+  - `build-rootfs.sh`: Docker 빌드 → rootfs 추출 → ext4 3GB 이미지 생성 → `/opt/kata/share/kata-containers/proof-agent.img` 배포.
+  - `entrypoint.sh`: VM 진입점 — workspace 확인, git init, vsock 명령 수신 루프, 명령어 블랙리스트 필터링, 환경 변수 주입 제거.
+  - `browserless-helper.py` / `browserless-helper.js`: a1 browserless 서버(`http://192.168.1.50:20047`) 원격 연결 헬퍼 (Python pyppeteer / Node.js puppeteer-core).
+- **Phase 3: SandboxManager 코어** (`app/backend/core/sandbox/` — 6파일):
+  - `manager.py`: SandboxManager — VM 생명주기 (create/execute/status/destroy), containerd CLI 호출, dense_mode 지원, 리소스 제한 (CPU/memory/timeout).
+  - `workspace.py`: WorkspaceManager — 결과 파일 준비 (original/extracted/annotations/agent_output 디렉토리), Supabase Storage 다운로드, git init + .gitignore.
+  - `communicator.py`: VsockCommunicator — Kata VM 과 AF_VSOCK 통신, HTTP 폴백 지원.
+  - `collector.py`: ResultCollector — agent_output/extracted/annotations 파일 수집, git diff 추출, Supabase Storage 업로드.
+  - `security.py`: 명령어 블랙리스트 (30+ 정규식 패턴: rm -rf /, dd of=/dev/, mkfs, mount, sysctl, insmod, reboot, fork bomb, curl|sh 등), 환경 변수 주입 제거.
+- **Phase 4: FastAPI API + DB 마이그레이션**:
+  - `app/backend/api/sandboxes.py`: REST API — POST/GET/DELETE /api/sandboxes, /execute, /files, /files/read, /files/write, /commit, /diff, /collect, /stats (관리자용 통계). 기존 `get_current_user` 인증 재사용, sandbox 소유자 검증.
+  - `app/backend/db/migrations/026_add_sandboxes.sql`: sandboxes 테이블 생성 (id, job_id, user_id, status, vm_id, workspace_path, resource_limits JSONB, result JSONB, error, created_at, updated_at, expires_at).
+  - `app/backend/db/models.py`: Sandbox SQLAlchemy 모델 추가.
+  - `app/backend/main.py`: sandboxes_router 등록.
+  - `app/backend/config.py`: sandbox_* 설정 10개 추가 (sandbox_enabled, sandbox_data_dir, sandbox_runtime, sandbox_runtime_dense, sandbox_image, sandbox_default_timeout, sandbox_max_concurrent, sandbox_max_concurrent_dense, sandbox_browserless_url).
+- **Phase 5: Node.js AI 도구** (`app/ai-backend/src/`):
+  - `tools/sandbox.ts`: 14개 도구 — create_sandbox, execute_in_sandbox, read/write/list_sandbox_files, commit_sandbox_changes, get_sandbox_diff, collect_sandbox_results, destroy_sandbox, download_file, convert_document (LibreOffice/Pandoc 자동 선택), transcribe_audio (faster-whisper), process_image (ImageMagick/Pillow — resize/convert/rotate/crop/grayscale/thumbnail), get_workspace_status.
+  - `tools/browserless.ts`: 3개 도구 — browse_web (스크린샷), convert_web_to_pdf, extract_web_text. a1 browserless 서버 REST API 사용.
+  - `lib/proof-api.ts`: sandbox API 메서드 10개 추가 (createSandbox, executeInSandbox, getSandboxStatus, listSandboxFiles, readSandboxFile, writeSandboxFile, commitSandboxChanges, getSandboxDiff, collectSandboxResults, destroySandbox).
+  - `chat/route.ts`: sandbox + browserless 도구 통합, system prompt에 sandbox/web browsing 도구 사용 규칙 추가.
+- **Phase 6: 5계층 보안 방어**:
+  - Layer 1: read-only rootfs (시스템 바이너리 변경 차단).
+  - Layer 2: capabilities drop (CAP_SYS_ADMIN/SYS_RAWIO/SYS_MODULE/SYS_BOOT 등 전면 제거).
+  - Layer 3: seccomp 프로필 (mount, mkfs, init_module, reboot 등 시스콜 차단).
+  - Layer 4: AppArmor 프로필 (/dev/sda, /proc/kcore, /sys/firmware 등 위험 경로 차단).
+  - Layer 5: Kata Agent Policy OPA (이미지 화이트리스트, 명령어 블랙리스트, CLONE_NEWUSER 제한).
+  - Sandbox Manager 레벨 명령어 블랙리스트 (30+ 정규식 패턴).
+- **Phase 7: 프론트엔드 통합**:
+  - `app/frontend/src/components/SandboxBrowser.jsx`: 신규 — workspace 파일 브라우저 (트리 뷰, 디렉토리 펼침/접힘, 파일 내용 미리보기, 새로고침).
+  - `app/frontend/src/pages/JobResultPage.jsx`: sandboxId state, SandboxBrowser 패널 + 토글 버튼, AgentChatModal context에 sandboxId 전달.
+  - `app/frontend/src/api.js`: sandbox API 메서드 12개 추가 (createSandbox, getSandbox, executeInSandbox, listSandboxFiles, readSandboxFile, writeSandboxFile, commitSandboxChanges, getSandboxDiff, collectSandboxResults, destroySandbox, getSandboxStats).
+  - `app/frontend/src/locales/{ko,en,ja}/page.json`: sandbox i18n 키 22개 추가 (runInSandbox, sandboxStatus, fileBrowser, collectResults, stats 등).
+- **Phase 8: 운영 (자동 정리 + 통계)**:
+  - `app/backend/workers/tasks.py`: `cleanup_expired_sandboxes` Celery task — 만료된 sandbox 자동 종료 + 결과 수집 (sandbox_default_timeout 초과 시).
+  - `app/backend/celery_app.py`: beat_schedule에 10분 간격 cleanup-expired-sandboxes 등록.
+  - `app/backend/api/sandboxes.py`: `/api/sandboxes/stats` 엔드포인트 — 상태별 카운트, 디스크 사용량, 사용자별 활성 sandbox 수 (관리자용).
+- **인프라 통합**:
+  - `app/docker-compose.yml`: backend 서비스에 SANDBOX_* 환경변수 6개, ai-backend 서비스에 BROWSERLESS_URL/BROWSERLESS_TOKEN 추가.
+  - `app/.env.example`: sandbox 환경변수 10개 + browserless 환경변수 2개 추가.
+- **메모리 최적화 전략** (300+ VM 달성):
+  - browserless 서버 공유 (a1, ~500MB/VM 절약).
+  - virtio-mem 동적 메모리 (기본 512MB, 필요 시 4GB 확장, idle 시 회수).
+  - KSM 페이지 병합 (THP 비활성화 후 4KB 단위, ~40% 절약).
+  - zRAM 압축 스왑 (128GB, zstd 압축, 3:1 압축률).
+  - virtio-fs DAX (host buffer cache를 guest에 직접 매핑, guest page cache 중복 제거).
+  - reclaim_guest_freed_memory (게스트 해제 메모리 호스트 회수).
+- **핵심 파일**: `KATA_SANDBOX_PLAN.md`, `infra/kata-host/`(7파일), `infra/kata-guest/`(5파일), `app/backend/core/sandbox/`(6파일), `app/backend/api/sandboxes.py`, `app/backend/db/migrations/026_add_sandboxes.sql`, `app/backend/workers/tasks.py`, `app/backend/celery_app.py`, `app/backend/config.py`, `app/backend/main.py`, `app/ai-backend/src/tools/sandbox.ts`, `app/ai-backend/src/tools/browserless.ts`, `app/ai-backend/src/lib/proof-api.ts`, `app/ai-backend/src/chat/route.ts`, `app/frontend/src/components/SandboxBrowser.jsx`, `app/frontend/src/pages/JobResultPage.jsx`, `app/frontend/src/api.js`, `app/frontend/src/locales/*/page.json`, `app/docker-compose.yml`, `app/.env.example`.
+
 ### AI agent 채팅 — Vercel ai-chatbot 템플릿 기반 UI 재작성 + FastAPI 리버스 프록시
 
 - **FastAPI `/api/ai/*` 리버스 프록시** (`app/backend/main.py`, `app/backend/config.py`): Vercel AI SDK 5.x `useChat`가 `POST /api/ai/chat`으로 스트리밍 요청을 보내는데, Vite dev server proxy는 로컬 개발에서만 동작하고 프로덕션/단일 오리진 환경에서는 FastAPI가 빌드된 SPA를 서빙하므로 `POST /api/ai/chat`이 SPA catch-all GET 라우트에 걸려 **405 Method Not Allowed**를 반환하던 버그 수정. FastAPI에 `/api/ai/{path:path}` 리버스 프록시 라우트를 SPA catch-all 앞에 추가해 Node.js AI 백엔드(`ai_backend_url`, 기본값 `http://localhost:3001`)로 httpx 스트리밍 relay. hop-by-hop 헤더 제외, 모든 HTTP 메서드 지원.

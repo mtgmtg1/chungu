@@ -192,6 +192,8 @@
     "sourceImages": "Source Images",
     "sourceFile": "Source File",
     "sourceFiles": "Source Files",
+    "uploadNewFiles": "Upload New Files",
+    "emptySourceFiles": "No source files",
     "deleteSourceFileTitle": "Delete source file?",
     "deleteSourceFileDesc": "Deleting {{filename}} cannot be undone. The converted result will remain unchanged.",
     "editMode": "Edit Mode",
@@ -685,6 +687,30 @@
     "pause": "Pause",
     "mute": "Mute",
     "unmute": "Unmute",
-    "fullscreen": "Fullscreen"
+    "fullscreen": "Fullscreen",
+    "sandbox": {
+      "runInSandbox": "Run with Agent",
+      "sandboxStatus": "Sandbox Status",
+      "creating": "Creating sandbox…",
+      "running": "Running",
+      "stopped": "Stopped",
+      "error": "Error",
+      "destroy": "Destroy Sandbox",
+      "destroyConfirm": "Destroy the sandbox? Unsaved files will be lost.",
+      "fileBrowser": "File Browser",
+      "loading": "Loading…",
+      "empty": "No files",
+      "loadFailed": "Failed to load file list",
+      "readFailed": "Failed to read file",
+      "refresh": "Refresh",
+      "collectResults": "Collect Results",
+      "collecting": "Collecting results…",
+      "collectSuccess": "{{count}} files saved",
+      "collectFailed": "Failed to collect results",
+      "stats": "Sandbox Stats",
+      "activeCount": "Active Sandboxes",
+      "totalCreated": "Total Created",
+      "diskUsage": "Disk Usage"
+    }
   }
 }

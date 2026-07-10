@@ -334,6 +334,8 @@ class SandboxManager:
     def list_files(self, container_name: str, path: str = "/workspace") -> dict[str, Any]:
         """workspace 내 파일 목록을 조회한다.
 
+        [Flow: nerdctl exec 로 ls -la 실행 -> 출력 파싱 -> 파일/디렉토리 목록 반환]
+
         매개변수:
             container_name: 컨테이너 이름
             path: 조회할 경로 (/workspace 하위)
@@ -344,7 +346,7 @@ class SandboxManager:
         cmd = [
             "nerdctl", "-n", "k8s.io", "exec", "--user", "1000:1000",
             container_name,
-            "/bin/sh", "-c", f"ls -la --time-style=+ {path} 2>/dev/null",
+            "/bin/sh", "-c", f"ls -la {path} 2>/dev/null",
         ]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
@@ -352,11 +354,19 @@ class SandboxManager:
                 return {"files": [], "error": result.stderr}
 
             files = []
-            for line in result.stdout.strip().split("\n")[1:]:  # 헤더 제외
-                parts = line.split(None, 7)
-                if len(parts) < 8:
+            for line in result.stdout.strip().split("\n"):
+                # 'total' 헤더 라인 스킵
+                if line.startswith("total"):
                     continue
-                perms, _, _, _, size, _, _, name = parts
+                parts = line.split(None, 8)
+                if len(parts) < 9:
+                    continue
+                perms = parts[0]
+                size = parts[4]
+                name = parts[8]
+                # 심볼릭 링크의 '-> target' 부분 제거
+                if " -> " in name:
+                    name = name.split(" -> ")[0]
                 files.append({
                     "name": name,
                     "size": int(size) if size.isdigit() else 0,
@@ -394,6 +404,11 @@ class SandboxManager:
     def write_file(self, container_name: str, path: str, content: str) -> dict[str, Any]:
         """workspace 에 파일을 쓴다.
 
+        [Flow: content 를 base64 인코딩 -> nerdctl exec 로 디코딩하여 파일 작성]
+
+        stdin pipe 방식(cat > file)은 nerdctl exec + Kata 조합에서 hang 발생하므로,
+        base64 인코딩된 내용을 명령어 인자로 전달하여 디코딩하는 방식 사용.
+
         매개변수:
             container_name: 컨테이너 이름
             path: 파일 경로 (/workspace 하위)
@@ -402,14 +417,15 @@ class SandboxManager:
         반환값:
             {"status": "ok", "path": str} 또는 {"error": str}
         """
-        # stdin 으로 파일 내용 전달
+        import base64
+        encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
         cmd = [
-            "nerdctl", "-n", "k8s.io", "exec", "--user", "1000:1000", "-i",
+            "nerdctl", "-n", "k8s.io", "exec", "--user", "1000:1000",
             container_name,
-            "/bin/sh", "-c", f"cat > {path}",
+            "/bin/sh", "-c", f"echo '{encoded}' | base64 -d > {path}",
         ]
         try:
-            result = subprocess.run(cmd, input=content, capture_output=True, text=True, timeout=10)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
             if result.returncode != 0:
                 return {"error": result.stderr}
             return {"status": "ok", "path": path}

@@ -91,16 +91,19 @@ export async function searchText(
       undefined,
       authHeaders,
     );
+    console.log(`[searchText] job=${jobId} query=${query} pageNo=${pageNo} matches=${res.matches?.length ?? 0}`);
     const pageDimensions: Record<number, { width: number; height: number }> = {};
     for (const [k, v] of Object.entries(res.page_dimensions || {})) {
       pageDimensions[Number(k)] = v;
     }
     return { matches: res.matches || [], pageDimensions };
-  } catch {
+  } catch (err) {
+    console.error(`[searchText] job=${jobId} query=${query} pageNo=${pageNo} endpoint failed: ${err instanceof Error ? err.message : String(err)}`);
     // search-text 엔드포인트가 없으면 getElements로 전체 요소를 받아 Node.js 측에서 필터링
     const { elements, pageDimensions } = await getElements(jobId, pageNo, authHeaders);
     const regex = new RegExp(query, 'i');
     const matches = elements.filter((el) => regex.test(String(el.text || '')));
+    console.log(`[searchText] fallback job=${jobId} elements=${elements.length} matches=${matches.length}`);
     return { matches, pageDimensions };
   }
 }

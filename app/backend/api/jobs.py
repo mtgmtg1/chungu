@@ -3201,6 +3201,11 @@ def search_job_text(
     PDF 텍스트 레이어에서 키워드/정규식 검색을 수행한다.
     """
     import fitz
+    import time as _time
+
+    start_time = _time.monotonic()
+    used_ocr_layout = False
+    used_ocr_fallback = False
 
     job = db.get(Job, job_id)
     _require_job_access(job, user)
@@ -3265,6 +3270,7 @@ def search_job_text(
                 layout_by_page = {int(k): v for k, v in json.loads(layout_raw.decode("utf-8")).items()}
                 ocr_elements = build_agent_elements_from_ocr_layout(layout_by_page, pdf_bytes, page_range=ocr_page_range)
                 if ocr_elements:
+                    used_ocr_layout = True
                     logger.info(f"[search_job_text] {job_id} 저장된 OCR layout 사용: {len(ocr_elements)}개 요소")
             except Exception as e:
                 logger.warning(f"[search_job_text] {job_id} 저장된 OCR layout 사용 실패: {e}")
@@ -3275,6 +3281,7 @@ def search_job_text(
                 from ..core.pdf_annotate_converter import collect_elements_for_agent
 
                 ocr_elements, _ocr_pdf_bytes, layout_by_page = collect_elements_for_agent(job_id, page_range=ocr_page_range)
+                used_ocr_fallback = True
             except Exception as e:
                 logger.warning(f"[search_job_text] {job_id} OCR 폴백 실패: {e}")
                 ocr_elements, layout_by_page = [], {}
@@ -3297,7 +3304,18 @@ def search_job_text(
                 "text": text.strip(),
             })
 
-    return {"matches": matches, "total": len(matches)}
+    import time as _time
+    total_elapsed = _time.monotonic() - start_time
+    return Response(
+        json.dumps({"matches": matches, "total": len(matches)}, ensure_ascii=False, default=str),
+        media_type="application/json",
+        headers={
+            "X-Total-Elapsed": str(round(total_elapsed * 1000)),
+            "X-Used-OCR-Layout": str(used_ocr_layout).lower(),
+            "X-Used-OCR-Fallback": str(used_ocr_fallback).lower(),
+            "X-OCR-Layout-Path": str(job.result_ocr_layout_storage_path or ""),
+        },
+    )
 
 
 def _resolve_annotations_json_path(job: Job, source_index: int) -> str | None:

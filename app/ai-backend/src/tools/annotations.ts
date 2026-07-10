@@ -80,7 +80,8 @@ interface CachedElements {
  */
 export function buildAnnotationTools(context: AnnotationContext) {
   const jobId = String(context.jobId || context.job_id || '');
-  const sourceIndex = Number(context.sourceIndex ?? context.source_index ?? 0);
+  const parsedSourceIndex = Number(context.sourceIndex ?? context.source_index ?? 0);
+  const sourceIndex = Number.isInteger(parsedSourceIndex) ? parsedSourceIndex : 0;
   const authHeaders = context.authHeaders || {};
 
   // [Flow: Step 1 (현재 요청에서 추가/삭제될 주석을 임시 저장) -> Step 2 (apply_annotations에서 일괄 저장)]
@@ -163,33 +164,27 @@ export function buildAnnotationTools(context: AnnotationContext) {
         summary_only: z.boolean().optional().describe('true면 요약 필드만 반환 (id/type/page_no/color/comment). 생략 시 원본 JSON 전체 반환'),
       }),
       execute: async ({ page_no, summary_only }) => {
-        try {
-          const { annotations, total } = await proofApi.getAnnotations(jobId, sourceIndex, page_no, authHeaders);
-          const sliced = annotations.slice(0, 80);
-          if (summary_only) {
-            return {
-              annotations: sliced.map((a) => {
-                const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
-                  ? (a as any).annotation
-                  : a;
-                return {
-                  id: inner.id,
-                  type: inner.type,
-                  page_no: (inner.pageIndex ?? 0) + 1,
-                  color: inner.color,
-                  comment: inner.contents,
-                };
-              }),
-              total,
-            };
-          }
-          // 원본 JSON 전체 구조 반환 — EmbedPDF AnnotationTransferItem[] 형식 그대로
-          return { annotations: sliced, total };
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error(`[get_annotations] job=${jobId} page_no=${page_no}: ${msg}`);
-          return { error: `get_annotations failed: ${msg}` };
+        const { annotations, total } = await proofApi.getAnnotations(jobId, sourceIndex, page_no, authHeaders);
+        const sliced = annotations.slice(0, 80);
+        if (summary_only) {
+          return {
+            annotations: sliced.map((a) => {
+              const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
+                ? (a as any).annotation
+                : a;
+              return {
+                id: inner.id,
+                type: inner.type,
+                page_no: (inner.pageIndex ?? 0) + 1,
+                color: inner.color,
+                comment: inner.contents,
+              };
+            }),
+            total,
+          };
         }
+        // 원본 JSON 전체 구조 반환 — EmbedPDF AnnotationTransferItem[] 형식 그대로
+        return { annotations: sliced, total };
       },
     }),
 
@@ -357,44 +352,63 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     apply_annotations: tool({
-      description: '현재까지 추가한 하이라이트/콜아웃을 Storage에 저장하고 뷰어에 반영한다.',
+      description: '현재까지 추가한 하이라이트/콜아웃을 Storage에 저장하고 뷰어에 반영한다. 저장 실패 시에도 실제 원인을 결과에 반환한다.',
       inputSchema: z.object({}),
       execute: async () => {
+        // [Flow: Step 1 (대기 중인 변경 확인) -> Step 2 (주석 JSON 생성)
+        //       -> Step 3 (원래 주석 파일 저장 시도) -> Step 4 (원본 JSON fallback)
+        //       -> Step 5 (구조화된 저장 결과 반환)]
         if (pending.length === 0 && removals.length === 0) {
-          return { saved: false, reason: 'No pending annotations or removals' };
+          return { saved: false, reason: '저장할 주석 변경이 없습니다.' };
         }
+
+        if (pending.length === 0) {
+          // 현재 remove_annotation은 승인 대기 상태만 기록하고 실제 삭제 API를 호출하지 않는다.
+          // 빈 배열을 저장 API에 보내면 백엔드가 400을 반환하므로 명시적인 결과를 반환한다.
+          return {
+            saved: false,
+            removals: removals.length,
+            reason: '삭제 요청은 승인 대기 중이며, 추가할 주석이 없어 저장하지 않았습니다.',
+          };
+        }
+
         try {
           const { pageDimensions } = await loadElements();
-          // [Flow: Step 1 (pending 주석을 embedpdf AnnotationTransferItem[] 형식으로 변환)
-          //       -> Step 2 (FastAPI /user-annotations 로 저장) -> Step 3 (결과 반환)]
-          const annotations = pending.map((p) =>
-            _buildAnnotationItem(p, pageDimensions),
+          const annotations = pending.map((pendingAnnotation) =>
+            _buildAnnotationItem(pendingAnnotation, pageDimensions),
           );
-
-          // annotated_pdf_files가 없는 원본 PDF(아직 AI 주석이 생성된 적 없는 문서)에서는
-          // source_index=0으로 저장 시 404가 발생하므로, source_index=-1로 fallback하여
-          // {job_id}/user_annotations.json에 저장한다.
           let saveSourceIndex = sourceIndex;
+          let usedFallback = false;
+
+          // [Flow: Step 1 (source_index로 주석 PDF 저장) -> Step 2 (404/실패 감지)
+          //       -> Step 3 (source_index=-1로 원본 PDF의 JSON 저장)]
           try {
             await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, authHeaders);
-          } catch (firstErr) {
-            if (saveSourceIndex >= 0) {
-              saveSourceIndex = -1;
-              await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, authHeaders);
-            } else {
-              throw firstErr;
-            }
+          } catch (firstError) {
+            if (saveSourceIndex < 0) throw firstError;
+            saveSourceIndex = -1;
+            usedFallback = true;
+            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, authHeaders);
           }
+
+          // 같은 실행에서 모델이 apply_annotations를 반복 호출해도 중복 저장하지 않는다.
+          pending.length = 0;
+          removals.length = 0;
           return {
             saved: true,
             count: annotations.length,
-            removals: removals.length,
             source_index: saveSourceIndex,
+            used_fallback: usedFallback,
           };
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error(`[apply_annotations] job=${jobId}: ${msg}`);
-          return { error: `apply_annotations failed: ${msg}` };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`[apply_annotations] job=${jobId} source_index=${sourceIndex}: ${message}`);
+          return {
+            saved: false,
+            error: 'apply_annotations 저장 실패',
+            detail: message,
+            source_index: sourceIndex,
+          };
         }
       },
     }),

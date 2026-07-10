@@ -97,7 +97,7 @@ export async function chatHandler(req: Request, res: Response) {
       ...buildMarkdownTools(toolContext),
       ...buildSpreadsheetTools(toolContext),
     },
-    stopWhen: stepCountIs(5),
+    stopWhen: stepCountIs(30),
   });
 
   return result.toUIMessageStreamResponse();

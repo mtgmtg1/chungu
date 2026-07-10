@@ -37,15 +37,21 @@ export async function request<T>(
     options.body = body;
   }
 
-  const res = await fetch(url, options);
-  const isJson = (res.headers.get('content-type') || '').includes('application/json');
-  const data = isJson ? await res.json() : await res.text();
-  if (!res.ok) {
-    const body = data as any;
-    const detail = isJson ? (body.detail || JSON.stringify(body)) : body;
-    throw new Error(`Proof API error ${res.status}: ${detail}`);
+  try {
+    const res = await fetch(url, options);
+    const isJson = (res.headers.get('content-type') || '').includes('application/json');
+    const data = isJson ? await res.json() : await res.text();
+    if (!res.ok) {
+      const body = data as any;
+      const detail = isJson ? (body.detail || JSON.stringify(body)) : body;
+      throw new Error(`Proof API error ${res.status}: ${detail}`);
+    }
+    return data as T;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[request] ${method} ${url} failed: ${msg}`, { headers: Object.keys(headers) });
+    throw err;
   }
-  return data as T;
 }
 
 /**

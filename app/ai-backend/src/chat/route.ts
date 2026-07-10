@@ -54,6 +54,8 @@ Rules:
 - To read other job result JSON, call read_job_json with kind="ocr_layout" | "extracted_files" | "annotated_pdf_files" | "job_meta".
 - To get a quick annotation summary (id/type/page/color only), call get_annotations with summary_only=true.
 - To create annotations directly from JSON (without using add_highlight/add_callout), call save_annotations with an EmbedPDF AnnotationTransferItem[] array. Use this when you need precise rect positions from view_page or read_job_json. Set merge=false to replace all existing annotations.
+- For PDF text elements, use get_elements with an explicit page_no whenever possible. Without page_no, the backend may OCR the entire PDF which is very slow for large/image-based PDFs.
+- When calling add_highlight or add_callout after get_elements(page_no), pass the same page_no to avoid re-scanning the whole PDF. If the page_no is omitted, the tool will still fall back to a full-document scan but it will be slower.
 - To modify existing annotations, first call get_annotations or read_job_json(kind="annotations") to list them, then call update_annotation with the annotation id.
 - update_annotation immediately persists changes to storage; you do not need to call apply_annotations after it.
 - For markdown edits, only call apply_edits when you are done with all replacements/insertions.

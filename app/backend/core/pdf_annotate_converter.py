@@ -239,10 +239,12 @@ def _rotate_image_90(image_path: Path, angle_code: int, output_dir: Path) -> Pat
 def _collect_page_elements(
     job: Job,
     temp_dir: Path,
+    page_range: list[int] | None = None,
 ) -> tuple[list[AnnotateElement], dict[int, Path], dict[int, dict]]:
-    """모든 페이지를 렌더링하고 PaddleOCR bbox를 확보해 텍스트 요소 목록을 반환한다.
+    """페이지를 렌더링하고 PaddleOCR bbox를 확보해 텍스트 요소 목록을 반환한다.
 
-    [Flow: Step 1 (페이지 이미지 로드) -> Step 2 (deskew 미세 회전 보정) -> Step 3 (PaddleOCR 전송 + bbox + angle_code 수신)
+    [Flow: Step 1 (page_range가 주어지면 해당 페이지만 이미지화) -> Step 2 (deskew 미세 회전 보정)
+          -> Step 3 (PaddleOCR 전송 + bbox + angle_code 수신)
           -> Step 4 (angle_code로 90° 회전 적용한 최종 이미지 준비) -> Step 5 (표 행 + 텍스트 블록 수집)
           -> Step 6 (layout 원본 보관 — 텍스트 레이어 생성용)]
 
@@ -250,13 +252,18 @@ def _collect_page_elements(
     반환하는 corrected_images는 "deskew + 90° 대회전 보정이 모두 완료된 정돈된 이미지"이며,
     이 이미지들로 주석 PDF를 생성하면 bbox와 완벽히 정렬된다.
 
+    Args:
+        job: Job 모델
+        temp_dir: 임시 출력 디렉터리
+        page_range: 1-based 페이지 번호 리스트. None이면 전체 페이지를 처리한다.
+
     Returns:
         (elements, corrected_images, layout_by_page) —
         elements: 주석 대상 텍스트 요소 목록 (bbox는 보정된 이미지 기준)
         corrected_images: page_no(1-based) → 정돈된 페이지 이미지 경로
         layout_by_page: page_no → PaddleOCR layout 원본 dict (overall_ocr_res 포함)
     """
-    image_paths = _get_page_image_paths(job, temp_dir)
+    image_paths = _get_page_image_paths(job, temp_dir, page_range=page_range)
     elements: list[AnnotateElement] = []
     corrected_images: dict[int, Path] = {}
     layout_by_page: dict[int, dict] = {}
@@ -351,7 +358,7 @@ def collect_elements_for_agent(
             elements, _corrected = _collect_page_elements_from_searchable_pdf(searchable_pdf_bytes, temp_dir, dpi=dpi)
             pdf_bytes = searchable_pdf_bytes
         else:
-            elements, corrected_images, layout_by_page = _collect_page_elements(job, temp_dir)
+            elements, corrected_images, layout_by_page = _collect_page_elements(job, temp_dir, page_range=page_range)
             if not corrected_images:
                 return [], None
             pdf_bytes = _images_to_pdf(corrected_images)

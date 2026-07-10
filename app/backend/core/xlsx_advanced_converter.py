@@ -54,13 +54,36 @@ def _get_markdown_content(job: Job) -> str:
     return ""
 
 
-def _get_page_image_paths(job: Job, temp_dir: Path) -> dict[int, Path]:
-    """원본 파일에서 페이지별 이미지 경로를 생성한다. PDF는 렌더링, 이미지는 그대로 사용한다."""
+def _get_page_image_paths(
+    job: Job,
+    temp_dir: Path,
+    page_range: list[int] | None = None,
+) -> dict[int, Path]:
+    """원본 파일에서 페이지별 이미지 경로를 생성한다. PDF는 렌더링, 이미지는 그대로 사용한다.
+
+    [Flow: Step 1 (page_range가 주어지면 1-based 페이지 집합 생성) -> Step 2 (이미지 파일이면 page_range 필터링 후 복사)
+          -> Step 3 (PDF면 page_range 범위만 렌더링) -> Step 4 (page_no → 이미지 경로 매핑 반환)]
+
+    Args:
+        job: Job 모델
+        temp_dir: 임시 출력 디렉터리
+        page_range: 1-based 페이지 번호 리스트. None이면 전체 페이지를 렌더링/복사한다.
+
+    Returns:
+        page_no(1-based) → 페이지 이미지 경로 매핑
+    """
     image_paths: dict[int, Path] = {}
+    page_set: set[int] = set(page_range) if page_range else set()
     files = job.extracted_files or []
-    images = [(idx + 1, info) for idx, info in enumerate(files) if isinstance(info, dict) and info.get("type") == "image" and info.get("storage_path")]
+    images = [
+        (idx + 1, info)
+        for idx, info in enumerate(files)
+        if isinstance(info, dict) and info.get("type") == "image" and info.get("storage_path")
+    ]
     if images:
         for page_num, info in images:
+            if page_set and page_num not in page_set:
+                continue
             try:
                 data = supabase_client.get_service_client().storage.from_("pdfs").download(info["storage_path"])
                 path = temp_dir / f"page-{page_num:03d}.png"
@@ -77,13 +100,25 @@ def _get_page_image_paths(job: Job, temp_dir: Path) -> dict[int, Path]:
         input_bytes = supabase_client.download_pdf(job.pdf_storage_path).read()
         input_path = temp_dir / "input.pdf"
         input_path.write_bytes(input_bytes)
-        render_pdf(str(input_path), str(temp_dir), dpi=300)
-        for p in sorted(temp_dir.glob("page-*.png")):
-            try:
-                page_num = int(p.stem.split("-")[-1])
-                image_paths[page_num] = p
-            except Exception:
-                pass
+        if page_set:
+            start_page = min(page_set)
+            end_page = max(page_set)
+            render_pdf(str(input_path), str(temp_dir), dpi=300, start=start_page, end=end_page)
+            for p in sorted(temp_dir.glob("page-*.png")):
+                try:
+                    page_num = int(p.stem.split("-")[-1])
+                    if page_num in page_set:
+                        image_paths[page_num] = p
+                except Exception:
+                    pass
+        else:
+            render_pdf(str(input_path), str(temp_dir), dpi=300)
+            for p in sorted(temp_dir.glob("page-*.png")):
+                try:
+                    page_num = int(p.stem.split("-")[-1])
+                    image_paths[page_num] = p
+                except Exception:
+                    pass
     except Exception as e:
         logger.warning(f"[_get_page_image_paths] PDF 렌더링 실패: {e}")
     return image_paths

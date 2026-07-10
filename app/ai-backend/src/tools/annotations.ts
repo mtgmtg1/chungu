@@ -87,17 +87,31 @@ export function buildAnnotationTools(context: AnnotationContext) {
   // [Flow: Step 1 (현재 요청에서 추가/삭제될 주석을 임시 저장) -> Step 2 (apply_annotations에서 일괄 저장)]
   const pending: PendingAnnotation[] = [];
   const removals: string[] = [];
-  // 요소/페이지 크기 캐시 — 동일 에이전트 실행 내에서 재사용
-  let elementsCache: CachedElements | null = null;
+  // 요소/페이지 크기 캐시 — 동일 에이전트 실행 내에서 재사용 (키: page_no 또는 'all')
+  const pageCache = new Map<number | 'all', CachedElements>();
 
   /**
-   * [Flow: Step 1 (캐시 확인) -> Step 2 (FastAPI에서 요소 조회) -> Step 3 (캐시에 저장) -> Step 4 (반환)]
+   * [Flow: Step 1 (page_no에 해당하는 캐시 확인) -> Step 2 (FastAPI에서 해당 페이지 요소 조회)
+   *       -> Step 3 (캐시에 저장) -> Step 4 (반환)]
+   *
+   * page_no가 생략되면 전체 페이지를 조회하며, 이미지 기반 PDF 전체를 OCR 하기 때문에 느릴 수 있다.
    */
-  async function loadElements(): Promise<CachedElements> {
-    if (elementsCache) return elementsCache;
-    const { elements, pageDimensions } = await proofApi.getElements(jobId, undefined, authHeaders);
-    elementsCache = { elements, pageDimensions };
-    return elementsCache;
+  async function loadElements(pageNo?: number): Promise<CachedElements> {
+    const key = pageNo ?? 'all';
+    if (pageCache.has(key)) return pageCache.get(key)!;
+    const { elements, pageDimensions } = await proofApi.getElements(jobId, pageNo, authHeaders);
+    const cache: CachedElements = { elements, pageDimensions };
+    pageCache.set(key, cache);
+    return cache;
+  }
+
+  /**
+   * [Flow: Step 1 (page_no 캐시 확인) -> Step 2 (필요 시 loadElements 호출)
+   *       -> Step 3 (해당 페이지 크기 반환)]
+   */
+  async function loadPageDimensions(pageNo: number): Promise<{ width: number; height: number }> {
+    const cache = await loadElements(pageNo);
+    return cache.pageDimensions[pageNo] || { width: 612, height: 792 };
   }
 
   return {
@@ -114,16 +128,13 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     get_elements: tool({
-      description: 'OCR 또는 텍스트 레이어에서 추출한 페이지 요소 목록을 반환한다.',
+      description: 'OCR 또는 텍스트 레이어에서 추출한 페이지 요소 목록을 반환한다. 큰 PDF나 이미지 기반 PDF에서는 page_no를 지정하지 않으면 전체 페이지를 OCR 해야 하므로 매우 느릴 수 있다. 특정 페이지의 요소만 필요할 때는 반드시 page_no를 명시한다.',
       inputSchema: z.object({
-        page_no: z.number().optional().describe('1-based 페이지 번호. 생략 시 모든 페이지'),
+        page_no: z.number().optional().describe('1-based 페이지 번호. 생략 시 모든 페이지를 OCR(느림)'),
       }),
       execute: async ({ page_no }) => {
-        const { elements } = await loadElements();
-        const filtered = page_no !== undefined
-          ? elements.filter((el) => Number(el.page_no) === page_no)
-          : elements;
-        return { elements: filtered.slice(0, 50), total: filtered.length };
+        const { elements } = await loadElements(page_no);
+        return { elements: elements.slice(0, 50), total: elements.length };
       },
     }),
 
@@ -261,16 +272,17 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     add_highlight: tool({
-      description: '선택한 요소에 하이라이트 주석을 추가한다.',
+      description: '선택한 요소에 하이라이트 주석을 추가한다. get_elements(page_no)를 먼저 호출했다면 동일한 page_no를 전달하면 해당 페이지만 빠르게 조회한다. page_no를 생략하면 전체 페이지를 조회하므로 큰 PDF에서는 느릴 수 있다.',
       inputSchema: z.object({
         element_index: z.number().describe('get_elements 결과의 인덱스'),
+        page_no: z.number().optional().describe('get_elements를 호출할 때 지정한 1-based 페이지 번호. 생략 시 전체 페이지에서 조회'),
         comment: z.string().describe('주석 코멘트'),
         color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])
           .default('yellow')
           .describe('색상 이름'),
       }),
-      execute: async ({ element_index, comment, color }) => {
-        const { elements } = await loadElements();
+      execute: async ({ element_index, page_no, comment, color }) => {
+        const { elements } = await loadElements(page_no);
         const element = elements[element_index];
         if (!element) {
           return { error: `element_index ${element_index} not found` };
@@ -291,16 +303,17 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     add_callout: tool({
-      description: '선택한 요소에 callout(텍스트 박스 + 화살표) 주석을 추가한다.',
+      description: '선택한 요소에 callout(텍스트 박스 + 화살표) 주석을 추가한다. get_elements(page_no)를 먼저 호출했다면 동일한 page_no를 전달하면 해당 페이지만 빠르게 조회한다.',
       inputSchema: z.object({
         element_index: z.number().describe('get_elements 결과의 인덱스'),
+        page_no: z.number().optional().describe('get_elements를 호출할 때 지정한 1-based 페이지 번호. 생략 시 전체 페이지에서 조회'),
         comment: z.string().describe('주석 코멘트'),
         color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])
           .default('purple')
           .describe('색상 이름'),
       }),
-      execute: async ({ element_index, comment, color }) => {
-        const { elements } = await loadElements();
+      execute: async ({ element_index, page_no, comment, color }) => {
+        const { elements } = await loadElements(page_no);
         const element = elements[element_index];
         if (!element) {
           return { error: `element_index ${element_index} not found` };
@@ -338,15 +351,16 @@ export function buildAnnotationTools(context: AnnotationContext) {
         page_nos: z.array(z.number()).describe('비교할 1-based 페이지 번호 목록'),
       }),
       execute: async ({ description, page_nos }) => {
-        const { elements } = await loadElements();
-        const results = page_nos.slice(0, 5).map((pageNo) => {
+        const results = [];
+        for (const pageNo of page_nos.slice(0, 5)) {
+          const { elements } = await loadElements(pageNo);
           const pageElements = elements.filter((el) => Number(el.page_no) === pageNo);
-          return {
+          results.push({
             page_no: pageNo,
             count: pageElements.length,
             elements: pageElements.slice(0, 10),
-          };
-        });
+          });
+        }
         return { description, page_nos, results };
       },
     }),
@@ -373,7 +387,11 @@ export function buildAnnotationTools(context: AnnotationContext) {
         }
 
         try {
-          const { pageDimensions } = await loadElements();
+          const pageNos = [...new Set(pending.map((p) => p.target.page_no))];
+          const pageDimensions: Record<number, { width: number; height: number }> = {};
+          for (const pageNo of pageNos) {
+            pageDimensions[pageNo] = await loadPageDimensions(pageNo);
+          }
           const annotations = pending.map((pendingAnnotation) =>
             _buildAnnotationItem(pendingAnnotation, pageDimensions),
           );

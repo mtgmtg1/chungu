@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, List
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from pypdf import PdfReader
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -3043,6 +3043,11 @@ def get_job_elements(
     각 요소는 page_no, bbox_pdf (PDF user-space 좌표), text 를 포함한다.
     """
     import fitz
+    import time as _time
+
+    start_time = _time.monotonic()
+    used_ocr_layout = False
+    used_ocr_fallback = False
 
     job = db.get(Job, job_id)
     _require_job_access(job, user)
@@ -3112,7 +3117,7 @@ def get_job_elements(
                 from ..core.pdf_annotate_converter import build_agent_elements_from_ocr_layout
 
                 layout_raw = client.storage.from_("results").download(job.result_ocr_layout_storage_path)
-                layout_by_page = json.loads(layout_raw.decode("utf-8"))
+                layout_by_page = {int(k): v for k, v in json.loads(layout_raw.decode("utf-8")).items()}
                 ocr_elements = build_agent_elements_from_ocr_layout(layout_by_page, pdf_bytes, page_range=ocr_page_range)
                 if ocr_elements:
                     elements = [
@@ -3124,6 +3129,7 @@ def get_job_elements(
                         }
                         for el in ocr_elements
                     ]
+                    used_ocr_layout = True
                     logger.info(f"[get_job_elements] {job_id} 저장된 OCR layout 사용: {len(elements)}개 요소")
             except Exception as e:
                 logger.warning(f"[get_job_elements] {job_id} 저장된 OCR layout 사용 실패: {e}")
@@ -3148,6 +3154,7 @@ def get_job_elements(
                     }
                     for el in ocr_elements
                 ]
+                used_ocr_fallback = True
                 if ocr_pdf_bytes:
                     ocr_doc = fitz.open(stream=ocr_pdf_bytes, filetype="pdf")
                     try:
@@ -3163,7 +3170,18 @@ def get_job_elements(
                 if layout_by_page:
                     _upload_ocr_layout(db, job, layout_by_page)
 
-    return {"elements": elements, "total": len(elements), "page_dimensions": page_dimensions}
+    import time as _time
+    total_elapsed = _time.monotonic() - start_time
+    return Response(
+        json.dumps({"elements": elements, "total": len(elements), "page_dimensions": page_dimensions}, ensure_ascii=False, default=str),
+        media_type="application/json",
+        headers={
+            "X-Total-Elapsed": str(round(total_elapsed * 1000)),
+            "X-Used-OCR-Layout": str(used_ocr_layout).lower(),
+            "X-Used-OCR-Fallback": str(used_ocr_fallback).lower(),
+            "X-OCR-Layout-Path": str(job.result_ocr_layout_storage_path or ""),
+        },
+    )
 
 
 # [Flow: Step 1 (job 조회) -> Step 2 (searchable PDF 다운로드) -> Step 3 (텍스트 검색)
@@ -3244,7 +3262,7 @@ def search_job_text(
                 from ..core.pdf_annotate_converter import build_agent_elements_from_ocr_layout
 
                 layout_raw = client.storage.from_("results").download(job.result_ocr_layout_storage_path)
-                layout_by_page = json.loads(layout_raw.decode("utf-8"))
+                layout_by_page = {int(k): v for k, v in json.loads(layout_raw.decode("utf-8")).items()}
                 ocr_elements = build_agent_elements_from_ocr_layout(layout_by_page, pdf_bytes, page_range=ocr_page_range)
                 if ocr_elements:
                     logger.info(f"[search_job_text] {job_id} 저장된 OCR layout 사용: {len(ocr_elements)}개 요소")

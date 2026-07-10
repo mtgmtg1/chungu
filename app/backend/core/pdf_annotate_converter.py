@@ -428,7 +428,8 @@ def build_agent_elements_from_ocr_layout(
     page_point_sizes = _page_point_sizes(pdf_bytes)
     page_set = set(page_range) if page_range is not None else None
     results: list[dict] = []
-    for page_no, layout_raw in layout_by_page.items():
+    for page_no_raw, layout_raw in layout_by_page.items():
+        page_no = int(page_no_raw) if isinstance(page_no_raw, str) else page_no_raw
         if page_set is not None and page_no not in page_set:
             continue
         page_width_pt, page_height_pt = page_point_sizes.get(page_no, (0.0, 0.0))

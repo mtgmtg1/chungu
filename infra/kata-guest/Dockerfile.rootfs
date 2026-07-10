@@ -13,6 +13,81 @@
 FROM debian:12-slim
 
 # ========================================
+# Stage 0: systemd + kata-agent 설치
+# ========================================
+# Kata 게스트 VM 은 systemd (PID 1) 가 init 로 실행되고
+# kata-agent 는 systemd 서비스로 실행된다.
+# 기본 Kata Ubuntu 이미지와 동일한 구성을 사용한다.
+
+# systemd + dbus 설치 (systemd-sysv 가 /sbin/init -> systemd 심볼릭 링크 생성)
+# dbus: kata-agent 가 cgroup 관리를 위해 D-Bus 시스템 버스에 연결해야 함.
+#   dbus 없으면 "Establishing a D-Bus connection: No such file or directory" 로 shim 실패.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    systemd systemd-sysv dbus \
+    && rm -rf /var/lib/apt/lists/*
+
+# kata-agent 바이너리 주입 (호스트에서 추출한 Kata 3.31.0 빌드, static-pie)
+COPY kata-agent /usr/bin/kata-agent
+RUN chmod +x /usr/bin/kata-agent
+
+# kata-agent OPA 정책 파일 (allow-all) — 없으면 kata-agent 가 종료됨
+COPY allow-all.rego /etc/kata-opa/allow-all.rego
+RUN ln -sf allow-all.rego /etc/kata-opa/default-policy.rego
+
+# kata-agent systemd 서비스 등록 (기본 Kata 이미지와 동일한 설정)
+COPY kata-agent.service /usr/lib/systemd/system/kata-agent.service
+COPY kata-containers.target /usr/lib/systemd/system/kata-containers.target
+RUN systemctl enable kata-agent.service 2>/dev/null || true && \
+    systemctl set-default kata-containers.target 2>/dev/null || true && \
+    mkdir -p /etc/systemd/system/basic.target.wants && \
+    ln -sf /usr/lib/systemd/system/kata-containers.target \
+       /etc/systemd/system/basic.target.wants/kata-containers.target
+
+# tmp.mount — kata-containers.target 이 Requires=tmp.mount 로 의존.
+#   tmpfs /tmp 가 없으면 kata-agent 가 정책 초기화 중 /tmp/policy.jsonl 에 쓰지 못해
+#   "Failed to initialize agent policy: Read-only file system (os error 30)" 로 종료됨.
+#   Debian 12 slim 에는 tmp.mount 유닛이 기본 설치되지 않으므로 수동 생성.
+RUN printf '[Unit]\n\
+Description=Temporary Directory\n\
+Documentation=man:hier(7)\n\
+ConditionPathIsSymbolicLink=!/tmp\n\
+DefaultDependencies=no\n\
+Conflicts=umount.target\n\
+Before=local-fs.target umount.target\n\
+After=swap.target\n\
+\n\
+[Mount]\n\
+What=tmpfs\n\
+Where=/tmp\n\
+Type=tmpfs\n\
+Options=mode=1777,strictatime,nosuid,nodev\n' > /usr/lib/systemd/system/tmp.mount
+
+# dbus.socket 을 kata-containers.target.wants 에 등록.
+#   kata-agent 가 D-Bus 시스템 버스에 연결하려면 dbus.socket 이 kata-containers.target
+#   시작 시점에 활성화되어야 함 (기본 Kata Ubuntu 이미지와 동일한 구성).
+RUN mkdir -p /etc/systemd/system/kata-containers.target.wants && \
+    ln -sf /usr/lib/systemd/system/dbus.socket \
+       /etc/systemd/system/kata-containers.target.wants/dbus.socket
+
+# 불필요한 systemd 서비스 비활성화 (게스트 VM 경량화)
+RUN find /etc/systemd/system /lib/systemd/system \
+    -path '*/multi-user.target.wants/*' \
+    ! -name 'kata-agent.service' \
+    -exec rm -f {} \; 2>/dev/null || true && \
+    rm -f /lib/systemd/system/systemd-resolved.service \
+          /lib/systemd/system/systemd-networkd.service \
+          /lib/systemd/system/systemd-timesyncd.service 2>/dev/null || true
+
+# Docker 빌드 아티팩트 제거 (systemd 가 docker 가상화로 잘못 감지하는 것 방지)
+# .dockerenv, /run/docker 등 Docker 가 남기는 파일들을 제거한다.
+RUN rm -f /.dockerenv /dockerenv 2>/dev/null || true && \
+    rm -rf /run/* 2>/dev/null || true
+
+# machine-id 생성 (systemd 부팅에 필요)
+RUN echo "b6a3c8e5f2d14e7a9b1c3d5e7f9a1b3c" > /etc/machine-id && \
+    ln -sf /etc/machine-id /var/lib/dbus/machine-id 2>/dev/null || true
+
+# ========================================
 # Stage 1: 시스템 패키지 설치 (문서/오디오/이미지 처리)
 # ========================================
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -107,8 +182,6 @@ ENV NODE_ENV=production
 # 작업 디렉토리
 WORKDIR /workspace
 
-# 비특권 사용자로 실행
-USER agent
-
-# 엔트리포인트
-ENTRYPOINT ["/opt/agent-runner/entrypoint.sh"]
+# Kata 게스트 VM 은 systemd (PID 1) 가 kata-agent 서비스를 실행한다.
+# 컨테이너 ENTRYPOINT / USER 지정 불필요 — build-rootfs.sh 가 docker export 로
+# 파일시스템만 추출하여 ext4 이미지로 변환한다.

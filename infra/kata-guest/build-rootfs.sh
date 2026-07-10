@@ -5,7 +5,7 @@
 #  -> Step 4 (Kata 설정에 이미지 등록) -> Step 5 (검증)]
 #
 # 사용법: sudo bash build-rootfs.sh
-# 출력: /opt/kata/share/kata-containers/proof-agent.img (3GB ext4)
+# 출력: /opt/kata/share/kata-containers/proof-agent.img (5GB ext4)
 #
 # 이 스크립트는 Docker 를 사용하여 게스트 rootfs 를 빌드한 후 ext4 이미지로 변환한다.
 # Kata VM 은 이 ext4 이미지를 rootfs 로 마운트하여 부팅한다.
@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE_NAME="proof-agent-rootfs"
 ROOTFS_DIR="/tmp/proof-agent-rootfs"
 OUTPUT_IMG="/opt/kata/share/kata-containers/proof-agent.img"
-IMG_SIZE="3G"
+IMG_SIZE="5G"
 
 # 색상 출력
 RED='\033[0;31m'
@@ -66,10 +66,15 @@ extract_rootfs() {
 }
 
 # ========================================
-# Step 3: ext4 이미지 생성
+# Step 3: 파티션 이미지 생성 (DOS/MBR + ext4)
 # ========================================
+# [Flow: 빈 이미지 생성 -> 파티션 테이블 생성 -> ext4 파일시스템 생성 -> rootfs 복사]
+#
+# Kata 커널은 DOS/MBR 파티션 테이블이 있는 디스크 이미지를 기대한다.
+# raw ext4 이미지 (파티션 테이블 없음) 는 커널이 rootfs 를 마운트하지 못한다.
+# 따라서 MBR 파티션 테이블을 만들고 파티션 1 에 ext4 파일시스템을 생성한다.
 create_ext4_image() {
-    info "Step 3: ext4 이미지 생성 (${IMG_SIZE})"
+    info "Step 3: 파티션 이미지 생성 (${IMG_SIZE})"
 
     # 출력 디렉토리 확인
     mkdir -p "$(dirname "${OUTPUT_IMG}")"
@@ -81,10 +86,40 @@ create_ext4_image() {
         info "  기존 이미지 백업: ${backup}"
     fi
 
-    # ext4 이미지 생성 (rootfs 디렉토리를 이미지로 복사)
-    # mkfs.ext4 -d 옵션은 디렉토리 내용을 ext4 이미지로 직접 복사
-    mkfs.ext4 -d "${ROOTFS_DIR}" "${OUTPUT_IMG}" "${IMG_SIZE}"
-    info "  ext4 이미지 생성 완료: ${OUTPUT_IMG} ($(ls -lh "${OUTPUT_IMG}" | awk '{print $5}'))"
+    # 빈 디스크 이미지 생성
+    info "  빈 디스크 이미지 생성 (${IMG_SIZE})"
+    truncate -s "${IMG_SIZE}" "${OUTPUT_IMG}"
+
+    # DOS/MBR 파티션 테이블 생성 (파티션 1: Linux, 부트 가능)
+    # 단일 파티션, 시작 섹터 2048 (1MB 정렬)
+    info "  파티션 테이블 생성 (DOS/MBR, 단일 파티션)"
+    parted -s "${OUTPUT_IMG}" mklabel msdos
+    parted -s "${OUTPUT_IMG}" mkpart primary ext4 1MiB 100%
+    parted -s "${OUTPUT_IMG}" set 1 boot on
+
+    # 루프 디바이스 설정 (파티션 매핑)
+    info "  루프 디바이스 설정"
+    local loop_dev
+    loop_dev=$(losetup --find --show --partscan "${OUTPUT_IMG}")
+    local part_dev="${loop_dev}p1"
+
+    # 파티션이 인식될 때까지 대기
+    local retries=0
+    while [[ ! -b "${part_dev}" && ${retries} -lt 10 ]]; do
+        sleep 0.5
+        retries=$((retries + 1))
+    done
+    [[ -b "${part_dev}" ]] || error "파티션 디바이스를 찾을 수 없음: ${part_dev}"
+
+    # ext4 파일시스템 생성 (rootfs 디렉토리 내용 복사)
+    info "  ext4 파일시스템 생성 (rootfs 복사)"
+    mkfs.ext4 -d "${ROOTFS_DIR}" "${part_dev}"
+
+    # 루프 디바이스 해제
+    info "  루프 디바이스 해제"
+    losetup -d "${loop_dev}"
+
+    info "  파티션 이미지 생성 완료: ${OUTPUT_IMG} ($(ls -lh "${OUTPUT_IMG}" | awk '{print $5}'))"
 }
 
 # ========================================
@@ -104,8 +139,8 @@ register_image() {
             if grep -q "^image\s*=" "${config}"; then
                 sed -i "s|^image\s*=.*|image = \"${OUTPUT_IMG}\"|" "${config}"
             else
-                # [hypervisor.cloud-hypervisor] 섹션 아래에 추가
-                sed -i "/\[hypervisor.cloud-hypervisor\]/a image = \"${OUTPUT_IMG}\"" "${config}"
+                # [hypervisor.clh] 섹션 아래에 추가
+                sed -i "/\[hypervisor.clh\]/a image = \"${OUTPUT_IMG}\"" "${config}"
             fi
             info "  ${config} 에 image 등록"
         fi
@@ -122,13 +157,14 @@ verify_image() {
     [[ -f "${OUTPUT_IMG}" ]] || error "이미지 파일이 생성되지 않음: ${OUTPUT_IMG}"
     info "  이미지 크기: $(ls -lh "${OUTPUT_IMG}" | awk '{print $5}')"
 
-    # ext4 파일시스템 확인
-    file "${OUTPUT_IMG}" | grep -q "ext4" || warn "이미지가 ext4 파일시스템이 아닐 수 있음"
+    # 파티션 테이블 확인
+    file "${OUTPUT_IMG}" | grep -q "DOS/MBR" || warn "이미지에 DOS/MBR 파티션 테이블이 없을 수 있음"
 
     # 주요 파일 존재 확인
     local check_files=(
         "/opt/agent-runner/entrypoint.sh"
         "/opt/agent-runner/browserless-helper.py"
+        "/usr/bin/kata-agent"
         "/usr/bin/python3"
         "/usr/bin/node"
         "/usr/bin/git"
@@ -137,6 +173,12 @@ verify_image() {
         "/usr/bin/soffice"
         "/usr/bin/pandoc"
         "/usr/bin/pdftotext"
+        "/usr/bin/dbus-daemon"
+        "/usr/lib/systemd/system/kata-agent.service"
+        "/usr/lib/systemd/system/kata-containers.target"
+        "/usr/lib/systemd/system/tmp.mount"
+        "/usr/lib/systemd/system/dbus.socket"
+        "/etc/systemd/system/kata-containers.target.wants/dbus.socket"
     )
 
     info "  주요 파일 확인:"

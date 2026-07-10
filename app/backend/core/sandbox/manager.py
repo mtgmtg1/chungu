@@ -62,6 +62,32 @@ class SandboxManager:
         self.default_timeout = default_timeout
         self.workspace_mgr = WorkspaceManager(workspace_root)
 
+    def _to_host_path(self, container_path: Path) -> str:
+        """컨테이너 내부 경로를 호스트 경로로 변환한다.
+
+        [Flow: /data/... -> /var/lib/docker/volumes/.../_data/... 변환]
+
+        nerdctl 이 호스트 containerd 를 통해 sandbox VM 을 생성하므로,
+        바인드 마운트 source 는 호스트의 절대 경로여야 한다.
+        /data 는 Docker volume appdata 에 마운트되어 있으므로
+        /var/lib/docker/volumes/chungu-app_appdata/_data 로 치환한다.
+
+        매개변수:
+            container_path: 컨테이너 내부 경로 (예: /data/jobs/{job_id})
+
+        반환값:
+            호스트 절대 경로 문자열
+        """
+        import os
+        # 환경변수 HOST_DATA_DIR 이 있으면 사용 (명시적 매핑)
+        host_data_dir = os.environ.get("HOST_DATA_DIR")
+        if host_data_dir:
+            return str(container_path).replace("/data", host_data_dir, 1)
+        # 기본: Docker volume appdata 마운트 포인트 추정
+        return str(container_path).replace(
+            "/data", "/var/lib/docker/volumes/chungu-app_appdata/_data", 1
+        )
+
     def create_sandbox(
         self,
         job_id: str,
@@ -93,18 +119,27 @@ class SandboxManager:
         # Step 2: containerd 컨테이너 생성 (nerdctl 또는 ctr 사용)
         container_name = f"proof-sandbox-{sandbox_id}"
         cpu_limit = resource_limits.get("cpu", 1) if resource_limits else 1
-        mem_limit = resource_limits.get("memory_mb", 2048) if resource_limits else 2048
+        mem_limit = resource_limits.get("memory_mb", 4096) if resource_limits else 4096
+
+        # [Flow: 컨테이너 내부 경로 -> 호스트 경로 변환]
+        # nerdctl이 호스트 containerd를 통해 실행되므로, 바인드 마운트 source 는
+        # 호스트의 절대 경로여야 한다. /data 는 Docker volume appdata 에 마운트됨.
+        host_workspace = self._to_host_path(workspace_path)
 
         cmd = [
             "nerdctl",
+            "-n",
+            "k8s.io",
             "run",
             "-d",
             "--runtime", runtime,
             "--name", container_name,
             "--cpus", str(cpu_limit),
             "--memory", f"{mem_limit}m",
-            "--mount", f"type=bind,source={workspace_path},target=/workspace",
-            "--security-opt", "seccomp=/etc/kata-containers/seccomp-proof-agent.json",
+            "--mount", f"type=bind,source={host_workspace},target=/workspace",
+            # seccomp 프로필은 Kata 런타임이 게스트에 전달 (disable_guest_seccomp=false).
+            # --security-opt seccomp=... 를 사용하면 Kata shim 이 capget 시스콜을 차단당해
+            # "caps error: capget failure: Operation not permitted" 로 컨테이너 생성 실패.
             "--cap-drop", "ALL",
             "--cap-add", "CHOWN",
             "--cap-add", "DAC_OVERRIDE",
@@ -193,6 +228,8 @@ class SandboxManager:
         cmd_timeout = timeout or 300  # 기본 5분
         cmd = [
             "nerdctl",
+            "-n",
+            "k8s.io",
             "exec",
             "--user", "1000:1000",
             container_name,
@@ -220,7 +257,7 @@ class SandboxManager:
         반환값:
             {"status": "running"|"stopped"|"error", "cpu_usage": ..., "memory_usage": ...}
         """
-        cmd = ["nerdctl", "inspect", "--format", "{{json .State}}", container_name]
+        cmd = ["nerdctl", "-n", "k8s.io", "inspect", "--format", "{{json .State}}", container_name]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             if result.returncode != 0:
@@ -251,13 +288,13 @@ class SandboxManager:
 
         # Step 1: 컨테이너 중지
         try:
-            subprocess.run(["nerdctl", "stop", container_name], capture_output=True, timeout=30)
+            subprocess.run(["nerdctl", "-n", "k8s.io", "stop", container_name], capture_output=True, timeout=30)
         except Exception as e:
             logger.warning("컨테이너 중지 실패 (무시): %s", e)
 
         # Step 2: 컨테이너 삭제
         try:
-            subprocess.run(["nerdctl", "rm", "-f", container_name], capture_output=True, timeout=30)
+            subprocess.run(["nerdctl", "-n", "k8s.io", "rm", "-f", container_name], capture_output=True, timeout=30)
         except Exception as e:
             logger.warning("컨테이너 삭제 실패 (무시): %s", e)
 
@@ -279,7 +316,7 @@ class SandboxManager:
             {"files": [{"name": str, "size": int, "type": "file"|"dir"}]}
         """
         cmd = [
-            "nerdctl", "exec", "--user", "1000:1000",
+            "nerdctl", "-n", "k8s.io", "exec", "--user", "1000:1000",
             container_name,
             "/bin/sh", "-c", f"ls -la --time-style=+ {path} 2>/dev/null",
         ]
@@ -316,7 +353,7 @@ class SandboxManager:
             {"content": str, "size": int} 또는 {"error": str}
         """
         cmd = [
-            "nerdctl", "exec", "--user", "1000:1000",
+            "nerdctl", "-n", "k8s.io", "exec", "--user", "1000:1000",
             container_name,
             "/bin/sh", "-c", f"cat {path} 2>/dev/null | head -c {max_size}",
         ]
@@ -341,7 +378,7 @@ class SandboxManager:
         """
         # stdin 으로 파일 내용 전달
         cmd = [
-            "nerdctl", "exec", "--user", "1000:1000", "-i",
+            "nerdctl", "-n", "k8s.io", "exec", "--user", "1000:1000", "-i",
             container_name,
             "/bin/sh", "-c", f"cat > {path}",
         ]

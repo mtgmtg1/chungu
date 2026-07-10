@@ -15,6 +15,9 @@ sandbox_cgroup_only = true
 # Cloud Hypervisor 바이너리 경로
 path = "/opt/kata/bin/cloud-hypervisor"
 
+# 허용된 VMM 바이너리 경로 목록 (보안: 임의 경로 실행 방지)
+valid_hypervisor_paths = ["/opt/kata/bin/cloud-hypervisor"]
+
 # KVM 가속 활성화 (베어메탈이므로 nested virtualization 불필요)
 enable_kvm = true
 
@@ -78,13 +81,18 @@ privileged_without_host_devices = true
 # --- 게스트 이미지 ---
 # 커스텀 rootfs 이미지 (PROOF 에이전트 실행 환경)
 # 빌드 스크립트에서 생성: /opt/kata/share/kata-containers/proof-agent.img
+# build-rootfs.sh 가 이 라인을 자동으로 활성화/수정한다.
 # image = "/opt/kata/share/kata-containers/proof-agent.img"
 
 # 게스트 커널 (Kata 번들)
 kernel = "/opt/kata/share/kata-containers/vmlinux.container"
 
 # 커널 파라미터
-kernel_params = "console=hvc0 quiet"
+# Kata 런타임이 root=/dev/vda1 rootflags=data=ordered,errors=remount-ro ro rootfstype=ext4
+# 를 자동으로 추가하므로 추가 파라미터만 지정.
+# cgroup_no_v1=all: cgroup v1 비활성화 (kata-agent 요구사항)
+# systemd.unified_cgroup_hierarchy=1: cgroup v2 통합 계층 사용
+kernel_params = "cgroup_no_v1=all systemd.unified_cgroup_hierarchy=1"
 
 # --- 디버그 설정 (프로덕션에서는 비활성화) ---
 enable_debug = false

@@ -11,6 +11,12 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 ### Kata Containers + Cloud Hypervisor 기반 에이전트 샌드박스 (격리 실행 환경)
 
 - **목표**: PROOF 결과 페이지의 문서/이미지/오디오/비디오 파일들을 격리된 Kata Containers microVM 내부의 `/workspace`로 마운트하여, 에이전트가 자유롭게 코드 작성/실행할 수 있도록 함. 300+ 동시 VM 목표 (고밀도 모드). 상세 계획은 `KATA_SANDBOX_PLAN.md` 참조.
+- **rootfs 부팅 성공 (디버그 완료)**: 커스텀 `proof-agent.img` 가 Kata 런타임으로 부팅되도록 4가지 근본 원인 수정:
+  1. **ext4 저널 유지**: Kata 런타임이 `rootflags=data=ordered` 를 자동 추가하는데, 저널 없는 ext4 는 `data=ordered` 모드를 지원하지 않아 `can't mount with data=, fs mounted w/o journal` 커널 패닉 발생. 저널 제거하지 않고 유지.
+  2. **`kernel_params` 에 `rw` 제거**: Kata 가 디스크를 `readonly: true` 로 설정하는데 `rw` 파라미터가 충돌. `ro` (Kata 기본값) 사용. `kernel_params = "cgroup_no_v1=all systemd.unified_cgroup_hierarchy=1"` 만 지정.
+  3. **`tmp.mount` 추가**: `kata-containers.target` 이 `Requires=tmp.mount` 로 의존하지만 Debian 12 slim 에는 tmp.mount 유닛이 기본 설치되지 않음. tmpfs /tmp 가 없으면 kata-agent 가 `/tmp/policy.jsonl` 에 쓰지 못해 `Failed to initialize agent policy: Read-only file system` 로 종료. `Dockerfile.rootfs` 에서 tmp.mount 유닛 파일 수동 생성.
+  4. **`dbus` 패키지 설치**: kata-agent 가 cgroup 관리를 위해 D-Bus 시스템 버스에 연결해야 함. dbus 없으면 `Establishing a D-Bus connection: No such file or directory` 로 shim 실패. `Dockerfile.rootfs` 에서 `dbus` 패키지 설치 + `dbus.socket` 을 `kata-containers.target.wants` 에 등록.
+- **sandbox e2e 테스트 완료**: nerdctl + Kata 런타임으로 VM 생성/명령실행/파일읽기/파일쓰기/Python실행/Node.js실행/git diff/종료 전 단계 검증. `--read-only` 플래그 정상 동작. `--security-opt seccomp=...` 는 Kata shim 의 capget 시스콜을 차단하여 사용 불가 (seccomp 는 Kata 레벨에서 `disable_guest_seccomp=false` 로 적용).
 - **Phase 1: 호스트 환경 구성** (`infra/kata-host/` — 7파일):
   - `install-kata.sh`: Kata 3.31 + Cloud Hypervisor 설치, THP 비활성화 (KSM 4KB 페이지 병합률 확보), KSM 극대화 (pages_to_scan=5000), zRAM 128GB 압축 스왑, /dev/shm 160GB (기본 모드) / 75GB (고밀도 모드), disable-thp systemd 서비스.
   - `configuration-clh.toml`: 기본 모드 (150 VM, default_memory=2048MB, DAX 1GB 윈도우, virtio-mem 동적 확장 최대 8GB, cache=auto, reclaim_guest_freed_memory=true).
@@ -20,8 +26,8 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
   - `apparmor-proof-agent`: 위험 경로 접근 차단 (/dev/sda, /proc/kcore, /sys/firmware 등), /workspace·/tmp·/home/agent만 read-write.
   - `kata-opa-policy.rego`: Kata Agent Policy (OPA/Rego) — CreateContainer 이미지 화이트리스트, ExecProcess 명령어 블랙리스트, CLONE_NEWUSER 제한 (Layer 5 심화 보안).
 - **Phase 2: 게스트 rootfs 빌드** (`infra/kata-guest/` — 5파일):
-  - `Dockerfile.rootfs`: Debian 12 slim + LibreOffice/Pandoc/Poppler/Tesseract(kor/eng/jpn/chi-sim/chi-tra)/MarkItDown/PyMuPDF + FFmpeg/faster-whisper(small 모델 사전 다운로드)/pydub/librosa + ImageMagick/Ghostscript/Pillow/OpenCV/@napi-rs/canvas + Noto CJK/Nanum/Unfonts/Liberation 폰트 + Python 3.11/Node.js 20/git + 비특권 사용자 agent(UID 1000, sudo 불가). Chrome/Puppeteer 제외 (browserless 서버 공유로 ~500MB/VM 절약).
-  - `build-rootfs.sh`: Docker 빌드 → rootfs 추출 → ext4 3GB 이미지 생성 → `/opt/kata/share/kata-containers/proof-agent.img` 배포.
+  - `Dockerfile.rootfs`: Debian 12 slim + systemd + dbus (kata-agent cgroup 관리용) + tmp.mount 유닛 (tmpfs /tmp, kata-agent 정책 초기화용) + LibreOffice/Pandoc/Poppler/Tesseract(kor/eng/jpn/chi-sim/chi-tra)/MarkItDown/PyMuPDF + FFmpeg/faster-whisper(small 모델 사전 다운로드)/pydub/librosa + ImageMagick/Ghostscript/Pillow/OpenCV/@napi-rs/canvas + Noto CJK/Nanum/Unfonts/Liberation 폰트 + Python 3.11/Node.js 20/git + 비특권 사용자 agent(UID 1000, sudo 불가). Chrome/Puppeteer 제외 (browserless 서버 공유로 ~500MB/VM 절약).
+  - `build-rootfs.sh`: Docker 빌드 → rootfs 추출 → ext4 5GB 이미지 생성 → `/opt/kata/share/kata-containers/proof-agent.img` 배포.
   - `entrypoint.sh`: VM 진입점 — workspace 확인, git init, vsock 명령 수신 루프, 명령어 블랙리스트 필터링, 환경 변수 주입 제거.
   - `browserless-helper.py` / `browserless-helper.js`: a1 browserless 서버(`http://192.168.1.50:20047`) 원격 연결 헬퍼 (Python pyppeteer / Node.js puppeteer-core).
 - **Phase 3: SandboxManager 코어** (`app/backend/core/sandbox/` — 6파일):

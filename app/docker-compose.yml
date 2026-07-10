@@ -39,8 +39,10 @@ services:
       # appdata volume 의 호스트 경로를 직접 마운트 — nerdctl 이 호스트 경로 기준으로
       # Kata VM 에 bind mount 하므로 컨테이너 내부 /data 가 호스트 /data 와 동일해야 함.
       - /var/lib/docker/volumes/chungu-app_appdata/_data:/data
-      # Kata Containers 샌드박스: 호스트 containerd socket + Kata 설정 공유
-      - /run/containerd/containerd.sock:/run/containerd/containerd.sock
+      # Kata Containers 샌드박스: 호스트 containerd socket + FIFO 공유
+      # /run/containerd 전체를 마운트 — nerdctl exec 가 FIFO 파일을 생성/접근하려면
+      # 호스트와 컨테이너가 동일한 /run/containerd/fifo/ 경로를 공유해야 함.
+      - /run/containerd:/run/containerd
       - /opt/kata:/opt/kata:ro
       - /etc/kata-containers:/etc/kata-containers:ro
       - /usr/local/bin/containerd-shim-kata-clh-v2:/usr/local/bin/containerd-shim-kata-clh-v2:ro

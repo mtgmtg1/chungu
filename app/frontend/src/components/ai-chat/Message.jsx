@@ -63,8 +63,22 @@ const MessageContent = memo(function MessageContent({ text, className = "", role
  * @param {boolean} [props.isLastAssistant] - 마지막 어시스턴트 메시지인지 여부
  * @param {() => void} [props.onRegenerate] - 마지막 어시스턴트 메시지 재생성 콜백
  * @param {boolean} [props.canRegenerate] - 재생성 가능 여부
+ * @param {string} [props.approvalMode='ask'] - 도구 승인 모드 ("ask" | "always")
+ * @param {() => void} [props.onToolApprove] - 도구 승인 콜백
+ * @param {() => void} [props.onToolDeny] - 도구 거부 콜백
+ * @param {() => void} [props.onToolAlways] - 항상 승인 콜백
  */
-function PreviewMessage({ message, isLoading, isLastAssistant, onRegenerate, canRegenerate }) {
+function PreviewMessage({
+  message,
+  isLoading,
+  isLastAssistant,
+  onRegenerate,
+  canRegenerate,
+  approvalMode = "ask",
+  onToolApprove,
+  onToolDeny,
+  onToolAlways,
+}) {
   const { t } = useTranslation();
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
@@ -97,6 +111,10 @@ function PreviewMessage({ message, isLoading, isLastAssistant, onRegenerate, can
           output={part.output}
           errorText={part.errorText}
           defaultOpen={part.state === "output-error"}
+          approvalMode={approvalMode}
+          onApprove={onToolApprove}
+          onDeny={onToolDeny}
+          onAlways={onToolAlways}
         />
       );
     }

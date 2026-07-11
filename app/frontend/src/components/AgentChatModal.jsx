@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
+import { api } from "../api.js";
 import { useAgentChat } from "../hooks/useAgentChat.js";
 import { useAgentChatHistory } from "../hooks/useAgentChatHistory.js";
 import Messages from "./ai-chat/Messages.jsx";
@@ -31,8 +32,21 @@ import AgentChatSidebar from "./AgentChatSidebar.jsx";
  * @param {(status: string) => void} props.onStatusChange - useChat status 변경 시 상위에 알림
  * @param {() => void} props.onClose - 모달 닫기 콜백
  * @param {Object} [props.sidebarProps] - 사이드바에 전달할 props (isVisible일 때만 사용)
+ * @param {string} [props.approvalMode='ask'] - 도구 승인 모드 ("ask" | "always")
+ * @param {(mode: 'ask' | 'always') => void} [props.onApprovalModeChange] - 승인 모드 변경 콜백
  */
-function ChatSession({ context, chatId, initialMessages, isVisible, onMessagesChange, onStatusChange, onClose, sidebarProps }) {
+function ChatSession({
+  context,
+  chatId,
+  initialMessages,
+  isVisible,
+  onMessagesChange,
+  onStatusChange,
+  onClose,
+  sidebarProps,
+  approvalMode = "ask",
+  onApprovalModeChange,
+}) {
   const { t } = useTranslation();
   const { messages, input, setInput, status, stop, sendContextualMessage, regenerate } = useAgentChat(
     context,
@@ -79,6 +93,29 @@ function ChatSession({ context, chatId, initialMessages, isVisible, onMessagesCh
     setInput(prompt);
     sendContextualMessage(prompt);
   };
+
+  // [Flow: 도구 승인 콜백 — 승인 메시지를 에이전트에게 자동 전송]
+  const handleToolApprove = useCallback(() => {
+    if (status === "submitted" || status === "streaming") return;
+    sendContextualMessage(t("page:agent.approveMessage", "승인했습니다. 계속 진행해주세요."));
+  }, [status, sendContextualMessage, t]);
+
+  // [Flow: 도구 거부 콜백 — 거부 메시지를 에이전트에게 자동 전송]
+  const handleToolDeny = useCallback(() => {
+    if (status === "submitted" || status === "streaming") return;
+    sendContextualMessage(t("page:agent.denyMessage", "거부했습니다. 이 작업을 취소해주세요."));
+  }, [status, sendContextualMessage, t]);
+
+  // [Flow: 항상 승인 콜백 — 설정 저장 후 승인 메시지 전송]
+  const handleToolAlways = useCallback(() => {
+    if (status === "submitted" || status === "streaming") return;
+    // 백엔드에 'always' 모드 저장
+    api.updateAISettings({ approval_mode: "always" }).catch(() => {});
+    // 상위 컴포넌트에 승인 모드 변경 알림
+    onApprovalModeChange?.("always");
+    // 에이전트에게 승인 메시지 전송
+    sendContextualMessage(t("page:agent.approveMessage", "승인했습니다. 계속 진행해주세요."));
+  }, [status, sendContextualMessage, t, onApprovalModeChange]);
 
   // [Flow: 백그라운드 모드 — useChat은 계속 실행되지만 UI는 렌더링하지 않음]
   if (!isVisible) return null;
@@ -133,6 +170,10 @@ function ChatSession({ context, chatId, initialMessages, isVisible, onMessagesCh
             status={status}
             onRegenerate={regenerate}
             canRegenerate={canRegenerate}
+            approvalMode={approvalMode}
+            onToolApprove={handleToolApprove}
+            onToolDeny={handleToolDeny}
+            onToolAlways={handleToolAlways}
           />
 
           {/* 입력 영역 */}
@@ -179,6 +220,17 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
     selectConversation,
     saveConversation,
   } = useAgentChatHistory(jobId);
+
+  // [Flow: 사용자 승인 모드 로드 — api.me()에서 ai_tool_approval_mode 조회]
+  const [approvalMode, setApprovalMode] = useState("ask");
+  useEffect(() => {
+    if (!isOpen) return;
+    api.me().then((profile) => {
+      if (profile?.ai_tool_approval_mode) {
+        setApprovalMode(profile.ai_tool_approval_mode);
+      }
+    }).catch(() => {});
+  }, [isOpen]);
 
   // [Flow: streamingIds — 현재 스트리밍 중(submitted/streaming)인 세션 ID 집합]
   // 이 세션들은 모달이 닫혀도 백그라운드에서 계속 실행된다.
@@ -266,7 +318,7 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
         return (
           <ChatSession
             key={id}
-            context={context}
+            context={{ ...context, approvalMode }}
             chatId={id}
             initialMessages={conversation?.messages || []}
             isVisible={isVisible}
@@ -274,6 +326,8 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
             onStatusChange={(status) => handleStatusChange(id, status)}
             onClose={onClose}
             sidebarProps={isVisible ? sidebarProps : undefined}
+            approvalMode={approvalMode}
+            onApprovalModeChange={setApprovalMode}
           />
         );
       })}

@@ -30,8 +30,9 @@ function buildSystemPrompt(context: Record<string, unknown>): string {
   const currentPage = context.currentPage || context.current_page || 1;
   const selectedFileIndex = context.selectedFileIndex ?? context.selected_file_index ?? 0;
   const activeEditor = context.activeEditor || context.active_editor || 'markdown';
+  const approvalMode = context.approvalMode || 'ask';
 
-  return `You are PROOF Agent, an AI assistant that helps users manipulate PDF annotations, markdown editor content, and spreadsheets.
+  const basePrompt = `You are PROOF Agent, an AI assistant that helps users manipulate PDF annotations, markdown editor content, and spreadsheets.
 
 Current context:
 - job_id: ${jobId}
@@ -49,6 +50,7 @@ Available tool categories:
    - get_sheet, update_cell, add_row, delete_row, apply_changes
 4. Sandbox (when user asks to run code or process files in isolation):
    - create_sandbox, execute_in_sandbox, read_sandbox_file, write_sandbox_file, list_sandbox_files, commit_sandbox_changes, get_sandbox_diff, collect_sandbox_results, destroy_sandbox
+   - IMPORTANT: User-visible filenames are preserved in /workspace/original/. For example, if the user says "보고서.pdf", the file is at /workspace/original/보고서.pdf. Read /workspace/_file_mapping.json to see the full mapping of user filenames to sandbox paths. Do NOT use /workspace/input.pdf — use the original filename instead.
 5. Web browsing (when user asks to capture or extract web content):
    - browse_web, convert_web_to_pdf, extract_web_text
 
@@ -69,6 +71,18 @@ Rules:
 - If the user request is ambiguous, ask for clarification before calling tools.
 - Respond in the same language as the user's request.
 - Keep final summary concise.`;
+
+  // [Flow: Step 3.5 (승인 모드가 'ask'인 경우 — 도구 승인 대기 지시 추가)]
+  if (approvalMode === 'ask') {
+    return basePrompt + `
+
+Tool approval:
+- When a tool returns requires_approval: true in its output, STOP and wait for the user to approve or deny before proceeding with any further actions.
+- Do NOT call apply_annotations, save_annotations, apply_edits, apply_changes, or any other persisting tool until the user has approved.
+- If the user denies, undo the pending change (e.g. do not persist the removal) and acknowledge the denial.`;
+  }
+
+  return basePrompt;
 }
 
 /**

@@ -20,6 +20,7 @@ export default function SettingsPage() {
   { id: "api", label: t("page:settings.apiKeys"), icon: "key" },
   { id: "billing", label: t("page:settings.billing"), icon: "payments" },
   { id: "rate", label: t("page:settings.rateLimit"), icon: "speed" },
+  { id: "ai", label: t("page:settings.aiAgent"), icon: "smart_toy" },
   { id: "account", label: t("page:settings.account"), icon: "person" }];
 
 
@@ -36,6 +37,8 @@ export default function SettingsPage() {
   const [pwForm, setPwForm] = useState({ current: "", new: "", confirm: "" });
   const [pwLoading, setPwLoading] = useState(false);
   const [dataRightsLoading, setDataRightsLoading] = useState(false);
+  const [aiApprovalMode, setAiApprovalMode] = useState("ask");
+  const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -54,6 +57,9 @@ export default function SettingsPage() {
       setAccount(acc);
       setKeys(k);
       setPayments(p);
+      if (acc?.ai_tool_approval_mode) {
+        setAiApprovalMode(acc.ai_tool_approval_mode);
+      }
     } catch (e) {
       setError(e.message || t("page:errors.loadFailed"));
     }
@@ -193,6 +199,22 @@ export default function SettingsPage() {
       setError(e.message || t("legal.consent.requestFailed"));
     } finally {
       setDataRightsLoading(false);
+    }
+  };
+
+  // [Flow: AI 에이전트 승인 모드 저장]
+  const handleSaveAiSettings = async (mode) => {
+    setAiApprovalMode(mode);
+    setAiSettingsLoading(true);
+    setError("");
+    try {
+      await api.updateAISettings({ approval_mode: mode });
+      setMsg(t("page:settings.aiSettingsSaved"));
+      setTimeout(() => setMsg(""), 3000);
+    } catch (e) {
+      setError(e.message || t("page:errors.unknown"));
+    } finally {
+      setAiSettingsLoading(false);
     }
   };
 
@@ -594,11 +616,81 @@ export default function SettingsPage() {
       </div>
     </div>;
 
+  // [Flow: AI 에이전트 설정 탭 — 도구 승인 모드 선택]
+  const renderAISettings = () =>
+    <div className="space-y-gutter" data-oid="ai-settings-panel">
+      <div className="glass-panel p-5 rounded-2xl" data-oid="ai-approval-panel">
+        <h3 className="font-headline-md text-headline-md text-on-surface mb-3" data-oid="ai-approval-title">
+          {t("page:settings.toolApproval")}
+        </h3>
+        <p className="text-on-surface-variant text-body-md mb-4" data-oid="ai-approval-desc">
+          {t("page:settings.toolApprovalDesc")}
+        </p>
+        <div className="space-y-3" data-oid="ai-approval-options">
+          {/* ask 모드 */}
+          <label
+            className={`flex items-start gap-3 rounded-xl border p-4 cursor-pointer transition-colors ${
+              aiApprovalMode === "ask"
+                ? "border-primary bg-primary-container/10"
+                : "border-outline-variant hover:bg-surface-container-low"
+            }`}
+            data-oid="ai-approval-ask"
+          >
+            <input
+              type="radio"
+              name="approvalMode"
+              value="ask"
+              checked={aiApprovalMode === "ask"}
+              onChange={() => handleSaveAiSettings("ask")}
+              disabled={aiSettingsLoading}
+              className="mt-1"
+            />
+            <div className="flex-1">
+              <p className="font-medium text-on-surface text-body-md">
+                {t("page:settings.approvalModeAsk")}
+              </p>
+              <p className="text-on-surface-variant text-label-sm mt-1">
+                {t("page:settings.approvalModeAskDesc")}
+              </p>
+            </div>
+          </label>
+          {/* always 모드 */}
+          <label
+            className={`flex items-start gap-3 rounded-xl border p-4 cursor-pointer transition-colors ${
+              aiApprovalMode === "always"
+                ? "border-primary bg-primary-container/10"
+                : "border-outline-variant hover:bg-surface-container-low"
+            }`}
+            data-oid="ai-approval-always"
+          >
+            <input
+              type="radio"
+              name="approvalMode"
+              value="always"
+              checked={aiApprovalMode === "always"}
+              onChange={() => handleSaveAiSettings("always")}
+              disabled={aiSettingsLoading}
+              className="mt-1"
+            />
+            <div className="flex-1">
+              <p className="font-medium text-on-surface text-body-md">
+                {t("page:settings.approvalModeAlways")}
+              </p>
+              <p className="text-on-surface-variant text-label-sm mt-1">
+                {t("page:settings.approvalModeAlwaysDesc")}
+              </p>
+            </div>
+          </label>
+        </div>
+      </div>
+    </div>;
+
 
   const tabContent = {
     api: renderApiKeys,
     billing: renderBilling,
     rate: renderRateLimit,
+    ai: renderAISettings,
     account: renderAccount
   };
 

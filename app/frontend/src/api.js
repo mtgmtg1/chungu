@@ -63,6 +63,11 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload),
     }),
+  updateAISettings: (payload) =>
+    request('/api/auth/ai-settings', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
 
   // 작업
   uploadJob: (formData) => request('/api/jobs/upload', { method: 'POST', body: formData }),

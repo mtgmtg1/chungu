@@ -65,8 +65,22 @@ function useMessages({ status }) {
  * @param {boolean} [props.isLoading] - 외부 로딩 상태
  * @param {() => void} [props.onRegenerate] - 마지막 어시스턴트 메시지 재생성 콜백
  * @param {boolean} [props.canRegenerate] - 재생성 가능 여부
+ * @param {string} [props.approvalMode='ask'] - 도구 승인 모드 ("ask" | "always")
+ * @param {() => void} [props.onToolApprove] - 도구 승인 콜백
+ * @param {() => void} [props.onToolDeny] - 도구 거부 콜백
+ * @param {() => void} [props.onToolAlways] - 항상 승인 콜백
  */
-export default function Messages({ messages, status, isLoading, onRegenerate, canRegenerate }) {
+export default function Messages({
+  messages,
+  status,
+  isLoading,
+  onRegenerate,
+  canRegenerate,
+  approvalMode = "ask",
+  onToolApprove,
+  onToolDeny,
+  onToolAlways,
+}) {
   const { containerRef, endRef, isAtBottom, scrollToBottom, handleScroll } = useMessages({ status });
 
   const showThinking =
@@ -100,6 +114,10 @@ export default function Messages({ messages, status, isLoading, onRegenerate, ca
               isLastAssistant={index === lastAssistantIndex}
               onRegenerate={onRegenerate}
               canRegenerate={canRegenerate}
+              approvalMode={approvalMode}
+              onToolApprove={onToolApprove}
+              onToolDeny={onToolDeny}
+              onToolAlways={onToolAlways}
             />
           ))}
 

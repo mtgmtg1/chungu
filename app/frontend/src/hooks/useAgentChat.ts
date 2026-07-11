@@ -17,6 +17,7 @@ export interface AgentContext {
   currentPage?: number;
   selectedFileIndex?: number;
   activeEditor?: string;
+  approvalMode?: 'ask' | 'always';
 }
 
 /**

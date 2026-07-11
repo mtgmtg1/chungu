@@ -20,6 +20,10 @@ class LanguageUpdate(BaseModel):
     language: str = Field(..., min_length=2, max_length=10)
 
 
+class AISettingsUpdate(BaseModel):
+    approval_mode: str = Field(..., pattern="^(ask|always)$")
+
+
 @router.get("/me")
 def me(
     auth: tuple[CurrentUser, ApiKey | None] = Depends(require_api_key_or_session),
@@ -47,6 +51,7 @@ def me(
         "subscription_status": db_user.subscription_status if db_user else "inactive",
         "is_admin": user.is_admin,
         "language": user.language or "en",
+        "ai_tool_approval_mode": db_user.ai_tool_approval_mode if db_user else "ask",
         **rate_limit,
     }
 
@@ -65,3 +70,18 @@ def update_language(
     db_user.language = payload.language
     db.commit()
     return {"language": db_user.language}
+
+
+@router.patch("/ai-settings")
+def update_ai_settings(
+    payload: AISettingsUpdate,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """AI 에이전트 도구 승인 모드 설정을 업데이트한다."""
+    db_user = db.get(User, uuid.UUID(user.user_id))
+    if db_user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    db_user.ai_tool_approval_mode = payload.approval_mode
+    db.commit()
+    return {"ai_tool_approval_mode": db_user.ai_tool_approval_mode}

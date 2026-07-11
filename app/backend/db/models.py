@@ -25,6 +25,8 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_developer: Mapped[bool] = mapped_column(Boolean, default=True)
     language: Mapped[str] = mapped_column(String(10), default="en")
+    # AI 에이전트 도구 승인 모드 ('ask' = 승인 버튼 표시, 'always' = 항상 자동 승인)
+    ai_tool_approval_mode: Mapped[str] = mapped_column(String(10), default="ask")
     # 자동 충전 설정
     auto_recharge_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_recharge_threshold: Mapped[int] = mapped_column(Integer, default=2000)  # milli-USD ($2.00)

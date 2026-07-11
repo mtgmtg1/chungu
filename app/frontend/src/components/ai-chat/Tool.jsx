@@ -1,7 +1,10 @@
-// [Flow: Step 1 (tool part 수신: type/state/input/output) -> Step 2 (상태 아이콘+배지 렌더링)
-//       -> Step 3 (펼침/접힘 토글) -> Step 4 (input/output JSON 표시)]
+// [Flow: Step 1 (tool part 수신: toolName/state/input/output) -> Step 2 (i18n 라벨로 사용자 친화적 액션 표시)
+//       -> Step 3 (상태 아이콘+배지 렌더링) -> Step 4 (승인 필요 시 ApprovalButtons 표시)
+//       -> Step 5 (에러 시 간결 메시지만 표시, JSON 노출 금지)]
 // Vercel ai-chatbot 템플릿의 Tool 컴포넌트(ai-elements/tool.tsx) 포팅.
 // shadcn/ui Collapsible 대신 useState + CSS로 자체 구현한다.
+// 도구 출력에 requires_approval: true가 포함된 경우 승인 버튼을 표시한다.
+// 보안·가독성을 위해 원본 도구 이름·input·output JSON은 화면에 노출하지 않는다.
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -12,17 +15,19 @@ import {
   Wrench,
   XCircle,
   AlertCircle,
+  ShieldCheck,
+  ShieldAlert,
 } from "lucide-react";
 
-// [Flow: tool state -> 한국어 상태 라벨 매핑]
-const STATUS_LABELS = {
-  "approval-requested": "승인 대기",
-  "approval-responded": "응답됨",
-  "input-available": "실행 중",
-  "input-streaming": "대기 중",
-  "output-available": "완료",
-  "output-denied": "거부됨",
-  "output-error": "오류",
+// [Flow: tool state -> i18n 키 매핑 (STATUS_LABELS 하드코딩 대체)]
+const STATUS_I18N_KEYS = {
+  "approval-requested": "page:agent.toolStatusApprovalWaiting",
+  "approval-responded": "page:agent.toolStatusResponded",
+  "input-available": "page:agent.toolStatusRunning",
+  "input-streaming": "page:agent.toolStatusPending",
+  "output-available": "page:agent.toolStatusDone",
+  "output-denied": "page:agent.toolStatusDenied",
+  "output-error": "page:agent.toolStatusError",
 };
 
 // [Flow: tool state -> 상태 아이콘 + 색상 매핑]
@@ -45,84 +50,255 @@ function StatusIcon({ state }) {
 }
 
 /**
- * Tool — 도구 호출의 진행 상태를 collapsible 카드로 표시한다.
+ * [Flow: Step 1 (도구 출력에서 requires_approval 확인) -> Step 2 (승인 상태: pending/approved/denied)
+ *       -> Step 3 (버튼 클릭 시 콜백 호출) -> Step 4 (승인 후 버튼 숨김)]
+ *
+ * ApprovalButtons — 도구 승인이 필요할 때 표시되는 승인/거부/항상승인 버튼.
+ * approvalMode가 'always'인 경우 버튼을 표시하지 않는다.
  *
  * @param {Object} props
- * @param {string} props.toolName - 도구 이름 (예: "search_text")
- * @param {string} props.state - 도구 상태 ("input-available" | "output-available" | ...)
- * @param {any} [props.input] - 도구 입력 파라미터
- * @param {any} [props.output] - 도구 출력 결과
- * @param {string} [props.errorText] - 에러 텍스트
- * @param {boolean} [props.defaultOpen=false] - 기본 펼침 여부
+ * @param {() => void} props.onApprove - 1회 승인 콜백
+ * @param {() => void} props.onDeny - 거부 콜백
+ * @param {() => void} props.onAlways - 항상 승인 콜백 (설정 저장 + 승인)
+ * @param {string} props.approvalState - 현재 승인 상태 ("pending" | "approved" | "denied")
  */
-export default function Tool({ toolName, state, input, output, errorText, defaultOpen = false }) {
+function ApprovalButtons({ onApprove, onDeny, onAlways, approvalState }) {
+  const { t } = useTranslation();
+
+  // [Flow: 이미 승인/거부된 경우 상태 메시지만 표시]
+  if (approvalState === "approved") {
+    return (
+      <div className="flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-xs text-green-700">
+        <ShieldCheck size={14} />
+        {t("page:agent.approved", "승인됨")}
+      </div>
+    );
+  }
+  if (approvalState === "denied") {
+    return (
+      <div className="flex items-center gap-2 rounded-lg bg-orange-50 px-3 py-2 text-xs text-orange-700">
+        <ShieldAlert size={14} />
+        {t("page:agent.denied", "거부됨")}
+      </div>
+    );
+  }
+
+  // [Flow: pending 상태 — 승인/항상 승인/거부 버튼 표시]
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        onClick={onApprove}
+        className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-on-primary transition-colors hover:bg-primary/90"
+        data-oid="tool-approve"
+      >
+        <ShieldCheck size={13} />
+        {t("page:agent.approve", "승인")}
+      </button>
+      <button
+        type="button"
+        onClick={onAlways}
+        className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary-container/20 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary-container/40"
+        data-oid="tool-always-approve"
+      >
+        <CheckCircle2 size={13} />
+        {t("page:agent.alwaysApprove", "항상 승인")}
+      </button>
+      <button
+        type="button"
+        onClick={onDeny}
+        className="flex items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-1.5 text-xs font-medium text-on-surface-variant transition-colors hover:bg-surface-container-high"
+        data-oid="tool-deny"
+      >
+        <ShieldAlert size={13} />
+        {t("page:agent.deny", "거부")}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * [Flow: Step 1 (toolName → i18n 라벨 조회) -> Step 2 (미정의 도구는 폴백 라벨 사용)]
+ *
+ * getToolLabel — 도구 원본 이름을 사용자 친화적 액션 라벨로 변환한다.
+ * i18n 키: `page:agent.toolLabels.<toolName>`
+ * 미정의 도구는 범용 폴백 "도구 실행" 을 반환한다.
+ *
+ * @param {function} t - i18n translate 함수
+ * @param {string} toolName - 도구 원본 이름 (예: "search_text")
+ * @returns {string} 사용자 친화적 액션 라벨
+ */
+function getToolLabel(t, toolName) {
+  const i18nKey = `page:agent.toolLabels.${toolName}`;
+  const label = t(i18nKey, "");
+  // [Flow: 빈 문자열 반환 시 폴백 — 원본 이름이 아닌 범용 라벨 사용]
+  if (!label || label === i18nKey) {
+    return t("page:agent.toolLabelFallback", "도구 실행");
+  }
+  return label;
+}
+
+/**
+ * [Flow: Step 1 (state + toolLabel → 표시 텍스트 결정) -> Step 2 (실행 중: "{action}하는 중...")
+ *       -> Step 3 (완료: "{action} 완료") -> Step 4 (기타: 상태 라벨만)]
+ *
+ * getDisplayMessage — 도구 상태에 따라 사용자에게 표시할 메시지를 생성한다.
+ * 진행 중일 때 접미사("하는 중...")를 붙이고, 완료 시 "완료" 접미사를 붙인다.
+ *
+ * @param {function} t - i18n translate 함수
+ * @param {string} state - 도구 상태
+ * @param {string} toolLabel - 사용자 친화적 도구 라벨
+ * @returns {string} 표시 메시지
+ */
+function getDisplayMessage(t, state, toolLabel) {
+  // [Flow: 실행 중 — "{action}하는 중..." 형태]
+  if (state === "input-available" || state === "input-streaming") {
+    return t("page:agent.toolInProgress", "{{action}}하는 중…", { action: toolLabel });
+  }
+  // [Flow: 완료 — "{action} 완료" 형태]
+  if (state === "output-available") {
+    return t("page:agent.toolDone", "{{action}} 완료", { action: toolLabel });
+  }
+  // [Flow: 거부됨]
+  if (state === "output-denied") {
+    return t("page:agent.toolDenied", "{{action}} 거부됨", { action: toolLabel });
+  }
+  // [Flow: 승인 대기 — "{action} — 승인 대기" 형태]
+  if (state === "approval-requested") {
+    return t("page:agent.toolApprovalWaiting", "{{action}} — 승인 대기", { action: toolLabel });
+  }
+  // [Flow: 응답됨]
+  if (state === "approval-responded") {
+    return t("page:agent.toolResponded", "{{action}} — 응답됨", { action: toolLabel });
+  }
+  // [Flow: 기타 상태 — 라벨만 표시]
+  return toolLabel;
+}
+
+/**
+ * Tool — 도구 호출의 진행 상태를 사용자 친화적 카드로 표시한다.
+ * 원본 도구 이름·input·output JSON은 보안·가독성을 위해 화면에 노출하지 않는다.
+ * 승인이 필요한 도구는 ApprovalButtons를 표시하고, 에러는 간결한 메시지만 표시한다.
+ *
+ * @param {Object} props
+ * @param {string} props.toolName - 도구 이름 (예: "search_text") — i18n 라벨로 변환됨
+ * @param {string} props.state - 도구 상태 ("input-available" | "output-available" | ...)
+ * @param {any} [props.input] - 도구 입력 파라미터 (표시하지 않음, 승인 감지용 props 유지)
+ * @param {any} [props.output] - 도구 출력 결과 (표시하지 않음, requires_approval 감지용)
+ * @param {string} [props.errorText] - 에러 텍스트 (간결 메시지로 표시)
+ * @param {boolean} [props.defaultOpen=false] - 기본 펼침 여부
+ * @param {string} [props.approvalMode='ask'] - 승인 모드 ("ask" | "always")
+ * @param {() => void} [props.onApprove] - 도구 승인 콜백
+ * @param {() => void} [props.onDeny] - 도구 거부 콜백
+ * @param {() => void} [props.onAlways] - 항상 승인 콜백 (설정 저장 + 승인)
+ */
+export default function Tool({
+  toolName,
+  state,
+  input,
+  output,
+  errorText,
+  defaultOpen = false,
+  approvalMode = "ask",
+  onApprove,
+  onDeny,
+  onAlways,
+}) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(defaultOpen);
+  // [Flow: 승인 상태 — pending(대기) | approved(승인) | denied(거부)]
+  const [approvalState, setApprovalState] = useState("pending");
 
-  const hasInput = input && Object.keys(input).length > 0;
   const hasOutput = output !== undefined && output !== null;
   const hasError = errorText || state === "output-error";
+
+  // [Flow: 도구 출력에서 requires_approval 감지 — output 객체는 표시하지 않고 감지에만 사용]
+  const requiresApproval =
+    hasOutput && !hasError && typeof output === "object" && output?.requires_approval === true;
+
+  // [Flow: 승인 모드가 'always'이거나 이미 승인/거부된 경우 버튼 미표시]
+  const showApprovalButtons =
+    requiresApproval && approvalMode === "ask" && approvalState === "pending";
+
+  // [Flow: 사용자 친화적 라벨 + 표시 메시지 생성]
+  const toolLabel = getToolLabel(t, toolName);
+  const displayMessage = getDisplayMessage(t, state, toolLabel);
+  const statusLabel = t(STATUS_I18N_KEYS[state] || "page:agent.toolStatusPending", state);
+
+  // [Flow: 승인 버튼 클릭 핸들러 — 상태 업데이트 후 콜백 호출]
+  const handleApprove = () => {
+    setApprovalState("approved");
+    onApprove?.();
+  };
+  const handleDeny = () => {
+    setApprovalState("denied");
+    onDeny?.();
+  };
+  const handleAlways = () => {
+    setApprovalState("approved");
+    onAlways?.();
+  };
+
+  // [Flow: 펼침 가능 여부 — 승인 버튼이 있거나 에러가 있을 때만 펼침 가능]
+  const canExpand = showApprovalButtons || hasError;
 
   return (
     <div
       className="ai-chat-tool-open group mb-3 w-full rounded-lg border border-outline-variant/60 bg-surface-container-lowest/80"
       data-oid="ai-chat-tool"
     >
-      {/* 헤더 (토글) */}
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 p-3 text-left"
+      {/* 헤더 (승인/에러가 있을 때만 토글 가능) */}
+      <div
+        className={`flex w-full items-center justify-between gap-3 p-3 text-left ${
+          canExpand ? "cursor-pointer" : "cursor-default"
+        }`}
+        onClick={canExpand ? () => setOpen((v) => !v) : undefined}
+        role={canExpand ? "button" : undefined}
       >
         <div className="flex items-center gap-2 min-w-0">
           <Wrench size={14} className="text-on-surface-variant flex-shrink-0" />
-          <span className="font-medium text-sm text-on-surface truncate">{toolName}</span>
+          <span className="font-medium text-sm text-on-surface truncate">
+            {displayMessage}
+          </span>
           <span className="flex items-center gap-1.5 rounded-full bg-surface-container-high px-2 py-0.5 text-xs text-on-surface-variant flex-shrink-0">
             <StatusIcon state={state} />
-            {STATUS_LABELS[state] || state}
+            {statusLabel}
           </span>
+          {requiresApproval && approvalState === "pending" && approvalMode === "ask" && (
+            <span className="flex items-center gap-1 rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700 flex-shrink-0">
+              <ShieldAlert size={11} />
+              {t("page:agent.approvalRequired", "승인 필요")}
+            </span>
+          )}
         </div>
-        <ChevronDown
-          size={14}
-          className={`text-on-surface-variant flex-shrink-0 transition-transform duration-200 ${
-            open ? "rotate-180" : ""
-          }`}
-        />
-      </button>
+        {canExpand && (
+          <ChevronDown
+            size={14}
+            className={`text-on-surface-variant flex-shrink-0 transition-transform duration-200 ${
+              open ? "rotate-180" : ""
+            }`}
+          />
+        )}
+      </div>
 
-      {/* 본문 (펼침 시) */}
-      {open && (hasInput || hasOutput || hasError) && (
+      {/* 본문 (펼침 시) — 승인 버튼 또는 에러 메시지만 표시, JSON 노출 금지 */}
+      {open && canExpand && (
         <div className="space-y-3 px-3 pb-3">
-          {hasInput && (
-            <div className="space-y-1.5">
-              <h4 className="font-medium text-on-surface-variant text-xs uppercase tracking-wide">
-                {t("page:agent.toolParameters", "매개변수")}
-              </h4>
-              <pre className="overflow-x-auto rounded-md bg-surface-container-high/60 p-2.5 font-mono text-xs text-on-surface-variant">
-                {JSON.stringify(input, null, 2)}
-              </pre>
-            </div>
-          )}
+          {/* 에러 메시지 — errorText만 표시, output JSON은 노출하지 않음 */}
           {hasError && (
-            <div className="space-y-1.5">
-              <h4 className="font-medium text-xs uppercase tracking-wide text-error">
-                {t("page:agent.toolError", "오류")}
-              </h4>
-              <div className="flex items-start gap-2 rounded-md bg-error-container/30 p-2.5 text-xs text-error">
-                <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
-                <span className="font-mono">{errorText || JSON.stringify(output)}</span>
-              </div>
+            <div className="flex items-start gap-2 rounded-md bg-error-container/30 p-2.5 text-xs text-error">
+              <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+              <span>{errorText || t("page:agent.toolGenericError", "도구 실행 중 오류가 발생했습니다.")}</span>
             </div>
           )}
-          {hasOutput && !hasError && (
-            <div className="space-y-1.5">
-              <h4 className="font-medium text-on-surface-variant text-xs uppercase tracking-wide">
-                {t("page:agent.toolResult", "결과")}
-              </h4>
-              <pre className="overflow-x-auto rounded-md bg-surface-container-high/60 p-2.5 font-mono text-xs text-on-surface-variant max-h-48 overflow-y-auto">
-                {typeof output === "string" ? output : JSON.stringify(output, null, 2)}
-              </pre>
-            </div>
+          {/* 승인 버튼 영역 */}
+          {requiresApproval && (
+            <ApprovalButtons
+              onApprove={handleApprove}
+              onDeny={handleDeny}
+              onAlways={handleAlways}
+              approvalState={approvalState}
+            />
           )}
         </div>
       )}

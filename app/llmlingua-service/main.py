@@ -4,6 +4,10 @@
 # LLMLingua-2 프롬프트 압축 마이크로서비스.
 # Node.js AI 백엔드가 도구 결과 JSON이 임계값을 초과할 때 이 서비스에 압축을 요청한다.
 # 모델: microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank (다국어 지원, 경량)
+#
+# [Flow: OpenVINO INT8 가속 — CPU 추론 속도 2~4x 향상]
+# 변환 스크립트(convert_to_openvino.py)가 빌드 시 모델을 OpenVINO INT8 형식으로 변환한다.
+# 런타임은 OpenVINO 모델을 우선 로드하고, 실패 시 PyTorch 모델로 폴백한다.
 import logging
 import os
 import time
@@ -12,16 +16,16 @@ from typing import Any
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-# [Flow: LLMLingua-2 초기화 — 서버 시작 시 한 번만 로드하여 재사용]
-from llmlingua import PromptCompressor
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("llmlingua-service")
 
-app = FastAPI(title="LLMLingua-2 Compression Service", version="2.0.0")
+app = FastAPI(title="LLMLingua-2 Compression Service", version="3.0.0")
 
 # [Flow: 모델 이름 환경변수 — 기본값은 다국어 BERT 기반 경량 모델]
 MODEL_NAME = os.environ.get("LLMLINGUA_MODEL", "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank")
+
+# [Flow: OpenVINO INT8 모델 경로 — 변환 스크립트가 빌드 시 생성]
+OV_INT8_DIR = os.environ.get("LLMLINGUA_OV_MODEL_DIR", "/app/ov_model_int8")
 
 # [Flow: fallback 압축 비율 — 동적 선택 실패 시 사용 (기본 0.5 = 2x 압축)]
 FALLBACK_RATE = float(os.environ.get("LLMLINGUA_RATE", "0.5"))
@@ -45,14 +49,87 @@ FORCE_TOKENS = ["error", "id", "page", "bbox", "rect", "color", "contents", "typ
 # 0.4 = 각 문맥(청크)마다 최대 40% 가변 허용하여 정보 밀도에 맞춤
 DYNAMIC_CONTEXT_COMPRESSION_RATIO = 0.4
 
-# [Flow: 서버 시작 시 PromptCompressor 인스턴스 생성 — 모델 다운로드/로드는 여기서 수행]
+
+def _createOpenVINOCompressor():
+    """[Flow: Step 1 (OpenVINO 모델 로드) -> Step 2 (PromptCompressor 서브클래스 생성)
+           -> Step 3 (resize_token_embeddings no-op 패치) -> Step 4 (compressor 반환)]
+
+    OpenVINO INT8 양자화된 모델을 사용하는 PromptCompressor 인스턴스를 생성한다.
+    변환 시 어휘가 미리 확장되었으므로 init_llmlingua2 의 resize_token_embeddings 를 no-op 로 만든다.
+
+    @returns PromptCompressor 인스턴스 (OpenVINO 백엔드 사용)
+    @raises ImportError optimum-intel 이 설치되지 않은 경우
+    @raises FileNotFoundError OpenVINO 모델 디렉토리가 없는 경우
+    """
+    from optimum.intel import OVModelForTokenClassification
+    from transformers import AutoConfig, AutoTokenizer
+    from llmlingua import PromptCompressor
+
+    # [Flow: OpenVINO INT8 모델 로드 — CPU 프로바이더 사용]
+    logger.info(f"[openvino] Loading OpenVINO INT8 model from {OV_INT8_DIR}")
+    ov_model = OVModelForTokenClassification.from_pretrained(OV_INT8_DIR)
+
+    # [Flow: resize_token_embeddings no-op 패치]
+    # 변환 스크립트가 이미 어휘를 확장했으므로 런타임에 재확장 불필요.
+    # OpenVINO 모델은 고정된 그래프이므로 임베딩 크기 변경이 불가능하다.
+    ov_model.resize_token_embeddings = lambda n: None
+
+    # [Flow: 토크나이저 + config 로드 — OpenVINO 모델 디렉토리에서 함께 로드]
+    config = AutoConfig.from_pretrained(OV_INT8_DIR)
+    tokenizer = AutoTokenizer.from_pretrained(OV_INT8_DIR)
+    tokenizer.padding_side = "left"
+    tokenizer.pad_token_id = config.pad_token_id if config.pad_token_id else tokenizer.eos_token_id
+
+    # [Flow: PromptCompressor 인스턴스 생성 후 모델 교체]
+    # 먼저 더미 모델로 __init__ 을 호출한 후 self.model 을 OpenVINO 모델로 교체한다.
+    # use_llmlingua2=True 시 init_llmlingua2() 가 호출되는데,
+    # 이 시점에서는 ov_model.resize_token_embeddings 가 no-op 이므로 안전하다.
+    compressor = PromptCompressor(
+        model_name=MODEL_NAME,
+        use_llmlingua2=True,
+        device_map="cpu",
+    )
+    # [Flow: PyTorch 모델을 OpenVINO 모델로 교체]
+    compressor.model = ov_model
+    compressor.device = "cpu"
+
+    logger.info("[openvino] OpenVINO INT8 model loaded successfully")
+    return compressor
+
+
+def _createPyTorchCompressor():
+    """[Flow: PyTorch 폴백 — OpenVINO 모델을 사용할 수 없을 때 원본 PyTorch 모델 사용]
+
+    @returns PromptCompressor 인스턴스 (PyTorch 백엔드 사용)
+    """
+    from llmlingua import PromptCompressor
+
+    logger.info(f"[pytorch] Fallback to PyTorch model: {MODEL_NAME}")
+    compressor = PromptCompressor(
+        model_name=MODEL_NAME,
+        use_llmlingua2=True,
+        device_map="cpu",
+    )
+    logger.info("[pytorch] PyTorch model loaded successfully")
+    return compressor
+
+
+# [Flow: 서버 시작 시 PromptCompressor 인스턴스 생성 — OpenVINO 우선, PyTorch 폴백]
 logger.info(f"Initializing LLMLingua-2 with model: {MODEL_NAME}")
 _start = time.time()
-compressor = PromptCompressor(
-    model_name=MODEL_NAME,
-    use_llmlingua2=True,
-    device_map="cpu",
-)
+
+_use_openvino = os.path.isdir(OV_INT8_DIR) and os.path.exists(f"{OV_INT8_DIR}/openvino_model.xml")
+
+if _use_openvino:
+    try:
+        compressor = _createOpenVINOCompressor()
+    except Exception as e:
+        logger.warning(f"[openvino] Failed to load OpenVINO model: {e}, falling back to PyTorch")
+        compressor = _createPyTorchCompressor()
+else:
+    logger.info(f"[openvino] OpenVINO model not found at {OV_INT8_DIR}, using PyTorch")
+    compressor = _createPyTorchCompressor()
+
 _elapsed = time.time() - _start
 logger.info(f"LLMLingua-2 loaded in {_elapsed:.1f}s")
 
@@ -95,7 +172,8 @@ class CompressResponse(BaseModel):
 @app.get("/health")
 async def health() -> dict[str, str]:
     """헬스체크 엔드포인트."""
-    return {"status": "ok", "model": MODEL_NAME}
+    backend = "openvino-int8" if _use_openvino else "pytorch"
+    return {"status": "ok", "model": MODEL_NAME, "backend": backend}
 
 
 @app.post("/compress", response_model=CompressResponse)

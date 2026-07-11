@@ -1,5 +1,4 @@
 import { marked } from "marked";
-import { v4 as uuidv4 } from "uuid";
 
 /**
  * 마크다운 문자열을 React Flow 노드/에지 배열로 변환하는 순방향 파서.
@@ -18,6 +17,7 @@ export function parseMarkdownToFlow(markdownText) {
   const edges = [];
   const stack = []; // heading 레벨 스택 (부모 추적용)
   let currentPage = 1; // 페이지 마커 추적 — `<!-- 페이지 N -->` 형식
+  let headingIndex = 0; // 결정론적 ID용 heading 순번 — 새로고침 시 위치 매칭을 위해 UUID 대신 사용
 
   // 페이지 마커 정규식 — 마크다운 HTML 주석에서 페이지 번호 추출
   const PAGE_MARKER_RE = /<!--\s*페이지\s*(\d+)\s*-->/i;
@@ -32,9 +32,9 @@ export function parseMarkdownToFlow(markdownText) {
     }
 
     if (token.type === "heading") {
-      // Step 2: heading 토큰을 React Flow 노드로 변환
+      // Step 2: heading 토큰을 React Flow 노드로 변환 — 결정론적 ID로 새로고침 시 위치 매칭 가능
       const node = {
-        id: uuidv4(),
+        id: `heading-${headingIndex++}`,
         type: "headingNode",
         data: {
           label: token.text,
@@ -48,7 +48,8 @@ export function parseMarkdownToFlow(markdownText) {
       nodes.push(node);
 
       // Step 3: 부모-자식 에지 생성 (스택 기반 — 현재 depth 이상의 노드들을 pop)
-      while (stack.length > 0 && stack[stack.length - 1].level >= token.depth) {
+      // 주의: level은 data.level에 저장되어 있으므로 data.level로 접근해야 함
+      while (stack.length > 0 && stack[stack.length - 1].data.level >= token.depth) {
         stack.pop();
       }
       if (stack.length > 0) {

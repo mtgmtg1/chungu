@@ -56,7 +56,7 @@ function HeadingNode({ data, selected }) {
       className={`bg-white rounded-lg border-2 shadow-sm px-4 py-3 transition-all ${
         selected ? "border-primary shadow-md ring-2 ring-primary/20" : "border-outline-variant"
       }`}
-      style={{ width: data.width || 280, minHeight: data.height || 80 }}
+      style={{ width: "100%", minHeight: data.height || 80 }}
     >
       <NodeResizer
         minWidth={180}
@@ -114,7 +114,7 @@ function NoteNode({ data, selected, id }) {
           ? "bg-primary-fixed border-primary shadow-md ring-2 ring-primary/20"
           : "bg-surface-container-low border-primary-fixed-dim"
       }`}
-      style={{ width: data.width || 200, minHeight: data.height || 80 }}
+      style={{ width: "100%", minHeight: data.height || 80 }}
     >
       <NodeResizer
         minWidth={120}
@@ -357,9 +357,56 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId, drawin
   const bgVariant = "lines";
   const [rawFlowData, setRawFlowData] = useState({ nodes: [], edges: [] });
 
+  // [Flow: 노드 위치/크기 영속화 — localStorage에 저장하여 새로고침 후에도 드래그 위치 유지]
+  // 헤딩 노드 ID가 heading-{index}로 결정론적이므로 새로고침 후에도 동일 ID로 매칭 가능
+  const layoutStorageKey = jobId ? `flow-node-layout-${jobId}` : null;
+  const saveLayoutTimerRef = useRef(null);
+
   const reactFlow = useReactFlow();
   const { fitView, addNodes, deleteElements, screenToFlowPosition } = reactFlow;
   const noteIdCounter = useRef(0);
+
+  // [Flow: 헤딩 노드 위치/크기를 localStorage에서 복원 — ELK 레이아웃 후 저장된 위치로 override]
+  const restoreSavedLayout = useCallback((layoutedNodes) => {
+    if (!layoutStorageKey) return layoutedNodes;
+    try {
+      const raw = localStorage.getItem(layoutStorageKey);
+      if (!raw) return layoutedNodes;
+      const savedMap = JSON.parse(raw); // { [nodeId]: { x, y, width, height } }
+      return layoutedNodes.map(node => {
+        const saved = savedMap[node.id];
+        if (!saved) return node;
+        return {
+          ...node,
+          position: { x: saved.x ?? node.position.x, y: saved.y ?? node.position.y },
+          width: saved.width ?? node.width,
+          height: saved.height ?? node.height,
+          data: { ...node.data, width: saved.width ?? node.data?.width, height: saved.height ?? node.data?.height },
+        };
+      });
+    } catch { return layoutedNodes; }
+  }, [layoutStorageKey]);
+
+  // [Flow: 헤딩 노드 위치/크기를 localStorage에 저장 — debounced (500ms)]
+  const saveNodeLayout = useCallback((nodesToSave) => {
+    if (!layoutStorageKey) return;
+    if (saveLayoutTimerRef.current) clearTimeout(saveLayoutTimerRef.current);
+    saveLayoutTimerRef.current = setTimeout(() => {
+      // headingNode 타입만 저장 (noteNode는 useFlowDrawing에서 별도 관리)
+      const layoutMap = {};
+      for (const n of nodesToSave) {
+        if (n.type === "headingNode") {
+          layoutMap[n.id] = { x: n.position.x, y: n.position.y, width: n.width, height: n.height };
+        }
+      }
+      try { localStorage.setItem(layoutStorageKey, JSON.stringify(layoutMap)); } catch { /* quota 무시 */ }
+    }, 500);
+  }, [layoutStorageKey]);
+
+  // [Flow: 노드 드래그 종료 시 위치 저장]
+  const onNodeDragStop = useCallback(() => {
+    saveNodeLayout(nodes);
+  }, [nodes, saveNodeLayout]);
 
   // [Flow: 드로잉/주석 상태 관리 — perfect-freehand 기반 곡선, 도형, 텍스트, 지우개]
   const drawing = useFlowDrawing(jobId, screenToFlowPosition);
@@ -431,7 +478,7 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId, drawin
     });
   }, [drawing.customEdges, setEdges]);
 
-  // Step 1+2: 마크다운 파싱 + elkjs 레이아웃 계산
+  // Step 1+2: 마크다운 파싱 + elkjs 레이아웃 계산 + 저장된 위치 복원
   useEffect(() => {
     if (!markdown) {
       setLoading(false);
@@ -441,7 +488,9 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId, drawin
     const { nodes: rawNodes, edges: rawEdges } = parseMarkdownToFlow(markdown);
     setRawFlowData({ nodes: rawNodes, edges: rawEdges });
     calculateElkLayout(rawNodes, rawEdges).then(layoutedNodes => {
-      setNodes(layoutedNodes);
+      // localStorage에서 저장된 위치/크기로 override (새로고침 후에도 드래그 위치 유지)
+      const restoredNodes = restoreSavedLayout(layoutedNodes);
+      setNodes(restoredNodes);
       // 파싱 계층 에지(hierarchy) + LLM 트리 에지(dependency, 실선) 통합
       const allEdges = [
         ...rawEdges.map(e => ({ ...e, updatable: true })),
@@ -450,7 +499,17 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId, drawin
       setEdges(allEdges);
       setLoading(false);
     });
-  }, [markdown, dependencyEdges]);
+  }, [markdown, dependencyEdges, restoreSavedLayout]);
+
+  // [Flow: onNodesChange 래핑 — NodeResizer의 dimensions 변경 시 저장 트리거]
+  const handleNodesChange = useCallback((changes) => {
+    onNodesChange(changes);
+    // dimensions 변경(리사이즈)이 포함된 경우 저장
+    if (changes.some(c => c.type === "dimensions" && c.resizing === false)) {
+      // setNodes 후 최신 nodes를 가져오기 위해 약간 지연
+      setTimeout(() => saveNodeLayout(nodes), 0);
+    }
+  }, [onNodesChange, nodes, saveNodeLayout]);
 
   // 선택된 노드/엣지 삭제
   const handleDeleteSelected = useCallback(() => {
@@ -478,10 +537,12 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId, drawin
     setEdges(els => reconnectEdge(oldEdge, newConnection, els));
   }, [setEdges]);
 
-  // 레이아웃 재배치 — elkjs 재실행 (사용자가 드래그한 위치 리셋)
+  // 레이아웃 재배치 — elkjs 재실행 (사용자가 드래그한 위치 리셋 + 저장된 위치도 클리어)
   const handleRelayout = useCallback(() => {
     if (!rawFlowData.nodes.length) return;
     setLoading(true);
+    // 저장된 위치 삭제 — 재배치 후에는 ELK 결과를 새 기준으로 사용
+    if (layoutStorageKey) { try { localStorage.removeItem(layoutStorageKey); } catch { /* 무시 */ } }
     // 현재 사용자 추가 노트 노드는 유지
     const noteNodes = nodes.filter(n => n.type === "noteNode");
     calculateElkLayout(rawFlowData.nodes, rawFlowData.edges).then(layoutedNodes => {
@@ -489,7 +550,7 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId, drawin
       setLoading(false);
       setTimeout(() => fitView({ padding: 0.2, duration: 500 }), 100);
     });
-  }, [rawFlowData, nodes, setNodes, fitView]);
+  }, [rawFlowData, nodes, setNodes, fitView, layoutStorageKey]);
 
   // 전체 보기
   const handleFitView = useCallback(() => {
@@ -539,11 +600,12 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId, drawin
       edges={edges}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
-      onNodesChange={onNodesChange}
+      onNodesChange={handleNodesChange}
       onEdgesChange={onEdgesChange}
       onConnect={onConnect}
       onReconnect={onReconnect}
       onNodeClick={(_, node) => onNodeClick?.(node)}
+      onNodeDragStop={onNodeDragStop}
       fitView
       proOptions={{ hideAttribution: true }}
       defaultEdgeOptions={{ type: "custom" }}

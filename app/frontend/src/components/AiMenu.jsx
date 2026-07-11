@@ -47,13 +47,18 @@ function getSelectedMarkdown(editor) {
 }
 
 /**
- * [Flow: Step 1 (AI 결과 마크다운을 HTML로 변환) -> Step 2 (에디터 선택 영역 또는 커서 위치에 삽입)
+ * [Flow: Step 1 (AI 결과 마크다운을 HTML로 변환) -> Step 2 (요청 직전에 저장한 선택/커서 위치에 삽입)
  *       -> Step 3 (onChange 트리거로 자동 저장)]
+ *
+ * @param {import('@tiptap/core').Editor} editor
+ * @param {string} markdown
+ * @param {string} option
+ * @param {{from: number, to: number}} selection 요청 직전 에디터 선택 영역
  */
-function applyResultToEditor(editor, markdown, option) {
+function applyResultToEditor(editor, markdown, option, selection) {
   if (!editor || !markdown) return;
   const html = marked.parse(markdown || "");
-  const { from, to } = editor.state.selection;
+  const { from, to } = selection || editor.state.selection;
   if (option === "continue") {
     editor.chain().focus().insertContentAt(to, html).run();
   } else {
@@ -69,10 +74,13 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
   const menuRef = useRef(null);
   const customInputRef = useRef(null);
   const pendingOptionRef = useRef(null);
+  const selectionRef = useRef({ from: 0, to: 0 });
 
   const { completion, complete, isLoading, stop } = useCompletion({
     api: "/api/v1/ai/generate",
     credentials: "include",
+    // [Flow: 백엔드가 LLM 토큰을 평문 text stream으로내므로 text 프로토콜 사용]
+    streamProtocol: "text",
     // [Flow: Step 1 (Supabase 세션 토큰 획득) -> Step 2 (JWT + dev API key 헤더 구성) -> Step 3 (fetch 래핑)]
     fetch: async (url, init) => {
       const token = await getToken();
@@ -89,9 +97,9 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
       setError(err.message || "AI error");
     },
     onFinish: (_prompt, completionText) => {
-      // [Flow: Step 1 (스트리밍 완료) -> Step 2 (결과를 에디터에 적용) -> Step 3 (메뉴 닫기)]
+      // [Flow: Step 1 (스트리밍 완료) -> Step 2 (요청 직전 선택/커서 위치에 결과 적용) -> Step 3 (메뉴 닫기)]
       if (editor && completionText) {
-        applyResultToEditor(editor, completionText, pendingOptionRef.current);
+        applyResultToEditor(editor, completionText, pendingOptionRef.current, selectionRef.current);
       }
       setOpen(false);
       setShowCustomInput(false);
@@ -127,6 +135,7 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
     }
 
     pendingOptionRef.current = option;
+    selectionRef.current = editor.state.selection;
     setError("");
     setShowCustomInput(false);
     try {

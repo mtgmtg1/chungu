@@ -42,11 +42,18 @@ export async function calculateElkLayout(nodes, edges) {
   const layouted = await elk.layout(elkGraph);
 
   // Step 3: 계산된 좌표를 React Flow 노드에 매핑
+  // width/height를 노드 최상위 속성에도 설정 — NodeResizer가 node.width/node.height를 갱신하므로
+  // 내부 div가 width:100%로 래퍼에 맞춰지려면 최상위 속성이 초기값을 가져야 함
   return nodes.map(node => {
     const elkNode = layouted.children?.find(c => c.id === node.id);
+    const w = elkNode?.width || node.data?.width || 280;
+    const h = elkNode?.height || node.data?.height || 140;
     return {
       ...node,
       position: { x: elkNode?.x || 0, y: elkNode?.y || 0 },
+      width: w,
+      height: h,
+      data: { ...node.data, width: w, height: h },
     };
   });
 }

@@ -2025,8 +2025,13 @@ def preview_job(
     if effective_end < start_page:
         effective_end = start_page
 
-    selected = [content for num, content in pages if start_page <= num <= effective_end]
-    partial_markdown = "\n\n---\n\n".join(selected)
+    # [Flow: 페이지 마커를 포함하여 partial_markdown 구성 — FlowViewer 노드 클릭 시 PDF 페이지 스크롤 연동에 필요]
+    # _split_markdown_by_pages는 마커를 제거한 content만 반환하므로, 여기서 마커를 다시 붙여 복원.
+    # SimpleEditor/MarkdownPreview는 페이지 마커를 숨김 처리하므로 사용자에게 보이지 않음.
+    selected = [(num, content) for num, content in pages if start_page <= num <= effective_end]
+    partial_markdown = "\n\n---\n\n".join(
+        f"<!-- 페이지 {num} -->\n\n{content}" for num, content in selected
+    )
 
     source_url = None
     source_type = None

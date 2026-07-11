@@ -1815,14 +1815,17 @@ def _ensure_clean_source_pdf(
     path_hash = hashlib.md5(storage_path.encode("utf-8")).hexdigest()[:12]
     clean_storage_path = f"{job_id}/clean_{path_hash}.pdf"
 
-    # Step 1: clean PDF가 이미 존재하면 signed URL을 바로 반환한다.
-    # list() 대신 signed URL 생성을 시도해 Storage 폴더 구조 의존/권한 문제를 피한다.
+    # Step 1: clean PDF가 이미 존재하는지 download()로 확인한다.
+    # get_signed_download_url()은 존재하지 않는 객체라도 signed URL을 반환하므로
+    # clean PDF가 실제로 없는데도 있다고 판단하는 문제가 발생한다.
     try:
+        client = supabase_client.get_service_client()
+        client.storage.from_(bucket).download(clean_storage_path)
         url = supabase_client.get_signed_download_url(clean_storage_path, bucket=bucket, expires_in=3600)
         if url:
             return url, None
     except Exception as e:
-        logger.warning(f"[_ensure_clean_source_pdf] {job_id} clean.pdf URL 생성 실패(아직 없을 수 있음): {e}")
+        logger.info(f"[_ensure_clean_source_pdf] {job_id} clean.pdf 아직 없음(생성 필요): {e}")
 
     # Step 2: 원본 PDF 다운로드
     try:

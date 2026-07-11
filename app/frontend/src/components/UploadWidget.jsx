@@ -152,7 +152,14 @@ export default function UploadWidget({ onComplete, submitLabel, jobId, onProgres
       };
 
       if (isAddMode) {
-        await api.confirmAddFiles(jobId, createPayload);
+        console.log('[UploadWidget] confirmAddFiles 호출:', jobId, createPayload);
+        try {
+          await api.confirmAddFiles(jobId, createPayload);
+          console.log('[UploadWidget] confirmAddFiles 성공:', jobId);
+        } catch (err) {
+          console.error('[UploadWidget] confirmAddFiles 실패:', err);
+          throw err;
+        }
         if (onComplete) onComplete(jobId);
       } else {
         const res = await api.createJob(initRes.job_id, createPayload);

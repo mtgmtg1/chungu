@@ -941,6 +941,7 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
     if (selectedFile.type === "pdf") {
       return (
         <PdfViewerWithFab
+          key={selectedFile.url}
           viewerRef={pdfViewerRef}
           url={selectedFile.url}
           page={currentPage}

@@ -1375,20 +1375,6 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
                 "source_kind": source_kind,
                 "status": info.get("status", ""),
             }
-            # [Flow: 개별 searchable PDF가 있으면 preview_url을 대체 — 텍스트 검색/선택 가능]
-            # 각 extracted_files 항목은 자체 searchable_pdf_storage_path를 가질 수 있다.
-            # job.searchable_pdf_storage_path (Job 레벨)는 첫 번째 원본 PDF에만 해당하므로
-            # 여기서는 개별 항목의 searchable_pdf_storage_path만 사용한다.
-            individual_searchable = info.get("searchable_pdf_storage_path")
-            if individual_searchable:
-                try:
-                    searchable_url = supabase_client.get_signed_download_url(
-                        individual_searchable, bucket="pdfs", expires_in=3600
-                    )
-                    if searchable_url:
-                        item["preview_url"] = searchable_url
-                except Exception as e:
-                    logger.warning(f"[source_files] 개별 searchable PDF URL 생성 실패: {e}")
             return item
         # file 타입 (csv, md, xlsx, txt, html 등) — 다운로드용 signed URL만 생성
         if ftype == "file":
@@ -1477,14 +1463,7 @@ def _source_files(job: Job) -> list[dict]:
     # 원본 PDF에 내장된 주석이 있으면 clean PDF로 교체하고, 추출한 주석을 JSON 오버레이로
     # 초기화한다. 이렇게 하면 embedpdf가 PDF 내장 주석을 중복 렌더링/저장하는 문제를
     # 방지할 수 있다. docx/hwp는 여기서 PDF로 변환되지 않으므로 제외한다.
-    # [Flow: searchable PDF는 첫 번째 원본 PDF에만 적용 — job.searchable_pdf_storage_path는
-    # Job 레벨 단일 값이므로, 모든 PDF 항목에 덮어쓰면 새로 추가된 파일이 원본 PDF로 보이는 문제 발생]
-    first_original_pdf_index = next(
-        (i for i, item in enumerate(source_files)
-         if item.get("source_kind") == "original" and item.get("type") == "pdf"),
-        None,
-    )
-    for i, item in enumerate(source_files):
+    for item in source_files:
         if item.get("source_kind") != "original" or item.get("type") != "pdf":
             continue
         clean_url, extracted_annotations = _ensure_clean_source_pdf(
@@ -1494,16 +1473,14 @@ def _source_files(job: Job) -> list[dict]:
             item["url"] = clean_url
             item["preview_url"] = clean_url
         if extracted_annotations:
-            _initialize_user_annotations_json(job.id, extracted_annotations)
+            # [Flow: 파일별 주석 분리 — source_index를 전달하여 해당 파일의 주석 JSON에 저장]
+            _initialize_user_annotations_json(job.id, extracted_annotations, item.get("source_index", 0))
 
-        # [Flow: searchable PDF가 있으면 미리보기 URL을 대체 — 첫 번째 원본 PDF에만 적용]
+        # [Flow: searchable PDF가 있으면 미리보기 URL을 대체]
         # 다운로드용 url은 원본 clean PDF를 유지하고, preview_url만 searchable PDF로 변경.
         # 이렇게 하면 사용자는 뷰어에서 텍스트 검색/선택이 가능한 PDF를 보지만,
         # 다운로드는 원본 PDF를 받는다.
-        # job.searchable_pdf_storage_path는 단일 PDF Job의 원본에 대한 것이므로,
-        # 첫 번째 원본 PDF에만 적용한다. 추가로 업로드된 파일은 _build_source_file_item에서
-        # 개별 searchable_pdf_storage_path가 설정된 경우에만 searchable PDF를 사용한다.
-        if i == first_original_pdf_index and job.searchable_pdf_storage_path:
+        if job.searchable_pdf_storage_path:
             try:
                 searchable_url = supabase_client.get_signed_download_url(
                     job.searchable_pdf_storage_path, bucket="pdfs", expires_in=3600
@@ -1563,25 +1540,41 @@ def _source_files(job: Job) -> list[dict]:
                         item["annotations_json_url"] = annotations_json_url
                         break
 
-    # [Flow: user_annotations.json이 존재하면 AI 주석과 병합하여 원본 PDF 항목에 설정]
-    # 사용자가 직접 추가/편집한 주석은 user_annotations.json에만 저장되며,
-    # 여기서 AI 주석 JSON과 병합해 원본 탭에서 두 주석을 중복 없이 볼 수 있도록 한다.
-    user_annotations_json_path = f"{job.id}/user_annotations.json"
-    try:
-        user_annotations_url = supabase_client.get_signed_download_url(
-            user_annotations_json_path, bucket="results", expires_in=3600
-        )
-    except Exception:
-        user_annotations_url = None
-    if user_annotations_url:
-        merged_url = _merge_annotation_jsons(
-            job.id, shared_annotations_json_path, user_annotations_json_path
-        )
-        if merged_url:
-            for item in source_files:
-                if item.get("source_kind") == "original" and item.get("type") in ("pdf", "docx", "hwp"):
-                    item["annotations_json_url"] = merged_url
-                    break
+    # [Flow: 파일별 user_annotations_{source_index}.json이 존재하면 AI 주석과 병합하여 각 파일에 설정]
+    # 사용자가 직접 추가/편집한 주석은 파일별로 분리된 user_annotations_{source_index}.json에 저장되며,
+    # 여기서 AI 주석 JSON과 병합해 각 원본 탭에서 두 주석을 중복 없이 볼 수 있도록 한다.
+    # 파일별 주석 JSON이 없으면 기존 공유 user_annotations.json으로 폴백 (하위 호환).
+    for item in source_files:
+        if item.get("source_kind") != "original" or item.get("type") not in ("pdf", "docx", "hwp"):
+            continue
+        file_source_index = item.get("source_index", 0)
+        # [Flow: 파일별 주석 JSON 경로 — source_index별로 분리]
+        per_file_user_annotations_path = f"{job.id}/user_annotations_{file_source_index}.json"
+        # 하위 호환: 파일별 주석 JSON이 없으면 공유 user_annotations.json 사용
+        fallback_user_annotations_path = f"{job.id}/user_annotations.json"
+        # 파일별 주석 JSON이 존재하는지 확인
+        user_annotations_json_path = per_file_user_annotations_path
+        try:
+            user_annotations_url = supabase_client.get_signed_download_url(
+                user_annotations_json_path, bucket="results", expires_in=3600
+            )
+        except Exception:
+            user_annotations_url = None
+        # 파일별 주석 JSON이 없으면 공유 user_annotations.json으로 폴백 (첫 번째 파일만)
+        if not user_annotations_url and file_source_index == 0:
+            user_annotations_json_path = fallback_user_annotations_path
+            try:
+                user_annotations_url = supabase_client.get_signed_download_url(
+                    user_annotations_json_path, bucket="results", expires_in=3600
+                )
+            except Exception:
+                user_annotations_url = None
+        if user_annotations_url:
+            merged_url = _merge_annotation_jsons(
+                job.id, shared_annotations_json_path, user_annotations_json_path
+            )
+            if merged_url:
+                item["annotations_json_url"] = merged_url
     return source_files
 
 
@@ -1829,14 +1822,20 @@ def _ensure_clean_source_pdf(
         return None, None
 
 
-def _initialize_user_annotations_json(job_id: str, annotations: list[dict]) -> None:
-    """[Flow: Step 1 (기존 user_annotations.json 다운로드) -> Step 2 (기존 주석과 병합)
+def _initialize_user_annotations_json(job_id: str, annotations: list[dict], source_index: int = 0) -> None:
+    """[Flow: Step 1 (기존 주석 JSON 다운로드) -> Step 2 (기존 주석과 병합)
           -> Step 3 (중복 제거) -> Step 4 (저장 및 preview 캐시 무효화)]
 
-    원본 PDF에서 추출한 내장 주석을 user_annotations.json에 초기값으로 저장한다.
+    원본 PDF에서 추출한 내장 주석을 파일별 주석 JSON에 초기값으로 저장한다.
     이미 파일이 존재하면 기존 주석과 병합한 뒤 중복을 제거하여 덮어쓴다.
+
+    매개변수:
+        job_id: Job ID
+        annotations: 초기화할 주석 목록
+        source_index: 파일 인덱스 (해당 인덱스의 user_annotations_{source_index}.json에 저장)
     """
-    storage_path = f"{job_id}/user_annotations.json"
+    # [Flow: 파일별 주석 분리 — source_index별로 분리된 JSON에 저장]
+    storage_path = f"{job_id}/user_annotations_{source_index}.json"
     try:
         client = supabase_client.get_service_client()
         try:
@@ -2953,14 +2952,17 @@ def save_user_annotations(
 
     # [Flow: source_index가 -1이면 원본 PDF에 대한 사용자 주석을 JSON으로만 저장한다]
     # 별도의 주석 PDF 파일을 생성하지 않고, 원본 PDF 뷰어에서 annotations_json_url로 로드한다.
+    # source_index >= 0이면 파일별로 분리된 user_annotations_{source_index}.json에 저장한다.
     if source_index < 0:
         return _save_user_annotations_json(job, valid_annotations, db)
 
-    # AI 주석 공유 파일에 사용자 주석을 병합하므로 동시 쓰기 충돌 방지를 위해 행을 잠근다.
+    # [Flow: source_index >= 0 — AI 주석 PDF가 있는지 확인]
+    # AI 주석 PDF가 있으면 기존 동작 (주석 PDF에 병합), 없으면 파일별 주석 JSON으로 저장.
     locked_job = db.execute(
         select(Job).where(Job.id == job_id).with_for_update()
     ).scalar_one()
     entries = list(locked_job.annotated_pdf_files or [])
+    has_annotation_pdf = False
     if not entries:
         # 하위 호환: 목록 컬럼 추가 전에 생성된 단일 주석 PDF
         if locked_job.result_annotated_pdf_storage_path and source_index == 0:
@@ -2974,11 +2976,20 @@ def save_user_annotations(
                     "filename": f"{stem}_annotation1.pdf",
                 }
             ]
-        else:
-            raise HTTPException(status_code=404, detail="Annotation file not found")
+            has_annotation_pdf = True
+    else:
+        # index 필드로 entry 찾기 — 해당 source_index에 AI 주석 PDF가 있는지 확인
+        has_annotation_pdf = any(e.get("index") == source_index for e in entries)
+
+    # [Flow: AI 주석 PDF가 없으면 파일별 주석 JSON으로 저장 — 파일 추가 시 주석 합쳐짐 방지]
+    if not has_annotation_pdf:
+        return _save_user_annotations_json(job, valid_annotations, db, source_index)
 
     # index 필드로 entry 찾기 (position 기반이 아님)
+    # 하위 호환: source_index == 0이면 index == 1과 매칭 (단일 주석 PDF의 index는 1부터 시작)
     entry = next((e for e in entries if e.get("index") == source_index), None)
+    if entry is None and source_index == 0:
+        entry = next((e for e in entries if e.get("index") == 1), None)
     if entry is None:
         raise HTTPException(status_code=404, detail="Annotation file not found")
 
@@ -3088,7 +3099,7 @@ def _is_user_annotation(item: dict) -> bool:
     return True
 
 
-def _save_user_annotations_json(job: Job, annotations: list, db: Session) -> dict:
+def _save_user_annotations_json(job: Job, annotations: list, db: Session, source_index: int = -1) -> dict:
     """[Flow: Step 1 (사용자 주석만 필터링) -> Step 2 (AI 주석 JSON 다운로드)
           -> Step 3 (중복 제거 후 병합) -> Step 4 (results 버킷에 저장)
           -> Step 5 (preview 캐시 무효화)]
@@ -3097,10 +3108,23 @@ def _save_user_annotations_json(job: Job, annotations: list, db: Session) -> dic
     별도의 주석 PDF 파일을 생성하지 않고, 원본 PDF 뷰어에서 annotations_json_url로 로드한다.
     AI 주석과의 병합은 _source_files()에서 수행하며, 여기서는 사용자 주석만 저장해
     동일한 주석이 반복 저장되면서 색이 진해지는 것을 방지한다.
-    파일 경로는 고정: {job_id}/user_annotations.json
+
+    매개변수:
+        job: Job 객체
+        annotations: 저장할 주석 목록
+        db: DB 세션
+        source_index: 파일 인덱스 (-1이면 기존 공유 user_annotations.json, 0 이상이면
+            user_annotations_{source_index}.json에 저장하여 파일별 주석 분리)
+
+    반환값:
+        저장 결과 dict (ok, annotations_json_storage_path)
     """
     job_id = job.id
-    storage_path = f"{job_id}/user_annotations.json"
+    # [Flow: source_index >= 0이면 파일별로 분리된 주석 JSON 사용 — 파일 추가 시 주석 합쳐짐 방지]
+    if source_index >= 0:
+        storage_path = f"{job_id}/user_annotations_{source_index}.json"
+    else:
+        storage_path = f"{job_id}/user_annotations.json"
     try:
         client = supabase_client.get_service_client()
         # AI 주석은 제외하고 사용자가 추가/편집한 주석만 저장한다.
@@ -3680,7 +3704,8 @@ def get_job_annotations(
         pass
 
     # 사용자가 직접 추가/편집한 주석도 병합
-    user_annotations_json_path = f"{job.id}/user_annotations.json"
+    # [Flow: 파일별 주석 분리 — source_index별로 분리된 user_annotations_{source_index}.json을 먼저 확인]
+    user_annotations_json_path = f"{job.id}/user_annotations_{source_index}.json"
     try:
         user_bytes = client.storage.from_("results").download(user_annotations_json_path)
         user_annotations = json.loads(user_bytes.decode("utf-8"))
@@ -3692,7 +3717,20 @@ def get_job_annotations(
                     continue
                 all_annotations.append(a)
     except Exception:
-        pass
+        # 파일별 주석 JSON이 없으면 공유 user_annotations.json으로 폴백 (하위 호환)
+        user_annotations_json_path = f"{job.id}/user_annotations.json"
+        try:
+            user_bytes = client.storage.from_("results").download(user_annotations_json_path)
+            user_annotations = json.loads(user_bytes.decode("utf-8"))
+            if isinstance(user_annotations, list):
+                existing_ids = {_annotation_id(a) for a in all_annotations if _annotation_id(a)}
+                for a in user_annotations:
+                    aid = _annotation_id(a)
+                    if aid and aid in existing_ids:
+                        continue
+                    all_annotations.append(a)
+        except Exception:
+            pass
 
     if page_no is not None:
         filtered = []
@@ -3741,7 +3779,8 @@ def update_job_annotation(
     except Exception:
         pass
 
-    user_annotations_json_path = f"{job.id}/user_annotations.json"
+    # [Flow: 파일별 주석 분리 — source_index별로 분리된 user_annotations_{source_index}.json을 먼저 확인]
+    user_annotations_json_path = f"{job.id}/user_annotations_{source_index}.json"
     user_annotations: list[dict] = []
     try:
         user_bytes = client.storage.from_("results").download(user_annotations_json_path)
@@ -3749,7 +3788,15 @@ def update_job_annotation(
         if not isinstance(user_annotations, list):
             user_annotations = []
     except Exception:
-        user_annotations = []
+        # 파일별 주석 JSON이 없으면 공유 user_annotations.json으로 폴백 (하위 호환)
+        user_annotations_json_path = f"{job.id}/user_annotations.json"
+        try:
+            user_bytes = client.storage.from_("results").download(user_annotations_json_path)
+            user_annotations = json.loads(user_bytes.decode("utf-8"))
+            if not isinstance(user_annotations, list):
+                user_annotations = []
+        except Exception:
+            user_annotations = []
 
     target_index = -1
     target_list = all_annotations
@@ -4017,7 +4064,8 @@ def get_job_result_json(
         except Exception:
             pass
 
-        user_annotations_json_path = f"{job.id}/user_annotations.json"
+        # [Flow: 파일별 주석 분리 — source_index별로 분리된 user_annotations_{source_index}.json을 먼저 확인]
+        user_annotations_json_path = f"{job.id}/user_annotations_{source_index}.json"
         try:
             user_bytes = client.storage.from_("results").download(user_annotations_json_path)
             user_annotations = json.loads(user_bytes.decode("utf-8"))
@@ -4029,7 +4077,20 @@ def get_job_result_json(
                         continue
                     all_annotations.append(a)
         except Exception:
-            pass
+            # 파일별 주석 JSON이 없으면 공유 user_annotations.json으로 폴백 (하위 호환)
+            user_annotations_json_path = f"{job.id}/user_annotations.json"
+            try:
+                user_bytes = client.storage.from_("results").download(user_annotations_json_path)
+                user_annotations = json.loads(user_bytes.decode("utf-8"))
+                if isinstance(user_annotations, list):
+                    existing_ids = {_annotation_id(a) for a in all_annotations if _annotation_id(a)}
+                    for a in user_annotations:
+                        aid = _annotation_id(a)
+                        if aid and aid in existing_ids:
+                            continue
+                        all_annotations.append(a)
+            except Exception:
+                pass
 
         if page_no is not None:
             filtered = []

@@ -516,9 +516,12 @@ export default function JobResultPage() {
     const selected = sourceFiles[selectedFileIndex];
     if (!selected || selected.type !== "pdf") return;
     try {
-      // AI 주석은 원본 PDF 탭에 병합되므로, 항상 원본 PDF의 JSON overlay로 저장한다.
+      // [Flow: 파일별 주석 분리 — source_index를 전송하여 각 파일의 주석이 별도로 저장되도록 함]
+      // 기존에는 항상 source_index: -1로 전송하여 모든 주석이 user_annotations.json에 합쳐졌으나,
+      // 파일 추가 시 주석이 섞이는 문제를 해결하기 위해 source_index를 파일별로 분리.
+      const fileSourceIndex = selected.source_index ?? -1;
       await api.saveUserAnnotations(jobId, {
-        source_index: -1,
+        source_index: fileSourceIndex,
         annotations,
       });
     } catch (e) {

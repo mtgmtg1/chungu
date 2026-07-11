@@ -11,23 +11,28 @@ import * as proofApi from '../lib/proof-api.js';
 interface SandboxContext {
   jobId?: string;
   job_id?: string;
+  sandboxId?: string;
   authHeaders?: AuthHeaders;
   [key: string]: unknown;
 }
 
-// 활성 sandbox ID (createSandbox 호출 후 설정됨)
-let activeSandboxId: string | null = null;
-
 /**
- * [Flow: Step 1 (context에서 job_id, authHeaders 추출) -> Step 2 (sandbox 도구들 정의)
+ * [Flow: Step 1 (context에서 job_id, authHeaders, sandboxId 추출) -> Step 2 (sandbox 도구들 정의)
  *       -> Step 3 (도구 객체 반환)]
  *
- * @param context 에이전트 컨텍스트 (jobId, authHeaders 포함)
+ * 활성 sandbox ID는 클로저로 관리하여 각 채팅 세션마다 독립적으로 유지된다.
+ * 이전에는 모듈 레벨 전역 변수를 사용하여 다중 사용자 환경에서 경쟁 조건이 발생했으나,
+ * 이제 createSandboxTools 호출 시 클로저로 캡처하여 세션별 격리를 보장한다.
+ *
+ * @param context 에이전트 컨텍스트 (jobId, sandboxId, authHeaders 포함)
  * @returns sandbox 조작 도구 맵
  */
 export function createSandboxTools(context: SandboxContext) {
   const jobId = context.jobId || context.job_id;
   const authHeaders = context.authHeaders;
+  // 활성 sandbox ID — 클로저로 관리하여 각 채팅 세션마다 독립 유지
+  // context.sandboxId 가 있으면 초기값으로 사용 (프론트엔드가 기존 sandbox 를 재사용하는 경우)
+  let activeSandboxId: string | null = (context.sandboxId as string) || null;
 
   // ========================================
   // 도구 1: sandbox 생성

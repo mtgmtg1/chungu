@@ -192,6 +192,7 @@
     "sourceImages": "원본 이미지",
     "sourceFile": "원본 파일",
     "sourceFiles": "원본 파일 목록",
+    "openInNewTab": "새 탭에서 열기",
     "uploadNewFiles": "새 파일 업로드",
     "emptySourceFiles": "원본 파일이 없습니다",
     "deleteSourceFileTitle": "원본 파일 삭제",

@@ -192,6 +192,7 @@
     "sourceImages": "Source Images",
     "sourceFile": "Source File",
     "sourceFiles": "Source Files",
+    "openInNewTab": "Open in new tab",
     "uploadNewFiles": "Upload New Files",
     "emptySourceFiles": "No source files",
     "deleteSourceFileTitle": "Delete source file?",

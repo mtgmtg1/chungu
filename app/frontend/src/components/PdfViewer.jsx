@@ -1,9 +1,11 @@
-// [Flow: Step 1 (URL, page, annotationsJson 수신) -> Step 2 (IntersectionObserver로 패널 가시성 감지)
-//       -> Step 3 (보이면 EmbedPDF PDFViewer를 dynamic import로 로드) -> Step 4 (onReady에서 registry 획득)
-//       -> Step 5 (annotation plugin으로 초기 주석 import) -> Step 6 (scroll plugin으로 page prop 위치로 이동)
-//       -> Step 7 (page prop/annotationsJson 변경 시 동기화) -> Step 8 (상위 ref로 exportAnnotations 노출)]
-import { forwardRef, lazy, Suspense, useEffect, useImperativeHandle, useRef, useState } from "react";
+// [Flow: Step 1 (URL, page, annotationsJson 수신) -> Step 2 (데이터 유효성 검증)
+//       -> Step 3 (IntersectionObserver로 패널 가시성 감지) -> Step 4 (보이면 EmbedPDF PDFViewer를 dynamic import로 로드)
+//       -> Step 5 (ErrorBoundary로 snippet preact crash 전파 차단) -> Step 6 (onReady에서 registry 획득)
+//       -> Step 7 (annotation plugin으로 초기 주석 import) -> Step 8 (scroll plugin으로 page prop 위치로 이동)
+//       -> Step 9 (page prop/annotationsJson 변경 시 동기화) -> Step 10 (상위 ref로 exportAnnotations 노출)]
+import { Component, forwardRef, lazy, Suspense, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { AlertCircle, RotateCw, FileText } from "lucide-react";
 
 /**
  * [Flow: Step 1 (@embedpdf/react-pdf-viewer의 PDFViewer를 동적 import)
@@ -13,6 +15,99 @@ import { useTranslation } from "react-i18next";
 const PDFViewer = lazy(() =>
   import("@embedpdf/react-pdf-viewer").then((mod) => ({ default: mod.PDFViewer }))
 );
+
+/**
+ * [Flow: Step 1 (annotationsJson 항목 순회) -> Step 2 (rect/origin/size 등 필수 좌표 필드 존재 검사)
+ *       -> Step 3 (잘못된 항목은 제거하고 유효한 항목만 반환)]
+ * snippet 내부 preact 컴포넌트가 rect.origin.x 등에 접근할 때 undefined 로 crash 하는 것을 방지한다.
+ * EmbedPDF AnnotationTransferItem 형식이 아닌 데이터를 사전에 필터링한다.
+ *
+ * @param {Array} items - annotationsJson 배열
+ * @returns {Array} 유효한 항목만 포함된 배열
+ */
+function sanitizeAnnotationsJson(items) {
+  if (!Array.isArray(items)) return [];
+  return items.filter((item) => {
+    if (!item || typeof item !== "object") return false;
+    // annotation 객체에 rect 가 있으면 origin/size 검증
+    const rect = item.rect ?? item.annotation?.rect;
+    if (rect && (!rect.origin || typeof rect.origin.x !== "number" || !rect.size)) return false;
+    // page 인덱스가 음수면 제거
+    if (typeof item.pageIndex === "number" && item.pageIndex < 0) return false;
+    return true;
+  });
+}
+
+/**
+ * [Flow: Step 1 (snippet preact 렌더링 crash 감지) -> Step 2 (에러 상태 저장)
+ *       -> Step 3 (fallback UI: 에러 메시지 + 재시도 버튼 + iframe PDF 폴백)]
+ * @embedpdf/snippet 내부 preact 컴포넌트가 특정 데이터에서 crash 할 때
+ * 에러가 React 트리로 전파되어 결과 페이지 전체가 망가지는 것을 차단한다.
+ * crash 시 iframe 으로 최소한의 PDF 보기 기능을 제공한다.
+ */
+class PdfViewerErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("[PdfViewer] snippet crash (ErrorBoundary):", error, errorInfo);
+  }
+
+  handleRetry = () => {
+    this.setState({ hasError: false, error: null });
+  };
+
+  render() {
+    if (this.state.hasError) {
+      const { url, t } = this.props;
+      return (
+        <div className="flex flex-col h-full w-full min-h-0 items-center justify-center gap-3 p-4 bg-surface-container-low" data-oid="pdf-viewer-error">
+          <AlertCircle size={32} className="text-error flex-shrink-0" />
+          <div className="text-center text-sm text-on-surface-variant max-w-xs">
+            {t("page:errors.loadFailed")}
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={this.handleRetry}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white text-sm hover:opacity-90 transition-opacity"
+              data-oid="pdf-viewer-retry">
+              <RotateCw size={14} />
+              {t("page:retry")}
+            </button>
+            {url && (
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-outline-variant text-on-surface text-sm hover:bg-surface-container-high transition-colors"
+                data-oid="pdf-viewer-open-external">
+                <FileText size={14} />
+                {t("page:result.openInNewTab")}
+              </a>
+            )}
+          </div>
+          {/* iframe 폴백: 주석 편집은 불가하지만 최소한 PDF 내용 확인 가능 */}
+          {url && (
+            <iframe
+              src={url}
+              title="PDF fallback"
+              className="flex-1 w-full min-h-0 mt-2 rounded border border-outline-variant bg-white"
+              data-oid="pdf-viewer-fallback-iframe"
+            />
+          )}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 /**
  * [Flow: Step 1 (url, page, annotationsJson, onAnnotationChanged 수신)
@@ -35,6 +130,11 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
   const [hasBeenVisible, setHasBeenVisible] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const importedAnnotationsJsonRef = useRef(null);
+
+  // [Flow: Step 1 (데이터 유효성 정규화) — url 빈 문자열/undefined 처리, page 1 이상 보장, annotationsJson 형식 검증]
+  const validUrl = url && typeof url === "string" && url.trim() ? url : null;
+  const normalizedPage = Math.max(1, Number(page) || 1);
+  const safeAnnotationsJson = sanitizeAnnotationsJson(annotationsJson);
 
   /**
    * [Flow: Step 1 (상위 ref로 노출할 API 정의) -> Step 2 (annotation plugin 메서드 래핑)]
@@ -130,8 +230,8 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
    */
   useEffect(() => {
     if (!isReady || !scrollApiRef.current) return;
-    scrollApiRef.current.scrollToPage({ pageNumber: page });
-  }, [page, isReady]);
+    scrollApiRef.current.scrollToPage({ pageNumber: normalizedPage });
+  }, [normalizedPage, isReady]);
 
   /**
    * [Flow: Step 1 (annotation plugin이 있으면 importAnnotations Task를 Promise로 변환)
@@ -156,19 +256,19 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
   useEffect(() => {
     const api = annotationApiRef.current;
     if (!isReady || !api) return;
-    if (!annotationsJson || annotationsJson.length === 0) return;
-    const currentJson = JSON.stringify(annotationsJson);
+    if (!safeAnnotationsJson || safeAnnotationsJson.length === 0) return;
+    const currentJson = JSON.stringify(safeAnnotationsJson);
     if (currentJson === importedAnnotationsJsonRef.current) return;
     const runImport = async () => {
       try {
-        await importAnnotationsAsPromise(api, annotationsJson);
+        await importAnnotationsAsPromise(api, safeAnnotationsJson);
         importedAnnotationsJsonRef.current = currentJson;
       } catch (e) {
         console.error("[PdfViewer] importAnnotations failed:", e);
       }
     };
     runImport();
-  }, [annotationsJson, isReady]);
+  }, [safeAnnotationsJson, isReady]);
 
   /**
    * [Flow: Step 1 (컨테이너 ref가 있으면 Observer 생성) -> Step 2 (교차 상태 변경 시 가시성 플래그 갱신)
@@ -193,7 +293,7 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
     };
   }, []);
 
-  if (!url) {
+  if (!validUrl) {
     return (
       <div className="flex-1 flex items-center justify-center h-full w-full min-h-0 text-on-surface-variant text-sm" data-oid="pdf-empty">
         {t("page:errors.loadFailed")}
@@ -211,16 +311,16 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
     scrollApiRef.current = registry?.getPlugin("scroll")?.provides() ?? null;
     setIsReady(true);
 
-    if (scrollApiRef.current && page > 1) {
-      scrollApiRef.current.scrollToPage({ pageNumber: page });
+    if (scrollApiRef.current && normalizedPage > 1) {
+      scrollApiRef.current.scrollToPage({ pageNumber: normalizedPage });
     }
 
     const api = annotationApiRef.current;
     if (api) {
-      if (annotationsJson && annotationsJson.length > 0) {
-        const currentJson = JSON.stringify(annotationsJson);
+      if (safeAnnotationsJson && safeAnnotationsJson.length > 0) {
+        const currentJson = JSON.stringify(safeAnnotationsJson);
         if (currentJson !== importedAnnotationsJsonRef.current) {
-          importAnnotationsAsPromise(api, annotationsJson)
+          importAnnotationsAsPromise(api, safeAnnotationsJson)
             .then(() => {
               importedAnnotationsJsonRef.current = currentJson;
             })
@@ -253,24 +353,26 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
     <div ref={containerRef} className="flex-1 flex flex-col h-full w-full min-h-0 overflow-hidden bg-surface-container-low" data-oid="pdf-viewer">
       <div className="flex-1 overflow-hidden min-h-0 relative" data-oid="pdf-viewer-wrap">
         {hasBeenVisible ? (
-          <Suspense
-            fallback={(
-              <div className="absolute inset-0 flex items-center justify-center text-on-surface-variant text-sm" data-oid="pdf-loading">
-                {t("page:result.preview")}
-              </div>
-            )}
-          >
-            <PDFViewer
-              ref={viewerRef}
-              config={{
-                src: url,
-                documentId: "source-doc",
-                i18n: { locale },
-              }}
-              style={{ width: "100%", height: "100%" }}
-              onReady={handleReady}
-            />
-          </Suspense>
+          <PdfViewerErrorBoundary url={validUrl} t={t}>
+            <Suspense
+              fallback={(
+                <div className="absolute inset-0 flex items-center justify-center text-on-surface-variant text-sm" data-oid="pdf-loading">
+                  {t("page:result.preview")}
+                </div>
+              )}
+            >
+              <PDFViewer
+                ref={viewerRef}
+                config={{
+                  src: validUrl,
+                  documentId: "source-doc",
+                  i18n: { locale },
+                }}
+                style={{ width: "100%", height: "100%" }}
+                onReady={handleReady}
+              />
+            </Suspense>
+          </PdfViewerErrorBoundary>
         ) : (
           <div className="absolute inset-0 flex items-center justify-center text-on-surface-variant text-sm" data-oid="pdf-placeholder">
             {t("page:result.preview")}

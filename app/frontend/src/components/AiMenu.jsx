@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { marked } from "marked";
 import TurndownService from "turndown";
 import { useCompletion } from "@ai-sdk/react";
+import { DOMSerializer } from "@tiptap/pm/model";
 import { getToken } from "../api.js";
 import {
   ArrowDownWideNarrow,
@@ -35,7 +36,10 @@ function getSelectedMarkdown(editor) {
   const { from, to } = editor.state.selection;
   if (from === to) return "";
   const slice = editor.state.doc.slice(from, to);
-  const serializer = editor.view.domSerializer || editor.schema.serializer;
+  // [Flow: ProseMirror DOMSerializer로 슬라이스를 HTML로 직렬화 — Tiptap v3에서는
+  //       editor.view.domSerializer / editor.schema.serializer 가 undefined이므로
+  //       DOMSerializer.fromSchema(editor.schema) 를 사용해야 함]
+  const serializer = DOMSerializer.fromSchema(editor.schema);
   const fragment = slice.content;
   const div = document.createElement("div");
   div.appendChild(serializer.serializeFragment(fragment));

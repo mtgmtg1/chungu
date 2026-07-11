@@ -338,7 +338,10 @@
     "flowAnalyzeDeps": "AI依存性分析",
     "flowAnalyzing": "分析中…",
     "flowDepEdges": "依存関係リンク",
-    "flowHierarchyEdges": "階層構造"
+    "flowHierarchyEdges": "階層構造",
+    "flowAddNote": "注釈ノート追加",
+    "flowDeleteSelected": "選択要素削除",
+    "flowHint": "ノードをドラッグして接続 · ダブルクリックで注釈編集 · Deleteで削除"
   },
   "poems": [
     {

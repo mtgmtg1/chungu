@@ -338,7 +338,10 @@
     "flowAnalyzeDeps": "AI Dependency Analysis",
     "flowAnalyzing": "Analyzing…",
     "flowDepEdges": "Dependency Links",
-    "flowHierarchyEdges": "Hierarchy"
+    "flowHierarchyEdges": "Hierarchy",
+    "flowAddNote": "Add Note",
+    "flowDeleteSelected": "Delete Selected",
+    "flowHint": "Drag nodes to connect · Double-click to edit notes · Delete to remove"
   },
   "poems": [
     {

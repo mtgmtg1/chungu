@@ -840,7 +840,15 @@ async def confirm_add_files(
             storage_path = info["storage_path"]
             filename = info["original_name"]
             rel_path = info.get("relative_path", filename)
+            expected_size = info.get("size", 0)
             data = supabase_client.download_pdf(storage_path).read()
+            # [Flow: TUS 업로드 후 Storage 파일 크기 검증 — 클라이언트가 보낸 크기와 다르면 잘못된 파일이 업로드되었을 수 있음]
+            actual_size = len(data)
+            if expected_size and actual_size != expected_size:
+                logger.warning(
+                    f"[confirm-add-files:{job.id}] {filename} Storage 크기 불일치: "
+                    f"예상={expected_size}, 실제={actual_size}, storage_path={storage_path}"
+                )
             if archive_handler.is_archive(filename):
                 archive_dest = tmp_path / f"extracted_{rel_path}"
                 archive_dest.mkdir(parents=True, exist_ok=True)

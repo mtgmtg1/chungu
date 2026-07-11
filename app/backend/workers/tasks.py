@@ -943,10 +943,17 @@ def run_job_added_files(job_id: str) -> dict:
                 return local_path
             # Storage에서 다운로드
             storage_path = info.get("storage_path", "")
+            expected_size = info.get("size", 0)
             if storage_path:
                 data = supabase_client.download_pdf(storage_path).read()
                 added_dir.mkdir(parents=True, exist_ok=True)
                 local_path.write_bytes(data)
+                actual_size = local_path.stat().st_size
+                if expected_size and actual_size != expected_size:
+                    logger.warning(
+                        f"[run_job_added_files:{job_id}] {info['path']} 다운로드 크기 불일치: "
+                        f"예상={expected_size}, 실제={actual_size}, storage_path={storage_path}"
+                    )
                 return local_path
             raise FileNotFoundError(f"파일을 찾을 수 없음: {info['path']}")
 

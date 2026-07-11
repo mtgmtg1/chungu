@@ -52,7 +52,7 @@ def main():
     # 가중치 + 활성화 모두 INT8 로 양자화하여 CPU 추론 속도를 2~4x 향상
     # 캘리브레이션 데이터로 50개 샘플 문장을 사용하여 활성화 분포 추정
     import nncf
-    from openvino.runtime import Core, serialize
+    from openvino import Core, serialize
 
     print(f"[convert] Applying INT8 quantization with NNCF...")
     core = Core()

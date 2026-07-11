@@ -17,7 +17,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # [Flow: 모델 사전 다운로드 — 런타임 지연 방지]
 # 서버 시작 시 다운로드하면 첫 요청이 지연되므로 빌드 시 미리 다운로드한다
-RUN python -c "from llmlingua import PromptCompressor; PromptCompressor(model_name='microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank', use_llmlingua2=True)"
+# CUDA_VISIBLE_DEVICES="" 로 GPU 인식 차단 — CPU 전용 모드로 모델 로드
+ENV CUDA_VISIBLE_DEVICES=""
+RUN python -c "from llmlingua import PromptCompressor; PromptCompressor(model_name='microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank', use_llmlingua2=True, device_map='cpu')"
 
 # --- Runtime stage ---
 FROM python:3.11-slim AS runtime
@@ -37,6 +39,8 @@ COPY llmlingua-service/main.py ./main.py
 
 ENV PYTHONUNBUFFERED=1
 ENV HF_HOME=/root/.cache/huggingface
+# [Flow: CPU 전용 모드 — GPU 없는 서버에서 torch CUDA 초기화 실패 방지]
+ENV CUDA_VISIBLE_DEVICES=""
 EXPOSE 8000
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

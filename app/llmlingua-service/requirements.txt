@@ -1,5 +1,8 @@
 # LLMLingua-2 프롬프트 압축 서비스 의존성
-# llmlingua 패키지는 transformers, torch, huggingface-hub 등을 자동으로 설치한다
+# CPU 전용 torch 를 먼저 설치하여 CUDA GPU 의존성 제거 (a1 서버는 GPU 없음)
+# 이후 llmlingua 패키지가 torch 를 이미 설치된 것으로 인식하여 재설치하지 않음
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0
 llmlingua>=0.2.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0

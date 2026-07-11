@@ -372,6 +372,26 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId, drawin
     }
   }, [drawing.updateFromAgent, drawingApiRef]);
 
+  // 주석 노트 텍스트 변경 핸들러 (NoteNode의 data.onTextChange 콜백)
+  const handleNoteTextChange = useCallback((nodeId, newText) => {
+    setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, text: newText } } : n));
+  }, [setNodes]);
+
+  // 주석 노트 추가 — 화면 중앙에 새 노트 노드 생성
+  const handleAddNote = useCallback(() => {
+    noteIdCounter.current += 1;
+    const newNote = {
+      id: `note-${Date.now()}-${noteIdCounter.current}`,
+      type: "noteNode",
+      position: { x: 200 + Math.random() * 100, y: 200 + Math.random() * 100 },
+      data: {
+        text: "",
+        onTextChange: handleNoteTextChange,
+      },
+    };
+    addNodes(newNote);
+  }, [addNodes, handleNoteTextChange]);
+
   // [Flow: 서버에서 로드한 noteNodes를 React Flow 노드로 통합]
   useEffect(() => {
     if (!drawing.noteNodes || drawing.noteNodes.length === 0) return;
@@ -431,26 +451,6 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId, drawin
       setLoading(false);
     });
   }, [markdown, dependencyEdges]);
-
-  // 주석 노트 텍스트 변경 핸들러 (NoteNode의 data.onTextChange 콜백)
-  const handleNoteTextChange = useCallback((nodeId, newText) => {
-    setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, text: newText } } : n));
-  }, [setNodes]);
-
-  // 주석 노트 추가 — 화면 중앙에 새 노트 노드 생성
-  const handleAddNote = useCallback(() => {
-    noteIdCounter.current += 1;
-    const newNote = {
-      id: `note-${Date.now()}-${noteIdCounter.current}`,
-      type: "noteNode",
-      position: { x: 200 + Math.random() * 100, y: 200 + Math.random() * 100 },
-      data: {
-        text: "",
-        onTextChange: handleNoteTextChange,
-      },
-    };
-    addNodes(newNote);
-  }, [addNodes, handleNoteTextChange]);
 
   // 선택된 노드/엣지 삭제
   const handleDeleteSelected = useCallback(() => {

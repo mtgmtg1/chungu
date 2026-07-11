@@ -51,6 +51,7 @@ _start = time.time()
 compressor = PromptCompressor(
     model_name=MODEL_NAME,
     use_llmlingua2=True,
+    device_map="cpu",
 )
 _elapsed = time.time() - _start
 logger.info(f"LLMLingua-2 loaded in {_elapsed:.1f}s")

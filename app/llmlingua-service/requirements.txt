@@ -1,0 +1,6 @@
+# LLMLingua-2 프롬프트 압축 서비스 의존성
+# llmlingua 패키지는 transformers, torch, huggingface-hub 등을 자동으로 설치한다
+llmlingua>=0.2.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.0.0

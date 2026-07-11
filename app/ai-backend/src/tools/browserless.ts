@@ -189,12 +189,16 @@ export function createBrowserlessTools() {
     }),
     execute: async ({ url }) => {
       try {
-        const text = await extractText(url);
+        const rawText = await extractText(url);
+        // [Flow: 출력 크기 제한 — 텍스트를 3000자로 잘라서 토큰 소비 절약]
+        const truncated = rawText.length > 3000
+          ? rawText.slice(0, 3000) + '\n...[truncated]'
+          : rawText;
         return {
           status: 'ok',
           url,
-          text,
-          text_length: text.length,
+          text: truncated,
+          text_length: rawText.length,
         };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

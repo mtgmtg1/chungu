@@ -134,7 +134,8 @@ export function buildAnnotationTools(context: AnnotationContext) {
       }),
       execute: async ({ page_no }) => {
         const { elements } = await loadElements(page_no);
-        return { elements: elements.slice(0, 50), total: elements.length };
+        // [Flow: 출력 크기 제한 — 50→20개로 축소하여 토큰 소비 절약]
+        return { elements: elements.slice(0, 20), total: elements.length };
       },
     }),
 
@@ -154,10 +155,10 @@ export function buildAnnotationTools(context: AnnotationContext) {
       execute: async ({ kind, page_no }) => {
         try {
           const result = await proofApi.getResultJson(jobId, kind, sourceIndex, page_no, authHeaders);
-          // 결과가 너무 크면 일부만 반환 (토큰 절약)
+          // [Flow: 출력 크기 제한 — 80→30개로 축소하여 토큰 소비 절약]
           const data = result.data;
-          if (Array.isArray(data) && data.length > 80) {
-            return { kind, total: data.length, data: data.slice(0, 80), truncated: true };
+          if (Array.isArray(data) && data.length > 30) {
+            return { kind, total: data.length, data: data.slice(0, 30), truncated: true };
           }
           return { kind, total: result.total ?? (Array.isArray(data) ? data.length : undefined), data };
         } catch (err) {
@@ -176,7 +177,8 @@ export function buildAnnotationTools(context: AnnotationContext) {
       }),
       execute: async ({ page_no, summary_only }) => {
         const { annotations, total } = await proofApi.getAnnotations(jobId, sourceIndex, page_no, authHeaders);
-        const sliced = annotations.slice(0, 80);
+        // [Flow: 출력 크기 제한 — 80→30개로 축소하여 토큰 소비 절약]
+        const sliced = annotations.slice(0, 30);
         if (summary_only) {
           return {
             annotations: sliced.map((a) => {

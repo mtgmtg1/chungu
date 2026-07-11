@@ -41,7 +41,10 @@ export function createSandboxTools(context: SandboxContext) {
     description:
       '새 에이전트 샌드박스(Kata VM)를 생성한다. 이 도구는 sandbox 내부에서 코드를 실행하기 전에 반드시 먼저 호출해야 한다. ' +
       'sandbox 는 격리된 Linux 환경으로, Python/Node.js/git/LibreOffice/FFmpeg/ImageMagick/Tesseract 등이 사전 설치되어 있다. ' +
-      'workspace (/workspace) 에 Job 의 결과 파일이 마운트된다.',
+      'workspace (/workspace) 에 Job 의 결과 파일이 마운트된다. ' +
+      '중요: 사용자가 말하는 파일명(예: "보고서.pdf")은 /workspace/original/ 디렉토리에 원본 파일명으로 배치되어 있다. ' +
+      '/workspace/_file_mapping.json 파일을 읽으면 사용자 파일명 ↔ sandbox 내부 경로 매핑을 확인할 수 있다. ' +
+      '사용자가 파일명을 언급하면 항상 /workspace/original/{파일명} 경로를 사용하라.',
     inputSchema: z.object({
       resourceLimits: z
         .object({
@@ -94,7 +97,10 @@ export function createSandboxTools(context: SandboxContext) {
       'sandbox 내부에서 셸 명령을 실행한다. Python 스크립트, Node.js 스크립트, git 명령, ' +
       'LibreOffice 변환, FFmpeg 처리, ImageMagick 이미지 변환 등을 수행할 수 있다. ' +
       '명령은 비특권 사용자(agent, UID 1000)로 실행되며, /workspace 가 작업 디렉토리다. ' +
-      '위험 명령(rm -rf /, dd of=/dev/, mount, reboot 등)은 보안 정책에 의해 차단된다.',
+      '위험 명령(rm -rf /, dd of=/dev/, mount, reboot 등)은 보안 정책에 의해 차단된다. ' +
+      '파일명 안내: 사용자가 말하는 파일명은 /workspace/original/ 디렉토리에 원본 그대로 있다. ' +
+      '예: 사용자가 "보고서.pdf"라고 말하면 /workspace/original/보고서.pdf 를 가리킨다. ' +
+      '/workspace/input.pdf 도 동일한 파일이지만 원본 파일명을 사용하는 것을 권장한다.',
     inputSchema: z.object({
       command: z.string().describe('실행할 셸 명령어 (예: "python3 /workspace/script.py")'),
       timeout: z
@@ -117,7 +123,14 @@ export function createSandboxTools(context: SandboxContext) {
         stdout: string;
         stderr: string;
         error?: string;
-      }>(`/api/sandboxes/${activeSandboxId}/execute`, 'POST', body, authHeaders);
+      }>(`/api/sandboxes/${activeSandboxId}/execute`, 'POST', body, authHeaders).then(
+        // [Flow: 출력 크기 제한 — stdout/stderr 를 2000자로 잘라서 토큰 소비 절약]
+        (result: { exit_code: number; stdout: string; stderr: string; error?: string }) => ({
+          ...result,
+          stdout: _truncate(result.stdout, 2000),
+          stderr: _truncate(result.stderr, 1000),
+        }),
+      );
     },
   });
 
@@ -127,11 +140,13 @@ export function createSandboxTools(context: SandboxContext) {
   const readSandboxFile = tool({
     description:
       'sandbox 의 workspace 에서 파일 내용을 읽는다. ' +
-      '에이전트가 생성한 코드, 변환 결과, 로그 등을 확인할 때 사용한다.',
+      '에이전트가 생성한 코드, 변환 결과, 로그 등을 확인할 때 사용한다. ' +
+      '사용자가 말하는 파일명은 /workspace/original/ 디렉토리에 원본 그대로 배치되어 있다. ' +
+      '예: 사용자가 "보고서.pdf"를 달라고 하면 /workspace/original/보고서.pdf 를 읽으면 된다.',
     inputSchema: z.object({
       path: z
         .string()
-        .describe('읽을 파일 경로 (예: "/workspace/agent_output/result.csv")'),
+        .describe('읽을 파일 경로 (예: "/workspace/original/보고서.pdf" 또는 "/workspace/agent_output/result.csv")'),
     }),
     execute: async ({ path }) => {
       if (!activeSandboxId) {
@@ -143,7 +158,13 @@ export function createSandboxTools(context: SandboxContext) {
         content: string;
         size: number;
         error?: string;
-      }>(`/api/sandboxes/${activeSandboxId}/files/read?${params}`, 'GET', undefined, authHeaders);
+      }>(`/api/sandboxes/${activeSandboxId}/files/read?${params}`, 'GET', undefined, authHeaders).then(
+        // [Flow: 출력 크기 제한 — 파일 내용을 4000자로 잘라서 토큰 소비 절약]
+        (result: { content: string; size: number; error?: string }) => ({
+          ...result,
+          content: _truncate(result.content, 4000),
+        }),
+      );
     },
   });
 
@@ -184,12 +205,14 @@ export function createSandboxTools(context: SandboxContext) {
   const listSandboxFiles = tool({
     description:
       'sandbox 의 workspace 내 파일 목록을 조회한다. ' +
-      '에이전트가 생성한 파일이나 기존 결과 파일을 확인할 때 사용한다.',
+      '에이전트가 생성한 파일이나 기존 결과 파일을 확인할 때 사용한다. ' +
+      '사용자가 업로드한 원본 파일은 /workspace/original/ 디렉토리에 원본 파일명 그대로 있다. ' +
+      '/workspace/_file_mapping.json 을 조회하면 사용자 파일명 ↔ 경로 매핑을 볼 수 있다.',
     inputSchema: z.object({
       path: z
         .string()
-        .default('/workspace')
-        .describe('조회할 디렉토리 경로 (기본: /workspace)'),
+        .default('/workspace/original')
+        .describe('조회할 디렉토리 경로 (기본: /workspace/original — 사용자 원본 파일들이 있는 위치)'),
     }),
     execute: async ({ path }) => {
       if (!activeSandboxId) {
@@ -616,4 +639,20 @@ print(f'Thumbnail saved: {img.size}')
     process_image: processImage,
     get_workspace_status: getWorkspaceStatus,
   };
+}
+
+/**
+ * [Flow: Step 1 (문자열과 최대 길이 수신) -> Step 2 (최대 길이 초과 시 잘라내고 생략 표시) -> Step 3 (반환)]
+ *
+ * _truncate — 문자열을 지정된 최대 길이로 자른다.
+ * 도구 출력(stdout/stderr/file content)이 너무 길어 토큰을 과소비하는 것을 방지한다.
+ *
+ * @param str 원본 문자열
+ * @param maxLen 최대 길이 (문자 수)
+ * @returns 잘린 문자열 (원본보다 짧으면 "...[truncated]" 접미사 추가)
+ */
+function _truncate(str: string | undefined, maxLen: number): string {
+  if (!str) return '';
+  if (str.length <= maxLen) return str;
+  return str.slice(0, maxLen) + '\n...[truncated]';
 }

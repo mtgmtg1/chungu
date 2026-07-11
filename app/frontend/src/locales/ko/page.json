@@ -328,7 +328,17 @@
     "annotationEditColor": "색상",
     "annotationEditComment": "코멘트",
     "annotationEditOpacity": "투명도",
-    "annotationDelete": "삭제"
+    "annotationDelete": "삭제",
+    "flow": "플로우",
+    "flowView": "플로우 뷰",
+    "flowLoading": "플로우 생성 중…",
+    "flowEmpty": "표시할 헤딩 구조가 없습니다.",
+    "flowResetLayout": "레이아웃 재배치",
+    "flowFitView": "전체 보기",
+    "flowAnalyzeDeps": "AI 의존성 분석",
+    "flowAnalyzing": "AI 분석 중…",
+    "flowDepEdges": "의존성 연결",
+    "flowHierarchyEdges": "계층 구조"
   },
   "poems": [
     {

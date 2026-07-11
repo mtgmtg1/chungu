@@ -50,7 +50,8 @@ export function buildSpreadsheetTools(context: SpreadsheetContext) {
       execute: async ({ sheet_index }) => {
         const url = await _getXlsxUrl(jobId, authHeaders);
         const sheet = await _loadSheet(url, sheet_index);
-        return { sheet_index, rows: sheet.rows.slice(0, 50) };
+        // [Flow: 출력 크기 제한 — 50→20행으로 축소하여 토큰 소비 절약]
+        return { sheet_index, rows: sheet.rows.slice(0, 20) };
       },
     }),
 

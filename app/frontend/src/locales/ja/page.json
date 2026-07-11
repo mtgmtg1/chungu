@@ -328,7 +328,17 @@
     "annotationEditColor": "色",
     "annotationEditComment": "コメント",
     "annotationEditOpacity": "不透明度",
-    "annotationDelete": "削除"
+    "annotationDelete": "削除",
+    "flow": "フロー",
+    "flowView": "フロービュー",
+    "flowLoading": "フロー生成中…",
+    "flowEmpty": "表示する見出し構造がありません。",
+    "flowResetLayout": "レイアウト再配置",
+    "flowFitView": "全体表示",
+    "flowAnalyzeDeps": "AI依存性分析",
+    "flowAnalyzing": "分析中…",
+    "flowDepEdges": "依存関係リンク",
+    "flowHierarchyEdges": "階層構造"
   },
   "poems": [
     {

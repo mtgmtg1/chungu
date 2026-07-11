@@ -8,6 +8,32 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### AI 에이전트 툴콜 응답 처리 개선 — LLMLingua-2 동적 프롬프트 압축 + maxOutputTokens + 도구 출력 제한
+
+- **목표**: 에이전트가 툴콜 결과를 읽고 다음 툴콜을 호출하지 못하는 문제를 5가지 방향으로 수정. Gemma 4-26B 모델의 토큰 예산 부족, 도구 출력 과다, 시스템 프롬프트 모호성, 디버깅 로그 부족을 해결.
+- **maxOutputTokens 8192 설정** (`app/ai-backend/src/chat/route.ts`): vLLM 기본값(128~256)은 툴콜 결과 분석에 부족하므로 `streamText()`에 `maxOutputTokens: 8192` 추가.
+- **LLMLingua-2 동적 프롬프트 압축 마이크로서비스** (`app/llmlingua-service/` — 3파일):
+  - `main.py`: FastAPI 서버 — POST `/compress` 엔드포인트. LLMLingua-2 `PromptCompressor(model_name="microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank", use_llmlingua2=True)` 사용.
+  - **동적 rate 선택** (`_selectDynamicRate`): 도구 결과 크기(문자 수)에 따라 3단계 자동 선택 — 4000~8000자→0.5(2x), 8000~20000자→0.3(3x), 20000자+→0.2(5x). 논문 Appendix L Sample-Wise Dynamic Compression Ratio 방식 적용.
+  - **`dynamic_context_compression_ratio=0.4`**: 각 문맥(청크)마다 40% 가변 허용하여 정보 밀도에 맞춤.
+  - **`force_tokens`**: 8개 핵심 JSON 키(`error`, `id`, `page`, `bbox`, `rect`, `color`, `contents`, `type`) 보존하여 좌표/ID/페이지/색상 손실 방지.
+  - `Dockerfile`: Python 3.11-slim + llmlingua 패키지 + 모델 사전 다운로드 (런타임 지연 방지). builder/runtime 2단계 이미지.
+  - `requirements.txt`: llmlingua>=0.2.0, fastapi, uvicorn, pydantic.
+- **Node.js 클라이언트** (`app/ai-backend/src/lib/llmlingua.ts`):
+  - `shouldCompress(text, threshold=4000)`: 임계값 초과 시만 압축.
+  - `compressToolResults(text, dynamic=true)`: Python 서비스에 POST `/compress` 요청, 실패 시 원본 폴백 (30초 타임아웃).
+- **prepareStep 통합** (`app/ai-backend/src/chat/route.ts`): `prepareStep` 콜백에서 이전 스텝의 tool 결과 JSON이 4000자 초과 시 LLMLingua-2 압축 적용. 압축된 데이터를 시스템 메시지로 주입.
+- **도구 출력 크기 제한**:
+  - `annotations.ts`: `get_elements` 50→20개, `read_job_json` 80→30개, `get_annotations` 80→30개.
+  - `sandbox.ts`: `execute_in_sandbox` stdout 2000자/stderr 1000자 제한, `read_sandbox_file` content 4000자 제한 (`_truncate` 헬퍼 함수).
+  - `spreadsheet.ts`: `get_sheet` rows 50→20행.
+  - `browserless.ts`: `extract_web_text` text 3000자 제한.
+- **시스템 프롬프트 개선** (`route.ts`): "CRITICAL: Always read and analyze tool results before making the next tool call" 지시 추가. "After calling a tool, summarize what you learned from its output before deciding the next step" 추가.
+- **onStepFinish 로깅** (`route.ts`): 각 스텝 종료 시 `finishReason`, `toolCalls`, `toolResults`, `usage`(input/output tokens) 로그 출력.
+- **docker-compose.yml + .env.example**: `llmlingua` 서비스 추가 (포트 8001), `ai-backend`에 `LLMLINGUA_URL=http://llmlingua:8000` 환경변수 추가. `.env.example`에 `LLMLINGUA_URL`/`LLMLINGUA_RATE`/`LLMLINGUA_MODEL` 3개 환경변수 추가.
+- **리서치 근거**: LLMLingua-2 논문(arxiv 2403.12968) Table 5/6/12, Appendix L. 동적 압축(DCR)이 고정 비율(FR) 대비 5x/7x에서 +17.5% 성능 개선. 5x(rate=0.2)에서도 원본 대비 89% 성능 유지, 2.9x 지연 가속.
+- **핵심 파일**: `app/llmlingua-service/`(3파일), `app/ai-backend/src/lib/llmlingua.ts`, `app/ai-backend/src/chat/route.ts`, `app/ai-backend/src/tools/annotations.ts`, `app/ai-backend/src/tools/sandbox.ts`, `app/ai-backend/src/tools/spreadsheet.ts`, `app/ai-backend/src/tools/browserless.ts`, `app/docker-compose.yml`, `app/.env.example`.
+
 ### Kata Containers + Cloud Hypervisor 기반 에이전트 샌드박스 (격리 실행 환경)
 
 - **목표**: PROOF 결과 페이지의 문서/이미지/오디오/비디오 파일들을 격리된 Kata Containers microVM 내부의 `/workspace`로 마운트하여, 에이전트가 자유롭게 코드 작성/실행할 수 있도록 함. 300+ 동시 VM 목표 (고밀도 모드). 상세 계획은 `KATA_SANDBOX_PLAN.md` 참조.

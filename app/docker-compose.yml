@@ -155,7 +155,26 @@ services:
       - PROOF_API_URL=http://api:28181
       # browserless 원격 브라우저 서버 (a1 기존 구동 중, sandbox VM 공유)
       - BROWSERLESS_URL=${BROWSERLESS_URL:-http://192.168.1.50:20047}
-      - BROWSERLESS_TOKEN=${BROWSERLESS_TOKEN:-}
+      - BROWSERLESS_TOKEN=${BROWSERLESS_TOKEN:-qwer1234}
+      # [Flow: LLMLingua-2 프롬프트 압축 서비스 — 도구 결과가 임계값 초과 시 동적 압축]
+      - LLMLINGUA_URL=http://llmlingua:8000
+      - LLMLINGUA_RATE=${LLMLINGUA_RATE:-0.5}
+    networks:
+      - default
+    restart: unless-stopped
+
+  # [Flow: LLMLingua-2 프롬프트 압축 마이크로서비스 — 도구 결과 JSON 동적 압축]
+  # ai-backend가 prepareStep에서 이전 스텝의 tool 결과가 4000자 초과 시 POST /compress 호출
+  # 동적 rate: 4000~8000자→0.5(2x), 8000~20000자→0.3(3x), 20000자+→0.2(5x)
+  llmlingua:
+    build:
+      context: .
+      dockerfile: llmlingua-service/Dockerfile
+    environment:
+      - LLMLINGUA_MODEL=${LLMLINGUA_MODEL:-microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank}
+      - LLMLINGUA_RATE=${LLMLINGUA_RATE:-0.5}
+    ports:
+      - "8001:8000"
     networks:
       - default
     restart: unless-stopped

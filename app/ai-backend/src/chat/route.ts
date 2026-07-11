@@ -1,5 +1,7 @@
 // [Flow: Step 1 (POST 요청에서 messages/context/authHeaders 추출) -> Step 2 (system prompt 빌드)
-//       -> Step 3 (streamText에 모델/메시지/도구 등록) -> Step 4 (UIMessage 스트림으로 변환하여 반환)]
+//       -> Step 3 (streamText에 모델/메시지/도구 등록 + maxOutputTokens 8192 + onStepFinish 로깅)
+//       -> Step 4 (prepareStep에서 이전 스텝 메시지가 임계값 초과 시 LLMLingua-2 압축 적용)
+//       -> Step 5 (UIMessage 스트림으로 변환하여 반환)]
 // Vercel AI SDK 5.x의 streamText를 사용하는 핵심 채팅 엔드포인트.
 // PDF 주석, 마크다운, 엑셀 조작 도구를 통합하여 멀티스텝 에이전트 실행을 제공한다.
 import {
@@ -10,16 +12,25 @@ import {
 } from 'ai';
 import type { Request, Response } from 'express';
 import { getAuthHeaders } from '../lib/auth.js';
+import { compressToolResults, shouldCompress } from '../lib/llmlingua.js';
 import { buildModel } from '../lib/model.js';
 import { buildAnnotationTools } from '../tools/annotations.js';
 import { createBrowserlessTools } from '../tools/browserless.js';
+import { buildFlowTools } from '../tools/flow.js';
 import { buildMarkdownTools } from '../tools/markdown.js';
 import { createSandboxTools } from '../tools/sandbox.js';
 import { buildSpreadsheetTools } from '../tools/spreadsheet.js';
 
+// [Flow: maxOutputTokens — vLLM 기본값(128~256)은 툴콜 결과 분석에 부족하므로 8192로 설정]
+const MAX_OUTPUT_TOKENS = 8192;
+
+// [Flow: LLMLingua-2 압축 임계값 — 이전 스텝의 tool 결과 JSON이 이 값(문자 수)을 초과하면 압축]
+// 동적 rate: 4000~8000자→0.5(2x), 8000~20000자→0.3(3x), 20000자+→0.2(5x) — Python 서비스가 자동 선택
+const COMPRESSION_THRESHOLD_CHARS = 4000;
+
 /**
  * [Flow: Step 1 (context 수신) -> Step 2 (job_id, source_type, page, editor 등 추출)
- *       -> Step 3 (도구 사용 규칙을 포함한 system prompt 생성) -> Step 4 (반환)]
+ *       -> Step 3 (도구 사용 규칙 + 도구 결과 분석 지시를 포함한 system prompt 생성) -> Step 4 (반환)]
  *
  * @param context 프론트엔드에서 전달된 에이전트 컨텍스트
  * @returns system prompt 문자열
@@ -53,9 +64,13 @@ Available tool categories:
    - IMPORTANT: User-visible filenames are preserved in /workspace/original/. For example, if the user says "보고서.pdf", the file is at /workspace/original/보고서.pdf. Read /workspace/_file_mapping.json to see the full mapping of user filenames to sandbox paths. Do NOT use /workspace/input.pdf — use the original filename instead.
 5. Web browsing (when user asks to capture or extract web content):
    - browse_web, convert_web_to_pdf, extract_web_text
+6. Flow analysis (when user asks to visualize document structure or find logical dependencies):
+   - extract_flow_structure, infer_flow_dependencies
 
 Rules:
 - Always use the provided tools to make changes; do not just describe them.
+- CRITICAL: Always read and analyze tool results before making the next tool call. Do NOT call another tool based on assumptions — use the actual data returned by the previous tool. If a tool returns an error, read the error message and adjust your approach accordingly.
+- After calling a tool, summarize what you learned from its output before deciding the next step.
 - For PDF annotations, only call apply_annotations when you are done adding/removing highlights/callouts.
 - To inspect a PDF page visually, call view_page to get a vision analysis of the rendered page image (DPI is estimated from the page's embedded raster images; pass an explicit dpi between 150 and 300 only when needed).
 - To read existing annotation JSON (full EmbedPDF AnnotationTransferItem[] structure with id, type, pageIndex, rect, color, contents, calloutLine, strokeColor), call read_job_json with kind="annotations". Use this to check exact annotation positions/structure before editing.
@@ -87,7 +102,7 @@ Tool approval:
 
 /**
  * [Flow: Step 1 (요청 본문 파싱) -> Step 2 (도구 컨텍스트 생성) -> Step 3 (streamText 실행)
- *       -> Step 4 (UIMessage 스트림 반환)]
+ *       -> Step 4 (prepareStep에서 이전 스텝 tool 결과 압축) -> Step 5 (UIMessage 스트림 반환)]
  *
  * @param req Express 요청
  * @param res Express 응답
@@ -120,8 +135,76 @@ export async function chatHandler(req: Request, res: Response) {
       ...buildSpreadsheetTools(toolContext),
       ...createSandboxTools(toolContext),
       ...createBrowserlessTools(),
+      ...buildFlowTools(toolContext),
     },
+    // [Flow: maxOutputTokens 8192 — vLLM 기본값(128~256)은 툴콜 결과 분석에 부족]
+    maxOutputTokens: MAX_OUTPUT_TOKENS,
     stopWhen: stepCountIs(30),
+    // [Flow: prepareStep — 이전 스텝의 tool 결과가 임계값 초과 시 LLMLingua-2 로 압축하여 전달]
+    prepareStep: async ({ steps, stepNumber, messages: stepMessages }) => {
+      // [Flow: 첫 스텝이거나 이전 스텝이 없으면 압축 불필요]
+      if (stepNumber === 0 || steps.length === 0) {
+        return {};
+      }
+
+      const lastStep = steps[steps.length - 1];
+      const toolResults = lastStep?.toolResults || [];
+
+      // [Flow: tool 결과가 없으면 압축 불필요]
+      if (toolResults.length === 0) {
+        return {};
+      }
+
+      // [Flow: tool 결과 JSON을 문자열로 직렬화하여 압축 대상 크기 계산]
+      const toolResultJson = JSON.stringify(
+        toolResults.map((tr: any) => ({
+          toolName: tr.toolName,
+          output: tr.output,
+        })),
+      );
+
+      // [Flow: 임계값 미만이면 압축 불필요]
+      if (!shouldCompress(toolResultJson, COMPRESSION_THRESHOLD_CHARS)) {
+        return {};
+      }
+
+      console.log(
+        `[chatHandler] step=${stepNumber} toolResults size=${toolResultJson.length} chars — compressing with LLMLingua-2`,
+      );
+
+      // [Flow: LLMLingua-2 로 tool 결과 압축 — 실패 시 원본 사용 (폴백)]
+      const compressed = await compressToolResults(toolResultJson);
+
+      if (compressed !== toolResultJson) {
+        console.log(
+          `[chatHandler] step=${stepNumber} compressed: ${toolResultJson.length} -> ${compressed.length} chars (${Math.round((1 - compressed.length / toolResultJson.length) * 100)}% reduction)`,
+        );
+        // [Flow: 압축된 tool 결과를 시스템 메시지로 주입 — 모델이 압축된 데이터를 사용하도록 안내]
+        return {
+          messages: [
+            ...stepMessages,
+            {
+              role: 'system' as const,
+              content: `[Previous tool results were compressed by LLMLingua-2 for context efficiency. Use this compressed data:\n${compressed}`,
+            },
+          ],
+        };
+      }
+
+      return {};
+    },
+    // [Flow: onStepFinish — 각 스텝 종료 시 toolCalls/toolResults/usage 로깅]
+    onStepFinish: ({ finishReason, usage, toolCalls, toolResults }) => {
+      const toolCallNames = toolCalls?.map((tc: any) => tc.toolName).join(', ') || 'none';
+      const toolResultCount = toolResults?.length || 0;
+      const inputTokens = usage?.inputTokens ?? '?';
+      const outputTokens = usage?.outputTokens ?? '?';
+      console.log(
+        `[chatHandler] finishReason=${finishReason} ` +
+          `tools=[${toolCallNames}] toolResults=${toolResultCount} ` +
+          `tokens(in=${inputTokens}, out=${outputTokens})`,
+      );
+    },
   });
 
   return result.toUIMessageStreamResponse();

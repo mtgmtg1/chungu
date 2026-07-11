@@ -328,7 +328,17 @@
     "annotationEditColor": "Color",
     "annotationEditComment": "Comment",
     "annotationEditOpacity": "Opacity",
-    "annotationDelete": "Delete"
+    "annotationDelete": "Delete",
+    "flow": "Flow",
+    "flowView": "Flow View",
+    "flowLoading": "Generating flow…",
+    "flowEmpty": "No heading structure to display.",
+    "flowResetLayout": "Reset Layout",
+    "flowFitView": "Fit View",
+    "flowAnalyzeDeps": "AI Dependency Analysis",
+    "flowAnalyzing": "Analyzing…",
+    "flowDepEdges": "Dependency Links",
+    "flowHierarchyEdges": "Hierarchy"
   },
   "poems": [
     {

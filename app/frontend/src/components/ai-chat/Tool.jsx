@@ -176,18 +176,38 @@ function getDisplayMessage(t, state, toolLabel) {
 }
 
 /**
+ * [Flow: Step 1 (input/output JSON을 안전하게 직렬화) -> Step 2 (순환 참조/함수는 생략) -> Step 3 (문자열 반환)]
+ *
+ * safeJsonStringify — 도구 input/output을 읽기 쉬운 JSON으로 직렬화한다.
+ * 순환 참조나 직렬화 불가능한 값이 있어도 에러를 발생시키지 않는다.
+ *
+ * @param {any} obj - 직렬화할 객체
+ * @returns {string} 들여쓰기된 JSON 문자열
+ */
+function safeJsonStringify(obj) {
+  if (obj === undefined || obj === null) return "";
+  try {
+    return JSON.stringify(obj, null, 2);
+  } catch {
+    return String(obj);
+  }
+}
+
+/**
  * Tool — 도구 호출의 진행 상태를 사용자 친화적 카드로 표시한다.
  * 원본 도구 이름·input·output JSON은 보안·가독성을 위해 화면에 노출하지 않는다.
+ * 단, isAdmin이 true인 경우(관리자 계정) 디버깅을 위해 원본 도구 이름과 input/output JSON을 표시한다.
  * 승인이 필요한 도구는 ApprovalButtons를 표시하고, 에러는 간결한 메시지만 표시한다.
  *
  * @param {Object} props
  * @param {string} props.toolName - 도구 이름 (예: "search_text") — i18n 라벨로 변환됨
  * @param {string} props.state - 도구 상태 ("input-available" | "output-available" | ...)
- * @param {any} [props.input] - 도구 입력 파라미터 (표시하지 않음, 승인 감지용 props 유지)
- * @param {any} [props.output] - 도구 출력 결과 (표시하지 않음, requires_approval 감지용)
+ * @param {any} [props.input] - 도구 입력 파라미터 (관리자 모드에서 표시, 승인 감지용)
+ * @param {any} [props.output] - 도구 출력 결과 (관리자 모드에서 표시, requires_approval 감지용)
  * @param {string} [props.errorText] - 에러 텍스트 (간결 메시지로 표시)
  * @param {boolean} [props.defaultOpen=false] - 기본 펼침 여부
  * @param {string} [props.approvalMode='ask'] - 승인 모드 ("ask" | "always")
+ * @param {boolean} [props.isAdmin=false] - 관리자 계정 여부 (true 시 도구 이름·JSON 표시)
  * @param {() => void} [props.onApprove] - 도구 승인 콜백
  * @param {() => void} [props.onDeny] - 도구 거부 콜백
  * @param {() => void} [props.onAlways] - 항상 승인 콜백 (설정 저장 + 승인)
@@ -200,6 +220,7 @@ export default function Tool({
   errorText,
   defaultOpen = false,
   approvalMode = "ask",
+  isAdmin = false,
   onApprove,
   onDeny,
   onAlways,
@@ -239,8 +260,8 @@ export default function Tool({
     onAlways?.();
   };
 
-  // [Flow: 펼침 가능 여부 — 승인 버튼이 있거나 에러가 있을 때만 펼침 가능]
-  const canExpand = showApprovalButtons || hasError;
+  // [Flow: 펼침 가능 여부 — 승인 버튼, 에러, 또는 관리자 디버그 모드일 때 펼침 가능]
+  const canExpand = showApprovalButtons || hasError || isAdmin;
 
   return (
     <div
@@ -260,6 +281,12 @@ export default function Tool({
           <span className="font-medium text-sm text-on-surface truncate">
             {displayMessage}
           </span>
+          {/* [Flow: 관리자 모드 — 원본 도구 이름 표시] */}
+          {isAdmin && (
+            <span className="font-mono text-[11px] text-on-surface-variant/60 flex-shrink-0">
+              {toolName}
+            </span>
+          )}
           <span className="flex items-center gap-1.5 rounded-full bg-surface-container-high px-2 py-0.5 text-xs text-on-surface-variant flex-shrink-0">
             <StatusIcon state={state} />
             {statusLabel}
@@ -281,7 +308,7 @@ export default function Tool({
         )}
       </div>
 
-      {/* 본문 (펼침 시) — 승인 버튼 또는 에러 메시지만 표시, JSON 노출 금지 */}
+      {/* 본문 (펼침 시) — 승인 버튼, 에러 메시지, 또는 관리자 디버그 JSON 표시 */}
       {open && canExpand && (
         <div className="space-y-3 px-3 pb-3">
           {/* 에러 메시지 — errorText만 표시, output JSON은 노출하지 않음 */}
@@ -299,6 +326,31 @@ export default function Tool({
               onAlways={handleAlways}
               approvalState={approvalState}
             />
+          )}
+          {/* [Flow: 관리자 디버그 모드 — input/output JSON 표시] */}
+          {isAdmin && (
+            <div className="space-y-2 rounded-md bg-surface-container-high/40 p-2.5">
+              {input && Object.keys(input).length > 0 && (
+                <div>
+                  <div className="mb-1 text-[11px] font-semibold text-on-surface-variant">
+                    {t("page:agent.toolDebugInput", "요청")}
+                  </div>
+                  <pre className="overflow-x-auto rounded bg-surface-container-lowest p-2 text-[11px] font-mono text-on-surface-variant max-h-48">
+                    {safeJsonStringify(input)}
+                  </pre>
+                </div>
+              )}
+              {hasOutput && (
+                <div>
+                  <div className="mb-1 text-[11px] font-semibold text-on-surface-variant">
+                    {t("page:agent.toolDebugOutput", "결과")}
+                  </div>
+                  <pre className="overflow-x-auto rounded bg-surface-container-lowest p-2 text-[11px] font-mono text-on-surface-variant max-h-64">
+                    {safeJsonStringify(output)}
+                  </pre>
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}

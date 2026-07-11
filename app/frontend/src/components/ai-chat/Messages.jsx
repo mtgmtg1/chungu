@@ -66,6 +66,7 @@ function useMessages({ status }) {
  * @param {() => void} [props.onRegenerate] - 마지막 어시스턴트 메시지 재생성 콜백
  * @param {boolean} [props.canRegenerate] - 재생성 가능 여부
  * @param {string} [props.approvalMode='ask'] - 도구 승인 모드 ("ask" | "always")
+ * @param {boolean} [props.isAdmin=false] - 관리자 계정 여부 (도구 디버그 정보 표시)
  * @param {() => void} [props.onToolApprove] - 도구 승인 콜백
  * @param {() => void} [props.onToolDeny] - 도구 거부 콜백
  * @param {() => void} [props.onToolAlways] - 항상 승인 콜백
@@ -77,6 +78,7 @@ export default function Messages({
   onRegenerate,
   canRegenerate,
   approvalMode = "ask",
+  isAdmin = false,
   onToolApprove,
   onToolDeny,
   onToolAlways,
@@ -115,6 +117,7 @@ export default function Messages({
               onRegenerate={onRegenerate}
               canRegenerate={canRegenerate}
               approvalMode={approvalMode}
+              isAdmin={isAdmin}
               onToolApprove={onToolApprove}
               onToolDeny={onToolDeny}
               onToolAlways={onToolAlways}

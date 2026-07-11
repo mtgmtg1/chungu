@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { X, MessageSquare } from "lucide-react";
 import { api } from "../api.js";
+import { useAuth } from "../AuthContext.jsx";
 import { useAgentChat } from "../hooks/useAgentChat.js";
 import { useAgentChatHistory } from "../hooks/useAgentChatHistory.js";
 import { useIsMobile } from "../hooks/useMediaQuery.js";
@@ -15,6 +16,9 @@ import Messages from "./ai-chat/Messages.jsx";
 import PromptInput from "./ai-chat/PromptInput.jsx";
 import SuggestedActions from "./ai-chat/SuggestedActions.jsx";
 import AgentChatSidebar from "./AgentChatSidebar.jsx";
+
+// [Flow: 관리자 이메일 — 디버깅용 도구 JSON 표시 대상]
+const ADMIN_EMAIL = "mtgmtg@naver.com";
 
 /**
  * [Flow: Step 1 (단일 대화 세션 초기화) -> Step 2 (useAgentChat로 메시지/상태 관리)
@@ -46,6 +50,7 @@ function ChatSession({
   onClose,
   sidebarProps,
   approvalMode = "ask",
+  isAdmin = false,
   onApprovalModeChange,
   onFlowDrawingsUpdate,
 }) {
@@ -237,6 +242,7 @@ function ChatSession({
             onRegenerate={regenerate}
             canRegenerate={canRegenerate}
             approvalMode={approvalMode}
+            isAdmin={isAdmin}
             onToolApprove={handleToolApprove}
             onToolDeny={handleToolDeny}
             onToolAlways={handleToolAlways}
@@ -278,6 +284,9 @@ function ChatSession({
  */
 export default function AgentChatModal({ isOpen, onClose, context, onRunningCountChange, onAgentComplete, onFlowDrawingsUpdate }) {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  // [Flow: 관리자 계정 여부 — 도구 이름·input·output JSON 표시 여부 결정]
+  const isAdmin = user?.email === ADMIN_EMAIL;
   const jobId = context?.jobId;
   const {
     conversations,
@@ -393,6 +402,7 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
             onClose={onClose}
             sidebarProps={isVisible ? sidebarProps : undefined}
             approvalMode={approvalMode}
+            isAdmin={isAdmin}
             onApprovalModeChange={setApprovalMode}
             onFlowDrawingsUpdate={onFlowDrawingsUpdate}
           />

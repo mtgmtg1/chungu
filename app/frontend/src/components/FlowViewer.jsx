@@ -56,7 +56,7 @@ function HeadingNode({ data, selected }) {
       className={`bg-white rounded-lg border-2 shadow-sm px-4 py-3 transition-all ${
         selected ? "border-primary shadow-md ring-2 ring-primary/20" : "border-outline-variant"
       }`}
-      style={{ width: "100%", minHeight: data.height || 80 }}
+      style={{ width: "100%", height: "100%" }}
     >
       <NodeResizer
         minWidth={180}
@@ -114,7 +114,7 @@ function NoteNode({ data, selected, id }) {
           ? "bg-primary-fixed border-primary shadow-md ring-2 ring-primary/20"
           : "bg-surface-container-low border-primary-fixed-dim"
       }`}
-      style={{ width: "100%", minHeight: data.height || 80 }}
+      style={{ width: "100%", height: "100%" }}
     >
       <NodeResizer
         minWidth={120}
@@ -124,30 +124,32 @@ function NoteNode({ data, selected, id }) {
         color="#f59e0b"
       />
       <Handle type="target" position={Position.Top} isConnectable={true} />
-      <div className="flex items-center gap-1 mb-1">
-        <StickyNote size={12} className="text-primary" />
-        <span className="text-[10px] font-bold text-on-primary-fixed-variant uppercase tracking-wide">Note</span>
+      <div className="flex flex-col h-full">
+        <div className="flex items-center gap-1 mb-1">
+          <StickyNote size={12} className="text-primary" />
+          <span className="text-[10px] font-bold text-on-primary-fixed-variant uppercase tracking-wide">Note</span>
+        </div>
+        {editing ? (
+          <textarea
+            ref={textareaRef}
+            value={text}
+            onChange={e => setText(e.target.value)}
+            onBlur={handleBlur}
+            onKeyDown={e => {
+              if (e.key === "Escape") handleBlur();
+            }}
+            className="flex-1 w-full text-xs text-on-surface bg-transparent border-none outline-none resize-none min-h-0 nodrag nopan"
+            placeholder="메모를 입력하세요…"
+          />
+        ) : (
+          <p
+            onDoubleClick={() => setEditing(true)}
+            className="flex-1 text-xs text-on-surface whitespace-pre-wrap break-words cursor-text min-h-0"
+          >
+            {text || <span className="text-on-surface-variant italic">더블클릭하여 편집</span>}
+          </p>
+        )}
       </div>
-      {editing ? (
-        <textarea
-          ref={textareaRef}
-          value={text}
-          onChange={e => setText(e.target.value)}
-          onBlur={handleBlur}
-          onKeyDown={e => {
-            if (e.key === "Escape") handleBlur();
-          }}
-          className="w-full text-xs text-on-surface bg-transparent border-none outline-none resize-none min-h-[60px] nodrag nopan"
-          placeholder="메모를 입력하세요…"
-        />
-      ) : (
-        <p
-          onDoubleClick={() => setEditing(true)}
-          className="text-xs text-on-surface whitespace-pre-wrap break-words cursor-text min-h-[60px]"
-        >
-          {text || <span className="text-on-surface-variant italic">더블클릭하여 편집</span>}
-        </p>
-      )}
       <Handle type="source" position={Position.Bottom} isConnectable={true} />
     </div>
   );
@@ -361,6 +363,8 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId, drawin
   // 헤딩 노드 ID가 heading-{index}로 결정론적이므로 새로고침 후에도 동일 ID로 매칭 가능
   const layoutStorageKey = jobId ? `flow-node-layout-${jobId}` : null;
   const saveLayoutTimerRef = useRef(null);
+  const nodesRef = useRef(nodes);
+  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
 
   const reactFlow = useReactFlow();
   const { fitView, addNodes, deleteElements, screenToFlowPosition } = reactFlow;
@@ -405,8 +409,8 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId, drawin
 
   // [Flow: 노드 드래그 종료 시 위치 저장]
   const onNodeDragStop = useCallback(() => {
-    saveNodeLayout(nodes);
-  }, [nodes, saveNodeLayout]);
+    saveNodeLayout(nodesRef.current);
+  }, [saveNodeLayout]);
 
   // [Flow: 드로잉/주석 상태 관리 — perfect-freehand 기반 곡선, 도형, 텍스트, 지우개]
   const drawing = useFlowDrawing(jobId, screenToFlowPosition);
@@ -506,10 +510,10 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId, drawin
     onNodesChange(changes);
     // dimensions 변경(리사이즈)이 포함된 경우 저장
     if (changes.some(c => c.type === "dimensions" && c.resizing === false)) {
-      // setNodes 후 최신 nodes를 가져오기 위해 약간 지연
-      setTimeout(() => saveNodeLayout(nodes), 0);
+      // setNodes 후 최신 nodes를 가져오기 위해 ref 사용 + 약간 지연
+      setTimeout(() => saveNodeLayout(nodesRef.current), 0);
     }
-  }, [onNodesChange, nodes, saveNodeLayout]);
+  }, [onNodesChange, saveNodeLayout]);
 
   // 선택된 노드/엣지 삭제
   const handleDeleteSelected = useCallback(() => {

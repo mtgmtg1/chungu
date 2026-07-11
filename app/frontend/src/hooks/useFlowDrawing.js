@@ -22,6 +22,8 @@ import { api } from "../api.js";
 export function useFlowDrawing(jobId, screenToFlowPosition) {
   const [paths, setPaths] = useState([]);
   const [textAnnotations, setTextAnnotations] = useState([]);
+  const [noteNodes, setNoteNodes] = useState([]);
+  const [customEdges, setCustomEdges] = useState([]);
   const [currentPoints, setCurrentPoints] = useState([]);
   const currentPointsRef = useRef([]);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -51,6 +53,8 @@ export function useFlowDrawing(jobId, screenToFlowPosition) {
       const parsed = JSON.parse(raw);
       if (parsed.paths) setPaths(parsed.paths);
       if (parsed.textAnnotations) setTextAnnotations(parsed.textAnnotations);
+      if (parsed.noteNodes) setNoteNodes(parsed.noteNodes);
+      if (parsed.customEdges) setCustomEdges(parsed.customEdges);
     } catch { /* parse error 무시 */ }
   }, [storageKey]);
 
@@ -63,6 +67,8 @@ export function useFlowDrawing(jobId, screenToFlowPosition) {
         if (cancelled || !data) return;
         if (data.paths?.length) setPaths(data.paths);
         if (data.textAnnotations?.length) setTextAnnotations(data.textAnnotations);
+        if (data.note_nodes?.length) setNoteNodes(data.note_nodes);
+        if (data.custom_edges?.length) setCustomEdges(data.custom_edges);
       })
       .catch(() => { /* 서버 실패 시 localStorage만 사용 */ });
     return () => { cancelled = true; };
@@ -72,7 +78,7 @@ export function useFlowDrawing(jobId, screenToFlowPosition) {
   useEffect(() => {
     if (!storageKey) return;
     try {
-      localStorage.setItem(storageKey, JSON.stringify({ paths, textAnnotations }));
+      localStorage.setItem(storageKey, JSON.stringify({ paths, textAnnotations, noteNodes, customEdges }));
     } catch { /* quota 초과 무시 */ }
   }, [storageKey, paths, textAnnotations]);
 
@@ -81,15 +87,15 @@ export function useFlowDrawing(jobId, screenToFlowPosition) {
     if (!jobId) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      api.saveFlowDrawings(jobId, { paths, textAnnotations }).catch(() => {});
+      api.saveFlowDrawings(jobId, { paths, textAnnotations, note_nodes: noteNodes, custom_edges: customEdges }).catch(() => {});
     }, 2000);
-  }, [jobId, paths, textAnnotations]);
+  }, [jobId, paths, textAnnotations, noteNodes, customEdges]);
 
   useEffect(() => {
-    if (paths.length > 0 || textAnnotations.length > 0) {
+    if (paths.length > 0 || textAnnotations.length > 0 || noteNodes.length > 0 || customEdges.length > 0) {
       scheduleServerSave();
     }
-  }, [paths, textAnnotations, scheduleServerSave]);
+  }, [paths, textAnnotations, noteNodes, customEdges, scheduleServerSave]);
 
   // 화면 좌표 → flow 좌표 변환
   const getFlowPoint = useCallback((e) => {
@@ -239,6 +245,8 @@ export function useFlowDrawing(jobId, screenToFlowPosition) {
   const clear = useCallback(() => {
     setPaths([]);
     setTextAnnotations([]);
+    setNoteNodes([]);
+    setCustomEdges([]);
   }, []);
 
   // 텍스트 주석 삭제
@@ -246,10 +254,23 @@ export function useFlowDrawing(jobId, screenToFlowPosition) {
     setTextAnnotations((prev) => prev.filter((a) => a.id !== id));
   }, []);
 
+  // 에이전트 도구 결과로 받은 전체 상태를 로컬에 반영 — 동기화 메서드
+  const updateFromAgent = useCallback((data) => {
+    if (data.paths !== undefined) setPaths(data.paths);
+    if (data.text_annotations !== undefined) setTextAnnotations(data.text_annotations);
+    if (data.textAnnotations !== undefined) setTextAnnotations(data.textAnnotations);
+    if (data.note_nodes !== undefined) setNoteNodes(data.note_nodes);
+    if (data.noteNodes !== undefined) setNoteNodes(data.noteNodes);
+    if (data.custom_edges !== undefined) setCustomEdges(data.custom_edges);
+    if (data.customEdges !== undefined) setCustomEdges(data.customEdges);
+  }, []);
+
   return {
     // 상태
     paths,
     textAnnotations,
+    noteNodes,
+    customEdges,
     isDrawing,
     strokeColor,
     strokeWidth,
@@ -269,5 +290,6 @@ export function useFlowDrawing(jobId, screenToFlowPosition) {
     undo,
     clear,
     deleteTextAnnotation,
+    updateFromAgent,
   };
 }

@@ -66,6 +66,16 @@ Available tool categories:
    - browse_web, convert_web_to_pdf, extract_web_text
 6. Flow analysis (when user asks to visualize document structure or build a logical tree):
    - extract_flow_structure, infer_flow_dependencies
+7. Flow view manipulation (when user asks to draw, annotate, add notes, connect nodes, or restructure headings in the flow view):
+   - Layout: get_flow_layout (get node positions for placing drawings near nodes)
+   - Drawing/annotation: get_flow_drawings, add_flow_shape (line/arrow/rectangle/circle), add_flow_text_annotation, delete_flow_drawing, clear_flow_drawings
+   - Note nodes: add_flow_note, update_flow_note, delete_flow_note
+   - Custom edges: add_flow_edge, delete_flow_edge
+   - Heading nodes: add_flow_heading, delete_flow_heading, rename_flow_heading, move_flow_heading
+   - Persistence: save_flow_drawings (MUST call after drawing/note/edge changes to persist)
+   - IMPORTANT: Always call get_flow_layout first to get node positions before placing drawings or notes. Coordinates are in the flow coordinate system.
+   - IMPORTANT: Always call save_flow_drawings after any drawing/note/edge changes. Without it, changes are lost.
+   - Heading tools (add/delete/rename/move_flow_heading) directly edit the markdown and are persisted immediately. Do NOT mix with apply_edits.
 
 Rules:
 - Always use the provided tools to make changes; do not just describe them.

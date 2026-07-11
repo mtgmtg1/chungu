@@ -24,9 +24,11 @@ router = APIRouter(prefix="/api/jobs", tags=["flow-drawings"])
 
 
 class FlowDrawingData(BaseModel):
-    """드로잉/주석 데이터 — paths(SVG path 배열) + text_annotations(텍스트 주석 배열)."""
+    """드로잉/주석/노트/엣지 데이터 — paths + text_annotations + note_nodes + custom_edges."""
     paths: list[dict[str, Any]] = Field(default_factory=list)
     text_annotations: list[dict[str, Any]] = Field(default_factory=list)
+    note_nodes: list[dict[str, Any]] = Field(default_factory=list)
+    custom_edges: list[dict[str, Any]] = Field(default_factory=list)
 
 
 @router.get("/{job_id}/flow-drawings", response_model=None)
@@ -49,6 +51,8 @@ async def get_flow_drawings(
     return {
         "paths": record.paths or [],
         "text_annotations": record.text_annotations or [],
+        "note_nodes": record.note_nodes or [],
+        "custom_edges": record.custom_edges or [],
     }
 
 
@@ -72,6 +76,8 @@ async def save_flow_drawings(
     if record:
         record.paths = data.paths
         record.text_annotations = data.text_annotations
+        record.note_nodes = data.note_nodes
+        record.custom_edges = data.custom_edges
         record.updated_at = datetime.utcnow()
     else:
         record = FlowDrawing(
@@ -79,11 +85,13 @@ async def save_flow_drawings(
             user_id=user.user_id,
             paths=data.paths,
             text_annotations=data.text_annotations,
+            note_nodes=data.note_nodes,
+            custom_edges=data.custom_edges,
         )
         db.add(record)
 
     db.commit()
-    return {"status": "ok", "paths": record.paths, "text_annotations": record.text_annotations}
+    return {"status": "ok", "paths": record.paths, "text_annotations": record.text_annotations, "note_nodes": record.note_nodes, "custom_edges": record.custom_edges}
 
 
 @router.delete("/{job_id}/flow-drawings", response_model=None)

@@ -8,6 +8,51 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### Flow Panel 에이전트 조작 도구 확장 — 드로잉/주석/노트/엣지/헤딩 노드 CRUD
+
+- **목표**: 플로우뷰(React Flow)의 드로잉, 텍스트 주석, 노트 노드, 커스텀 엣지, 헤딩 노드 구조를 에이전트가 조작할 수 있도록 AI 백엔드 도구를 확장. 기존 `flow.ts`에는 읽기/분석 전용 도구 2개만 있었고, 드로잉/주석 CRUD, 노트/엣지 영속화, 헤딩 노드 조작 도구가 전무했음. 백엔드 `flow_drawings` API와 프론트엔드 저장 로직은 사용자 수동 조작용으로만 구현되어 있었음.
+- **의존성 추가**: `app/ai-backend/package.json`에 `elkjs@^0.9.3` 추가 — 서버 사이드 레이아웃 계산용 (에이전트가 드로잉/주석을 노드 근처에 배치할 때 좌표 참조).
+- **Phase 1: 백엔드 DB 마이그레이션 & API 확장**:
+  - `app/backend/db/migrations/029_add_flow_notes_edges.sql` (신규): `flow_drawings` 테이블에 `note_nodes JSONB`, `custom_edges JSONB` 컬럼 추가.
+  - `app/backend/db/models.py`: `FlowDrawing` 모델에 `note_nodes`, `custom_edges` 컬럼 추가.
+  - `app/backend/api/flow_drawings.py`: `FlowDrawingData` Pydantic 모델 + GET/PUT 응답에 `note_nodes`, `custom_edges` 필드 포함.
+- **Phase 2: AI 백엔드 proof-api.ts 클라이언트 확장**:
+  - `app/ai-backend/src/lib/proof-api.ts`: `getFlowDrawings`/`saveFlowDrawings`/`deleteFlowDrawings` 클라이언트 메서드 추가 (GET/PUT/DELETE `/api/jobs/{jobId}/flow-drawings`).
+- **Phase 3: 드로잉/주석 도구** (`app/ai-backend/src/tools/flow.ts`):
+  - `createShapePath` 포팅: `drawingUtils.js`의 선/화살표/사각형/원 SVG path 생성 로직을 TypeScript로 이식.
+  - `get_flow_layout`: elkjs로 마크다운 헤딩 노드 위치 계산 → 에이전트가 드로잉/주석 배치 시 좌표 참조.
+  - `get_flow_drawings`: 서버에서 현재 paths, text_annotations, note_nodes, custom_edges 조회.
+  - `add_flow_shape`: 도형(선/화살표/사각형/원) SVG path 생성 추가. 입력: shapeType, 좌표(x1,y1,x2,y2), strokeColor, strokeWidth.
+  - `add_flow_text_annotation`: 텍스트 주석 추가. 입력: text, x/y, color, fontSize.
+  - `delete_flow_drawing`: ID로 특정 path 또는 text annotation 삭제.
+  - `clear_flow_drawings`: 모든 드로잉/주석/노트/엣지 초기화.
+  - `save_flow_drawings`: 보류 중인 변경사항을 서버에 PUT 저장. 변경된 전체 상태 반환 (프론트엔드 동기화용).
+  - read-modify-write 패턴: `ensureLoaded()`로 서버에서 로드 → 보류 버퍼에서 조작 → `save_flow_drawings`로 영속화 (markdown.ts의 edits 버퍼 패턴과 동일).
+- **Phase 4: 노트 노드 & 커스텀 엣지 도구** (`flow.ts`):
+  - `add_flow_note`: 스티키 노트 추가. 입력: text, x/y, width, height.
+  - `update_flow_note`: 노트 텍스트/크기 수정. 입력: noteId, text?, width?, height?.
+  - `delete_flow_note`: ID로 노트 삭제.
+  - `add_flow_edge`: 두 노드 간 커스텀 엣지 추가. 입력: sourceNodeId, targetNodeId, label?.
+  - `delete_flow_edge`: ID로 엣지 삭제.
+- **Phase 5: 헤딩 노드 조작 도구** (`flow.ts` — 내부적으로 마크다운 편집):
+  - `add_flow_heading`: 마크다운에 새 헤딩 추가 → 플로우뷰에 새 노드 생성. parentHeading 지정 시 해당 섹션 끝에, 생략 시 문서 끝에 추가.
+  - `delete_flow_heading`: 헤딩 섹션 전체 삭제 → 플로우뷰에서 노드 제거.
+  - `rename_flow_heading`: 헤딩 텍스트 변경 → 플로우뷰 노드 제목 수정.
+  - `move_flow_heading`: 헤딩 레벨 변경 → 플로우뷰 노드 계층 이동.
+  - `_findHeadingLineRange` 헬퍼: 마크다운에서 헤딩 라인 인덱스 범위 검색.
+  - 헤딩 도구는 마크다운을 직접 수정하므로 `apply_edits`와 혼용 금지 (시스템 프롬프트에 명시).
+- **Phase 6: route.ts 시스템 프롬프트 업데이트**:
+  - `app/ai-backend/src/chat/route.ts`: `buildSystemPrompt()`에 "7. Flow view manipulation" 도구 카테고리 추가. 레이아웃/드로잉/주석/노트/엣지/헤딩 도구 사용 규칙 명시. "항상 `get_flow_layout` 먼저 호출", "조작 후 반드시 `save_flow_drawings` 호출", "헤딩 도구는 `apply_edits`와 혼용 금지" 지시.
+- **Phase 7: 프론트엔드 동기화**:
+  - `app/frontend/src/hooks/useFlowDrawing.js`: `noteNodes`/`customEdges` state 추가. 서버 GET/localStorage/자동 저장 PUT에 새 필드 포함. `updateFromAgent(data)` 메서드 추가 — 에이전트 도구 결과로 받은 전체 상태를 로컬에 즉시 반영.
+  - `app/frontend/src/components/FlowViewer.jsx`: `forwardRef` + `useImperativeHandle`로 `updateFromAgent` 외부 노출. `drawingApiRef`로 FlowCanvas에 전달. `noteNodes`를 React Flow `noteNode` 타입 노드로 변환하여 `nodes` state에 통합. `customEdges`를 `custom` 타입 엣지로 변환하여 `edges` state에 통합.
+  - `app/frontend/src/components/AgentChatModal.jsx`: `onFlowDrawingsUpdate` prop 추가. ChatSession에서 `messages`의 `save_flow_drawings` 도구 결과(`state === "output-available"`)를 감지하여 콜백 호출.
+  - `app/frontend/src/pages/JobResultPage.jsx`: `flowViewerApiRef` 생성 → FlowViewer에 ref 연결. AgentChatModal에 `onFlowDrawingsUpdate` 콜백 전달 → `flowViewerApiRef.current.updateFromAgent(data)` 호출로 즉시 동기화.
+- **Phase 8: i18n**: `app/frontend/src/locales/{ko,en,ja}/page.json`에 신규 도구 라벨 18개 추가 (`extract_flow_structure` ~ `move_flow_heading`).
+- **검증**: AI 백엔드 TypeScript 빌드 성공 (에러 0), 프론트엔드 Vite 빌드 성공 (2337 모듈 변환), 백엔드 모델/API에 note_nodes/custom_edges 컬럼 정상 추가 확인.
+- **배포 시 주의**: DB 마이그레이션 `029_add_flow_notes_edges.sql`을 서버 `supabase-chungu-db` 컨테이너에 수동 적용 필요 (AGENTS.md "Deployment" 섹션 참조).
+- **핵심 파일**: `app/ai-backend/src/tools/flow.ts`, `app/ai-backend/src/lib/proof-api.ts`, `app/ai-backend/src/chat/route.ts`, `app/backend/db/migrations/029_add_flow_notes_edges.sql`, `app/backend/db/models.py`, `app/backend/api/flow_drawings.py`, `app/frontend/src/hooks/useFlowDrawing.js`, `app/frontend/src/components/FlowViewer.jsx`, `app/frontend/src/components/AgentChatModal.jsx`, `app/frontend/src/pages/JobResultPage.jsx`, `app/frontend/src/locales/{ko,en,ja}/page.json`.
+
 ### Flow Panel 기능 확장 — 드로깅/주석, 노드 리사이즈, 원문 PDF 스크롤 연동
 
 - **목표**: React Flow 기반 Flow Panel 에 3가지 기능 추가: (1) 풍부한 드로잉/주석 도구, (2) 드래그앤드롭 노드 리사이즈, (3) 플로우 노드 클릭 시 왼쪽 SourcePanel 원문 PDF의 해당 페이지로 자동 스크롤. koda-learn 프로젝트의 `perfect-freehand` + SVG path 드로잉 엔진을 이식하고 React Flow의 `NodeResizer`/`ViewportPortal`로 통합.

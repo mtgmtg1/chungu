@@ -550,3 +550,67 @@ export async function destroySandbox(
 ): Promise<{ status: string; container: string; error?: string }> {
   return request(`/api/sandboxes/${sandboxId}`, 'DELETE', undefined, authHeaders);
 }
+
+/* ============================================================
+ * Flow Drawings API — React Flow 캔버스 드로잉/주석/노트/엣지 CRUD
+ * ========================================================== */
+
+/**
+ * [Flow: Step 1 (job_id 수신) -> Step 2 (GET /api/jobs/{id}/flow-drawings) -> Step 3 (드로잉 데이터 반환)]
+ *
+ * 사용자의 Flow Panel 드로잉/주석/노트/엣지를 조회한다.
+ *
+ * @param jobId Job ID
+ * @param authHeaders 인증 헤더
+ * @returns 드로잉 데이터 (paths, text_annotations, note_nodes, custom_edges) 또는 null
+ */
+export async function getFlowDrawings(
+  jobId: string,
+  authHeaders?: AuthHeaders,
+): Promise<{
+  paths: Array<Record<string, unknown>>;
+  text_annotations: Array<Record<string, unknown>>;
+  note_nodes: Array<Record<string, unknown>>;
+  custom_edges: Array<Record<string, unknown>>;
+} | null> {
+  return request(`/api/jobs/${jobId}/flow-drawings`, 'GET', undefined, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (job_id + 데이터 수신) -> Step 2 (PUT /api/jobs/{id}/flow-drawings) -> Step 3 (저장 결과 반환)]
+ *
+ * 사용자의 Flow Panel 드로잉/주석/노트/엣지를 upsert 한다 (전체 교체).
+ *
+ * @param jobId Job ID
+ * @param data 저장할 드로잉 데이터 (paths, text_annotations, note_nodes, custom_edges)
+ * @param authHeaders 인증 헤더
+ * @returns 저장 결과
+ */
+export async function saveFlowDrawings(
+  jobId: string,
+  data: {
+    paths?: Array<Record<string, unknown>>;
+    text_annotations?: Array<Record<string, unknown>>;
+    note_nodes?: Array<Record<string, unknown>>;
+    custom_edges?: Array<Record<string, unknown>>;
+  },
+  authHeaders?: AuthHeaders,
+): Promise<{ status: string; paths: unknown[]; text_annotations: unknown[]; note_nodes: unknown[]; custom_edges: unknown[] }> {
+  return request(`/api/jobs/${jobId}/flow-drawings`, 'PUT', data, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (job_id 수신) -> Step 2 (DELETE /api/jobs/{id}/flow-drawings) -> Step 3 (삭제 결과 반환)]
+ *
+ * 사용자의 Flow Panel 드로잉/주석/노트/엣지 전체를 삭제한다.
+ *
+ * @param jobId Job ID
+ * @param authHeaders 인증 헤더
+ * @returns 삭제 결과
+ */
+export async function deleteFlowDrawings(
+  jobId: string,
+  authHeaders?: AuthHeaders,
+): Promise<{ status: string }> {
+  return request(`/api/jobs/${jobId}/flow-drawings`, 'DELETE', undefined, authHeaders);
+}

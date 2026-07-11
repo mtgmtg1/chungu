@@ -73,6 +73,7 @@ export default function JobResultPage() {
   const editorRef = useRef(null);
   const pagedViewerRef = useRef(null);
   const sourcePanelApiRef = useRef(null); // SourcePanel imperhandle (scrollToPage) 용
+  const flowViewerApiRef = useRef(null); // FlowViewer imperative handle (updateFromAgent) 용
   const [sourcePanelHandle, setSourcePanelHandle] = useState(null);
   const sourcePanelRef = useCallback((node) => {
     if (node) setSourcePanelHandle(node);
@@ -630,6 +631,7 @@ export default function JobResultPage() {
     if (previewMode === "flow") {
       return (
         <FlowViewer
+          ref={flowViewerApiRef}
           markdown={displayMarkdown}
           jobId={jobId}
           onNodeClick={(node) => {
@@ -1198,6 +1200,10 @@ export default function JobResultPage() {
             }}
             onRunningCountChange={setAgentRunningCount}
             onAgentComplete={() => loadJobRef.current()}
+            onFlowDrawingsUpdate={(data) => {
+              // [Flow: 에이전트가 save_flow_drawings 완료 → FlowViewer에 즉시 반영]
+              flowViewerApiRef.current?.updateFromAgent?.(data);
+            }}
           />
           {/* 샌드박스 파일 브라우저 (에이전트가 sandbox 를 생성한 경우 표시) */}
           {sandboxId && sandboxPanelOpen && (

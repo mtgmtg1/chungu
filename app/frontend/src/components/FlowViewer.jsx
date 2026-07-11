@@ -4,7 +4,7 @@
 // 마크다운 문서의 헤딩 구조를 React Flow 캔버스에 논리 흐름 그래프로 시각화.
 // 계층 구조는 실선(hierarchy) 엣지, AI 의존성은 점선(dependency) 엣지로 표현.
 // 사용자는 주석 노트 추가, 수동 연결, 엣지 재연결, 선택 삭제, 배경 전환 가능.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, forwardRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ReactFlow,
@@ -349,7 +349,7 @@ function FlowToolbar({ onAddNote, onDeleteSelected, onRelayout, onFitView }) {
  *
  * [Flow: Step 1 (마크다운 파싱) -> Step 2 (elkjs 레이아웃 계산) -> Step 3 (React Flow 렌더링) -> Step 4 (툴바 상호작용)]
  */
-function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId }) {
+function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId, drawingApiRef }) {
   const { t } = useTranslation();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -364,6 +364,52 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId }) {
   // [Flow: 드로잉/주석 상태 관리 — perfect-freehand 기반 곡선, 도형, 텍스트, 지우개]
   const drawing = useFlowDrawing(jobId, screenToFlowPosition);
   const isDrawingMode = drawing.tool !== "select";
+
+  // [Flow: drawingApiRef에 updateFromAgent 노출 — 에이전트 도구 결과로 로컬 상태 갱신]
+  useEffect(() => {
+    if (drawingApiRef) {
+      drawingApiRef.current = { updateFromAgent: drawing.updateFromAgent };
+    }
+  }, [drawing.updateFromAgent, drawingApiRef]);
+
+  // [Flow: 서버에서 로드한 noteNodes를 React Flow 노드로 통합]
+  useEffect(() => {
+    if (!drawing.noteNodes || drawing.noteNodes.length === 0) return;
+    const noteFlowNodes = drawing.noteNodes.map(n => ({
+      id: n.id,
+      type: "noteNode",
+      position: { x: n.x, y: n.y },
+      data: {
+        text: n.text,
+        width: n.width,
+        height: n.height,
+        onTextChange: handleNoteTextChange,
+      },
+    }));
+    // 기존 noteNode 타입 노드를 제거하고 새로 추가 (중복 방지)
+    setNodes(prev => {
+      const nonNoteNodes = prev.filter(n => n.type !== "noteNode");
+      return [...nonNoteNodes, ...noteFlowNodes];
+    });
+  }, [drawing.noteNodes, handleNoteTextChange, setNodes]);
+
+  // [Flow: 서버에서 로드한 customEdges를 React Flow 엣지로 통합]
+  useEffect(() => {
+    if (!drawing.customEdges || drawing.customEdges.length === 0) return;
+    const customFlowEdges = drawing.customEdges.map(e => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      type: "custom",
+      data: { label: e.label || "" },
+      updatable: true,
+    }));
+    // 기존 custom 타입 엣지를 제거하고 새로 추가 (중복 방지)
+    setEdges(prev => {
+      const nonCustomEdges = prev.filter(e => e.type !== "custom");
+      return [...nonCustomEdges, ...customFlowEdges];
+    });
+  }, [drawing.customEdges, setEdges]);
 
   // Step 1+2: 마크다운 파싱 + elkjs 레이아웃 계산
   useEffect(() => {
@@ -569,8 +615,16 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId }) {
  * @param {Array} [props.dependencyEdges] - AI 의존성 에지 배열 [{ source, target, data: { reason } }]
  * @returns {JSX.Element} 플로우 뷰 컴포넌트
  */
-export default function FlowViewer({ markdown, onNodeClick, dependencyEdges = [], jobId }) {
+const FlowViewer = forwardRef(function FlowViewer({ markdown, onNodeClick, dependencyEdges = [], jobId }, ref) {
   const { t } = useTranslation();
+  const drawingApiRef = useRef(null);
+
+  // [Flow: useImperativeHandle로 updateFromAgent 메서드를 외부에 노출]
+  useImperativeHandle(ref, () => ({
+    updateFromAgent: (data) => {
+      drawingApiRef.current?.updateFromAgent?.(data);
+    },
+  }), []);
 
   return (
     <div className="h-full flex flex-col" data-oid="flow-viewer">
@@ -588,9 +642,12 @@ export default function FlowViewer({ markdown, onNodeClick, dependencyEdges = []
             onNodeClick={onNodeClick}
             dependencyEdges={dependencyEdges}
             jobId={jobId}
+            drawingApiRef={drawingApiRef}
           />
         </ReactFlowProvider>
       </div>
     </div>
   );
-}
+});
+
+export default FlowViewer;

@@ -47,6 +47,7 @@ function ChatSession({
   sidebarProps,
   approvalMode = "ask",
   onApprovalModeChange,
+  onFlowDrawingsUpdate,
 }) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
@@ -68,6 +69,29 @@ function ChatSession({
   useEffect(() => {
     onStatusChangeRef.current(status);
   }, [status]);
+
+  // [Flow: 채팅 메시지에서 save_flow_drawings 도구 결과 감지 → 플로우뷰 즉시 동기화]
+  const onFlowDrawingsUpdateRef = useRef(onFlowDrawingsUpdate);
+  onFlowDrawingsUpdateRef.current = onFlowDrawingsUpdate;
+  useEffect(() => {
+    if (!onFlowDrawingsUpdateRef.current) return;
+    for (const message of messages) {
+      if (message.role !== "assistant") continue;
+      const parts = message.parts || [];
+      for (const part of parts) {
+        const type = part.type;
+        const isToolPart = type === "dynamic-tool" || (typeof type === "string" && type.startsWith("tool-"));
+        if (!isToolPart) continue;
+        const toolName = type === "dynamic-tool" ? part.toolName : type.slice("tool-".length);
+        if (toolName !== "save_flow_drawings") continue;
+        if (part.state !== "output-available") continue;
+        const output = part.output;
+        if (output && output.ok) {
+          onFlowDrawingsUpdateRef.current(output);
+        }
+      }
+    }
+  }, [messages]);
 
   // [Flow: 스트리밍이 끝났을 때(status가 ready/error로 전환)만 메시지 저장]
   useEffect(() => {
@@ -252,7 +276,7 @@ function ChatSession({
  * @param {(count: number) => void} [props.onRunningCountChange] - 실행 중 에이전트 수 변경 시 호출
  * @param {() => void} [props.onAgentComplete] - 에이전트 세션이 streaming → ready/error로 전환될 때 호출 (상위에서 job/preview 재로드 용)
  */
-export default function AgentChatModal({ isOpen, onClose, context, onRunningCountChange, onAgentComplete }) {
+export default function AgentChatModal({ isOpen, onClose, context, onRunningCountChange, onAgentComplete, onFlowDrawingsUpdate }) {
   const { t } = useTranslation();
   const jobId = context?.jobId;
   const {
@@ -370,6 +394,7 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
             sidebarProps={isVisible ? sidebarProps : undefined}
             approvalMode={approvalMode}
             onApprovalModeChange={setApprovalMode}
+            onFlowDrawingsUpdate={onFlowDrawingsUpdate}
           />
         );
       })}

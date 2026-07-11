@@ -354,11 +354,14 @@ class Sandbox(Base):
 
 
 class FlowDrawing(Base):
-    """Flow Panel 드로잉/주석 저장 — 작업+사용자별 1레코드.
+    """Flow Panel 드로잉/주석/노트/엣지 저장 — 작업+사용자별 1레코드.
 
-    사용자가 React Flow 캔버스에 그린 SVG path 드로잉과 텍스트 주석을 저장.
+    사용자가 React Flow 캔버스에 그린 SVG path 드로잉, 텍스트 주석,
+    스티키 노트(NoteNode), 수동 연결(커스텀 엣지)을 저장.
     paths: DrawingPath[] (d, stroke, strokeWidth, type, shapeType)
     text_annotations: TextAnnotation[] (id, x, y, text, fontSize, color)
+    note_nodes: NoteNode[] (id, x, y, text, width, height)
+    custom_edges: CustomEdge[] (id, source, target, label)
     """
 
     __tablename__ = "flow_drawings"
@@ -368,6 +371,8 @@ class FlowDrawing(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     paths: Mapped[list] = mapped_column(JSON, default=list)
     text_annotations: Mapped[list] = mapped_column(JSON, default=list)
+    note_nodes: Mapped[list] = mapped_column(JSON, default=list)
+    custom_edges: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

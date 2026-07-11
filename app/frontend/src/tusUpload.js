@@ -80,14 +80,10 @@ export function uploadFileTUS(file, storagePath, onProgress) {
       },
     })
 
-    upload.findPreviousUploads().then((previousUploads) => {
-      console.log('[TUS] 이전 업로드 조회:', file.name, previousUploads.length)
-      if (previousUploads.length) {
-        console.log('[TUS] 이전 업로드 resume:', file.name, previousUploads[0])
-        upload.resumeFromPreviousUpload(previousUploads[0])
-      }
-      upload.start()
-    })
+    // [Flow: 이전 TUS 업로드 resume을 비활성화 -> fingerprint 버그/Storage 캐싱으로 잘못된 파일이 업로드되는 문제 방지]
+    // 대용량 파일 재업로드 시 네트워크가 끊기면 처음부터 다시 시작되지만, 파일이 바뀌는 버그를 막는 것이 우선이다.
+    console.log('[TUS] 새 업로드 시작 (resume 비활성화):', file.name, storagePath)
+    upload.start()
   })
 }
 

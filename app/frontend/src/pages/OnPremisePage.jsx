@@ -127,7 +127,7 @@ export default function OnPremisePage() {
           <h2 className="text-3xl font-bold text-slate-900 mb-4" data-oid="onprem-hero-title">
             {t("page:onPremise.heroTitle")}
           </h2>
-          <p className="text-lg text-slate-600 max-w-2xl mx-auto" data-oid="onprem-hero-desc">
+          <p className="text-base md:text-lg text-slate-600 max-w-2xl mx-auto" data-oid="onprem-hero-desc">
             {t("page:onPremise.heroDesc")}
           </p>
         </div>

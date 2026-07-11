@@ -3,8 +3,8 @@
 //       -> Step 4 (노드 클릭 시 콜백)]
 // 마크다운 문서의 헤딩 구조를 React Flow 캔버스에 논리 흐름 그래프로 시각화.
 // 계층 구조는 실선(hierarchy) 엣지, AI 의존성은 점선(dependency) 엣지로 표현.
-// 사용자는 주석 노트 추가, 수동 연결, 엣지 재연결, 선택 삭제, 배경/테마 전환 가능.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// 사용자는 주석 노트 추가, 수동 연결, 엣지 재연결, 선택 삭제, 배경 전환 가능.
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ReactFlow,
@@ -30,11 +30,10 @@ import {
   Workflow,
   StickyNote,
   Trash2,
-  Grid3x3,
-  Sun,
-  Moon,
   LayoutGrid,
   Maximize,
+  Circle,
+  Plus,
 } from "lucide-react";
 import { parseMarkdownToFlow } from "../utils/markdownToFlow";
 import { calculateElkLayout } from "../utils/elkLayout";
@@ -99,14 +98,16 @@ function NoteNode({ data, selected, id }) {
 
   return (
     <div
-      className={`bg-yellow-50 rounded-lg border-2 shadow-sm px-3 py-2 w-[200px] min-h-[80px] transition-all ${
-        selected ? "border-amber-500 shadow-md ring-2 ring-amber-300/30" : "border-amber-300"
+      className={`rounded-lg border-2 shadow-sm px-3 py-2 w-[200px] min-h-[80px] transition-all ${
+        selected
+          ? "bg-primary-fixed border-primary shadow-md ring-2 ring-primary/20"
+          : "bg-surface-container-low border-primary-fixed-dim"
       }`}
     >
       <Handle type="target" position={Position.Top} isConnectable={true} />
       <div className="flex items-center gap-1 mb-1">
-        <StickyNote size={12} className="text-amber-600" />
-        <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wide">Note</span>
+        <StickyNote size={12} className="text-primary" />
+        <span className="text-[10px] font-bold text-on-primary-fixed-variant uppercase tracking-wide">Note</span>
       </div>
       {editing ? (
         <textarea
@@ -150,7 +151,7 @@ function HierarchyEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition,
       id={id}
       path={edgePath}
       style={{ ...style, strokeWidth: selected ? 3 : 2, stroke: selected ? "#6366f1" : (style?.stroke || "#b0b0b0") }}
-      markerEnd={markerEnd}
+      markerEnd={markerEnd || "url(#arrow-closed)"}
     />
   );
 }
@@ -264,30 +265,31 @@ const edgeTypes = { hierarchy: HierarchyEdge, dependency: DependencyEdge, custom
  * ========================================================== */
 
 const BG_VARIANTS = [
-  { key: "dots", icon: "·", label: "Dots" },
-  { key: "lines", icon: "▦", label: "Lines" },
-  { key: "cross", icon: "+", label: "Cross" },
+  { key: "dots", icon: Circle, label: "Dots" },
+  { key: "lines", icon: LayoutGrid, label: "Lines" },
+  { key: "cross", icon: Plus, label: "Cross" },
 ];
 
 /**
  * FlowToolbar — React Flow Panel 오버레이에 배치된 툴바.
- * 주석 추가, 선택 삭제, 배경 전환, 다크모드 토글, 레이아웃 재배치, 전체 보기 버튼 제공.
+ * 주석 추가, 선택 삭제, 배경 전환, 레이아웃 재배치, 전체 보기 버튼 제공.
  */
-function FlowToolbar({ onAddNote, onDeleteSelected, bgVariant, setBgVariant, colorMode, setColorMode, onRelayout, onFitView }) {
+function FlowToolbar({ onAddNote, onDeleteSelected, bgVariant, setBgVariant, onRelayout, onFitView }) {
   const { t } = useTranslation();
-  const btnClass = "flex items-center justify-center w-8 h-8 rounded-lg text-sm font-medium transition-colors border";
-  const btnDefault = "border-outline-variant bg-white text-on-surface hover:bg-surface-container-high";
+  const btnClass = "flex items-center justify-center w-10 h-10 md:w-8 md:h-8 rounded-lg text-sm font-medium transition-colors border";
+  const btnDefault = "border-outline-variant bg-surface-container-lowest text-on-surface hover:bg-surface-container-high";
   const btnActive = "border-primary bg-primary/10 text-primary";
 
   return (
     <>
       {/* 좌측 상단: 주 액션 툴바 */}
       <Panel position="top-left" className="!m-2">
-        <div className="flex items-center gap-1 bg-white rounded-lg shadow-md border border-outline-variant p-1">
+        <div className="flex flex-wrap items-center gap-1 bg-surface-container-lowest rounded-lg shadow-md border border-outline-variant p-1 max-w-[calc(100vw-1rem)]">
           <button
             onClick={onAddNote}
             title={t("page:result.flowAddNote")}
             className={`${btnClass} ${btnDefault}`}
+            aria-label={t("page:result.flowAddNote")}
             data-oid="flow-btn-note">
             <StickyNote size={16} />
           </button>
@@ -295,6 +297,7 @@ function FlowToolbar({ onAddNote, onDeleteSelected, bgVariant, setBgVariant, col
             onClick={onDeleteSelected}
             title={t("page:result.flowDeleteSelected")}
             className={`${btnClass} ${btnDefault}`}
+            aria-label={t("page:result.flowDeleteSelected")}
             data-oid="flow-btn-delete">
             <Trash2 size={16} />
           </button>
@@ -303,6 +306,7 @@ function FlowToolbar({ onAddNote, onDeleteSelected, bgVariant, setBgVariant, col
             onClick={onRelayout}
             title={t("page:result.flowResetLayout")}
             className={`${btnClass} ${btnDefault}`}
+            aria-label={t("page:result.flowResetLayout")}
             data-oid="flow-btn-relayout">
             <LayoutGrid size={16} />
           </button>
@@ -310,33 +314,30 @@ function FlowToolbar({ onAddNote, onDeleteSelected, bgVariant, setBgVariant, col
             onClick={onFitView}
             title={t("page:result.flowFitView")}
             className={`${btnClass} ${btnDefault}`}
+            aria-label={t("page:result.flowFitView")}
             data-oid="flow-btn-fitview">
             <Maximize size={16} />
           </button>
         </div>
       </Panel>
 
-      {/* 우측 상단: 배경 + 테마 토글 */}
+      {/* 우측 상단: 배경 전환 */}
       <Panel position="top-right" className="!m-2">
-        <div className="flex items-center gap-1 bg-white rounded-lg shadow-md border border-outline-variant p-1">
-          {BG_VARIANTS.map(v => (
-            <button
-              key={v.key}
-              onClick={() => setBgVariant(v.key)}
-              title={v.label}
-              className={`${btnClass} ${bgVariant === v.key ? btnActive : btnDefault}`}
-              data-oid={`flow-btn-bg-${v.key}`}>
-              <span className="text-base leading-none">{v.icon}</span>
-            </button>
-          ))}
-          <div className="w-px h-6 bg-outline-variant mx-0.5" />
-          <button
-            onClick={() => setColorMode(colorMode === "dark" ? "light" : "dark")}
-            title={colorMode === "dark" ? "Light mode" : "Dark mode"}
-            className={`${btnClass} ${btnDefault}`}
-            data-oid="flow-btn-theme">
-            {colorMode === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
+        <div className="flex flex-wrap items-center justify-end gap-1 bg-surface-container-lowest rounded-lg shadow-md border border-outline-variant p-1 max-w-[calc(100vw-1rem)]">
+          {BG_VARIANTS.map(v => {
+            const Icon = v.icon;
+            return (
+              <button
+                key={v.key}
+                onClick={() => setBgVariant(v.key)}
+                title={v.label}
+                className={`${btnClass} ${bgVariant === v.key ? btnActive : btnDefault}`}
+                aria-label={v.label}
+                data-oid={`flow-btn-bg-${v.key}`}>
+                <Icon size={16} />
+              </button>
+            );
+          })}
         </div>
       </Panel>
     </>
@@ -359,7 +360,6 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [] }) {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [loading, setLoading] = useState(true);
   const [bgVariant, setBgVariant] = useState("dots");
-  const [colorMode, setColorMode] = useState("light");
   const [rawFlowData, setRawFlowData] = useState({ nodes: [], edges: [] });
 
   const reactFlow = useReactFlow();
@@ -378,8 +378,8 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [] }) {
     calculateElkLayout(rawNodes, rawEdges).then(layoutedNodes => {
       setNodes(layoutedNodes);
       const allEdges = [
-        ...rawEdges,
-        ...dependencyEdges.map(e => ({ ...e, type: "dependency" })),
+        ...rawEdges.map(e => ({ ...e, updatable: true })),
+        ...dependencyEdges.map(e => ({ ...e, type: "dependency", updatable: true })),
       ];
       setEdges(allEdges);
       setLoading(false);
@@ -421,6 +421,7 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [] }) {
       id: `e-${params.source}-${params.target}-${Date.now()}`,
       type: "custom",
       animated: false,
+      updatable: true,
       data: { label: "" },
     };
     setEdges(eds => addEdge(newEdge, eds));
@@ -471,7 +472,23 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [] }) {
     : BackgroundVariant.Dots;
 
   return (
-    <ReactFlow
+    <>
+      {/* 전역 SVG marker 정의 — 엣지 화살표용. React Flow는 markerEnd를 URL 문자열로 참조. */}
+      <svg style={{ position: "absolute", width: 0, height: 0 }}>
+        <defs>
+          <marker
+            id="arrow-closed"
+            markerWidth="10"
+            markerHeight="10"
+            refX="9"
+            refY="5"
+            orient="auto-start-reverse"
+            markerUnits="strokeWidth">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#b0b0b0" />
+          </marker>
+        </defs>
+      </svg>
+      <ReactFlow
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}
@@ -482,13 +499,13 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [] }) {
       onReconnect={onReconnect}
       onNodeClick={(_, node) => onNodeClick?.(node)}
       fitView
-      colorMode={colorMode}
       proOptions={{ hideAttribution: true }}
       defaultEdgeOptions={{ type: "custom" }}
       data-oid="flow-canvas">
       <Background variant={bgVariantEnum} gap={16} size={1} />
-      <Controls />
+      <Controls position="bottom-left" className="!flex" />
       <MiniMap
+        className="hidden md:block"
         nodeColor={n => n.type === "noteNode" ? "#f59e0b" : "#6366f1"}
         nodeStrokeColor="#fff"
         nodeBorderRadius={4}
@@ -501,12 +518,11 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [] }) {
         onDeleteSelected={handleDeleteSelected}
         bgVariant={bgVariant}
         setBgVariant={setBgVariant}
-        colorMode={colorMode}
-        setColorMode={setColorMode}
         onRelayout={handleRelayout}
         onFitView={handleFitView}
       />
     </ReactFlow>
+    </>
   );
 }
 

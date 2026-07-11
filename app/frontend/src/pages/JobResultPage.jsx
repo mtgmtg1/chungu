@@ -35,6 +35,7 @@ import { api } from "../api.js";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { SkeletonPageResult } from "../components/Skeleton.jsx";
 import { getDisplayProgress } from "../utils/progress.js";
+import { useIsMobile } from "../hooks/useMediaQuery.js";
 
 function downloadByUrl(url, filename) {
   const a = document.createElement("a");
@@ -50,6 +51,7 @@ export default function JobResultPage() {
   const { jobId } = useParams();
   const nav = useNavigate();
   const { t, i18n } = useTranslation();
+  const isMobile = useIsMobile();
   const statusLabel = (status) => t(`common:status.${status}`) || status;
   const [job, setJob] = useState(null);
   const [markdown, setMarkdown] = useState("");
@@ -115,6 +117,8 @@ export default function JobResultPage() {
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, percent: 0, fileName: "" });
   // 추가 파일 증분 변환 폴링 (source_files 중 status=processing인 항목이 있을 때)
   const [addedFilesPolling, setAddedFilesPolling] = useState(false);
+  // 모바일 탭 전환: SourcePanel과 결과 콘텐츠를 토글 ("source" | "result")
+  const [mobileViewTab, setMobileViewTab] = useState("source");
 
   const openDropdown = (setter, timerRef) => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -643,10 +647,66 @@ export default function JobResultPage() {
       : <div className="h-full flex items-center justify-center" data-oid="xlsx-advanced-loading"><Loader2 className="animate-spin text-primary" size={24} /></div>;
   };
 
-  // [Flow: Step 1 (항상 좌측 SourcePanel + 우측 콘텐츠 분할 구조 생성) -> Step 2 (SourcePanel에 업로드 버튼 콜백 전달) -> Step 3 (사이드바 상태에 따라 collapse/expand)]
+  // [Flow: Step 1 (SourcePanel에 전달할 공통 props 객체 생성 — DRY) -> Step 2 (모바일이면 탭 전환 렌더링, 데스크탑이면 PanelGroup 분할 렌더링)]
   const renderResultArea = () => {
     const rightContent = renderRightContent();
 
+    const sourcePanelProps = {
+      sourceFiles,
+      sourceUrl,
+      sourceType,
+      imageUrls,
+      filename: job?.filename,
+      selectedFileIndex,
+      onFileSelect: handleFileSelect,
+      onDeleteFile: openDeleteSourceFileModal,
+      onRetryAnnotation: () => handleAnnotateAction("retry", 0),
+      currentPage,
+      totalPages: job?.total_pages || 1,
+      onSaveAnnotations: handleSaveAnnotations,
+      onStartAnnotate: startAnnotate,
+      onStartAnnotateEdit: startAnnotateEdit,
+      onCancelAnnotation: handleCancelAnnotation,
+      onUpload: () => setUploadPopupOpen(true),
+      uploadProgress,
+      converting,
+      annotationRuns: job?.annotated_pdf_files || [],
+    };
+
+    // [Flow: 모바일 — 탭 바로 SourcePanel / 결과 콘텐츠 전환, 한 번에 하나만 표시]
+    if (isMobile) {
+      return (
+        <div className="flex-1 flex flex-col min-h-0" data-oid="result-mobile">
+          {/* 모바일 탭 바 */}
+          <div className="flex border-b border-outline-variant bg-surface flex-shrink-0" data-oid="mobile-tab-bar">
+            <button
+              onClick={() => setMobileViewTab("source")}
+              className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium transition-colors ${mobileViewTab === "source" ? "text-primary border-b-2 border-primary" : "text-on-surface-variant"}`}
+              data-oid="mobile-tab-source">
+              <span className="material-symbols-outlined text-lg">description</span>
+              {t("page:result.source") || "원본"}
+            </button>
+            <button
+              onClick={() => setMobileViewTab("result")}
+              className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium transition-colors ${mobileViewTab === "result" ? "text-primary border-b-2 border-primary" : "text-on-surface-variant"}`}
+              data-oid="mobile-tab-result">
+              <span className="material-symbols-outlined text-lg">article</span>
+              {t("page:result.result") || "결과"}
+            </button>
+          </div>
+          {/* 탭 콘텐츠 — 활성 탭만 렌더링하여 모바일 성능 확보 */}
+          <div className="flex-1 flex flex-col min-h-0 overflow-hidden" data-oid="mobile-tab-content">
+            {mobileViewTab === "source" ? (
+              <SourcePanel {...sourcePanelProps} data-oid="result-source-mobile" />
+            ) : (
+              rightContent
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // [Flow: 데스크탑 — 기존 PanelGroup 좌우 분할 유지]
     return (
       <PanelGroup direction="horizontal" className="flex-1 flex min-h-0" data-oid="result-split">
         <Panel
@@ -658,27 +718,7 @@ export default function JobResultPage() {
           collapsedSize={0}
           className="flex flex-col h-full min-h-0 overflow-hidden"
           data-oid="result-source-panel">
-          <SourcePanel
-            sourceFiles={sourceFiles}
-            sourceUrl={sourceUrl}
-            sourceType={sourceType}
-            imageUrls={imageUrls}
-            filename={job?.filename}
-            selectedFileIndex={selectedFileIndex}
-            onFileSelect={handleFileSelect}
-            onDeleteFile={openDeleteSourceFileModal}
-            onRetryAnnotation={() => handleAnnotateAction("retry", 0)}
-            currentPage={currentPage}
-            totalPages={job?.total_pages || 1}
-            onSaveAnnotations={handleSaveAnnotations}
-            onStartAnnotate={startAnnotate}
-            onStartAnnotateEdit={startAnnotateEdit}
-            onCancelAnnotation={handleCancelAnnotation}
-            onUpload={() => setUploadPopupOpen(true)}
-            uploadProgress={uploadProgress}
-            converting={converting}
-            annotationRuns={job?.annotated_pdf_files || []}
-            data-oid="result-source" />
+          <SourcePanel {...sourcePanelProps} data-oid="result-source" />
         </Panel>
         <PanelResizeHandle
           className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize"
@@ -704,30 +744,33 @@ export default function JobResultPage() {
       data-oid="vl.tj_r">
 
       <header
-        className="relative h-14 border-b border-outline-variant bg-surface flex items-center justify-between px-4 flex-shrink-0"
+        className="relative border-b border-outline-variant bg-surface flex flex-col flex-shrink-0"
         data-oid="kxse7f.">
 
-        <div className="flex items-center gap-4" data-oid="jz8kj2e">
+        {/* [Flow: 1행: 뒤로가기 + 파일명 + 상태 배지 — 모바일에서 파일명 truncate] */}
+        <div className="flex items-center justify-between px-4 h-14 gap-2" data-oid="header-row1">
+
+        <div className="flex items-center gap-2 md:gap-4 min-w-0 flex-1" data-oid="jz8kj2e">
           <Link
             to="/jobs"
-            className="flex items-center gap-2 text-on-surface-variant hover:text-primary transition-colors"
+            className="flex items-center gap-2 text-on-surface-variant hover:text-primary transition-colors shrink-0"
             data-oid="homj3ye">
 
             <ArrowLeft size={18} data-oid="pmqivjc" />
-            <span className="font-medium" data-oid="efc.i4.">
+            <span className="font-medium hidden sm:inline" data-oid="efc.i4.">
               {t("common:jobs")}
             </span>
           </Link>
-          <div className="h-4 w-px bg-outline-variant" data-oid="-vnoo-."></div>
+          <div className="h-4 w-px bg-outline-variant hidden md:block" data-oid="-vnoo-."></div>
           <h1
-            className="font-headline-md text-headline-md font-bold text-on-surface"
+            className="font-headline-md text-headline-md font-bold text-on-surface truncate min-w-0"
             data-oid="aaxa04a">
 
             {job?.filename || jobId}
           </h1>
           {job?.status === "done" &&
           <span
-            className="px-3 py-1 bg-green-100 text-green-700 text-xs font-bold rounded-full flex items-center gap-1.5 border border-green-200"
+            className="px-3 py-1 bg-green-100 text-green-700 text-xs font-bold rounded-full flex items-center gap-1.5 border border-green-200 shrink-0"
             data-oid="lxd0:1l">
 
               <span
@@ -739,7 +782,7 @@ export default function JobResultPage() {
           }
           {job?.status === "error" &&
           <span
-            className="px-3 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full flex items-center gap-1.5 border border-red-200"
+            className="px-3 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full flex items-center gap-1.5 border border-red-200 shrink-0"
             data-oid="uf3gdos">
 
               <XCircle size={12} data-oid="vcowgtj" />
@@ -748,7 +791,7 @@ export default function JobResultPage() {
           }
           {job?.status === "retrying" &&
           <span
-            className="px-3 py-1 bg-amber-100 text-amber-700 text-xs font-bold rounded-full flex items-center gap-1.5 border border-amber-200"
+            className="px-3 py-1 bg-amber-100 text-amber-700 text-xs font-bold rounded-full flex items-center gap-1.5 border border-amber-200 shrink-0"
             data-oid="retrying-badge">
 
               <RefreshCw size={12} className="animate-spin" data-oid="retrying-icon" />
@@ -756,16 +799,20 @@ export default function JobResultPage() {
             </span>
           }
         </div>
+        </div>
 
-        {/* [Flow: Step 1 (완료된 작업의 뷰 모드 드롭다운을 헤더 중앙에 배치) -> Step 2 (Markdown / Excel / Excel Advanced / Flow 선택)] */}
+        {/* [Flow: 2행: 뷰 모드 드롭다운 + 다운로드 + 패널 토글 + 에이전트 버튼 — 모바일에서 가로 스크롤 또는 wrap] */}
+        <div className="flex items-center gap-2 px-4 py-2 border-t border-outline-variant/50 overflow-x-auto" data-oid="header-row2">
+
+        {/* [Flow: Step 1 (완료된 작업의 뷰 모드 드롭다운) -> Step 2 (Markdown / Excel / Excel Advanced / Flow 선택)] */}
         {job?.status === "done" && !needsPagedMode(job) &&
         <div
-          className="absolute left-1/2 -translate-x-1/2 relative"
+          className="relative shrink-0"
           onMouseEnter={() => openDropdown(setViewModeDropdownOpen, viewModeDropdownTimerRef)}
           onMouseLeave={() => closeDropdown(setViewModeDropdownOpen, viewModeDropdownTimerRef)}
           data-oid="view-mode-dropdown">
           <button
-            className="flex items-center gap-2 px-4 py-1.5 bg-surface-container-high text-on-surface rounded-lg text-sm font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
+            className="flex items-center gap-2 px-3 md:px-4 py-1.5 bg-surface-container-high text-on-surface rounded-lg text-sm font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
             data-oid="view-mode-btn">
             {previewMode === "markdown" && "Markdown"}
             {previewMode === "xlsxBasic" && t("page:result.excel")}
@@ -816,17 +863,18 @@ export default function JobResultPage() {
         </div>
         }
 
-        <div className="flex items-center gap-2" data-oid=":tdat.:">
+        <div className="flex items-center gap-2 ml-auto" data-oid=":tdat.:">
           {job?.status === "done" && previewMode === "markdown" && markdownSaveMessage &&
-          <span className="text-sm text-on-surface-variant font-medium" data-oid="markdown-save-msg">
+          <span className="text-sm text-on-surface-variant font-medium hidden sm:inline" data-oid="markdown-save-msg">
             {markdownSaveMessage}
           </span>
           }
-          {job?.status === "done" &&
+          {/* [Flow: 모바일에서는 패널 토글 대신 탭 전환을 사용하므로 숨김] */}
+          {job?.status === "done" && !isMobile &&
           <button
             onClick={() => setSidebarOpen((v) => !v)}
             title={sidebarOpen ? t("page:result.hideSidebar") : t("page:result.showSidebar")}
-            className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
+            className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant shrink-0"
             data-oid="g85z5vd">
               {sidebarOpen ?
             <PanelLeftClose size={16} data-oid="tn5ebf8" /> :
@@ -834,11 +882,11 @@ export default function JobResultPage() {
             }
             </button>
           }
-          {job?.status === "done" && !needsPagedMode(job) &&
+          {job?.status === "done" && !needsPagedMode(job) && !isMobile &&
           <button
             onClick={() => setRightPanelOpen((v) => !v)}
             title={rightPanelOpen ? t("page:result.hideResultPanel") : t("page:result.showResultPanel")}
-            className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
+            className="flex items-center gap-1.5 px-3 py-2 bg-surface-container-high text-on-surface rounded-lg font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant shrink-0"
             data-oid="result-right-panel-toggle">
               {rightPanelOpen ?
             <PanelRightClose size={16} data-oid="result-right-panel-close-icon" /> :
@@ -849,7 +897,7 @@ export default function JobResultPage() {
           {job?.status === "done" &&
           <>
               <div
-                className="relative group"
+                className="relative group shrink-0"
                 onMouseEnter={() => openDropdown(setDownloadDropdownOpen, downloadDropdownTimerRef)}
                 onMouseLeave={() => closeDropdown(setDownloadDropdownOpen, downloadDropdownTimerRef)}
                 data-oid="download-group">
@@ -927,6 +975,7 @@ export default function JobResultPage() {
               }
             </>
           }
+        </div>
         </div>
       </header>
 

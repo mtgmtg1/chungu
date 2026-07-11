@@ -183,7 +183,7 @@ export default function UploadWidget({ onComplete, submitLabel, jobId, onProgres
         className="group relative bg-surface border border-outline-variant/60 p-2 shadow-2xl shadow-primary/5 hover:shadow-primary/10 transition-all duration-500 block cursor-pointer"
         data-oid="upload-widget-dropzone"
       >
-        <div className="border-2 border-dashed border-outline-variant/40 group-hover:border-primary/40 p-8 flex flex-col items-center justify-center transition-colors bg-surface-container-lowest" data-oid="upload-widget-inner">
+        <div className="border-2 border-dashed border-outline-variant/40 group-hover:border-primary/40 p-4 md:p-8 min-h-[200px] flex flex-col items-center justify-center transition-colors bg-surface-container-lowest" data-oid="upload-widget-inner">
           <div className="w-14 h-14 bg-primary-container/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300" data-oid="upload-widget-icon-wrap">
             <FileUp className="text-primary" size={32} data-oid="upload-widget-icon" />
           </div>
@@ -193,9 +193,9 @@ export default function UploadWidget({ onComplete, submitLabel, jobId, onProgres
           <p className="text-body-sm text-outline" data-oid="upload-widget-types">
             {t("page:upload.fileTypes")}
           </p>
-          <div className="mt-6 flex items-center gap-3" data-oid="upload-widget-buttons">
+          <div className="mt-4 md:mt-6 flex flex-col md:flex-row items-center gap-4 md:gap-3 w-full md:w-auto" data-oid="upload-widget-buttons">
             <label
-              className="px-5 py-2.5 bg-primary text-on-primary font-headline-md hover:bg-primary-container transition-all shadow-md cursor-pointer"
+              className="px-5 py-2.5 bg-primary text-on-primary font-headline-md hover:bg-primary-container transition-all shadow-md cursor-pointer w-full md:w-auto text-center"
               data-oid="upload-widget-select-files"
             >
               <input
@@ -210,7 +210,7 @@ export default function UploadWidget({ onComplete, submitLabel, jobId, onProgres
               {t("page:upload.selectFiles")}
             </label>
             <label
-              className="px-5 py-2.5 border border-outline-variant text-on-surface font-headline-md hover:bg-surface-container transition-all cursor-pointer"
+              className="px-5 py-2.5 border border-outline-variant text-on-surface font-headline-md hover:bg-surface-container transition-all cursor-pointer w-full md:w-auto text-center"
               data-oid="upload-widget-select-folder"
             >
               <input

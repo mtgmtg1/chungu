@@ -149,7 +149,7 @@ export default function DeveloperPage() {
       </div>
 
       <div
-        className="grid grid-cols-1 lg:grid-cols-12 gap-gutter"
+        className="grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-gutter"
         data-oid="ge.yf.c">
 
         <div className="lg:col-span-8 space-y-gutter" data-oid="h4n16u:">
@@ -306,7 +306,7 @@ export default function DeveloperPage() {
                         data-oid="vaz:iuo">
 
                           <code
-                          className="bg-surface-container-high px-2 py-1 rounded text-primary-container font-mono text-sm"
+                          className="bg-surface-container-high px-2 py-1 rounded text-primary-container font-mono text-xs md:text-sm whitespace-nowrap"
                           data-oid="lcap4qu">
 
                             {k.prefix}••••••••••••••••
@@ -472,7 +472,7 @@ export default function DeveloperPage() {
                   </span>
                 </div>
                 <code
-                  className="block bg-surface-container-low p-2 rounded font-mono text-sm text-primary"
+                  className="block bg-surface-container-low p-2 rounded font-mono text-xs md:text-sm text-primary overflow-x-auto"
                   data-oid="67c2e4i">
 
                   /api/v1/jobs/upload
@@ -491,7 +491,7 @@ export default function DeveloperPage() {
                   </button>
                 </div>
                 <div
-                  className="code-block p-4 rounded-xl text-sm overflow-x-auto"
+                  className="code-block p-4 rounded-xl text-xs md:text-sm overflow-x-auto"
                   data-oid="w89wd.r">
 
                   <pre data-oid="07e49al">

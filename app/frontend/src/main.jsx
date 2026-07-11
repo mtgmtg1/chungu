@@ -156,7 +156,6 @@ ReactDOM.createRoot(rootEl).render(
                 element={<LegalRefundPage data-oid="lglrefund" />}
                 data-oid="lglrefund_r" />
 
-
             </Routes>
           <CookieConsent data-oid="cookie_consent" />
           </BrowserRouter>

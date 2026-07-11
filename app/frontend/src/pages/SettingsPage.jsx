@@ -314,7 +314,7 @@ export default function SettingsPage() {
           <h3 className="font-headline-md text-headline-md text-on-surface mb-3" data-oid="9onqjjl">
             {t("page:settings.createKey")}
           </h3>
-          <div className="flex gap-3" data-oid="d9upb3i">
+          <div className="flex flex-col gap-3 sm:flex-row" data-oid="d9upb3i">
             <input
           type="text"
           placeholder={t("page:settings.keyName")}
@@ -344,7 +344,7 @@ export default function SettingsPage() {
           <p className="text-xs font-semibold text-amber-800 mb-2" data-oid="4wp2fq4">
             {t("page:settings.saveKey")}
           </p>
-          <div className="flex gap-2" data-oid="i3a3w5-">
+          <div className="flex flex-col gap-2 sm:flex-row" data-oid="i3a3w5-">
             <pre className="flex-1 rounded bg-white p-3 text-xs break-all text-on-surface" data-oid="pakcgw5">
               {revealedKey.key}
             </pre>
@@ -369,7 +369,7 @@ export default function SettingsPage() {
   const renderBilling = () =>
   <div className="space-y-gutter" data-oid="4-uks8s">
       <div className="glass-panel p-5 rounded-2xl" data-oid="q-z26g6">
-        <div className="flex items-center justify-between mb-4" data-oid="g986wss">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-4" data-oid="g986wss">
           <div data-oid="399lxub">
             <p className="text-on-surface-variant text-body-md mb-1" data-oid="kyfb3l8">
               {t("page:settings.subscriptionPlan")}
@@ -452,7 +452,7 @@ export default function SettingsPage() {
           <h3 className="font-headline-md text-headline-md text-on-surface mb-4" data-oid="eya.8mo">
             {t("page:settings.rateLimit")}
           </h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-gutter" data-oid="8o1xxr0">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-gutter" data-oid="8o1xxr0">
             <div className="bg-surface-container-low rounded-xl p-4" data-oid="io:eh.v">
               <p className="text-on-surface-variant text-label-sm mb-1" data-oid="d1ehxj1">
                 {t("page:settings.requestsPerMinute")}
@@ -711,13 +711,13 @@ export default function SettingsPage() {
         </div>
       }
 
-      <div className="flex flex-col md:flex-row gap-gutter" data-oid="ci89oi2">
-        <nav className="md:w-56 shrink-0 space-y-1" data-oid="d:aw:qt">
+      <div className="flex flex-col md:flex-row gap-4 md:gap-gutter" data-oid="ci89oi2">
+        <nav className="flex md:block md:w-56 shrink-0 overflow-x-auto md:overflow-x-visible gap-2 md:gap-1 md:space-y-1" data-oid="d:aw:qt">
           {tabs.map((tab, idx) =>
           <AnimatedRow key={tab.id} index={idx}>
           <button
             onClick={() => setActiveTab(tab.id)}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left font-body-md transition-colors ${
+            className={`w-auto md:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left font-body-md whitespace-nowrap shrink-0 transition-colors ${
             activeTab === tab.id ?
             "bg-primary-container/10 text-primary font-bold border-r-2 border-primary" :
             "text-on-surface-variant hover:bg-primary-container/10"}`

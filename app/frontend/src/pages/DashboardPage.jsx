@@ -241,7 +241,7 @@ export default function DashboardPage() {
       }
 
       <div
-        className="grid grid-cols-1 lg:grid-cols-3 gap-gutter mb-stack-lg"
+        className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-gutter mb-stack-lg"
         data-oid="luldwv5">
 
         {/* Status breakdown */}
@@ -458,7 +458,7 @@ export default function DashboardPage() {
           </Link>
         </div>
         <div className="overflow-x-auto custom-scrollbar" data-oid="402.8po">
-          <table className="w-full text-left" data-oid="8tfz9r_">
+          <table className="w-full min-w-[600px] text-left" data-oid="8tfz9r_">
             <thead
               className="bg-surface-container-low/50 text-on-surface-variant font-label-sm text-label-sm uppercase tracking-wider"
               data-oid="2286wug">
@@ -583,11 +583,11 @@ export default function DashboardPage() {
 
       {/* API promo */}
       <div
-        className="mt-stack-lg grid grid-cols-1 md:grid-cols-3 gap-gutter"
+        className="mt-stack-lg grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-gutter"
         data-oid="u1p66au">
 
         <div
-          className="col-span-1 md:col-span-2 glass-surface p-5 rounded-2xl border border-primary/10 flex items-start gap-4"
+          className="col-span-1 md:col-span-2 glass-surface p-5 rounded-2xl border border-primary/10 flex flex-col sm:flex-row items-start gap-4"
           data-oid="jaaioij">
 
           <div

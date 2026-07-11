@@ -398,7 +398,7 @@ export default function JobsPage() {
         className="flex flex-col md:flex-row md:items-end justify-between gap-gutter mb-stack-lg"
         data-oid="7dzkh55">
 
-        <div className="flex gap-4" data-oid="1:wslj4">
+        <div className="flex flex-wrap gap-2 md:gap-4" data-oid="1:wslj4">
           <div
             className="flex items-center gap-2 px-3 py-1 bg-surface-container rounded-full"
             data-oid="w_ck6a4">
@@ -432,15 +432,15 @@ export default function JobsPage() {
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-3 relative" data-oid="5h44.7o">
+        <div className="flex flex-wrap items-center gap-2 md:gap-3 relative" data-oid="5h44.7o">
           <Link
             to="/"
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-on-primary font-body-md text-body-md font-medium hover:opacity-90 transition-all shadow-sm"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-on-primary font-body-md text-body-md font-medium hover:opacity-90 transition-all shadow-sm shrink-0"
             data-oid="mv6xpjv">
             <span className="material-symbols-outlined" data-oid="6-myl-e">
               upload
             </span>
-            {t("page:jobs.uploadFiles")}
+            <span className="hidden sm:inline">{t("page:jobs.uploadFiles")}</span>
           </Link>
           <div className="relative" data-oid="-1o8i-:">
             <button

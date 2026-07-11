@@ -54,7 +54,7 @@ export function AuthProvider({ children }) {
             const devData = await resp.json();
             const { data: sessionData, error } = await supabase.auth.setSession({
               access_token: devData.access_token,
-              refresh_token: devData.access_token,
+              refresh_token: devData.refresh_token,
             });
             if (error) {
               console.warn("[DEV auto-login] 세션 설정 실패:", error.message);

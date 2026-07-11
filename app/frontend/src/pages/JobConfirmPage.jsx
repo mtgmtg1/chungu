@@ -100,8 +100,8 @@ export default function JobConfirmPage() {
         </div>
       </nav>
 
-      <main className="flex-grow flex items-center justify-center px-gutter py-10" data-oid="lj9rbb1">
-        <div className="w-full max-w-xl bg-white border border-outline-variant shadow-xl shadow-primary/5 p-6 md:p-8" data-oid="gslt5ko">
+      <main className="flex-grow flex items-center justify-center px-margin-mobile md:px-gutter py-10" data-oid="lj9rbb1">
+        <div className="w-full max-w-xl bg-white border border-outline-variant shadow-xl shadow-primary/5 p-4 md:p-6 lg:p-8" data-oid="gslt5ko">
           <div className="flex items-center gap-2 mb-5" data-oid="rte0f89">
             <Link
               to="/"

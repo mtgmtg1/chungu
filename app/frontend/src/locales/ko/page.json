@@ -341,7 +341,9 @@
     "flowHierarchyEdges": "계층 구조",
     "flowAddNote": "주석 노트 추가",
     "flowDeleteSelected": "선택 요소 삭제",
-    "flowHint": "노드를 드래그하여 연결 · 더블클릭하여 주석 편집 · Delete로 삭제"
+    "flowHint": "노드를 드래그하여 연결 · 더블클릭하여 주석 편집 · Delete로 삭제",
+    "source": "원본",
+    "result": "결과"
   },
   "poems": [
     {

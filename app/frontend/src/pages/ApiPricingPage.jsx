@@ -241,7 +241,7 @@ export default function ApiPricingPage() {
 
         {/* 크레딧 구매 섹션 (API 요금제 — Paddle 체크아웃과 동일한 상품/가격) */}
         <div
-          className="bg-white border border-slate-200 rounded-3xl p-6 md:p-8 shadow-lg mb-14"
+          className="bg-white border border-slate-200 rounded-3xl p-4 md:p-6 lg:p-8 shadow-lg mb-14"
           data-oid="price-credit-card"
         >
           <div className="flex items-center gap-3 mb-4">

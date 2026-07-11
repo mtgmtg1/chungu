@@ -38,8 +38,9 @@ export default function SidebarLayout({ children, title, subtitle }) {
   }, []);
 
   const sidebarWidth = expanded ? "w-64" : "w-20";
-  const marginLeft = expanded ? "ml-64" : "ml-20";
-  const headerWidth = expanded ? "w-[calc(100%-16rem)]" : "w-[calc(100%-5rem)]";
+  // [Flow: 모바일에서는 사이드바가 숨겨지므로 margin-left 제거 — md: 이상에서만 적용]
+  const marginLeft = expanded ? "ml-0 md:ml-64" : "ml-0 md:ml-20";
+  const headerWidth = expanded ? "w-full md:w-[calc(100%-16rem)]" : "w-full md:w-[calc(100%-5rem)]";
 
   function isActive(href) {
     if (href === "#") return false;
@@ -181,7 +182,9 @@ export default function SidebarLayout({ children, title, subtitle }) {
             {expanded ? "chevron_left" : "chevron_right"}
           </span>
         </button>
-        <div className="flex items-center gap-6" data-oid="89yal5:">
+        <div className="flex items-center gap-3 md:gap-6" data-oid="89yal5:">
+          {/* [Flow: 모바일에서는 햄버거 메뉴가 좌측에 있으므로 헤더에 여유 공간 확보] */}
+          <div className="w-8 md:hidden" data-oid="mobile-header-spacer" />
           <LanguageSelector data-oid="ezpxm7o" />
           <Link
             to="/settings?tab=account"
@@ -204,7 +207,7 @@ export default function SidebarLayout({ children, title, subtitle }) {
         data-oid="h2incux">
 
         <div
-          className="max-w-container-max mx-auto px-margin-desktop py-stack-lg"
+          className="max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-stack-lg"
           data-oid="6oyeknh">
 
           {(title || subtitle) &&

@@ -24,7 +24,7 @@ export default function GlobalFooter() {
           />
           <p data-oid="global-footer-copy-text">{t("page:upload.copyright")}</p>
         </div>
-        <div className="flex items-center gap-6" data-oid="global-footer-links">
+        <div className="flex items-center gap-4 md:gap-6 flex-wrap justify-center md:justify-end" data-oid="global-footer-links">
           <Link
             to="/terms"
             className="hover:text-primary transition-colors"

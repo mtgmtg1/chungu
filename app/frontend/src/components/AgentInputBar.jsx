@@ -23,13 +23,13 @@ export default function AgentInputBar({ onOpenChat, runningCount = 0 }) {
 
   return (
     <div
-      className="fixed bottom-6 left-1/2 z-40 w-full max-w-2xl -translate-x-1/2 px-4"
+      className="fixed bottom-4 md:bottom-6 left-1/2 z-40 w-full max-w-2xl -translate-x-1/2 px-margin-mobile md:px-4"
       data-oid="agent-input-bar"
     >
       <button
         type="button"
         onClick={handleClick}
-        className="mx-auto flex w-1/3 min-w-[240px] cursor-pointer items-center gap-2.5 rounded-2xl border border-outline-variant/30 bg-surface/95 px-4 py-2.5 shadow-lg backdrop-blur-md transition-all duration-200 hover:border-primary/30 hover:bg-surface-container-lowest/80 hover:shadow-xl active:scale-[0.98]"
+        className="mx-auto flex w-full md:w-1/3 md:min-w-[240px] cursor-pointer items-center gap-2.5 rounded-2xl border border-outline-variant/30 bg-surface/95 px-4 py-3 md:py-2.5 shadow-lg backdrop-blur-md transition-all duration-200 hover:border-primary/30 hover:bg-surface-container-lowest/80 hover:shadow-xl active:scale-[0.98]"
         aria-label={t("page:agent.inputPlaceholder", "AI에게 무엇을 도와드릴까요?")}
         data-oid="agent-input-trigger"
       >

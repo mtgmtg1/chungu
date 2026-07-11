@@ -6,10 +6,11 @@
 // onRunningCountChange 콜백으로 상위에 보고한다.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { X } from "lucide-react";
+import { X, MessageSquare } from "lucide-react";
 import { api } from "../api.js";
 import { useAgentChat } from "../hooks/useAgentChat.js";
 import { useAgentChatHistory } from "../hooks/useAgentChatHistory.js";
+import { useIsMobile } from "../hooks/useMediaQuery.js";
 import Messages from "./ai-chat/Messages.jsx";
 import PromptInput from "./ai-chat/PromptInput.jsx";
 import SuggestedActions from "./ai-chat/SuggestedActions.jsx";
@@ -48,6 +49,8 @@ function ChatSession({
   onApprovalModeChange,
 }) {
   const { t } = useTranslation();
+  const isMobile = useIsMobile();
+  const [showSidebarMobile, setShowSidebarMobile] = useState(false);
   const { messages, input, setInput, status, stop, sendContextualMessage, regenerate } = useAgentChat(
     context,
     { chatId, initialMessages },
@@ -127,22 +130,61 @@ function ChatSession({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-0 md:p-4"
       data-oid="agent-chat-modal"
       onClick={onClose}
     >
       <div
-        className="ai-chat-modal-in flex h-[85vh] max-h-[900px] w-full max-w-5xl flex-row overflow-hidden rounded-2xl border border-outline-variant/40 bg-surface shadow-2xl"
+        className={`ai-chat-modal-in flex w-full flex-row overflow-hidden bg-surface shadow-2xl ${
+          isMobile
+            ? "h-[100vh] flex-col"
+            : "h-[85vh] max-h-[900px] max-w-5xl rounded-2xl border border-outline-variant/40"
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* 왼쪽 사이드바: 대화 이력 */}
-        {sidebarProps && <AgentChatSidebar {...sidebarProps} />}
+        {/* [Flow: 모바일 — 사이드바를 오버레이 드로어로 표시, 데스크탑 — 인라인 사이드바] */}
+        {sidebarProps && !isMobile && <AgentChatSidebar {...sidebarProps} />}
+
+        {/* 모바일 사이드바 드로어 */}
+        {sidebarProps && isMobile && showSidebarMobile && (
+          <>
+            <div
+              className="fixed inset-0 z-50 bg-black/30"
+              onClick={() => setShowSidebarMobile(false)}
+              data-oid="mobile-sidebar-overlay"
+            />
+            <div
+              className="fixed left-0 top-0 z-50 h-full w-[280px] bg-surface shadow-2xl"
+              data-oid="mobile-sidebar-drawer"
+            >
+              <AgentChatSidebar
+                {...sidebarProps}
+                onSelect={(id) => {
+                  sidebarProps.onSelect(id);
+                  setShowSidebarMobile(false);
+                }}
+              />
+            </div>
+          </>
+        )}
 
         {/* 오른쪽 채팅 영역 */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* 헤더 */}
-          <div className="flex flex-shrink-0 items-center justify-between border-b border-outline-variant/30 px-5 py-3.5">
+          <div className="flex flex-shrink-0 items-center justify-between border-b border-outline-variant/30 px-4 md:px-5 py-3.5">
             <div className="flex items-center gap-2.5">
+              {/* [Flow: 모바일 — 사이드바 토글 버튼 표시] */}
+              {sidebarProps && isMobile && (
+                <button
+                  type="button"
+                  onClick={() => setShowSidebarMobile(true)}
+                  className="flex size-8 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-container-high"
+                  aria-label={t("page:agent.chatHistory", "대화 이력")}
+                  data-oid="mobile-sidebar-toggle"
+                >
+                  <MessageSquare size={18} />
+                </button>
+              )}
               <div className="flex flex-col">
                 <h3 className="font-semibold text-sm text-on-surface">
                   {t("page:agent.chatTitle", "PROOF AI")}

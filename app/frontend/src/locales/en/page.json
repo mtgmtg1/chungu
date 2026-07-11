@@ -341,7 +341,9 @@
     "flowHierarchyEdges": "Hierarchy",
     "flowAddNote": "Add Note",
     "flowDeleteSelected": "Delete Selected",
-    "flowHint": "Drag nodes to connect · Double-click to edit notes · Delete to remove"
+    "flowHint": "Drag nodes to connect · Double-click to edit notes · Delete to remove",
+    "source": "Source",
+    "result": "Result"
   },
   "poems": [
     {

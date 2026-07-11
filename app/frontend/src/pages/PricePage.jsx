@@ -131,15 +131,15 @@ export default function PricePage() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-6 py-16" data-oid="price-main">
-        <div className="text-center mb-10" data-oid="price-hero">
+      <main className="max-w-6xl mx-auto px-margin-mobile md:px-6 py-8 md:py-16" data-oid="price-main">
+        <div className="text-center mb-8 md:mb-10" data-oid="price-hero">
           <h2
-            className="text-4xl md:text-5xl font-bold text-slate-900 mb-4 tracking-tight"
+            className="text-3xl md:text-4xl lg:text-5xl font-bold text-slate-900 mb-4 tracking-tight"
             data-oid="price-hero-title"
           >
             {t("page:plans.heroTitle")}
           </h2>
-          <p className="text-lg md:text-xl text-slate-600 max-w-2xl mx-auto leading-relaxed" data-oid="price-hero-desc">
+          <p className="text-base md:text-lg lg:text-xl text-slate-600 max-w-2xl mx-auto leading-relaxed" data-oid="price-hero-desc">
             {t("page:plans.heroDesc")}
           </p>
         </div>
@@ -194,7 +194,7 @@ export default function PricePage() {
             </div>
 
             <div
-              className="bg-white border border-slate-200 rounded-3xl p-8 md:p-10 shadow-lg mb-12"
+              className="bg-white border border-slate-200 rounded-3xl p-5 md:p-8 lg:p-10 shadow-lg mb-12"
               data-oid="price-included"
             >
               <h3 className="text-center text-2xl font-bold text-slate-900 mb-8">

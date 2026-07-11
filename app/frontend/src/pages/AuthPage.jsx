@@ -130,12 +130,12 @@ export default function AuthPage() {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center bg-slate-50"
+      className="min-h-screen flex items-center justify-center bg-slate-50 px-4"
       data-oid="yel_p-w">
 
       <form
         onSubmit={handleSubmit}
-        className="bg-white rounded-xl shadow-sm border p-6 w-full max-w-sm space-y-4"
+        className="bg-white rounded-xl shadow-sm border p-5 md:p-6 w-full max-w-sm space-y-4"
         data-oid="xpfks5y">
 
         <div className="text-center" data-oid="d46vz5f">

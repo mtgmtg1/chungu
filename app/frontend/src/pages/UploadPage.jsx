@@ -47,11 +47,11 @@ export default function UploadPage() {
   return (
     <div className="min-h-screen bg-background text-on-background flex flex-col overflow-x-hidden" data-oid="23_u4l8">
       <nav className="w-full bg-transparent" data-oid="i7-y4-o">
-        <div className="max-w-container-max mx-auto flex justify-between items-center h-20 px-gutter" data-oid="2gdjtc9">
+        <div className="max-w-container-max mx-auto flex justify-between items-center h-16 md:h-20 px-margin-mobile md:px-gutter" data-oid="2gdjtc9">
           <div className="flex items-center gap-2" data-oid="ro0013g">
-            <Logo height="54px" data-oid="9p74bh1" />
+            <Logo height="44px" data-oid="9p74bh1" />
           </div>
-          <div className="flex items-center gap-6" data-oid="azbdxm0">
+          <div className="flex items-center gap-3 md:gap-6" data-oid="azbdxm0">
             <Link
               to="/price"
               className="text-body-md text-on-surface-variant hover:text-primary transition-colors font-medium"
@@ -63,7 +63,7 @@ export default function UploadPage() {
             <>
                 <Link
                 to="/dashboard"
-                className="text-body-md text-on-surface-variant hover:text-primary transition-colors font-medium" data-oid="hxfwqj4">
+                className="text-body-md text-on-surface-variant hover:text-primary transition-colors font-medium hidden sm:inline" data-oid="hxfwqj4">
 
                   {t("page:upload.myJobs")}
                 </Link>
@@ -71,7 +71,7 @@ export default function UploadPage() {
                 to="/price"
                 className="text-body-md flex items-center gap-1 text-primary hover:underline font-medium" data-oid="j8k1rq5">
                   {profile?.subscription?.plan?.toUpperCase() ?? "Free"}{" "}
-                  {t("page:upload.plan")}
+                  <span className="hidden sm:inline">{t("page:upload.plan")}</span>
                 </Link>
               </> :
 
@@ -79,7 +79,7 @@ export default function UploadPage() {
               to="/login"
               className="text-body-md flex items-center gap-1 text-on-surface-variant hover:text-primary transition-colors font-medium" data-oid="4bqhh5q">
 
-                <LogIn size={18} data-oid="n24csz4" /> {t("common:auth.login")}
+                <LogIn size={18} data-oid="n24csz4" /> <span className="hidden sm:inline">{t("common:auth.login")}</span>
               </Link>
             }
           </div>
@@ -104,17 +104,17 @@ export default function UploadPage() {
 
         </div>
 
-        <div className="w-full max-w-3xl px-gutter text-center relative z-10" data-oid="t:1j9cg">
-          <h1 className="text-display font-display text-on-surface mb-4 tracking-tight" data-oid="icit2z9">
+        <div className="w-full max-w-3xl px-margin-mobile md:px-gutter text-center relative z-10" data-oid="t:1j9cg">
+          <h1 className="text-3xl md:text-display font-display text-on-surface mb-4 tracking-tight" data-oid="icit2z9">
             <span className="text-primary" data-oid="9zubavq">{t("page:upload.title")}</span>
           </h1>
-          <p className="text-body-lg text-on-surface-variant mb-12 opacity-80" data-oid="0lczkhk">
+          <p className="text-body-md md:text-body-lg text-on-surface-variant mb-8 md:mb-12 opacity-80" data-oid="0lczkhk">
             {t("page:upload.subtitle")}
           </p>
 
           <UploadWidget onComplete={handleComplete} data-oid="upload-page-widget" />
 
-          <div className="mt-8 flex justify-center gap-8 text-label-sm text-outline font-medium uppercase tracking-widest opacity-60" data-oid="10-kc.x">
+          <div className="mt-8 flex flex-col md:flex-row justify-center gap-4 md:gap-8 text-label-sm text-outline font-medium uppercase tracking-widest opacity-60" data-oid="10-kc.x">
             <span className="flex items-center gap-1.5" data-oid="dtoqnz9">
               <span className="text-sm" data-oid="bqnxyd_">{t("page:upload.badgeSecurity")}</span>{" "}
               {t("page:upload.badgeEncrypted")}

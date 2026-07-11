@@ -9,6 +9,7 @@ import PdfViewer from "./PdfViewer.jsx";
 import MediaPlayer from "./MediaPlayer.jsx";
 import AnnotationListPanel from "./AnnotationListPanel.jsx";
 import { api } from "../api.js";
+import { useIsMobile } from "../hooks/useMediaQuery.js";
 
 function SourceIcon({ type }) {
   if (type === "pdf") return <FileText size={16} className="text-error flex-shrink-0" />;
@@ -580,6 +581,7 @@ export default function SourcePanel({
   totalPages = 1,
 }) {
   const { t } = useTranslation();
+  const isMobile = useIsMobile();
   const files = sourceFiles && sourceFiles.length > 0 ? sourceFiles : [];
   const [internalIndex, setInternalIndex] = useState(0);
   const isControlled = selectedFileIndex !== undefined && onFileSelect;
@@ -973,20 +975,20 @@ export default function SourcePanel({
     return <SingleFilePreview file={selectedFile} filename={filename || selectedFile.name} annotationsJson={selectedAnnotationsJson} pdfViewerRef={pdfViewerRef} onAnnotationChanged={handleAnnotationChanged} />;
   }
 
-  // [Flow: Step 1 (원본 파일 목록 패널을 항상 렌더링) -> Step 2 (선택된 파일 미리보기를 우측에 렌더링)]
+  // [Flow: Step 1 (원본 파일 목록 패널을 항상 렌더링) -> Step 2 (선택된 파일 미리보기를 우측에 렌더링) — 모바일에서는 세로 방향으로 전환]
   return (
     <div className="flex flex-col h-full overflow-hidden bg-surface-container-low" data-oid="source-panel">
       <div className="flex-1 overflow-hidden flex min-h-0">
-        <PanelGroup direction="horizontal" className="flex-1 flex min-h-0">
+        <PanelGroup direction={isMobile ? "vertical" : "horizontal"} className="flex-1 flex min-h-0">
           <Panel
             defaultSize={files.length > 1 ? 35 : 25}
             minSize={15}
             maxSize={60}
-            className="border-r border-outline-variant overflow-hidden flex flex-col"
+            className={`overflow-hidden flex flex-col ${isMobile ? "border-b" : "border-r"} border-outline-variant`}
           >
             {renderFileList()}
           </Panel>
-          <PanelResizeHandle className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize" />
+          <PanelResizeHandle className={`${isMobile ? "h-2 w-full cursor-row-resize" : "w-2 h-full cursor-col-resize"} bg-outline-variant/50 hover:bg-primary transition-colors`} />
           <Panel className="overflow-hidden min-h-0 flex flex-col">
             {renderPreview()}
           </Panel>

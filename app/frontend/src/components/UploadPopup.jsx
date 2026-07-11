@@ -42,7 +42,7 @@ export default function UploadPopup({ open, onClose, jobId, onProgress, onComple
         onClick={(e) => e.stopPropagation()}
         data-oid="upload-popup-container"
       >
-        <div className="flex items-center justify-between p-4 border-b border-outline-variant" data-oid="upload-popup-header">
+        <div className="flex items-center justify-between p-3 md:p-4 border-b border-outline-variant" data-oid="upload-popup-header">
           <h3 className="font-headline-md text-headline-md font-bold text-on-surface" data-oid="upload-popup-title">
             {t("page:result.uploadNewFiles")}
           </h3>
@@ -56,7 +56,7 @@ export default function UploadPopup({ open, onClose, jobId, onProgress, onComple
             <X size={20} />
           </button>
         </div>
-        <div className="p-4" data-oid="upload-popup-body">
+        <div className="p-3 md:p-4" data-oid="upload-popup-body">
           <UploadWidget
             jobId={jobId}
             onProgress={onProgress}

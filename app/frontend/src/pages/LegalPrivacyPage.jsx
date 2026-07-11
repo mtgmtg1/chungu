@@ -19,8 +19,8 @@ export default function LegalPrivacyPage() {
 
   // [Flow: Step 1 (페이지 컨테이너) -> Step 2 (제목 + intro) -> Step 3 (12조 섹션 반복 렌더링) -> Step 4 (문의처)]
   return (
-    <div className="min-h-screen bg-gray-50 py-12 px-4">
-      <div className="max-w-3xl mx-auto bg-white rounded-xl shadow-sm p-8 md:p-12">
+    <div className="min-h-screen bg-gray-50 py-6 md:py-12 px-4">
+      <div className="max-w-3xl mx-auto bg-white rounded-xl shadow-sm p-5 md:p-8 lg:p-12">
         {/* 뒤로 가기 버튼 */}
         <button
           onClick={() => navigate(-1)}

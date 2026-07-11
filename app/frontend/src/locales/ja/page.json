@@ -341,7 +341,9 @@
     "flowHierarchyEdges": "階層構造",
     "flowAddNote": "注釈ノート追加",
     "flowDeleteSelected": "選択要素削除",
-    "flowHint": "ノードをドラッグして接続 · ダブルクリックで注釈編集 · Deleteで削除"
+    "flowHint": "ノードをドラッグして接続 · ダブルクリックで注釈編集 · Deleteで削除",
+    "source": "原文",
+    "result": "結果"
   },
   "poems": [
     {

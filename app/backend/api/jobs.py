@@ -787,13 +787,18 @@ async def init_add_files(
     if total_size > max_mb * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"Total file size exceeds limit (max {max_mb}MB)")
 
+    # [Flow: 파일명에 고유 접미사 추가 — 기존 파일과 같은 이름이어도 Storage 덮어쓰기 방지]
     upload_paths = []
     for f in files:
         safe_name = supabase_client._sanitize_storage_filename(f["name"])
-        storage_path = f"{job.id}/{safe_name}"
+        stem = Path(safe_name).stem
+        ext = Path(safe_name).suffix
+        unique_suffix = uuid.uuid4().hex[:8]
+        unique_name = f"{stem}_{unique_suffix}{ext}"
+        storage_path = f"{job.id}/{unique_name}"
         upload_paths.append({
             "original": f["name"],
-            "storage_name": safe_name,
+            "storage_name": unique_name,
             "storage_path": storage_path,
             "relative_path": f.get("relative_path", f["name"]),
             "size": f.get("size", 0),
@@ -858,6 +863,7 @@ async def confirm_add_files(
                 "is_new": True,
             }
             # 이미지/문서 파일은 Storage에 업로드하여 source_files에서 미리보기 가능하도록 함
+            # unique_suffix=True — 기존 파일과 같은 이름이어도 Storage 덮어쓰기 방지
             if ftype == "image":
                 try:
                     info_entry["storage_path"] = supabase_client.upload_image(job.id, fp, fp.name)
@@ -866,14 +872,14 @@ async def confirm_add_files(
             elif ftype in media_loader.DOCLING_TYPES or ftype in media_loader.HWP_TYPES:
                 try:
                     info_entry["storage_path"] = supabase_client.upload_input(
-                        BytesIO(fp.read_bytes()), fp.name, job.id
+                        BytesIO(fp.read_bytes()), fp.name, job.id, unique_suffix=True
                     )
                 except Exception as e:
                     logger.warning(f"[confirm-add-files:{job.id}] 문서 업로드 실패: {fp.name}: {e}")
             elif ftype in ("audio", "video"):
                 try:
                     info_entry["storage_path"] = supabase_client.upload_input(
-                        BytesIO(fp.read_bytes()), fp.name, job.id
+                        BytesIO(fp.read_bytes()), fp.name, job.id, unique_suffix=True
                     )
                 except Exception as e:
                     logger.warning(f"[confirm-add-files:{job.id}] 미디어 업로드 실패: {fp.name}: {e}")
@@ -891,13 +897,16 @@ async def confirm_add_files(
     existing_files = job.extracted_files or []
     # 단일 PDF/DOCX/HWP Job의 경우 extracted_files가 비어 있을 수 있으므로
     # 기존 원본 파일을 extracted_files에 합성 항목으로 추가
+    # 기존 변환 결과 마크다운을 가져와 result_markdown에 채워 넣는다 —
+    # 이후 run_job_added_files이 combined markdown을 재생성할 때 기존 파일 내용이 누락되지 않도록 함
     if not existing_files and job.pdf_storage_path and job.file_type in ("pdf", "docx", "hwp"):
+        existing_markdown = _extract_single_file_markdown(job)
         existing_files = [{
             "path": job.original_filename or Path(job.pdf_storage_path).name,
             "type": job.file_type,
             "size": job.file_size or 0,
             "duration": 0,
-            "result_markdown": "",
+            "result_markdown": existing_markdown,
             "storage_path": job.pdf_storage_path,
         }]
 
@@ -1288,6 +1297,37 @@ def _get_markdown_content(job: Job) -> str:
     if job.result_md_path and Path(job.result_md_path).exists():
         return Path(job.result_md_path).read_text(encoding="utf-8")
     return ""
+
+
+# [Flow: Step 1 (기존 마크다운 다운로드) -> Step 2 (파일 구분자 제거) -> Step 3 (순수 마크다운 반환)]
+_FILE_MARKER_RE = _re.compile(r"<!--\s*파일\s+\d+\s*-->\s*\n*", _re.IGNORECASE)
+
+
+def _extract_single_file_markdown(job: Job) -> str:
+    """단일 파일 Job의 기존 변환 결과 마크다운에서 파일 구분자를 제거한 순수 내용을 반환한다.
+
+    매개변수:
+        job: Job 객체 (result_edited_md_storage_path 또는 result_md_storage_path 사용)
+
+    반환값:
+        파일 구분자(`<!-- 파일 N -->`)가 제거된 순수 마크다운 문자열.
+        기존 마크다운이 없으면 빈 문자열.
+
+    주요 논리:
+        _get_markdown_content로 전체 마크다운을 가져온 뒤, 파일 구분자를 제거한다.
+        단일 파일 Job이므로 파일 구분자는 최대 1개이며, 제거 후 남은 내용이
+        해당 파일의 result_markdown이 된다.
+    """
+    try:
+        full_markdown = _get_markdown_content(job)
+    except Exception as e:
+        logger.warning(f"[extract-single-file-markdown:{job.id}] 마크다운 로드 실패: {e}")
+        return ""
+    if not full_markdown.strip():
+        return ""
+    # 파일 구분자(`<!-- 파일 N -->`) 제거 후 앞뒤 공백 정리
+    cleaned = _FILE_MARKER_RE.sub("", full_markdown).strip()
+    return cleaned
 
 
 _PAGE_MARKER_RE = _re.compile(r"<!--\s*페이지\s*(\d+)\s*-->", _re.IGNORECASE)

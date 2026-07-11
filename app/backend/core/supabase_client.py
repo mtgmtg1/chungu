@@ -64,10 +64,29 @@ def _safe_job_path(filename: str, job_id: str | None = None) -> str:
     return safe
 
 
-def upload_input(file: BytesIO, filename: str, job_id: str) -> str:
-    """업로드된 입력 파일을 pdfs 버킷에 저장하고 storage_path를 반환한다."""
+def upload_input(file: BytesIO, filename: str, job_id: str, unique_suffix: bool = False) -> str:
+    """업로드된 입력 파일을 pdfs 버킷에 저장하고 storage_path를 반환한다.
+
+    매개변수:
+        file: 업로드할 파일의 BytesIO 객체
+        filename: 원본 파일명 (Storage 경로 생성용)
+        job_id: Job ID (Storage 경로의 상위 디렉토리)
+        unique_suffix: True면 파일명에 UUID 8자 접미사를 추가하여 같은 이름의 파일
+            추가 시 덮어쓰기를 방지한다. 기본값 False (기존 동작 보존).
+
+    반환값:
+        Storage 경로 문자열 (예: "{job_id}/report.pdf" 또는 "{job_id}/report_abc12345.pdf")
+    """
     client = get_service_client()
-    storage_path = _safe_job_path(filename, job_id)
+    if unique_suffix:
+        # [Flow: 파일명에 고유 접미사 추가 — 같은 이름의 파일 추가 시 Storage 덮어쓰기 방지]
+        safe = _sanitize_storage_filename(filename)
+        stem = Path(safe).stem
+        ext = Path(safe).suffix
+        suffix = uuid.uuid4().hex[:8]
+        storage_path = f"{job_id}/{stem}_{suffix}{ext}"
+    else:
+        storage_path = _safe_job_path(filename, job_id)
     content = file.read()
     client.storage.from_("pdfs").upload(
         storage_path,

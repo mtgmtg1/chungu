@@ -1078,7 +1078,7 @@ def run_job_added_files(job_id: str) -> dict:
         all_file_markdowns = [f.get("result_markdown", "") for f in all_files]
         combined_markdown = converter.build_combined_file_markdowns(all_file_markdowns)
 
-        # [Flow: Step 5 (combined markdown을 Storage에 재업로드)]
+        # [Flow: Step 5 (combined markdown을 Storage에 재업로드 + CSV/XLSX Basic 재생성)]
         out_dir = work_dir / "result"
         out_dir.mkdir(parents=True, exist_ok=True)
         edited_path = out_dir / "result_edited.md"
@@ -1092,6 +1092,26 @@ def run_job_added_files(job_id: str) -> dict:
         except Exception as e:
             logger.exception(f"[run_job_added_files:{job_id}] Storage 업로드 실패: {e}")
             raise
+
+        # [Flow: Step 5b (CSV/XLSX Basic 재생성 — 마크다운과 결과 파일 불일치 방지)]
+        # 새 파일이 추가되어 combined markdown이 변경되었으므로, 기존 CSV/XLSX Basic도 재생성한다.
+        # XLSX Advanced는 별도 LLM 변환이므로 사용자가 수동으로 재실행해야 한다.
+        if combined_markdown.strip():
+            try:
+                from ..core import office_converter
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    xlsx_path = Path(tmpdir) / "result.xlsx"
+                    csv_path = Path(tmpdir) / "result.csv"
+                    office_converter.markdown_to_xlsx_basic(combined_markdown, xlsx_path)
+                    office_converter.markdown_to_csv_basic(combined_markdown, csv_path)
+                    xlsx_storage_path = supabase_client.upload_office_result(job_id, xlsx_path, "xlsx")
+                    csv_storage_path = supabase_client.upload_office_result(job_id, csv_path, "csv")
+                job.result_xlsx_basic_storage_path = xlsx_storage_path
+                job.result_xlsx_storage_path = xlsx_storage_path  # 하위 호환
+                job.result_csv_storage_path = csv_storage_path
+                logger.info(f"[run_job_added_files:{job_id}] CSV/XLSX Basic 재생성 완료")
+            except Exception as e:
+                logger.warning(f"[run_job_added_files:{job_id}] CSV/XLSX Basic 재생성 실패 (무시됨): {e}")
 
         # total_pages, total_files 갱신
         total_pages = 0

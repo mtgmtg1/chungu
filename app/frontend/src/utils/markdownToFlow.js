@@ -17,8 +17,20 @@ export function parseMarkdownToFlow(markdownText) {
   const nodes = [];
   const edges = [];
   const stack = []; // heading 레벨 스택 (부모 추적용)
+  let currentPage = 1; // 페이지 마커 추적 — `<!-- 페이지 N -->` 형식
+
+  // 페이지 마커 정규식 — 마크다운 HTML 주석에서 페이지 번호 추출
+  const PAGE_MARKER_RE = /<!--\s*페이지\s*(\d+)\s*-->/i;
 
   for (const token of tokens) {
+    // 페이지 마커 감지 — html 토큰의 text에서 정규식 매칭
+    if (token.type === "html" && token.text) {
+      const match = token.text.match(PAGE_MARKER_RE);
+      if (match) {
+        currentPage = parseInt(match[1], 10) || currentPage;
+      }
+    }
+
     if (token.type === "heading") {
       // Step 2: heading 토큰을 React Flow 노드로 변환
       const node = {
@@ -29,6 +41,7 @@ export function parseMarkdownToFlow(markdownText) {
           level: token.depth,        // H1=1, H2=2, ... (marked 토큰의 depth 속성)
           content: [],               // 다음 heading 전까지의 하위 토큰
           contentPreview: "",        // 첫 200자 미리보기
+          page: currentPage,         // 해당 heading이 속한 원본 PDF 페이지 번호
         },
         position: { x: 0, y: 0 },    // elkjs가 계산
       };

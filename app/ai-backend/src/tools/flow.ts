@@ -1,7 +1,7 @@
 // [Flow: Step 1 (context에서 job_id, authHeaders 추출) -> Step 2 (마크다운에서 헤딩 트리 추출)
-//       -> Step 3 (골격 노드 압축 JSON 생성) -> Step 4 (LLM으로 의존성 에지 추론) -> Step 5 (도구 객체 반환)]
+//       -> Step 3 (골격 노드 압축 JSON 생성) -> Step 4 (LLM으로 트리 구조 에지 추론) -> Step 5 (도구 객체 반환)]
 // 플로우 뷰용 서버 사이드 도구. 마크다운 문서의 헤딩 구조를 추출하고
-// AI로 크로스 섹션 논리적 의존성을 분석하여 React Flow 에지 데이터를 생성.
+// AI로 논리적 트리 구조를 분석하여 React Flow 부모-자식 에지 데이터를 생성.
 import { tool } from 'ai';
 import { z } from 'zod';
 import { marked } from 'marked';
@@ -108,7 +108,7 @@ export function buildFlowTools(context: FlowToolContext) {
 
     infer_flow_dependencies: tool({
       description:
-        '추출된 플로우 노드의 논리적 의존성을 AI로 추론. 크로스 섹션 의존성을 발견하여 React Flow 점선 에지 데이터를 반환. extract_flow_structure로 얻은 nodes 배열을 입력으로 사용.',
+        '추출된 플로우 노드를 논리적 트리 구조로 재구성. 각 노드가 최대 한 개의 부모를 갖는 트리 형태의 부모-자식 에지를 AI로 추론. extract_flow_structure로 얻은 nodes 배열을 입력으로 사용.',
       inputSchema: z.object({
         nodes: z
           .array(
@@ -123,7 +123,7 @@ export function buildFlowTools(context: FlowToolContext) {
           .describe('extract_flow_structure로 추출된 노드 배열'),
       }),
       execute: async ({ nodes }) => {
-        // 참고 자료의 시스템 프롬프트 템플릿을 사용해 LLM이 의존성 에지를 추론하도록 지시.
+        // LLM이 노드를 논리적 트리로 재구성하도록 지시.
         // 이 도구는 노드 배열을 반환하고, 실제 LLM 추론은 에이전트의 streamText 컨텍스트에서 수행됨.
         // 도구 자체는 데이터를 정규화하여 반환하고, 에이전트가 다음 스텝에서 분석하도록 함.
         const compactNodes = nodes.map(n => ({
@@ -137,7 +137,7 @@ export function buildFlowTools(context: FlowToolContext) {
         return {
           nodes: compactNodes,
           instruction:
-            'Analyze the provided nodes and identify lateral logical dependencies (cross-section prerequisites). Return a JSON array of edges: [{ source, target, type: "logical-dependency", reason }]. Focus on dependencies between sections that are NOT in the same parent-child hierarchy.',
+            'Analyze the provided nodes and organize them into a logical tree structure. Return a JSON array of edges: [{ source, target, type: "hierarchy", reason }]. CRITICAL: Each node must have AT MOST ONE parent — this is a tree, not a graph. The tree should reflect logical containment and prerequisite relationships, flowing from general/root concepts down to specific details. The root node(s) should have no parent. Include a "reason" field explaining why each parent-child relationship exists.',
         };
       },
     }),

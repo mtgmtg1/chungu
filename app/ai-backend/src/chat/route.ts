@@ -64,7 +64,7 @@ Available tool categories:
    - IMPORTANT: User-visible filenames are preserved in /workspace/original/. For example, if the user says "보고서.pdf", the file is at /workspace/original/보고서.pdf. Read /workspace/_file_mapping.json to see the full mapping of user filenames to sandbox paths. Do NOT use /workspace/input.pdf — use the original filename instead.
 5. Web browsing (when user asks to capture or extract web content):
    - browse_web, convert_web_to_pdf, extract_web_text
-6. Flow analysis (when user asks to visualize document structure or find logical dependencies):
+6. Flow analysis (when user asks to visualize document structure or build a logical tree):
    - extract_flow_structure, infer_flow_dependencies
 
 Rules:

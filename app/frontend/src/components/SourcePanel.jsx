@@ -1,6 +1,6 @@
 // [Flow: Step 1 (sourceFiles/sourceUrl/sourceType/imageUrls/jobId 수신) -> Step 2 (단일/다중 파일에 따라 PdfViewer에 URL 전달) -> Step 3 (pdf/docx/hwp가 아니면 기존 미디어/이미지 프리뷰)]
 // processing/error 상태의 주석 항목은 URL 없이 상태 정보만 표시한다.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FileText, FileUp, FileDown, ImageIcon, Volume2, Film, Trash2, Loader2, AlertCircle, RotateCw, Sparkles, ChevronDown, ChevronUp, List, Check } from "lucide-react";
 import { marked } from "marked";
@@ -559,27 +559,28 @@ function PdfViewerWithFab({
   );
 }
 
-export default function SourcePanel({
-  sourceFiles,
-  sourceUrl,
-  sourceType,
-  imageUrls,
-  filename,
-  currentPage,
-  selectedFileIndex,
-  onFileSelect,
-  onDeleteFile,
-  onSaveAnnotations,
-  onRetryAnnotation,
-  onStartAnnotate,
-  onStartAnnotateEdit,
-  onCancelAnnotation,
-  onUpload,
-  uploadProgress,
-  converting = false,
-  annotationRuns = [],
-  totalPages = 1,
-}) {
+const SourcePanel = forwardRef(function SourcePanel(props, ref) {
+  const {
+    sourceFiles,
+    sourceUrl,
+    sourceType,
+    imageUrls,
+    filename,
+    currentPage,
+    selectedFileIndex,
+    onFileSelect,
+    onDeleteFile,
+    onSaveAnnotations,
+    onRetryAnnotation,
+    onStartAnnotate,
+    onStartAnnotateEdit,
+    onCancelAnnotation,
+    onUpload,
+    uploadProgress,
+    converting = false,
+    annotationRuns = [],
+    totalPages = 1,
+  } = props;
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const files = sourceFiles && sourceFiles.length > 0 ? sourceFiles : [];
@@ -593,6 +594,15 @@ export default function SourcePanel({
   const [showAnnotationPanel, setShowAnnotationPanel] = useState(false);
 
   const selectedFile = files[selectedIndex] || files[0];
+
+  // [Flow: 외부 ref로 scrollToPage 노출 — FlowViewer 노드 클릭 시 원본 PDF 해당 페이지로 스크롤]
+  useImperativeHandle(ref, () => ({
+    scrollToPage: (pageNum) => {
+      if (pdfViewerRef.current && typeof pdfViewerRef.current.scrollToPage === "function") {
+        pdfViewerRef.current.scrollToPage(pageNum);
+      }
+    },
+  }), [pdfViewerRef]);
 
   /**
    * [Flow: Step 1 (PdfViewer ref로 exportAnnotations 호출) -> Step 2 (JSON 파싱)
@@ -996,6 +1006,6 @@ export default function SourcePanel({
       </div>
     </div>
   );
-}
+});
 
-
+export default SourcePanel;

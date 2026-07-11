@@ -246,4 +246,14 @@ export const api = {
     request(`/api/sandboxes/${sandboxId}/collect`, { method: 'POST' }),
   destroySandbox: (sandboxId) => request(`/api/sandboxes/${sandboxId}`, { method: 'DELETE' }),
   getSandboxStats: () => request('/api/sandboxes/stats'),
+
+  // Flow Panel 드로잉/주석 저장
+  getFlowDrawings: (jobId) => request(`/api/jobs/${jobId}/flow-drawings`),
+  saveFlowDrawings: (jobId, data) =>
+    request(`/api/jobs/${jobId}/flow-drawings`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  deleteFlowDrawings: (jobId) =>
+    request(`/api/jobs/${jobId}/flow-drawings`, { method: 'DELETE' }),
 }

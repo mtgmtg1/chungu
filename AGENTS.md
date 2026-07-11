@@ -8,6 +8,35 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### Flow Panel 기능 확장 — 드로깅/주석, 노드 리사이즈, 원문 PDF 스크롤 연동
+
+- **목표**: React Flow 기반 Flow Panel 에 3가지 기능 추가: (1) 풍부한 드로잉/주석 도구, (2) 드래그앤드롭 노드 리사이즈, (3) 플로우 노드 클릭 시 왼쪽 SourcePanel 원문 PDF의 해당 페이지로 자동 스크롤. koda-learn 프로젝트의 `perfect-freehand` + SVG path 드로잉 엔진을 이식하고 React Flow의 `NodeResizer`/`ViewportPortal`로 통합.
+- **의존성 추가**: `app/frontend/package.json`에 `perfect-freehand@^1.2.2` 추가 — 부드러운 곡선 생성.
+- **Phase 1: 노드 리사이즈** (`app/frontend/src/components/FlowViewer.jsx`):
+  - `HeadingNode`/`NoteNode`에 `@xyflow/react`의 `NodeResizer` 추가.
+  - 선택 시에만 핸들 노출 (`isVisible={selected}`), 최소/최대 크기 제한 (`minWidth/maxWidth/minHeight`).
+  - 고정 너비 CSS(`w-[280px]`, `w-[200px]`) 제거하고 `style={{ width: data.width }}`로 동적 적용. `elkLayout.js`는 이미 `data.width`/`data.height`를 존중.
+- **Phase 2: 노드 클릭 → 원문 PDF 스크롤 연동**:
+  - `app/frontend/src/utils/markdownToFlow.js`: `<!-- 페이지 N -->` HTML 주석을 정규식으로 추적, 각 heading 노드의 `data.page`에 페이지 번호 할당 (마커 없는 문서는 `1` 폴백).
+  - `app/frontend/src/components/SourcePanel.jsx`: `forwardRef` + `useImperativeHandle`로 `scrollToPage(pageNum)` 메서드 외부 노출.
+  - `app/frontend/src/pages/JobResultPage.jsx`: `sourcePanelApiRef` 생성 → `FlowViewer`의 `onNodeClick`에서 `sourcePanelApiRef.current.scrollToPage(node.data.page)` 호출.
+- **Phase 3: 드로잉/주석 도구**:
+  - `app/frontend/src/utils/drawingUtils.js` (신규): `getFreehandPath` (perfect-freehand), `createShapePath` (선/화살표/사각형/원), `eraseAtPoint`/`eraseTextAtPoint`.
+  - `app/frontend/src/hooks/useFlowDrawing.js` (신규): 펜/형광펜/지우개/텍스트/도형 모드, 색상/굵기, Undo/Clear, localStorage 자동 저장 + 서버 자동 저장 (2초 debounce). 드로잉 중 동기 상태 추적을 위해 `isDrawingRef`/`currentPointsRef` 사용 (stale closure 방지).
+  - `app/frontend/src/components/flow/DrawingOverlay.jsx` (신규): React Flow `ViewportPortal` 내부에 SVG 렌더링 → pan/zoom 자동 따라감. 드로잉 모드에서만 `pointerEvents: auto`.
+  - `app/frontend/src/components/flow/DrawingToolbar.jsx` (신규): 하단 중앙 툴바 — 모드 전환, 색상 팝오버(8색), 굵기 슬라이더(1~20px), 도형 서브메뉴, Undo/Clear.
+  - `FlowViewer.jsx` 통합: `useFlowDrawing` 훅 사용, 드로잉 모드 시 `panOnDrag={false}` + `nodesDraggable={false}`로 React Flow 상호작용 차단.
+- **Phase 4: 서버 저장 (Supabase)**:
+  - `app/backend/db/migrations/028_add_flow_drawings.sql` (신규): `flow_drawings` 테이블 — `job_id` + `user_id` UNIQUE, `paths JSONB`, `text_annotations JSONB`.
+  - `app/backend/db/models.py`: `FlowDrawing` SQLAlchemy 모델 추가.
+  - `app/backend/api/flow_drawings.py` (신규): GET/PUT/DELETE `/api/jobs/{job_id}/flow-drawings` CRUD API. `response_model=None`로 `CurrentUser` Pydantic 변환 회피.
+  - `app/backend/main.py`: `flow_drawings_router` 등록.
+  - `app/frontend/src/api.js`: `getFlowDrawings`/`saveFlowDrawings`/`deleteFlowDrawings` 클라이언트 메서드 추가.
+- **Phase 5: i18n**: `app/frontend/src/locales/{ko,en,ja}/page.json`에 14개 드로잉 키 추가 (`flowSelectMode`, `flowDraw`, `flowHighlight`, `flowEraser`, `flowText`, `flowShape`, `flowShapeLine`, `flowShapeArrow`, `flowShapeRectangle`, `flowShapeCircle`, `flowStrokeColor`, `flowStrokeWidth`, `flowUndo`, `flowClear`).
+- **디버깅/검증**: 로컬 Vite dev server + Playwright 브라우저에서 Flow 뷰 전환, 드로잉 툴바, 펜 드로잉 저장, 노드 클릭 → `scrollToPage` 호출, NodeResizer 핸들 노출, 프론트엔드 빌드, 백엔드 import 확인.
+- **배포 시 주의**: DB 마이그레이션 `028_add_flow_drawings.sql`을 서버 `supabase-chungu-db` 컨테이너에 수동 적용 필요 (AGENTS.md "Deployment" 섹션 참조).
+- **핵심 파일**: `app/frontend/src/components/FlowViewer.jsx`, `app/frontend/src/hooks/useFlowDrawing.js`, `app/frontend/src/utils/drawingUtils.js`, `app/frontend/src/components/flow/DrawingOverlay.jsx`, `app/frontend/src/components/flow/DrawingToolbar.jsx`, `app/frontend/src/pages/JobResultPage.jsx`, `app/frontend/src/components/SourcePanel.jsx`, `app/frontend/src/utils/markdownToFlow.js`, `app/backend/api/flow_drawings.py`, `app/backend/db/migrations/028_add_flow_drawings.sql`.
+
 ### Flow Panel — 마크다운 헤딩 구조를 React Flow 그래프로 시각화 + 드롭다운 뷰 전환
 
 - **목표**: 결과페이지(JobResultPage)에 마크다운 문서의 헤딩(H1~H6) 구조를 React Flow 캔버스에 논리 흐름 그래프로 시각화하는 플로우 패널 추가. 기존 가로형 탭 버튼(Markdown/Excel/Excel Advanced)을 드롭다운 메뉴로 교체하여 Markdown/Excel/Flow 뷰를 전환. 상세 계획은 `FLOW_PANEL_PLAN.md` 참조.

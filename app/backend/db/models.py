@@ -351,3 +351,25 @@ class Sandbox(Base):
 
     job: Mapped["Job | None"] = relationship("Job", lazy="selectin")
     user: Mapped["User | None"] = relationship("User", lazy="selectin")
+
+
+class FlowDrawing(Base):
+    """Flow Panel 드로잉/주석 저장 — 작업+사용자별 1레코드.
+
+    사용자가 React Flow 캔버스에 그린 SVG path 드로잉과 텍스트 주석을 저장.
+    paths: DrawingPath[] (d, stroke, strokeWidth, type, shapeType)
+    text_annotations: TextAnnotation[] (id, x, y, text, fontSize, color)
+    """
+
+    __tablename__ = "flow_drawings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[str] = mapped_column(String(255), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    paths: Mapped[list] = mapped_column(JSON, default=list)
+    text_annotations: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    job: Mapped["Job"] = relationship("Job", lazy="selectin")
+    user: Mapped["User"] = relationship("User", lazy="selectin")

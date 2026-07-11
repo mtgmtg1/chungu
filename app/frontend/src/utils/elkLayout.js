@@ -3,11 +3,11 @@ import ELK from "elkjs/lib/elk.bundled.js";
 const elk = new ELK();
 
 /**
- * elkjs layered 알고리즘으로 React Flow 노드에 자동 좌표를 부여.
+ * elkjs mrtree 알고리즘으로 React Flow 노드에 트리 형태 자동 좌표를 부여.
  * 노드 배열을 ELK JSON 그래프 형식으로 변환하여 elk.layout() 호출 후,
  * 계산된 x/y 좌표를 원본 노드에 매핑하여 반환.
  *
- * [Flow: Step 1 (ELK JSON 그래프 구성) -> Step 2 (layered 레이아웃 계산) -> Step 3 (좌표 매핑 반환)]
+ * [Flow: Step 1 (ELK JSON 그래프 구성) -> Step 2 (mrtree 레이아웃 계산) -> Step 3 (좌표 매핑 반환)]
  *
  * @param {Array} nodes - React Flow 노드 배열 (position 미사용)
  * @param {Array} edges - React Flow 에지 배열
@@ -16,15 +16,15 @@ const elk = new ELK();
 export async function calculateElkLayout(nodes, edges) {
   if (!nodes.length) return nodes;
 
-  // Step 1: elkjs JSON 그래프 구성
+  // Step 1: elkjs JSON 그래프 구성 — mrtree 알고리즘으로 트리 레이아웃
   const elkGraph = {
     id: "root",
     layoutOptions: {
-      "elk.algorithm": "layered",
+      "elk.algorithm": "mrtree",
       "elk.direction": "DOWN",
       "elk.spacing.nodeNode": "80",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "100",
-      "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+      "elk.mrtree.nodeNodeSpacing": "80",
+      "elk.mrtree.layerNodeSpacing": "100",
     },
     children: nodes.map(n => ({
       id: n.id,

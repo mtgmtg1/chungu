@@ -24,6 +24,7 @@ import {
   BaseEdge,
   getBezierPath,
   EdgeLabelRenderer,
+  NodeResizer,
 } from "@xyflow/react";
 import {
   Loader2,
@@ -32,11 +33,12 @@ import {
   Trash2,
   LayoutGrid,
   Maximize,
-  Circle,
-  Plus,
 } from "lucide-react";
 import { parseMarkdownToFlow } from "../utils/markdownToFlow";
 import { calculateElkLayout } from "../utils/elkLayout";
+import { useFlowDrawing } from "../hooks/useFlowDrawing.js";
+import DrawingOverlay from "./flow/DrawingOverlay.jsx";
+import DrawingToolbar from "./flow/DrawingToolbar.jsx";
 
 /* ============================================================
  * 커스텀 노드 컴포넌트
@@ -46,14 +48,23 @@ import { calculateElkLayout } from "../utils/elkLayout";
  * 헤딩 노드 컴포넌트 — 제목 + H레벨 배지 + 내용 미리보기.
  * React Flow 커스텀 노드로 등록되어 nodeTypes에 매핑됨.
  * 사용자가 수동 연결을 할 수 있도록 Handle의 isConnectable=true.
+ * NodeResizer로 선택 시 리사이즈 핸들 노출 — 드래그로 크기 조절 가능.
  */
 function HeadingNode({ data, selected }) {
   return (
     <div
-      className={`bg-white rounded-lg border-2 shadow-sm px-4 py-3 w-[280px] transition-all ${
+      className={`bg-white rounded-lg border-2 shadow-sm px-4 py-3 transition-all ${
         selected ? "border-primary shadow-md ring-2 ring-primary/20" : "border-outline-variant"
       }`}
+      style={{ width: data.width || 280, minHeight: data.height || 80 }}
     >
+      <NodeResizer
+        minWidth={180}
+        maxWidth={600}
+        minHeight={60}
+        isVisible={selected}
+        color="#6366f1"
+      />
       <Handle type="target" position={Position.Top} isConnectable={true} />
       <div className="flex items-center gap-2 mb-1">
         <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-primary/10 text-primary">
@@ -98,12 +109,20 @@ function NoteNode({ data, selected, id }) {
 
   return (
     <div
-      className={`rounded-lg border-2 shadow-sm px-3 py-2 w-[200px] min-h-[80px] transition-all ${
+      className={`rounded-lg border-2 shadow-sm px-3 py-2 min-h-[80px] transition-all ${
         selected
           ? "bg-primary-fixed border-primary shadow-md ring-2 ring-primary/20"
           : "bg-surface-container-low border-primary-fixed-dim"
       }`}
+      style={{ width: data.width || 200, minHeight: data.height || 80 }}
     >
+      <NodeResizer
+        minWidth={120}
+        maxWidth={500}
+        minHeight={60}
+        isVisible={selected}
+        color="#f59e0b"
+      />
       <Handle type="target" position={Position.Top} isConnectable={true} />
       <div className="flex items-center gap-1 mb-1">
         <StickyNote size={12} className="text-primary" />
@@ -157,7 +176,8 @@ function HierarchyEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition,
 }
 
 /**
- * 의존성 엣지 — 점선 + 호버 시 reason 툴팁.
+ * 트리 엣지 — 실선 + 호버 시 reason 툴팁.
+ * LLM이 생성한 논리적 트리 부모-자식 관계를 표현.
  * EdgeLabelRenderer 포털로 SVG 위에 HTML 툴팁을 별도 레이어에 렌더링.
  */
 function DependencyEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style, data, markerEnd, selected }) {
@@ -173,11 +193,10 @@ function DependencyEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition
         path={edgePath}
         style={{
           ...style,
-          strokeDasharray: "5 5",
-          stroke: selected ? "#f59e0b" : (style?.stroke || "#f59e0b"),
+          stroke: selected ? "#6366f1" : (style?.stroke || "#b0b0b0"),
           strokeWidth: selected ? 3 : 2,
         }}
-        markerEnd={markerEnd}
+        markerEnd={markerEnd || "url(#arrow-closed)"}
       />
       {/* 호버 감지용 투명한 클릭 영역 */}
       <BaseEdge
@@ -264,17 +283,11 @@ const edgeTypes = { hierarchy: HierarchyEdge, dependency: DependencyEdge, custom
  * 툴바 컴포넌트 (Panel 오버레이)
  * ========================================================== */
 
-const BG_VARIANTS = [
-  { key: "dots", icon: Circle, label: "Dots" },
-  { key: "lines", icon: LayoutGrid, label: "Lines" },
-  { key: "cross", icon: Plus, label: "Cross" },
-];
-
 /**
  * FlowToolbar — React Flow Panel 오버레이에 배치된 툴바.
- * 주석 추가, 선택 삭제, 배경 전환, 레이아웃 재배치, 전체 보기 버튼 제공.
+ * 주석 추가, 선택 삭제, 레이아웃 재배치, 전체 보기 버튼 제공.
  */
-function FlowToolbar({ onAddNote, onDeleteSelected, bgVariant, setBgVariant, onRelayout, onFitView }) {
+function FlowToolbar({ onAddNote, onDeleteSelected, onRelayout, onFitView }) {
   const { t } = useTranslation();
   const btnClass = "flex items-center justify-center w-10 h-10 md:w-8 md:h-8 rounded-lg text-sm font-medium transition-colors border";
   const btnDefault = "border-outline-variant bg-surface-container-lowest text-on-surface hover:bg-surface-container-high";
@@ -321,25 +334,7 @@ function FlowToolbar({ onAddNote, onDeleteSelected, bgVariant, setBgVariant, onR
         </div>
       </Panel>
 
-      {/* 우측 상단: 배경 전환 */}
-      <Panel position="top-right" className="!m-2">
-        <div className="flex flex-wrap items-center justify-end gap-1 bg-surface-container-lowest rounded-lg shadow-md border border-outline-variant p-1 max-w-[calc(100vw-1rem)]">
-          {BG_VARIANTS.map(v => {
-            const Icon = v.icon;
-            return (
-              <button
-                key={v.key}
-                onClick={() => setBgVariant(v.key)}
-                title={v.label}
-                className={`${btnClass} ${bgVariant === v.key ? btnActive : btnDefault}`}
-                aria-label={v.label}
-                data-oid={`flow-btn-bg-${v.key}`}>
-                <Icon size={16} />
-              </button>
-            );
-          })}
-        </div>
-      </Panel>
+
     </>
   );
 }
@@ -354,17 +349,21 @@ function FlowToolbar({ onAddNote, onDeleteSelected, bgVariant, setBgVariant, onR
  *
  * [Flow: Step 1 (마크다운 파싱) -> Step 2 (elkjs 레이아웃 계산) -> Step 3 (React Flow 렌더링) -> Step 4 (툴바 상호작용)]
  */
-function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [] }) {
+function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [], jobId }) {
   const { t } = useTranslation();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [loading, setLoading] = useState(true);
-  const [bgVariant, setBgVariant] = useState("dots");
+  const bgVariant = "lines";
   const [rawFlowData, setRawFlowData] = useState({ nodes: [], edges: [] });
 
   const reactFlow = useReactFlow();
   const { fitView, addNodes, deleteElements, screenToFlowPosition } = reactFlow;
   const noteIdCounter = useRef(0);
+
+  // [Flow: 드로잉/주석 상태 관리 — perfect-freehand 기반 곡선, 도형, 텍스트, 지우개]
+  const drawing = useFlowDrawing(jobId, screenToFlowPosition);
+  const isDrawingMode = drawing.tool !== "select";
 
   // Step 1+2: 마크다운 파싱 + elkjs 레이아웃 계산
   useEffect(() => {
@@ -377,6 +376,7 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [] }) {
     setRawFlowData({ nodes: rawNodes, edges: rawEdges });
     calculateElkLayout(rawNodes, rawEdges).then(layoutedNodes => {
       setNodes(layoutedNodes);
+      // 파싱 계층 에지(hierarchy) + LLM 트리 에지(dependency, 실선) 통합
       const allEdges = [
         ...rawEdges.map(e => ({ ...e, updatable: true })),
         ...dependencyEdges.map(e => ({ ...e, type: "dependency", updatable: true })),
@@ -501,6 +501,9 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [] }) {
       fitView
       proOptions={{ hideAttribution: true }}
       defaultEdgeOptions={{ type: "custom" }}
+      nodesDraggable={!isDrawingMode}
+      panOnDrag={!isDrawingMode}
+      selectionOnDrag={!isDrawingMode}
       data-oid="flow-canvas">
       <Background variant={bgVariantEnum} gap={16} size={1} />
       <Controls position="bottom-left" className="!flex" />
@@ -516,10 +519,36 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [] }) {
       <FlowToolbar
         onAddNote={handleAddNote}
         onDeleteSelected={handleDeleteSelected}
-        bgVariant={bgVariant}
-        setBgVariant={setBgVariant}
         onRelayout={handleRelayout}
         onFitView={handleFitView}
+      />
+      {/* [Flow: 드로잉 오버레이 — ViewportPortal로 pan/zoom 자동 따라감] */}
+      <DrawingOverlay
+        isActive={isDrawingMode}
+        paths={drawing.paths}
+        currentPathD={drawing.getCurrentPathD()}
+        strokeColor={drawing.strokeColor}
+        strokeWidth={drawing.strokeWidth}
+        isShapeMode={drawing.isShapeMode}
+        textAnnotations={drawing.textAnnotations}
+        onPointerDown={drawing.startDrawing}
+        onPointerMove={drawing.continueDrawing}
+        onPointerUp={drawing.endDrawing}
+        onDeleteText={drawing.deleteTextAnnotation}
+      />
+      {/* [Flow: 드로잉 도구 툴바 — 하단 중앙 Panel] */}
+      <DrawingToolbar
+        tool={drawing.tool}
+        onToolChange={drawing.setTool}
+        strokeColor={drawing.strokeColor}
+        onStrokeColorChange={drawing.setStrokeColor}
+        strokeWidth={drawing.strokeWidth}
+        onStrokeWidthChange={drawing.setStrokeWidth}
+        shapeType={drawing.shapeType}
+        onShapeTypeChange={drawing.setShapeType}
+        onUndo={drawing.undo}
+        onClear={drawing.clear}
+        canUndo={drawing.paths.length > 0 || drawing.textAnnotations.length > 0}
       />
     </ReactFlow>
     </>
@@ -540,7 +569,7 @@ function FlowCanvas({ markdown, onNodeClick, dependencyEdges = [] }) {
  * @param {Array} [props.dependencyEdges] - AI 의존성 에지 배열 [{ source, target, data: { reason } }]
  * @returns {JSX.Element} 플로우 뷰 컴포넌트
  */
-export default function FlowViewer({ markdown, onNodeClick, dependencyEdges = [] }) {
+export default function FlowViewer({ markdown, onNodeClick, dependencyEdges = [], jobId }) {
   const { t } = useTranslation();
 
   return (
@@ -558,6 +587,7 @@ export default function FlowViewer({ markdown, onNodeClick, dependencyEdges = []
             markdown={markdown}
             onNodeClick={onNodeClick}
             dependencyEdges={dependencyEdges}
+            jobId={jobId}
           />
         </ReactFlowProvider>
       </div>

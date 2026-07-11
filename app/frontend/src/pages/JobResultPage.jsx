@@ -72,6 +72,7 @@ export default function JobResultPage() {
   const pollRef = useRef(null);
   const editorRef = useRef(null);
   const pagedViewerRef = useRef(null);
+  const sourcePanelApiRef = useRef(null); // SourcePanel imperhandle (scrollToPage) 용
   const [sourcePanelHandle, setSourcePanelHandle] = useState(null);
   const sourcePanelRef = useCallback((node) => {
     if (node) setSourcePanelHandle(node);
@@ -630,9 +631,13 @@ export default function JobResultPage() {
       return (
         <FlowViewer
           markdown={displayMarkdown}
+          jobId={jobId}
           onNodeClick={(node) => {
-            // 향후: 마크다운 에디터에서 해당 헤딩으로 스크롤
-            console.log("Flow node clicked:", node.data.label);
+            // [Flow: 노드 클릭 -> SourcePanel PDF 해당 페이지로 스크롤]
+            const page = node.data?.page;
+            if (page && sourcePanelApiRef.current) {
+              sourcePanelApiRef.current.scrollToPage(page);
+            }
           }}
         />
       );
@@ -697,7 +702,7 @@ export default function JobResultPage() {
           {/* 탭 콘텐츠 — 활성 탭만 렌더링하여 모바일 성능 확보 */}
           <div className="flex-1 flex flex-col min-h-0 overflow-hidden" data-oid="mobile-tab-content">
             {mobileViewTab === "source" ? (
-              <SourcePanel {...sourcePanelProps} data-oid="result-source-mobile" />
+              <SourcePanel ref={sourcePanelApiRef} {...sourcePanelProps} data-oid="result-source-mobile" />
             ) : (
               rightContent
             )}
@@ -718,7 +723,7 @@ export default function JobResultPage() {
           collapsedSize={0}
           className="flex flex-col h-full min-h-0 overflow-hidden"
           data-oid="result-source-panel">
-          <SourcePanel {...sourcePanelProps} data-oid="result-source" />
+          <SourcePanel ref={sourcePanelApiRef} {...sourcePanelProps} data-oid="result-source" />
         </Panel>
         <PanelResizeHandle
           className="w-2 bg-outline-variant/50 hover:bg-primary transition-colors cursor-col-resize"
@@ -744,11 +749,8 @@ export default function JobResultPage() {
       data-oid="vl.tj_r">
 
       <header
-        className="relative border-b border-outline-variant bg-surface flex flex-col flex-shrink-0"
+        className="relative h-14 border-b border-outline-variant bg-surface flex items-center px-4 flex-shrink-0"
         data-oid="kxse7f.">
-
-        {/* [Flow: 1행: 뒤로가기 + 파일명 + 상태 배지 — 모바일에서 파일명 truncate] */}
-        <div className="flex items-center justify-between px-4 h-14 gap-2" data-oid="header-row1">
 
         <div className="flex items-center gap-2 md:gap-4 min-w-0 flex-1" data-oid="jz8kj2e">
           <Link
@@ -799,18 +801,25 @@ export default function JobResultPage() {
             </span>
           }
         </div>
+
+        {/* 헤더 정중앙: AI 에이전트 트리거 (좌·우 영역이 flex-1로 균형을 맞춰 자동 중앙 정렬) */}
+        <div className="flex-shrink-0" data-oid="header-center-agent">
+          {job?.status === "done" && (
+            <AgentInputBar
+              onOpenChat={() => setChatOpen(true)}
+              runningCount={agentRunningCount}
+            />
+          )}
         </div>
 
-        {/* [Flow: 2행: 뷰 모드 드롭다운 + 다운로드 + 패널 토글 + 에이전트 버튼 — 모바일에서 가로 스크롤 또는 wrap] */}
-        <div className="flex items-center gap-2 px-4 py-2 border-t border-outline-variant/50 overflow-x-auto" data-oid="header-row2">
-
-        {/* [Flow: Step 1 (완료된 작업의 뷰 모드 드롭다운) -> Step 2 (Markdown / Excel / Excel Advanced / Flow 선택)] */}
-        {job?.status === "done" && !needsPagedMode(job) &&
-        <div
-          className="relative shrink-0"
-          onMouseEnter={() => openDropdown(setViewModeDropdownOpen, viewModeDropdownTimerRef)}
-          onMouseLeave={() => closeDropdown(setViewModeDropdownOpen, viewModeDropdownTimerRef)}
-          data-oid="view-mode-dropdown">
+        <div className="flex items-center gap-2 md:gap-3 flex-1 justify-end" data-oid="header-actions">
+          {/* [Flow: Step 1 (완료된 작업의 뷰 모드 드롭다운) -> Step 2 (Markdown / Excel / Excel Advanced / Flow 선택)] */}
+          {job?.status === "done" && !needsPagedMode(job) &&
+          <div
+            className="relative shrink-0"
+            onMouseEnter={() => openDropdown(setViewModeDropdownOpen, viewModeDropdownTimerRef)}
+            onMouseLeave={() => closeDropdown(setViewModeDropdownOpen, viewModeDropdownTimerRef)}
+            data-oid="view-mode-dropdown">
           <button
             className="flex items-center gap-2 px-3 md:px-4 py-1.5 bg-surface-container-high text-on-surface rounded-lg text-sm font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
             data-oid="view-mode-btn">
@@ -863,7 +872,7 @@ export default function JobResultPage() {
         </div>
         }
 
-        <div className="flex items-center gap-2 ml-auto" data-oid=":tdat.:">
+          <div className="flex items-center gap-2" data-oid=":tdat.:">
           {job?.status === "done" && previewMode === "markdown" && markdownSaveMessage &&
           <span className="text-sm text-on-surface-variant font-medium hidden sm:inline" data-oid="markdown-save-msg">
             {markdownSaveMessage}
@@ -1176,10 +1185,6 @@ export default function JobResultPage() {
 
       {job?.status === "done" && (
         <>
-          <AgentInputBar
-            onOpenChat={() => setChatOpen(true)}
-            runningCount={agentRunningCount}
-          />
           <AgentChatModal
             isOpen={chatOpen}
             onClose={() => setChatOpen(false)}

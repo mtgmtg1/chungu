@@ -114,16 +114,19 @@ class SandboxManager:
         user_id: str,
         resource_limits: dict[str, Any] | None = None,
         dense_mode: bool = False,
+        job_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """새 sandbox 를 생성한다.
 
-        [Flow: workspace 준비 -> containerd 컨테이너 생성 -> VM 부팅 대기 -> 상태 반환]
+        [Flow: workspace 준비(파일 매핑 포함) -> containerd 컨테이너 생성 -> VM 부팅 대기 -> 상태 반환]
 
         매개변수:
             job_id: 연결된 Job ID
             user_id: 사용자 ID
             resource_limits: CPU/memory/disk 제한 (예: {"cpu": 2, "memory_mb": 4096})
             dense_mode: 고밀도 모드 (300+ VM) 사용 여부
+            job_data: Job 데이터 딕셔너리 (original_filename, extracted_files 등).
+                전달하면 workspace 준비 시 파일명 매핑(input.pdf → 원본 파일명)을 수행.
 
         반환값:
             {"sandbox_id": str, "container_id": str, "status": "running", "workspace": str}
@@ -133,8 +136,9 @@ class SandboxManager:
 
         logger.info("sandbox 생성 시작: id=%s, job=%s, user=%s, runtime=%s", sandbox_id, job_id, user_id, runtime)
 
-        # Step 1: workspace 준비 (결과 파일 다운로드 + git init)
-        workspace_path = self.workspace_mgr.prepare_workspace(job_id, user_id)
+        # Step 1: workspace 준비 (파일명 매핑 + git init)
+        # job_data 가 있으면 input.{ext} → original/{원본파일명} 매핑 수행.
+        workspace_path = self.workspace_mgr.prepare_workspace(job_id, user_id, job_data=job_data)
 
         # Step 2: containerd 컨테이너 생성 (nerdctl 또는 ctr 사용)
         container_name = f"proof-sandbox-{sandbox_id}"

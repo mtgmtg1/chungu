@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   Box,
+  ChevronDown,
   FileCode,
   FileDown,
   FileSpreadsheet,
@@ -17,6 +18,7 @@ import {
   PanelRightClose,
   RefreshCw,
   Trash2,
+  Workflow,
   XCircle } from
 "lucide-react";
 import SourcePanel from "../components/SourcePanel.jsx";
@@ -28,6 +30,7 @@ import AgentInputBar from "../components/AgentInputBar.jsx";
 import AgentChatModal from "../components/AgentChatModal.jsx";
 import SandboxBrowser from "../components/SandboxBrowser.jsx";
 import UploadPopup from "../components/UploadPopup.jsx";
+import FlowViewer from "../components/FlowViewer.jsx";
 import { api } from "../api.js";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { SkeletonPageResult } from "../components/Skeleton.jsx";
@@ -95,6 +98,10 @@ export default function JobResultPage() {
   const [downloadDropdownOpen, setDownloadDropdownOpen] = useState(false);
   const downloadDropdownTimerRef = useRef(null);
 
+  // 뷰 모드 드롭다운 (Markdown / Excel / Flow 전환)
+  const [viewModeDropdownOpen, setViewModeDropdownOpen] = useState(false);
+  const viewModeDropdownTimerRef = useRef(null);
+
   // AI 에이전트 채팅 모달 상태
   const [chatOpen, setChatOpen] = useState(false);
   // 백그라운드에서 실행 중인 에이전트 수 (모달을 닫아도 스트리밍이 계속되는 세션 개수)
@@ -104,6 +111,10 @@ export default function JobResultPage() {
   const [sandboxPanelOpen, setSandboxPanelOpen] = useState(false);
   // 새 파일 업로드 팝업 상태
   const [uploadPopupOpen, setUploadPopupOpen] = useState(false);
+  // 업로드 진행률 (SourcePanel에 표시하기 위해 상위에서 관리)
+  const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, percent: 0, fileName: "" });
+  // 추가 파일 증분 변환 폴링 (source_files 중 status=processing인 항목이 있을 때)
+  const [addedFilesPolling, setAddedFilesPolling] = useState(false);
 
   const openDropdown = (setter, timerRef) => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -216,6 +227,15 @@ export default function JobResultPage() {
     return () => clearInterval(interval);
   }, [annotatePolling, jobId]);
 
+  // [Flow: Step 1 (addedFilesPolling이 true면 5초 간격으로 job 폴링) -> Step 2 (source_files 중 processing인 항목이 없으면 폴링 중지)]
+  useEffect(() => {
+    if (!addedFilesPolling) return;
+    const interval = setInterval(() => {
+      loadJob();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [addedFilesPolling, jobId]);
+
   // [Flow: Step 1 (사이드바 상태 변경 감지) -> Step 2 (접힌 상태면 왼쪽 원본 패널 collapse, 펼친 상태면 expand)]
   useEffect(() => {
     if (!sourcePanelHandle) return;
@@ -250,6 +270,11 @@ export default function JobResultPage() {
       const fms = (preview.source_files || []).map((f) => f.result_markdown || "");
       setFileMarkdowns(fms);
       setSelectedFileIndex(0);
+      // [Flow: 추가 파일 증분 변환 중인지 확인 — source_files 중 status=processing인 항목이 있으면 폴링]
+      const hasProcessingFiles = (preview.source_files || []).some(
+        (f) => f.status === "processing"
+      );
+      setAddedFilesPolling(hasProcessingFiles);
       // [Flow: Step 1 (DB의 total_pages/total_files 확인) -> Step 2 (폴백: 마크다운의 last_page 확인) -> Step 3 (둘 중 하나라도 임계값 초과 시 페이징 모드)]
       const finalUsePaged = usePaged || (preview.last_page || 0) > PAGE_THRESHOLD;
       if (finalUsePaged) {
@@ -583,7 +608,7 @@ export default function JobResultPage() {
 
   const pct = getDisplayProgress(job, 80, now);
 
-  // [Flow: Step 1 (previewMode에 따라 우측 콘텐츠 선택) -> Step 2 (마크다운이면 SimpleEditor, 엑셀이면 SpreadsheetEditor 또는 로딩 스피너)]
+  // [Flow: Step 1 (previewMode에 따라 우측 콘텐츠 선택) -> Step 2 (마크다운이면 SimpleEditor, 엑셀이면 SpreadsheetEditor, 플로우이면 FlowViewer 또는 로딩 스피너)]
   const renderRightContent = () => {
     if (previewMode === "markdown") {
       return (
@@ -595,6 +620,17 @@ export default function JobResultPage() {
           onPageChange={setCurrentPage}
           onChange={handleMarkdownChange}
           data-oid="result-editor" />
+      );
+    }
+    if (previewMode === "flow") {
+      return (
+        <FlowViewer
+          markdown={displayMarkdown}
+          onNodeClick={(node) => {
+            // 향후: 마크다운 에디터에서 해당 헤딩으로 스크롤
+            console.log("Flow node clicked:", node.data.label);
+          }}
+        />
       );
     }
     if (previewMode === "xlsxBasic") {
@@ -639,6 +675,7 @@ export default function JobResultPage() {
             onStartAnnotateEdit={startAnnotateEdit}
             onCancelAnnotation={handleCancelAnnotation}
             onUpload={() => setUploadPopupOpen(true)}
+            uploadProgress={uploadProgress}
             converting={converting}
             annotationRuns={job?.annotated_pdf_files || []}
             data-oid="result-source" />
@@ -720,36 +757,62 @@ export default function JobResultPage() {
           }
         </div>
 
-        {/* [Flow: Step 1 (완료된 작업의 결과 탭을 헤더 중앙에 배치) -> Step 2 (Markdown / Excel / Excel Advanced 선택)] */}
+        {/* [Flow: Step 1 (완료된 작업의 뷰 모드 드롭다운을 헤더 중앙에 배치) -> Step 2 (Markdown / Excel / Excel Advanced / Flow 선택)] */}
         {job?.status === "done" && !needsPagedMode(job) &&
         <div
-          className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2"
-          data-oid="preview-tabs">
+          className="absolute left-1/2 -translate-x-1/2 relative"
+          onMouseEnter={() => openDropdown(setViewModeDropdownOpen, viewModeDropdownTimerRef)}
+          onMouseLeave={() => closeDropdown(setViewModeDropdownOpen, viewModeDropdownTimerRef)}
+          data-oid="view-mode-dropdown">
           <button
-            onClick={() => setPreviewMode("markdown")}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "markdown" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
-            data-oid="tab-markdown">
-            Markdown
+            className="flex items-center gap-2 px-4 py-1.5 bg-surface-container-high text-on-surface rounded-lg text-sm font-medium hover:bg-surface-container-high/80 transition-colors border border-outline-variant"
+            data-oid="view-mode-btn">
+            {previewMode === "markdown" && "Markdown"}
+            {previewMode === "xlsxBasic" && t("page:result.excel")}
+            {previewMode === "xlsxAdvanced" && "Excel Advanced"}
+            {previewMode === "flow" && t("page:result.flow")}
+            <ChevronDown size={14} />
           </button>
-          <button
-            onClick={() => {
-              setPreviewMode("xlsxBasic");
-              if (!job?.xlsx_basic_converted) {
-                convertOnly("xlsx_basic");
-              }
-            }}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "xlsxBasic" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
-            data-oid="tab-xlsx-basic">
-            {t("page:result.excel")}
-          </button>
-          {(job?.xlsx_advanced_converted || xlsxAdvancedPolling) &&
-          <button
-            onClick={() => setPreviewMode("xlsxAdvanced")}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${previewMode === "xlsxAdvanced" ? "bg-primary text-white" : "text-on-surface hover:bg-surface-container-high"}`}
-            data-oid="tab-xlsx-advanced">
-            Excel Advanced
-          </button>
-          }
+          <div
+            className={`absolute left-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg border border-outline-variant flex-col z-50 py-1 ${viewModeDropdownOpen ? "flex" : "hidden"}`}
+            data-oid="view-mode-menu">
+            <button
+              onClick={() => setPreviewMode("markdown")}
+              className={`flex items-center gap-2 text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface ${previewMode === "markdown" ? "font-bold text-primary" : ""}`}
+              data-oid="view-mode-markdown">
+              <FileCode size={16} className="text-primary flex-shrink-0" />
+              Markdown
+            </button>
+            <button
+              onClick={() => {
+                setPreviewMode("xlsxBasic");
+                if (!job?.xlsx_basic_converted) {
+                  convertOnly("xlsx_basic");
+                }
+              }}
+              className={`flex items-center gap-2 text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface ${previewMode === "xlsxBasic" ? "font-bold text-primary" : ""}`}
+              data-oid="view-mode-xlsx-basic">
+              <FileSpreadsheet size={16} className="text-primary flex-shrink-0" />
+              {t("page:result.excel")}
+            </button>
+            {(job?.xlsx_advanced_converted || xlsxAdvancedPolling) &&
+            <button
+              onClick={() => setPreviewMode("xlsxAdvanced")}
+              className={`flex items-center gap-2 text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface ${previewMode === "xlsxAdvanced" ? "font-bold text-primary" : ""}`}
+              data-oid="view-mode-xlsx-advanced">
+              <FileSpreadsheet size={16} className="text-primary flex-shrink-0" />
+              Excel Advanced
+            </button>
+            }
+            <div className="h-px bg-outline-variant my-1" />
+            <button
+              onClick={() => setPreviewMode("flow")}
+              className={`flex items-center gap-2 text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface ${previewMode === "flow" ? "font-bold text-primary" : ""}`}
+              data-oid="view-mode-flow">
+              <Workflow size={16} className="text-primary flex-shrink-0" />
+              {t("page:result.flow")}
+            </button>
+          </div>
         </div>
         }
 
@@ -1006,6 +1069,14 @@ export default function JobResultPage() {
       <UploadPopup
         open={uploadPopupOpen}
         onClose={() => setUploadPopupOpen(false)}
+        jobId={jobId}
+        onProgress={setUploadProgress}
+        onComplete={() => {
+          setUploadPopupOpen(false);
+          setUploadProgress({ current: 0, total: 0, percent: 0, fileName: "" });
+          // 업로드 완료 시 job을 새로고침하여 추가된 파일 + 증분 변환 폴링 시작
+          loadJob();
+        }}
         data-oid="result-upload-popup"
       />
 

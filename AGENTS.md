@@ -8,6 +8,36 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### Flow Panel — 마크다운 헤딩 구조를 React Flow 그래프로 시각화 + 드롭다운 뷰 전환
+
+- **목표**: 결과페이지(JobResultPage)에 마크다운 문서의 헤딩(H1~H6) 구조를 React Flow 캔버스에 논리 흐름 그래프로 시각화하는 플로우 패널 추가. 기존 가로형 탭 버튼(Markdown/Excel/Excel Advanced)을 드롭다운 메뉴로 교체하여 Markdown/Excel/Flow 뷰를 전환. 상세 계획은 `FLOW_PANEL_PLAN.md` 참조.
+- **MCP 조사 기반 구현**: context7 + deepwiki MCP로 React Flow v12, elkjs, marked의 최신 API 시그니처를 사전 조사하여 정확한 API 사용.
+- **Phase 1: 의존성 설치 + 인프라**:
+  - `@xyflow/react` (React Flow v12, 구 `reactflow`에서 패키지명 변경), `elkjs` (Eclipse Layout Kernel), `uuid` npm 설치.
+  - `app/frontend/src/index.css`: `@import "@xyflow/react/dist/style.css"` 추가 (PostCSS `@import` 우선 순위 준수).
+  - `app/frontend/src/locales/{ko,en,ja}/page.json`: flow 관련 i18n 키 11개 추가 (flow, flowView, flowLoading, flowEmpty, flowResetLayout, flowFitView, flowAnalyzeDeps, flowAnalyzing, flowDepEdges, flowHierarchyEdges, viewMode).
+- **Phase 2: 마크다운 → Flow 파서 (순방향 파이프라인)**:
+  - `app/frontend/src/utils/markdownToFlow.js`: `marked.lexer()`로 토큰화 → heading 토큰(`{ type, depth, text }`)을 React Flow 노드로 변환 → 스택 기반 부모-자식 계층 에지 생성 → 하위 콘텐츠를 `content`/`contentPreview`(200자)에 축적. 토큰 소모 0, 순수 파싱.
+  - `app/frontend/src/utils/elkLayout.js`: `elkjs/lib/elk.bundled.js` import → ELK JSON 그래프 형식(`{ id, layoutOptions, children, edges }`) 구성 → `elk.layout()` 호출 → 계산된 x/y 좌표를 노드에 매핑. 레이아웃 옵션: `elk.algorithm: 'layered'`, `elk.direction: 'DOWN'`, `elk.spacing.nodeNode: '80'`, `elk.layered.spacing.nodeNodeBetweenLayers: '100'`.
+- **Phase 3: FlowViewer 컴포넌트** (`app/frontend/src/components/FlowViewer.jsx`):
+  - `HeadingNode` 커스텀 노드: 제목 + H레벨 배지 + 내용 미리보기 (line-clamp-3). `<Handle>` 컴포넌트로 연결점 표시.
+  - `HierarchyEdge` 커스텀 엣지: 실선 (부모-자식 heading 관계). `BaseEdge` + `getBezierPath` 사용.
+  - `DependencyEdge` 커스텀 엣지: 점선 + 호버 시 `EdgeLabelRenderer` 포털로 `reason` 툴팁 렌더링 (AI 의존성 분석 결과 표시용).
+  - `ReactFlowProvider` + `useNodesState`/`useEdgesState` + `useReactFlow().fitView()`. `<Background>`, `<Controls>`, `<MiniMap>` 내장 컴포넌트. `proOptions={{ hideAttribution: true }}`.
+- **Phase 4: 드롭다운 뷰 전환기** (`app/frontend/src/pages/JobResultPage.jsx`):
+  - 기존 가로형 탭 버튼 3개(Markdown/Excel/Excel Advanced)를 드롭다운 메뉴로 교체. 기존 `openDropdown`/`closeDropdown` hover timer 패턴 재사용.
+  - `previewMode` state에 `"flow"` 추가 (`"markdown" | "xlsxBasic" | "xlsxAdvanced" | "flow"`).
+  - `renderRightContent()`에 flow 분기 추가: `FlowViewer` 컴포넌트 렌더링.
+  - `Workflow`, `ChevronDown` 아이콘 import 추가. `FlowViewer` import 추가.
+- **Phase 5: AI 의존성 추론 파이프라인 (백엔드)**:
+  - `app/ai-backend/src/tools/flow.ts`: `buildFlowTools` 팩토리 — 2개 도구:
+    - `extract_flow_structure`: 마크다운에서 헤딩 트리 추출 (토큰 소모 0, `marked.lexer()` 순수 파싱). 노드 배열 + 계층 에지 배열 반환.
+    - `infer_flow_dependencies`: 압축 메타데이터를 LLM에 전달하여 크로스 섹션 논리적 의존성 에지 추론. 참고 자료의 시스템 프롬프트 템플릿 적용.
+  - `app/ai-backend/src/chat/route.ts`: `buildFlowTools` import + `tools` 객체에 스프레드 등록. `buildSystemPrompt()`에 "6. Flow analysis" 도구 카테고리 설명 추가.
+  - `app/ai-backend/package.json`: `marked` 의존성 추가.
+- **Phase 6: 양방향 동기화 (향후 확장)**: 순환 참조 탐지(DFS), 다중 부모 검증, 위상 정렬 트리 복원, 드래그 앤 드롭 리팩토링, 실시간 동기화(Flow → 마크다운 에디터 `editor.commands.setContent()`). 별도 스프린트 예정.
+- **핵심 파일**: `FLOW_PANEL_PLAN.md`, `app/frontend/src/utils/markdownToFlow.js`, `app/frontend/src/utils/elkLayout.js`, `app/frontend/src/components/FlowViewer.jsx`, `app/frontend/src/pages/JobResultPage.jsx`, `app/frontend/src/locales/{ko,en,ja}/page.json`, `app/frontend/src/index.css`, `app/ai-backend/src/tools/flow.ts`, `app/ai-backend/src/chat/route.ts`.
+
 ### AI 에이전트 툴콜 응답 처리 개선 — LLMLingua-2 동적 프롬프트 압축 + maxOutputTokens + 도구 출력 제한
 
 - **목표**: 에이전트가 툴콜 결과를 읽고 다음 툴콜을 호출하지 못하는 문제를 5가지 방향으로 수정. Gemma 4-26B 모델의 토큰 예산 부족, 도구 출력 과다, 시스템 프롬프트 모호성, 디버깅 로그 부족을 해결.

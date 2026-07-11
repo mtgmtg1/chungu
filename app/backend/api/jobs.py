@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from .. import settings_store
+from ..config import settings
 from ..auth.api_key_auth import require_api_key_or_session
 from ..auth.supabase_auth import CurrentUser, get_current_admin, get_current_user
 from ..celery_app import celery as celery_app
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 from ..core.prompts import DEFAULT_COLUMNS
 from ..db.models import Job, User
 from ..db.session import get_db
-from ..workers.tasks import run_job
+from ..workers.tasks import run_job, run_job_added_files
 
 router = APIRouter(prefix="/api", tags=["jobs"])
 
@@ -753,6 +754,201 @@ async def create_job(
     }
 
 
+# [Flow: Step 1 (완료된 Job에 파일 추가 — Storage 업로드 경로 할당) -> Step 2 (TUS 업로드) -> Step 3 (confirm-add-files에서 분석 + 증분 변환)]
+@router.post("/jobs/{job_id}/init-add-files")
+async def init_add_files(
+    job_id: str,
+    payload: dict = Body(...),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """기존 완료된 Job에 새 파일을 추가하기 위한 Storage 업로드 경로를 반환한다.
+
+    init_job과 달리 새 Job을 생성하지 않고 기존 Job ID를 그대로 사용한다.
+    파일 검증(확장자, 크기)은 init_job과 동일하게 수행한다.
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+    if job.status != "done":
+        raise HTTPException(status_code=400, detail="Only completed jobs can accept additional files")
+
+    files = payload.get("files", [])
+    if not files:
+        raise HTTPException(status_code=400, detail="No files selected")
+
+    for f in files:
+        ext = Path(f["name"]).suffix.lower()
+        if ext not in MEDIA_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Unsupported file format: {f['name']}")
+
+    max_mb = int(settings_store.get_setting(db, "max_file_mb") or "200")
+    total_size = sum(f.get("size", 0) for f in files)
+    if total_size > max_mb * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"Total file size exceeds limit (max {max_mb}MB)")
+
+    upload_paths = []
+    for f in files:
+        safe_name = supabase_client._sanitize_storage_filename(f["name"])
+        storage_path = f"{job.id}/{safe_name}"
+        upload_paths.append({
+            "original": f["name"],
+            "storage_name": safe_name,
+            "storage_path": storage_path,
+            "relative_path": f.get("relative_path", f["name"]),
+            "size": f.get("size", 0),
+        })
+
+    return {"job_id": job.id, "upload_paths": upload_paths}
+
+
+# [Flow: Step 1 (TUS 업로드 완료 후 새 파일 다운로드/분석) -> Step 2 (extracted_files에 새 항목 추가 — status=processing, is_new=true) -> Step 3 (run_job_added_files Celery 태스크 트리거) -> Step 4 (프론트엔드에서 폴링으로 완료 대기)]
+@router.post("/jobs/{job_id}/confirm-add-files")
+async def confirm_add_files(
+    job_id: str,
+    payload: dict = Body(...),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """TUS 업로드 완료 후 새 파일들을 분석하여 기존 Job의 extracted_files에 추가하고 증분 변환을 트리거한다.
+
+    기존 결과는 유지되며, 새 파일만 변환되어 결과에 추가된다.
+    단일 PDF/DOCX/HWP Job에 파일을 추가하는 경우 file_type을 "mixed"로 전환한다.
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+    if job.status != "done":
+        raise HTTPException(status_code=400, detail="Only completed jobs can accept additional files")
+
+    files_info = payload.get("files", [])
+    if not files_info:
+        raise HTTPException(status_code=400, detail="No file information provided")
+
+    # [Flow: Step 1 (새 파일들을 Storage에서 다운로드/압축 해제) -> Step 2 (파일 타입별 분류)]
+    new_extracted_infos: list[dict] = []
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        all_extracted: list[Path] = []
+        for info in files_info:
+            storage_path = info["storage_path"]
+            filename = info["original_name"]
+            rel_path = info.get("relative_path", filename)
+            data = supabase_client.download_pdf(storage_path).read()
+            if archive_handler.is_archive(filename):
+                archive_dest = tmp_path / f"extracted_{rel_path}"
+                archive_dest.mkdir(parents=True, exist_ok=True)
+                all_extracted.extend(archive_handler.extract_all_recursive(filename, data, archive_dest))
+            else:
+                file_path = tmp_path / rel_path
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_bytes(data)
+                all_extracted.append(file_path)
+
+        # [Flow: Step 3 (새 파일 info 생성 — Storage 업로드 + 타입 감지 + processing 상태)]
+        for fp in all_extracted:
+            ftype = media_loader.detect_file_type(fp)
+            info_entry = {
+                "path": str(fp.name),
+                "type": ftype,
+                "size": fp.stat().st_size,
+                "duration": media_loader.get_media_duration_seconds(fp) if ftype in ("audio", "video") else 0,
+                "result_markdown": "",
+                "status": "processing",
+                "is_new": True,
+            }
+            # 이미지/문서 파일은 Storage에 업로드하여 source_files에서 미리보기 가능하도록 함
+            if ftype == "image":
+                try:
+                    info_entry["storage_path"] = supabase_client.upload_image(job.id, fp, fp.name)
+                except Exception as e:
+                    logger.warning(f"[confirm-add-files:{job.id}] 이미지 업로드 실패: {fp.name}: {e}")
+            elif ftype in media_loader.DOCLING_TYPES or ftype in media_loader.HWP_TYPES:
+                try:
+                    info_entry["storage_path"] = supabase_client.upload_input(
+                        BytesIO(fp.read_bytes()), fp.name, job.id
+                    )
+                except Exception as e:
+                    logger.warning(f"[confirm-add-files:{job.id}] 문서 업로드 실패: {fp.name}: {e}")
+            elif ftype in ("audio", "video"):
+                try:
+                    info_entry["storage_path"] = supabase_client.upload_input(
+                        BytesIO(fp.read_bytes()), fp.name, job.id
+                    )
+                except Exception as e:
+                    logger.warning(f"[confirm-add-files:{job.id}] 미디어 업로드 실패: {fp.name}: {e}")
+
+            # 새 파일의 원본 데이터를 작업 디렉토리에 저장 (Celery 태스크에서 다운로드 대신 사용)
+            work_dir = Path(settings.data_dir) / "jobs" / job_id / "added_files"
+            work_dir.mkdir(parents=True, exist_ok=True)
+            dest_path = work_dir / fp.name
+            if not dest_path.exists():
+                dest_path.write_bytes(fp.read_bytes())
+
+            new_extracted_infos.append(info_entry)
+
+    # [Flow: Step 4 (기존 extracted_files에 새 항목 병합)]
+    existing_files = job.extracted_files or []
+    # 단일 PDF/DOCX/HWP Job의 경우 extracted_files가 비어 있을 수 있으므로
+    # 기존 원본 파일을 extracted_files에 합성 항목으로 추가
+    if not existing_files and job.pdf_storage_path and job.file_type in ("pdf", "docx", "hwp"):
+        existing_files = [{
+            "path": job.original_filename or Path(job.pdf_storage_path).name,
+            "type": job.file_type,
+            "size": job.file_size or 0,
+            "duration": 0,
+            "result_markdown": "",
+            "storage_path": job.pdf_storage_path,
+        }]
+
+    merged_files = existing_files + new_extracted_infos
+    job.extracted_files = merged_files
+    # 단일 파일 타입 Job에 새 파일이 추가되면 mixed로 전환
+    if job.file_type in ("pdf", "docx", "hwp") and len(merged_files) > 1:
+        job.file_type = "mixed"
+    flag_modified(job, "extracted_files")
+    db.commit()
+
+    # [Flow: Step 5 (구독 사용량 사전 한도 체크)]
+    new_pages, new_image_count, new_audio_seconds, new_video_seconds, _ = await _analyze_extracted_files(
+        [Path(Path(settings.data_dir) / "jobs" / job_id / "added_files" / info["path"]) for info in new_extracted_infos]
+    )
+    db_user = db.get(User, job.user_id)
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    new_units = _calculate_work_units(new_pages, new_image_count, new_audio_seconds, new_video_seconds)
+    if new_units > 0:
+        ocr_model = job.ocr_model or "premium"
+        basic_pages = new_pages + new_image_count if ocr_model == "basic" else 0
+        premium_pages = new_pages + new_image_count if ocr_model != "basic" else 0
+        premium_pages += new_pages if job.use_docling_refinement else 0
+        media_seconds = new_audio_seconds + new_video_seconds
+        try:
+            subscription_service.reserve_usage(
+                db,
+                db_user,
+                basic_pages=basic_pages,
+                premium_pages=premium_pages,
+                media_seconds=media_seconds,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=402, detail=str(e))
+
+    # [Flow: Step 6 (증분 변환 Celery 태스크 트리거)]
+    run_job_added_files.delay(job.id)
+    logger.info(f"[confirm-add-files:{job.id}] 증분 변환 태스크 트리거 — 새 파일 {len(new_extracted_infos)}개")
+
+    # preview 캐시 무효화
+    cache.invalidate_pattern(f"preview:{job.id}:*")
+
+    return {
+        "job_id": job.id,
+        "status": job.status,
+        "added_files_count": len(new_extracted_infos),
+        "total_files": len(merged_files),
+    }
+
+
 @router.put("/jobs/{job_id}")
 def update_job(
     job_id: str,
@@ -1115,7 +1311,7 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
     if not isinstance(info, dict) or not info.get("storage_path"):
         return None
     ftype = info.get("type", "")
-    if ftype not in ("pdf", "image", "audio", "video", "docx", "hwp"):
+    if ftype not in ("pdf", "image", "audio", "video", "docx", "hwp", "file"):
         return None
     bucket = info.get("bucket", "pdfs")
     try:
@@ -1137,8 +1333,29 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
                 "preview_url": preview_url,
                 "source_index": idx,
                 "source_kind": source_kind,
+                "status": info.get("status", ""),
             }
             return item
+        # file 타입 (csv, md, xlsx, txt, html 등) — 다운로드용 signed URL만 생성
+        if ftype == "file":
+            try:
+                download_url = supabase_client.get_signed_download_url(storage_path, bucket=bucket, expires_in=3600)
+            except Exception:
+                return None
+            if not download_url:
+                return None
+            return {
+                "name": info.get("path", info.get("storage_path", "")),
+                "type": "file",
+                "url": download_url,
+                "storage_path": storage_path,
+                "bucket": bucket,
+                "page_num": idx + 1,
+                "result_markdown": info.get("result_markdown", ""),
+                "source_index": idx,
+                "source_kind": source_kind,
+                "status": info.get("status", ""),
+            }
         # image/audio/video는 원본 signed URL만 필요
         client = supabase_client.create_fresh_service_client()
         url = supabase_client.get_signed_download_url_with_client(client, storage_path, bucket=bucket, expires_in=3600)
@@ -1152,6 +1369,7 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
             "preview_url": url,
             "source_index": idx,
             "source_kind": source_kind,
+            "status": info.get("status", ""),
         }
         # 이미지에 searchable PDF가 있으면 preview_url을 대체 (텍스트 검색/선택 가능)
         if ftype == "image":

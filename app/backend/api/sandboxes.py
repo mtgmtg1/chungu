@@ -19,8 +19,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from sqlalchemy.orm.attributes import flag_modified
+
 from ..auth.supabase_auth import CurrentUser, get_current_user
 from ..config import settings
+from ..core import cache
 from ..core.sandbox import (
     ResultCollector,
     SandboxManager,
@@ -37,6 +40,28 @@ router = APIRouter(prefix="/api/sandboxes", tags=["sandboxes"])
 # --- sandbox manager 인스턴스 (싱글톤) ---
 _sandbox_mgr: SandboxManager | None = None
 _collector: ResultCollector | None = None
+
+# 파일 확장자 → source_files 타입 매핑 (_build_source_file_item 호환)
+_EXTENSION_TYPE_MAP = {
+    ".pdf": "pdf",
+    ".png": "image", ".jpg": "image", ".jpeg": "image", ".svg": "image",
+    ".mp3": "audio", ".wav": "audio",
+    ".mp4": "video", ".webm": "video",
+    ".csv": "file", ".md": "file", ".xlsx": "file", ".json": "file",
+    ".txt": "file", ".html": "file", ".zip": "file", ".tar": "file", ".gz": "file",
+}
+
+
+def _ext_to_file_type(extension: str) -> str:
+    """파일 확장자를 source_files 타입으로 변환한다.
+
+    매개변수:
+        extension: 파일 확장자 (예: ".csv")
+
+    반환값:
+        타입 문자열 ("pdf"|"image"|"audio"|"video"|"file")
+    """
+    return _EXTENSION_TYPE_MAP.get(extension.lower(), "file")
 
 
 def _get_sandbox_mgr() -> SandboxManager:
@@ -97,26 +122,53 @@ async def create_sandbox(
 ) -> dict[str, Any]:
     """새 sandbox 를 생성한다.
 
-    [Flow: Job 확인 -> sandbox 생성 -> DB 저장 -> 결과 반환]
+    [Flow: Job 확인 -> job_data 구성 -> sandbox 생성(파일 매핑 포함)
+      -> Storage 에서 결과 파일 다운로드 -> DB 저장 -> 결과 반환]
     """
     # Step 1: Job 확인
     job = db.execute(select(Job).where(Job.id == req.job_id)).scalar_one_or_none()
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    # Step 2: sandbox 생성
+    # Step 2: job_data 딕셔너리 구성 — 파일명 매핑에 필요한 필드만 추출
+    # original_filename: 단일 파일 Job에서 input.{ext} → 원본 파일명 매핑용
+    # extracted_files: 멀티미디어/아카이브 Job의 개별 파일 매핑용
+    # pdf_storage_path: Storage에서 원본 파일 다운로드용
+    # annotated_pdf_files: 주석 JSON 다운로드용
+    job_data = {
+        "original_filename": job.original_filename or "",
+        "pdf_storage_path": job.pdf_storage_path or "",
+        "extracted_files": job.extracted_files or [],
+        "annotated_pdf_files": job.annotated_pdf_files or [],
+        "file_type": job.file_type or "",
+    }
+
+    # Step 3: sandbox 생성 — job_data 전달로 파일명 매핑 수행
     mgr = _get_sandbox_mgr()
     result = mgr.create_sandbox(
         job_id=req.job_id,
         user_id=user.user_id,
         resource_limits=req.resource_limits,
         dense_mode=req.dense_mode,
+        job_data=job_data,
     )
 
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("error", "sandbox creation failed"))
 
-    # Step 3: DB 저장
+    # Step 4: Storage 에서 결과 파일 다운로드 (추출 결과 마크다운, 주석 JSON 등)
+    # 기존 처리 파일(input.pdf)은 _map_input_files_to_original_names 로 복사되었고,
+    # 여기서는 Storage 에만 있는 파일(추출 결과, 주석)을 추가로 다운로드.
+    try:
+        from ..core import supabase_client as sbc
+        workspace_path = Path(result.get("workspace", ""))
+        if workspace_path.exists():
+            _get_collector()  # collector 싱글톤 초기화 (필요시)
+            mgr.workspace_mgr.download_job_files(workspace_path, job_data, sbc.get_service_client())
+    except Exception as e:
+        logger.warning("Storage 파일 다운로드 실패 (무시): %s", e)
+
+    # Step 5: DB 저장
     sandbox = Sandbox(
         id=result["sandbox_id"],
         job_id=req.job_id,
@@ -419,7 +471,7 @@ async def collect_results(
 ) -> dict[str, Any]:
     """sandbox 의 결과 파일을 수집하여 Supabase Storage 에 업로드한다.
 
-    [Flow: sandbox 조회 -> workspace 스캔 -> Storage 업로드 -> 결과 반환]
+    [Flow: sandbox 조회 -> workspace 스캔 -> Storage 업로드 -> job.extracted_files 업데이트 -> 캐시 무효화]
     """
     sandbox = db.execute(
         select(Sandbox).where(Sandbox.id == sandbox_id)
@@ -447,6 +499,37 @@ async def collect_results(
         job_id=sandbox.job_id or "",
         supabase_client=supabase,
     )
+
+    # [Flow: 업로드된 파일을 job.extracted_files 에 추가하여 파일 탭에 표시]
+    uploaded_files = result.get("files", [])
+    if uploaded_files and sandbox.job_id:
+        job = db.execute(
+            select(Job).where(Job.id == sandbox.job_id)
+        ).scalar_one_or_none()
+        if job:
+            existing = list(job.extracted_files or [])
+            existing_paths = {
+                f.get("storage_path") for f in existing if isinstance(f, dict)
+            }
+            for f in uploaded_files:
+                storage_path = f.get("storage_path", "")
+                if not storage_path or storage_path in existing_paths:
+                    continue
+                ext = Path(f.get("path", "")).suffix.lower()
+                existing.append({
+                    "path": f.get("path", storage_path),
+                    "storage_path": storage_path,
+                    "type": _ext_to_file_type(ext),
+                    "size": f.get("size", 0),
+                    "bucket": "jobs",
+                    "source_kind": "agent_output",
+                })
+                existing_paths.add(storage_path)
+            job.extracted_files = existing
+            flag_modified(job, "extracted_files")
+            db.commit()
+            # preview 캐시 무효화 — 다음 preview_job 호출 시 새 파일이 source_files 에 포함됨
+            cache.invalidate_pattern(f"preview:{job.id}:*")
 
     return {
         "sandbox_id": sandbox_id,

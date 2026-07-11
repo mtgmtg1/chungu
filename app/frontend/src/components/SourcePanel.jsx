@@ -2,7 +2,8 @@
 // processing/error 상태의 주석 항목은 URL 없이 상태 정보만 표시한다.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { FileText, FileUp, ImageIcon, Volume2, Film, Trash2, Loader2, AlertCircle, RotateCw, Sparkles, ChevronDown, ChevronUp, List, Check } from "lucide-react";
+import { FileText, FileUp, FileDown, ImageIcon, Volume2, Film, Trash2, Loader2, AlertCircle, RotateCw, Sparkles, ChevronDown, ChevronUp, List, Check } from "lucide-react";
+import { marked } from "marked";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer from "./PdfViewer.jsx";
 import MediaPlayer from "./MediaPlayer.jsx";
@@ -16,7 +17,172 @@ function SourceIcon({ type }) {
   if (type === "image") return <ImageIcon size={16} className="text-primary flex-shrink-0" />;
   if (type === "audio") return <Volume2 size={16} className="text-secondary flex-shrink-0" />;
   if (type === "video") return <Film size={16} className="text-tertiary flex-shrink-0" />;
+  if (type === "file") return <FileDown size={16} className="text-tertiary flex-shrink-0" />;
   return <FileText size={16} className="text-outline flex-shrink-0" />;
+}
+
+/**
+ * [Flow: Step 1 (파일 확장자 확인) -> Step 2 (텍스트 기반 파일이면 fetch로 내용 로드)
+ *       -> Step 3 (마크다운은 marked로 렌더링, CSV는 표로 변환, 기타 텍스트는 pre로 표시)
+ *       -> Step 4 (바이너리 파일은 다운로드 링크만 표시)]
+ * file 타입 (csv, md, xlsx, txt, html, json 등) 의 미리보기를 제공한다.
+ * 텍스트 기반 파일은 내용을 fetch하여 인라인 렌더링하고,
+ * 바이너리 파일 (xlsx, zip 등) 은 다운로드 링크만 표시한다.
+ */
+function FilePreview({ file }) {
+  const { t } = useTranslation();
+  const filename = file.name || file.storage_path || "file";
+  const sizeKb = file.size ? Math.round(file.size / 1024) : null;
+  const ext = filename.split(".").pop()?.toLowerCase() || "";
+  const [content, setContent] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  // 텍스트 기반 파일 확장자 — fetch하여 내용을 표시
+  const TEXT_EXTS = ["md", "csv", "txt", "json", "html", "svg"];
+  const isTextFile = TEXT_EXTS.includes(ext);
+
+  useEffect(() => {
+    if (!isTextFile || !file.url) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetch(file.url)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.text();
+      })
+      .then((text) => {
+        if (!cancelled) {
+          setContent(text);
+          setLoading(false);
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setError(e.message);
+          setLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [file.url, isTextFile]);
+
+  // [Flow: 바이너리 파일 (xlsx, zip, tar, gz 등) — 다운로드 링크만 표시]
+  if (!isTextFile) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center h-full w-full text-on-surface-variant p-4 gap-4" data-oid="file-binary-preview">
+        <FileDown size={48} className="text-tertiary" />
+        <div className="text-center">
+          <p className="font-medium text-on-surface text-sm break-all">{filename}</p>
+          {sizeKb !== null && (
+            <p className="text-xs text-on-surface-variant mt-1">{sizeKb} KB</p>
+          )}
+        </div>
+        <a
+          href={file.url}
+          download={filename}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white text-sm hover:opacity-90 transition-colors"
+          data-oid="file-download-link"
+        >
+          <FileDown size={16} />
+          {t("common:download") || "Download"}
+        </a>
+      </div>
+    );
+  }
+
+  // [Flow: 로딩 중]
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center h-full w-full text-on-surface-variant" data-oid="file-text-loading">
+        <Loader2 size={24} className="animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  // [Flow: fetch 에러 — 다운로드 링크로 폴백]
+  if (error) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center h-full w-full text-on-surface-variant p-4 gap-4" data-oid="file-text-error">
+        <AlertCircle size={32} className="text-error" />
+        <p className="text-sm text-error">{error}</p>
+        <a href={file.url} download={filename} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white text-sm hover:opacity-90 transition-colors">
+          <FileDown size={16} />
+          {t("common:download") || "Download"}
+        </a>
+      </div>
+    );
+  }
+
+  // [Flow: 마크다운 — marked로 HTML 렌더링]
+  if (ext === "md" && content) {
+    const html = marked.parse(content, { breaks: true, gfm: true });
+    return (
+      <div className="flex-1 overflow-y-auto custom-scrollbar bg-white p-6" data-oid="file-md-preview">
+        <div className="prose max-w-none focus:outline-none" dangerouslySetInnerHTML={{ __html: html }} />
+      </div>
+    );
+  }
+
+  // [Flow: HTML — iframe으로 렌더링]
+  if (ext === "html" && content) {
+    return (
+      <iframe
+        srcDoc={content}
+        title={filename}
+        className="flex-1 w-full h-full border-0 bg-white"
+        sandbox=""
+        data-oid="file-html-preview"
+      />
+    );
+  }
+
+  // [Flow: CSV — 표로 렌더링]
+  if (ext === "csv" && content) {
+    const rows = content.split("\n").map((row) => row.split(","));
+    return (
+      <div className="flex-1 overflow-auto custom-scrollbar bg-white p-4" data-oid="file-csv-preview">
+        <table className="min-w-full text-xs border-collapse">
+          <tbody>
+            {rows.map((row, ri) => (
+              <tr key={ri} className={ri === 0 ? "font-bold bg-surface-container-high" : ""}>
+                {row.map((cell, ci) => (
+                  <td key={ci} className="border border-outline-variant px-2 py-1 whitespace-nowrap">{cell.trim()}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  // [Flow: JSON — 포맷팅하여 표시]
+  if (ext === "json" && content) {
+    let formatted = content;
+    try { formatted = JSON.stringify(JSON.parse(content), null, 2); } catch { /* 원본 유지 */ }
+    return (
+      <div className="flex-1 overflow-auto custom-scrollbar bg-surface-container-lowest p-4" data-oid="file-json-preview">
+        <pre className="text-xs font-mono whitespace-pre-wrap break-words text-on-surface">{formatted}</pre>
+      </div>
+    );
+  }
+
+  // [Flow: SVG — 이미지로 렌더링]
+  if (ext === "svg" && content) {
+    return (
+      <div className="flex-1 overflow-auto custom-scrollbar p-4 flex items-center justify-center bg-white" data-oid="file-svg-preview">
+        <div dangerouslySetInnerHTML={{ __html: content }} />
+      </div>
+    );
+  }
+
+  // [Flow: 기타 텍스트 파일 (txt 등) — pre로 표시]
+  return (
+    <div className="flex-1 overflow-auto custom-scrollbar bg-surface-container-lowest p-4" data-oid="file-text-preview">
+      <pre className="text-xs font-mono whitespace-pre-wrap break-words text-on-surface">{content || ""}</pre>
+    </div>
+  );
 }
 
 function SingleFilePreview({ file, filename, annotationsJson, pdfViewerRef, onAnnotationChanged }) {
@@ -408,6 +574,7 @@ export default function SourcePanel({
   onStartAnnotateEdit,
   onCancelAnnotation,
   onUpload,
+  uploadProgress,
   converting = false,
   annotationRuns = [],
   totalPages = 1,
@@ -614,6 +781,27 @@ export default function SourcePanel({
             </button>
           </div>
         )}
+        {/* [Flow: 업로드 진행률 바 — uploadProgress.total > 0일 때 표시] */}
+        {uploadProgress && uploadProgress.total > 0 && (
+          <div className="p-2 border-t border-outline-variant/40" data-oid="source-panel-upload-progress">
+            <div className="flex items-center gap-2 text-xs text-on-surface-variant mb-1">
+              <Loader2 size={14} className="text-primary animate-spin flex-shrink-0" />
+              <span className="truncate flex-1" data-oid="source-panel-prog-file">
+                {uploadProgress.fileName}
+              </span>
+              <span className="flex-shrink-0" data-oid="source-panel-prog-count">
+                {uploadProgress.current + 1}/{uploadProgress.total} ({uploadProgress.percent}%)
+              </span>
+            </div>
+            <div className="w-full bg-surface-container h-1.5 overflow-hidden rounded-full" data-oid="source-panel-prog-bg">
+              <div
+                className="bg-primary h-full transition-all duration-300 rounded-full"
+                style={{ width: `${uploadProgress.percent}%` }}
+                data-oid="source-panel-prog-fill"
+              />
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -674,6 +862,23 @@ export default function SourcePanel({
               <FileUp size={16} />
               {t("page:result.uploadNewFiles")}
             </button>
+          )}
+          {uploadProgress && uploadProgress.total > 0 && (
+            <div className="w-full max-w-xs" data-oid="source-panel-empty-prog">
+              <div className="flex items-center gap-2 text-xs text-on-surface-variant mb-1">
+                <Loader2 size={14} className="text-primary animate-spin flex-shrink-0" />
+                <span className="truncate flex-1">{uploadProgress.fileName}</span>
+                <span className="flex-shrink-0">
+                  {uploadProgress.current + 1}/{uploadProgress.total} ({uploadProgress.percent}%)
+                </span>
+              </div>
+              <div className="w-full bg-surface-container h-1.5 overflow-hidden rounded-full">
+                <div
+                  className="bg-primary h-full transition-all duration-300 rounded-full"
+                  style={{ width: `${uploadProgress.percent}%` }}
+                />
+              </div>
+            </div>
           )}
         </div>
       );
@@ -759,6 +964,10 @@ export default function SourcePanel({
           onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}
         />
       );
+    }
+
+    if (selectedFile.type === "file") {
+      return <FilePreview file={selectedFile} />;
     }
 
     return <SingleFilePreview file={selectedFile} filename={filename || selectedFile.name} annotationsJson={selectedAnnotationsJson} pdfViewerRef={pdfViewerRef} onAnnotationChanged={handleAnnotationChanged} />;

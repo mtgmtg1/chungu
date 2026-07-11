@@ -887,6 +887,257 @@ def run_job(job_id: str) -> dict:
         db.close()
 
 
+# [Flow: Step 1 (is_new=true 파일 필터링) -> Step 2 (파일 타입별 파이프라인 실행) -> Step 3 (result_markdown 채우기) -> Step 4 (전체 extracted_files에서 combined markdown 재생성) -> Step 5 (Storage 재업로드 + 캐시 무효화)]
+@celery.task(name="backend.workers.tasks.run_job_added_files")
+def run_job_added_files(job_id: str) -> dict:
+    """기존 완료된 Job에 새로 추가된 파일(is_new=true)만 변환하여 결과에 추가한다.
+
+    기존 파일의 result_markdown은 유지되며, 새 파일의 변환 결과가 append된다.
+    처리 완료 후 전체 extracted_files의 combined markdown을 재생성하여 Storage에 업로드한다.
+    Job의 status는 "done"을 유지하며, 새 파일의 status 필드로 진행 상황을 추적한다.
+    """
+    from ..core import paddleocr_client
+    from sqlalchemy.orm.attributes import flag_modified
+
+    db = SessionLocal()
+    job = db.get(Job, job_id)
+    if job is None:
+        db.close()
+        return {"error": "job not found"}
+
+    try:
+        # [Flow: Step 1 (새 파일 필터링 — is_new=true인 항목만 처리)]
+        all_files = job.extracted_files or []
+        new_files = [f for f in all_files if f.get("is_new")]
+        if not new_files:
+            logger.info(f"[run_job_added_files:{job_id}] 처리할 새 파일 없음")
+            return {"job_id": job_id, "skipped": True, "reason": "no new files"}
+
+        # 런타임 설정 주입
+        endpoint = job.endpoint or settings_store.get_setting(db, "llm_endpoint")
+        model = job.model or settings_store.get_setting(db, "llm_model")
+        api_key = settings_store.get_setting(db, "llm_api_key")
+        columns = job.columns or []
+        work_dir = Path(settings.data_dir) / "jobs" / job_id
+        added_dir = work_dir / "added_files"
+
+        media_ep = settings_store.get_setting(db, "media_llm_endpoint") or settings.media_llm_endpoint
+        media_mdl = settings_store.get_setting(db, "media_llm_model") or settings.media_llm_model
+        media_key = settings_store.get_setting(db, "media_llm_api_key") or settings.media_llm_api_key
+        llm_workers = int(settings_store.get_setting(db, "llm_max_workers") or settings.llm_max_workers)
+        media_workers = int(settings_store.get_setting(db, "media_max_workers") or settings.media_max_workers)
+
+        docling_enabled = settings_store.get_setting(db, "docling_enabled") == "1"
+        ocr_model = job.ocr_model or "premium"
+        ocr_engine = job.ocr_engine or "easyocr"
+        use_refinement = docling_enabled and job.use_docling_refinement and (settings_store.get_setting(db, "docling_refinement_enabled") == "1") and (ocr_model == "premium")
+
+        errors: list[str] = []
+
+        # [Flow: Step 2 (새 파일을 타입별로 분류하여 파이프라인 실행)]
+        # 새 파일의 로컬 경로를 찾는다 (added_files 디렉토리 또는 Storage에서 다운로드)
+        def resolve_local_path(info: dict) -> Path:
+            """새 파일의 로컬 경로를 반환. 없으면 Storage에서 다운로드."""
+            local_path = added_dir / info["path"]
+            if local_path.exists():
+                return local_path
+            # Storage에서 다운로드
+            storage_path = info.get("storage_path", "")
+            if storage_path:
+                data = supabase_client.download_pdf(storage_path).read()
+                added_dir.mkdir(parents=True, exist_ok=True)
+                local_path.write_bytes(data)
+                return local_path
+            raise FileNotFoundError(f"파일을 찾을 수 없음: {info['path']}")
+
+        # 파일 타입별 분류
+        docling_files: list[tuple[dict, Path]] = []
+        hwp_files: list[tuple[dict, Path]] = []
+        media_files: list[tuple[str, dict, Path]] = []
+        for info in new_files:
+            ftype = info.get("type", "")
+            try:
+                fp = resolve_local_path(info)
+            except Exception as e:
+                errors.append(f"{info.get('path', '?')}: {e}")
+                info["status"] = "error"
+                continue
+            if ftype in media_loader.DOCLING_TYPES:
+                docling_files.append((info, fp))
+            elif ftype in media_loader.HWP_TYPES:
+                hwp_files.append((info, fp))
+            elif ftype in ("image", "audio", "video"):
+                media_files.append((ftype, info, fp))
+            else:
+                errors.append(f"{info.get('path', '?')}: 지원하지 않는 파일 타입 ({ftype})")
+                info["status"] = "error"
+
+        # [Flow: Step 3a (Docling 타입 파일 처리 — PDF/DOCX/PPTX/XLSX/HTML)]
+        for info, fp in docling_files:
+            docling_errors: list[str] = []
+            oversized, total_fp_pages = count_oversized_pages(fp)
+            if oversized > 0:
+                errors.append(f"{fp.name}: {oversized}페이지가 350mm를 초과하여 파싱할 수 없습니다")
+            if oversized == total_fp_pages and total_fp_pages > 0:
+                docling_tables = []
+            else:
+                docling_tables = run_docling(
+                    fp,
+                    str(work_dir),
+                    columns,
+                    endpoint,
+                    model,
+                    api_key,
+                    extra_prompt=job.prompt,
+                    use_refinement=use_refinement,
+                    media_endpoint=media_ep,
+                    media_model=media_mdl,
+                    media_api_key=media_key,
+                    on_progress=lambda done, total: None,
+                    on_error=lambda page, msg: docling_errors.append(f"p{page}: {msg}"),
+                    ocr_engine=ocr_engine,
+                )
+            info["result_markdown"] = converter.build_layout_markdown_string(docling_tables)
+            info["status"] = "done"
+            info["is_new"] = False
+            errors.extend(docling_errors)
+
+        # [Flow: Step 3b (HWP 파일 처리)]
+        for info, fp in hwp_files:
+            hwp_errors: list[str] = []
+            hwp_tables = run_hwp(
+                fp,
+                str(work_dir),
+                columns,
+                endpoint,
+                model,
+                api_key,
+                extra_prompt=job.prompt,
+                use_refinement=use_refinement,
+                media_endpoint=media_ep,
+                media_model=media_mdl,
+                media_api_key=media_key,
+                on_progress=lambda done, total: None,
+                on_error=lambda page, msg: hwp_errors.append(f"p{page}: {msg}"),
+                ocr_engine=ocr_engine,
+            )
+            info["result_markdown"] = converter.build_layout_markdown_string(hwp_tables)
+            info["status"] = "done"
+            info["is_new"] = False
+            errors.extend(hwp_errors)
+
+        # [Flow: Step 3c (미디어 파일 처리 — 이미지/오디오/비디오)]
+        if media_files:
+            media_file_paths: list[tuple[str, Path]] = [(ftype, fp) for ftype, _, fp in media_files]
+            media_results = run_media(
+                media_file_paths,
+                str(work_dir),
+                columns,
+                endpoint,
+                model,
+                api_key,
+                extra_prompt=job.prompt,
+                media_endpoint=media_ep,
+                media_model=media_mdl,
+                media_api_key=media_key,
+                workers=llm_workers + media_workers,
+                on_progress=lambda done, total: None,
+                on_error=lambda filename, msg: errors.append(f"{filename}: {msg}"),
+                ocr_model=ocr_model,
+                ocr_engine=ocr_engine,
+            )
+            # run_media 결과를 파일명으로 매핑
+            result_by_name: dict[str, str] = {}
+            for filename, position, table in media_results:
+                result_by_name[filename] = converter.build_layout_markdown_string([(1, table or "")])
+
+            # 이미지 searchable PDF 생성
+            for ftype, info, fp in media_files:
+                info["result_markdown"] = result_by_name.get(fp.name, "")
+                info["status"] = "done"
+                info["is_new"] = False
+                # 이미지 파일에 searchable PDF 생성
+                if ftype == "image":
+                    try:
+                        md, layout_raw, _ = paddleocr_client.convert_image_with_layout(fp)
+                        searchable_pdf_bytes = _image_to_searchable_pdf(fp, layout_raw, dpi=job.dpi or 300)
+                        searchable_path = supabase_client.upload_input(
+                            BytesIO(searchable_pdf_bytes),
+                            f"searchable_{fp.name}",
+                            job_id,
+                        )
+                        info["searchable_pdf_storage_path"] = searchable_path
+                    except Exception as e:
+                        logger.warning(f"[run_job_added_files:{job_id}] 이미지 searchable PDF 생성 실패: {fp.name}: {e}")
+
+        # [Flow: Step 4 (전체 extracted_files에서 combined markdown 재생성)]
+        flag_modified(job, "extracted_files")
+        db.commit()
+
+        # 모든 파일의 result_markdown을 결합
+        all_file_markdowns = [f.get("result_markdown", "") for f in all_files]
+        combined_markdown = converter.build_combined_file_markdowns(all_file_markdowns)
+
+        # [Flow: Step 5 (combined markdown을 Storage에 재업로드)]
+        out_dir = work_dir / "result"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        edited_path = out_dir / "result_edited.md"
+        edited_path.write_text(combined_markdown, encoding="utf-8")
+        try:
+            storage_path = supabase_client.upload_result(
+                job_id, edited_md_path=edited_path
+            ).get("edited_md", "")
+            job.result_edited_md_storage_path = storage_path
+            job.result_edited_md_path = ""
+        except Exception as e:
+            logger.exception(f"[run_job_added_files:{job_id}] Storage 업로드 실패: {e}")
+            raise
+
+        # total_pages, total_files 갱신
+        total_pages = 0
+        for f in all_files:
+            ftype = f.get("type", "")
+            if ftype in media_loader.DOCLING_TYPES or ftype in media_loader.HWP_TYPES:
+                # 페이지 수는 result_markdown의 페이지 마커에서 추정
+                page_markers = combined_markdown.count("<!-- 페이지 ")
+                total_pages = max(total_pages, page_markers)
+            elif ftype == "image":
+                total_pages += 1
+        job.total_pages = max(job.total_pages or 0, total_pages)
+        job.total_files = len(all_files)
+        job.error_log = "\n".join(errors) if errors else (job.error_log or "")
+        flag_modified(job, "extracted_files")
+        db.commit()
+
+        # preview 캐시 무효화
+        try:
+            from ..core import cache
+            cache.invalidate_pattern(f"preview:{job_id}:*")
+        except Exception:
+            pass
+
+        logger.info(f"[run_job_added_files:{job_id}] 증분 변환 완료 — 새 파일 {len(new_files)}개 처리")
+        return {"job_id": job_id, "processed": len(new_files), "errors": len(errors)}
+
+    except Exception as e:  # noqa: BLE001
+        tb = traceback.format_exc()
+        logger.exception(f"[run_job_added_files:{job_id}] 실패: {e}")
+        # 실패한 새 파일들을 error 상태로 표시
+        try:
+            all_files = job.extracted_files or []
+            for f in all_files:
+                if f.get("is_new"):
+                    f["status"] = "error"
+            flag_modified(job, "extracted_files")
+            job.error_log = (job.error_log + f"\n[added_files] {tb}").strip()
+            db.commit()
+        except Exception:
+            pass
+        return {"job_id": job_id, "error": str(e)}
+    finally:
+        db.close()
+
+
 # OCR 업로드 원본 파일 및 변환 결과의 Supabase Storage 보관 기간 (일)
 # 실제 Storage 삭제는 별도 아카이빙 스토리지 구성 전까지 수행하지 않는다.
 RETENTION_DAYS = 30
@@ -1011,25 +1262,39 @@ def auto_recharge_retry() -> dict:
 
 @celery.task(name="backend.workers.tasks.cleanup_expired_sandboxes")
 def cleanup_expired_sandboxes() -> dict:
-    """[Flow: Step 1 (만료된 sandbox 조회) -> Step 2 (각 sandbox 종료 + 결과 수집) -> Step 3 (workspace 정리)]
+    """[Flow: Step 1 (만료된 sandbox 조회·종료) -> Step 2 (결과 수집) -> Step 3 (오래된 workspace 디스크 정리)]
 
     만료된 Kata 샌드박스를 자동으로 종료하고 결과 파일을 수집한다.
+    또한 이미 종료된 sandbox 의 workspace 디스크를 보존 기간(7일) 경과 후 삭제한다.
     Celery beat 에 의해 주기적으로 실행된다 (기본 10분 간격).
-    보존 기간(sandbox_default_timeout, 기본 30분)을 초과한 sandbox 가 대상이다.
     """
-    # [Flow: Step 1 (만료된 sandbox 조회) -> Step 2 (각 sandbox 종료 + 결과 수집) -> Step 3 (workspace 정리)]
     from datetime import datetime, timedelta, timezone
+    from pathlib import Path
     from sqlalchemy import select as sa_select, update as sa_update
     from ..db.models import Sandbox
-    from ..core.sandbox import SandboxManager
+    from ..core.sandbox import ResultCollector, SandboxManager, WorkspaceManager
 
+    # [Flow: Step 1 (만료된 sandbox 조회·종료) -> Step 2 (결과 수집) -> Step 3 (workspace 정리)]
     db = SessionLocal()
     try:
         now = datetime.now(timezone.utc)
         timeout_seconds = settings.sandbox_default_timeout
         cutoff = now - timedelta(seconds=timeout_seconds)
 
-        # 만료된 sandbox 조회 (created_at 이 cutoff 보다 오래됨, status 가 running/creating)
+        manager = SandboxManager()
+        collector = ResultCollector()
+        workspace_mgr = WorkspaceManager()
+
+        # supabase_client 지연 import (순환 참조 방지)
+        try:
+            from ..core.supabase_client import get_supabase_client
+            supabase = get_supabase_client()
+        except Exception:
+            supabase = None
+
+        # ========================================
+        # Step 1: 만료된 sandbox 종료 + 결과 수집
+        # ========================================
         expired = db.execute(
             sa_select(Sandbox).where(
                 Sandbox.status.in_(["creating", "running"]),
@@ -1037,24 +1302,27 @@ def cleanup_expired_sandboxes() -> dict:
             )
         ).scalars().all()
 
-        if not expired:
-            return {"cleaned": 0, "errors": 0}
-
-        manager = SandboxManager()
-        cleaned = 0
-        errors = 0
+        destroyed_count = 0
+        destroy_errors = 0
 
         for sandbox in expired:
             try:
                 logger.info(f"[cleanup_expired_sandboxes] sandbox {sandbox.id} 만료, 종료 시도")
-                # 결과 수집 시도 (실패해도 종료는 진행)
-                try:
-                    manager.collect_results(sandbox.id)
-                except Exception as collect_err:
-                    logger.warning(f"[cleanup_expired_sandboxes] {sandbox.id} 결과 수집 실패: {collect_err}")
+                workspace_path = Path(sandbox.workspace_path) if sandbox.workspace_path else None
 
-                # sandbox 종료
-                manager.destroy(sandbox.id)
+                # 결과 수집 시도 (실패해도 종료는 진행)
+                if workspace_path and workspace_path.exists():
+                    try:
+                        collector.collect_and_upload(
+                            workspace_path=workspace_path,
+                            job_id=sandbox.job_id or "",
+                            supabase_client=supabase,
+                        )
+                    except Exception as collect_err:
+                        logger.warning(f"[cleanup_expired_sandboxes] {sandbox.id} 결과 수집 실패: {collect_err}")
+
+                # sandbox 종료 — destroy_sandbox(container_name, workspace_path)
+                manager.destroy_sandbox(sandbox.container_name, workspace_path)
 
                 # DB 상태 업데이트
                 db.execute(
@@ -1062,14 +1330,62 @@ def cleanup_expired_sandboxes() -> dict:
                     .where(Sandbox.id == sandbox.id)
                     .values(status="expired", updated_at=now)
                 )
-                cleaned += 1
+                destroyed_count += 1
             except Exception as e:
                 logger.error(f"[cleanup_expired_sandboxes] sandbox {sandbox.id} 종료 실패: {e}")
-                errors += 1
+                destroy_errors += 1
+
+        # ========================================
+        # Step 2: 오래된 workspace 디스크 정리 (보존 기간 7일 경과)
+        # ========================================
+        # 이미 destroyed/expired 상태이고 workspace_path 가 비어있지 않은 sandbox 조회
+        stale = db.execute(
+            sa_select(Sandbox).where(
+                Sandbox.status.in_(["destroyed", "expired"]),
+                Sandbox.workspace_path != "",
+            )
+        ).scalars().all()
+
+        workspace_cleaned = 0
+        workspace_errors = 0
+
+        for sandbox in stale:
+            workspace_path = Path(sandbox.workspace_path) if sandbox.workspace_path else None
+            if not workspace_path or not workspace_path.exists():
+                # 이미 디스크에 없으면 DB 의 workspace_path 만 비우기
+                db.execute(
+                    sa_update(Sandbox)
+                    .where(Sandbox.id == sandbox.id)
+                    .values(workspace_path="", updated_at=now)
+                )
+                continue
+
+            try:
+                # cleanup_workspace: mtime 기준 preserve_days(7일) 경과 시 rmtree 실행
+                removed = workspace_mgr.cleanup_workspace(workspace_path, preserve_days=7)
+                if removed:
+                    db.execute(
+                        sa_update(Sandbox)
+                        .where(Sandbox.id == sandbox.id)
+                        .values(workspace_path="", updated_at=now)
+                    )
+                    workspace_cleaned += 1
+                    logger.info(f"[cleanup_expired_sandboxes] workspace 정리 완료: {workspace_path}")
+            except Exception as e:
+                logger.error(f"[cleanup_expired_sandboxes] workspace 정리 실패 {sandbox.id}: {e}")
+                workspace_errors += 1
 
         db.commit()
-        logger.info(f"[cleanup_expired_sandboxes] 완료: cleaned={cleaned}, errors={errors}")
-        return {"cleaned": cleaned, "errors": errors}
+        logger.info(
+            f"[cleanup_expired_sandboxes] 완료: destroyed={destroyed_count}, destroy_errors={destroy_errors}, "
+            f"workspace_cleaned={workspace_cleaned}, workspace_errors={workspace_errors}"
+        )
+        return {
+            "destroyed": destroyed_count,
+            "destroy_errors": destroy_errors,
+            "workspace_cleaned": workspace_cleaned,
+            "workspace_errors": workspace_errors,
+        }
     except Exception as e:
         logger.exception(f"[cleanup_expired_sandboxes] 태스크 오류: {e}")
         return {"error": str(e)}

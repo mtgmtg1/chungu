@@ -28,7 +28,9 @@
     "@tiptap/pm": "^3.27.1",
     "@tiptap/react": "^3.27.1",
     "@tiptap/starter-kit": "^3.27.1",
+    "@xyflow/react": "^12.11.2",
     "ai": "^5.0.0",
+    "elkjs": "^0.11.1",
     "face-api.js": "^0.22.2",
     "fast-json-patch": "^3.1.1",
     "i18next": "^24.2.3",
@@ -49,6 +51,7 @@
     "three": "^0.184.0",
     "turndown": "^7.2.4",
     "tus-js-client": "^4.3.1",
+    "uuid": "^14.0.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

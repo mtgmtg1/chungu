@@ -90,12 +90,16 @@ def main():
     def transform_fn(sample_idx):
         """[Flow: 캘리브레이션 샘플을 OpenVINO 입력 형식으로 변환]
 
+        OpenVINO 모델 입력은 2D (batch_size x seq_len) 형식이 필요하므로
+        캘리브레이션 샘플에 batch 차원을 추가한다.
+
         @param sample_idx 캘리브레이션 데이터셋 인덱스
         @returns OpenVINO 모델 입력 딕셔너리 (input_ids, attention_mask)
         """
+        import numpy as np
         return {
-            "input_ids": encodings["input_ids"][sample_idx],
-            "attention_mask": encodings["attention_mask"][sample_idx],
+            "input_ids": np.expand_dims(encodings["input_ids"][sample_idx], axis=0),
+            "attention_mask": np.expand_dims(encodings["attention_mask"][sample_idx], axis=0),
         }
 
     calibration_dataset = nncf.Dataset(range(len(calibration_texts)), transform_fn)

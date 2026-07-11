@@ -7,6 +7,7 @@ llmlingua>=0.2.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 pydantic>=2.0.0
-# [Flow: OpenVINO INT8 가속 — optimum-intel + nncf 로 모델 변환 및 추론]
-optimum-intel[openvino,nncf]>=1.20.0
+# [Flow: OpenVINO INT8 가속 — optimum-intel 로 모델 변환 및 추론]
+# 가중치 전용 INT8 양자화 (OVWeightQuantizationConfig) 사용 — 캘리브레이션 불필요
+optimum-intel[openvino]>=1.20.0
 openvino>=2024.0.0

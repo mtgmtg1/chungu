@@ -27,8 +27,13 @@ async function request(path, options = {}) {
   const token = await getToken()
   const headers = { ...(options.headers || {}) }
   // JWT 형식의 유효한 access_token일 때만 Bearer 헤더를 추가한다 (mock token은 제외)
-  if (token && token.startsWith('eyJ')) headers.Authorization = `Bearer ${token}`
-  if (DEV_API_KEY) headers['X-Api-Key'] = DEV_API_KEY
+  // JWT가 있으면 API key를 보내지 않는다: 백엔드가 API key를 먼저 검사하면
+  // 유효한 JWT임에도 불구하고 Invalid API key로 거부될 수 있다.
+  if (token && token.startsWith('eyJ')) {
+    headers.Authorization = `Bearer ${token}`
+  } else if (DEV_API_KEY) {
+    headers['X-Api-Key'] = DEV_API_KEY
+  }
   if (options.body && !(options.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json'
   }
@@ -47,8 +52,13 @@ async function authenticatedFetch(url, options = {}) {
   const token = await getToken()
   const headers = { ...(options.headers || {}) }
   // JWT 형식의 유효한 access_token일 때만 Bearer 헤더를 추가한다 (mock token은 제외)
-  if (token && token.startsWith('eyJ')) headers.Authorization = `Bearer ${token}`
-  if (DEV_API_KEY) headers['X-Api-Key'] = DEV_API_KEY
+  // JWT가 있으면 API key를 보내지 않는다: 백엔드가 API key를 먼저 검사하면
+  // 유효한 JWT임에도 불구하고 Invalid API key로 거부될 수 있다.
+  if (token && token.startsWith('eyJ')) {
+    headers.Authorization = `Bearer ${token}`
+  } else if (DEV_API_KEY) {
+    headers['X-Api-Key'] = DEV_API_KEY
+  }
   if (options.body && !(options.body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json'
   }

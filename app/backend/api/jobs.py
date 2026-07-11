@@ -1375,6 +1375,20 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
                 "source_kind": source_kind,
                 "status": info.get("status", ""),
             }
+            # [Flow: 개별 searchable PDF가 있으면 preview_url을 대체 — 텍스트 검색/선택 가능]
+            # 각 extracted_files 항목은 자체 searchable_pdf_storage_path를 가질 수 있다.
+            # job.searchable_pdf_storage_path (Job 레벨)는 첫 번째 원본 PDF에만 해당하므로
+            # 여기서는 개별 항목의 searchable_pdf_storage_path만 사용한다.
+            individual_searchable = info.get("searchable_pdf_storage_path")
+            if individual_searchable:
+                try:
+                    searchable_url = supabase_client.get_signed_download_url(
+                        individual_searchable, bucket="pdfs", expires_in=3600
+                    )
+                    if searchable_url:
+                        item["preview_url"] = searchable_url
+                except Exception as e:
+                    logger.warning(f"[source_files] 개별 searchable PDF URL 생성 실패: {e}")
             return item
         # file 타입 (csv, md, xlsx, txt, html 등) — 다운로드용 signed URL만 생성
         if ftype == "file":
@@ -1463,7 +1477,14 @@ def _source_files(job: Job) -> list[dict]:
     # 원본 PDF에 내장된 주석이 있으면 clean PDF로 교체하고, 추출한 주석을 JSON 오버레이로
     # 초기화한다. 이렇게 하면 embedpdf가 PDF 내장 주석을 중복 렌더링/저장하는 문제를
     # 방지할 수 있다. docx/hwp는 여기서 PDF로 변환되지 않으므로 제외한다.
-    for item in source_files:
+    # [Flow: searchable PDF는 첫 번째 원본 PDF에만 적용 — job.searchable_pdf_storage_path는
+    # Job 레벨 단일 값이므로, 모든 PDF 항목에 덮어쓰면 새로 추가된 파일이 원본 PDF로 보이는 문제 발생]
+    first_original_pdf_index = next(
+        (i for i, item in enumerate(source_files)
+         if item.get("source_kind") == "original" and item.get("type") == "pdf"),
+        None,
+    )
+    for i, item in enumerate(source_files):
         if item.get("source_kind") != "original" or item.get("type") != "pdf":
             continue
         clean_url, extracted_annotations = _ensure_clean_source_pdf(
@@ -1475,11 +1496,14 @@ def _source_files(job: Job) -> list[dict]:
         if extracted_annotations:
             _initialize_user_annotations_json(job.id, extracted_annotations)
 
-        # [Flow: searchable PDF가 있으면 미리보기 URL을 대체]
+        # [Flow: searchable PDF가 있으면 미리보기 URL을 대체 — 첫 번째 원본 PDF에만 적용]
         # 다운로드용 url은 원본 clean PDF를 유지하고, preview_url만 searchable PDF로 변경.
         # 이렇게 하면 사용자는 뷰어에서 텍스트 검색/선택이 가능한 PDF를 보지만,
         # 다운로드는 원본 PDF를 받는다.
-        if job.searchable_pdf_storage_path:
+        # job.searchable_pdf_storage_path는 단일 PDF Job의 원본에 대한 것이므로,
+        # 첫 번째 원본 PDF에만 적용한다. 추가로 업로드된 파일은 _build_source_file_item에서
+        # 개별 searchable_pdf_storage_path가 설정된 경우에만 searchable PDF를 사용한다.
+        if i == first_original_pdf_index and job.searchable_pdf_storage_path:
             try:
                 searchable_url = supabase_client.get_signed_download_url(
                     job.searchable_pdf_storage_path, bucket="pdfs", expires_in=3600

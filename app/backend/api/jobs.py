@@ -3713,44 +3713,39 @@ def _resolve_annotations_json_path(job: Job, source_index: int) -> str | None:
     return path
 
 
-# [Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (source_index로 주석 JSON 경로 확보)
-#       -> Step 3 (AI 주석 JSON + 사용자 주석 JSON 병합) -> Step 4 (page_no 필터링) -> Step 5 (주석 목록 반환)]
-# Node.js AI 백엔드가 기존 주석을 조회하기 위한 전용 엔드포인트.
-@router.get("/jobs/{job_id}/annotations")
-def get_job_annotations(
-    job_id: str,
-    source_index: int = Query(0, description="주석 파일 인덱스"),
-    page_no: int | None = Query(None, description="1-based 페이지 번호. 생략 시 모든 페이지"),
-    user: CurrentUser = Depends(get_current_user_or_api_key),
-    db: Session = Depends(get_db),
-):
-    """[Flow: Step 1 (job 조회) -> Step 2 (source_index로 주석 JSON 경로 확보)
-          -> Step 3 (AI 주석 JSON + 사용자 주석 JSON 병합) -> Step 4 (page_no 필터링)
-          -> Step 5 (EmbedPDF 형식 주석 목록 반환)]
+def _load_all_annotations(
+    job: Job,
+    source_index: int,
+    page_no: int | None = None,
+) -> list[dict]:
+    """[Flow: Step 1 (AI 주석 JSON 경로 확보 — None이면 스킵) -> Step 2 (AI 주석 다운로드)
+          -> Step 3 (사용자 주석 다운로드 및 ID 중복 제거 병합) -> Step 4 (page_no 필터링)
+          -> Step 5 (병합된 주석 목록 반환)]
 
-    AI 에이전트가 기존 주석 목록을 확인할 때 사용한다.
+    AI 주석 JSON과 사용자 주석 JSON을 모두 로드하여 병합한다.
+    _resolve_annotations_json_path가 None을 반환해도 에러를 발생시키지 않고
+    사용자 주석만 로드한다. 주석이 전혀 없으면 빈 리스트를 반환한다.
+
+    @param job Job 모델 인스턴스
+    @param source_index 주석 파일 인덱스 (0=첫 번째 원본)
+    @param page_no 1-based 페이지 번호. 생략 시 전체 페이지
+    @returns 병합된 주석 목록 (EmbedPDF AnnotationTransferItem[] 형식)
     """
-    job = db.get(Job, job_id)
-    _require_job_access(job, user)
-    _require_job_not_expired(job)
-
-    annotations_json_storage_path = _resolve_annotations_json_path(job, source_index)
-    if not annotations_json_storage_path:
-        raise HTTPException(status_code=404, detail="Annotation file not found")
-
     client = supabase_client.get_service_client()
     all_annotations: list[dict] = []
 
-    try:
-        existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
-        existing = json.loads(existing_bytes.decode("utf-8"))
-        if isinstance(existing, list):
-            all_annotations.extend(existing)
-    except Exception:
-        pass
+    # AI 주석 로드 — 경로가 None이면 AI 주석이 아직 없으므로 스킵
+    annotations_json_storage_path = _resolve_annotations_json_path(job, source_index)
+    if annotations_json_storage_path:
+        try:
+            existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
+            existing = json.loads(existing_bytes.decode("utf-8"))
+            if isinstance(existing, list):
+                all_annotations.extend(existing)
+        except Exception:
+            pass
 
-    # 사용자가 직접 추가/편집한 주석도 병합
-    # [Flow: 파일별 주석 분리 — source_index별로 분리된 user_annotations_{source_index}.json을 먼저 확인]
+    # 사용자 주석 로드 — 파일별 분리된 user_annotations_{source_index}.json 우선
     user_annotations_json_path = f"{job.id}/user_annotations_{source_index}.json"
     try:
         user_bytes = client.storage.from_("results").download(user_annotations_json_path)
@@ -3778,6 +3773,7 @@ def get_job_annotations(
         except Exception:
             pass
 
+    # page_no 필터링 — EmbedPDF 주석의 pageIndex는 0-based이므로 page_no - 1과 비교
     if page_no is not None:
         filtered = []
         for a in all_annotations:
@@ -3786,6 +3782,31 @@ def get_job_annotations(
                 filtered.append(a)
         all_annotations = filtered
 
+    return all_annotations
+
+
+# [Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (source_index로 주석 JSON 경로 확보)
+#       -> Step 3 (AI 주석 JSON + 사용자 주석 JSON 병합) -> Step 4 (page_no 필터링) -> Step 5 (주석 목록 반환)]
+# Node.js AI 백엔드가 기존 주석을 조회하기 위한 전용 엔드포인트.
+@router.get("/jobs/{job_id}/annotations")
+def get_job_annotations(
+    job_id: str,
+    source_index: int = Query(0, description="주석 파일 인덱스"),
+    page_no: int | None = Query(None, description="1-based 페이지 번호. 생략 시 모든 페이지"),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """[Flow: Step 1 (job 조회) -> Step 2 (_load_all_annotations로 AI+사용자 주석 병합 로드)
+          -> Step 3 (EmbedPDF 형식 주석 목록 반환)]
+
+    AI 에이전트가 기존 주석 목록을 확인할 때 사용한다.
+    AI 주석 PDF가 없어도 사용자 주석이 존재하면 반환하며, 주석이 전혀 없으면 빈 리스트를 반환한다.
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+
+    all_annotations = _load_all_annotations(job, source_index, page_no)
     return {"annotations": all_annotations, "total": len(all_annotations)}
 
 
@@ -3801,29 +3822,30 @@ def update_job_annotation(
     user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """[Flow: Step 1 (job 조회) -> Step 2 (source_index로 주석 JSON 경로 확보)
+    """[Flow: Step 1 (job 조회) -> Step 2 (source_index로 주석 JSON 경로 확보 — None이면 AI 주석 스킵)
           -> Step 3 (annotation_id로 주석 찾기) -> Step 4 (color/comment/opacity 수정)
           -> Step 5 (AI 주석이면 _userEdited 설정) -> Step 6 (Storage 저장 및 preview 캐시 무효화)]
 
     AI 에이전트가 기존 주석의 색상/코멘트/투명도를 변경할 때 사용한다.
+    AI 주석 PDF가 없어도 사용자 주석이 존재하면 수정할 수 있다.
     """
     job = db.get(Job, job_id)
     _require_job_access(job, user)
     _require_job_not_expired(job)
 
+    # AI 주석 경로 — None이면 AI 주석이 없으므로 사용자 주석만 로드
     annotations_json_storage_path = _resolve_annotations_json_path(job, source_index)
-    if not annotations_json_storage_path:
-        raise HTTPException(status_code=404, detail="Annotation file not found")
 
     client = supabase_client.get_service_client()
     all_annotations: list[dict] = []
-    try:
-        existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
-        existing = json.loads(existing_bytes.decode("utf-8"))
-        if isinstance(existing, list):
-            all_annotations = existing
-    except Exception:
-        pass
+    if annotations_json_storage_path:
+        try:
+            existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
+            existing = json.loads(existing_bytes.decode("utf-8"))
+            if isinstance(existing, list):
+                all_annotations = existing
+        except Exception:
+            pass
 
     # [Flow: 파일별 주석 분리 — source_index별로 분리된 user_annotations_{source_index}.json을 먼저 확인]
     user_annotations_json_path = f"{job.id}/user_annotations_{source_index}.json"
@@ -3890,7 +3912,7 @@ def update_job_annotation(
 
     target_storage_path = (
         annotations_json_storage_path
-        if target_list is all_annotations
+        if target_list is all_annotations and annotations_json_storage_path
         else user_annotations_json_path
     )
     client.storage.from_("results").upload(
@@ -4096,56 +4118,7 @@ def get_job_result_json(
             raise HTTPException(status_code=502, detail=f"Failed to download OCR layout: {e}")
 
     if kind == "annotations":
-        annotations_json_storage_path = _resolve_annotations_json_path(job, source_index)
-        if not annotations_json_storage_path:
-            raise HTTPException(status_code=404, detail="Annotation file not found")
-
-        client = supabase_client.get_service_client()
-        all_annotations: list[dict] = []
-        try:
-            existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
-            existing = json.loads(existing_bytes.decode("utf-8"))
-            if isinstance(existing, list):
-                all_annotations.extend(existing)
-        except Exception:
-            pass
-
-        # [Flow: 파일별 주석 분리 — source_index별로 분리된 user_annotations_{source_index}.json을 먼저 확인]
-        user_annotations_json_path = f"{job.id}/user_annotations_{source_index}.json"
-        try:
-            user_bytes = client.storage.from_("results").download(user_annotations_json_path)
-            user_annotations = json.loads(user_bytes.decode("utf-8"))
-            if isinstance(user_annotations, list):
-                existing_ids = {_annotation_id(a) for a in all_annotations if _annotation_id(a)}
-                for a in user_annotations:
-                    aid = _annotation_id(a)
-                    if aid and aid in existing_ids:
-                        continue
-                    all_annotations.append(a)
-        except Exception:
-            # 파일별 주석 JSON이 없으면 공유 user_annotations.json으로 폴백 (하위 호환)
-            user_annotations_json_path = f"{job.id}/user_annotations.json"
-            try:
-                user_bytes = client.storage.from_("results").download(user_annotations_json_path)
-                user_annotations = json.loads(user_bytes.decode("utf-8"))
-                if isinstance(user_annotations, list):
-                    existing_ids = {_annotation_id(a) for a in all_annotations if _annotation_id(a)}
-                    for a in user_annotations:
-                        aid = _annotation_id(a)
-                        if aid and aid in existing_ids:
-                            continue
-                        all_annotations.append(a)
-            except Exception:
-                pass
-
-        if page_no is not None:
-            filtered = []
-            for a in all_annotations:
-                inner = _annotation_inner(a)
-                if inner.get("pageIndex") == page_no - 1:
-                    filtered.append(a)
-            all_annotations = filtered
-
+        all_annotations = _load_all_annotations(job, source_index, page_no)
         return {"kind": "annotations", "data": all_annotations, "total": len(all_annotations)}
 
     raise HTTPException(status_code=400, detail=f"Unknown kind: {kind}. Supported: annotations|ocr_layout|extracted_files|annotated_pdf_files|job_meta")

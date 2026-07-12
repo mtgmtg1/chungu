@@ -378,3 +378,28 @@ class FlowDrawing(Base):
 
     job: Mapped["Job"] = relationship("Job", lazy="selectin")
     user: Mapped["User"] = relationship("User", lazy="selectin")
+
+
+class ChatConversation(Base):
+    """에이전트 채팅 대화 이력 — 작업+사용자+대화ID별 1레코드.
+
+    사용자가 Job(프로젝트)별로 나눈 여러 대화 세션과 각 세션의 UIMessage[]를 저장.
+    기존 localStorage 기반 대화 이력을 DB로 이전하여 단일 진실 공급원을 구축.
+    id: 클라이언트 생성 대화 ID (timestamp + random, useAgentChatHistory.generateConversationId)
+    messages: UIMessage[] (Vercel AI SDK 5.x — role, parts, id 등 포함)
+    도구 input/output이 500자 초과면 핵심 필드 + 크기 정보로 요약하여 저장 (용량 최적화).
+    요약은 프론트엔드 chatMessageUtils.compactMessagesForStorage에서 수행 후 DB에 전달.
+    """
+
+    __tablename__ = "chat_conversations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(255), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(100), default="")
+    messages: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    job: Mapped["Job"] = relationship("Job", lazy="selectin")
+    user: Mapped["User"] = relationship("User", lazy="selectin")

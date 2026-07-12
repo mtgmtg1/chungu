@@ -12,6 +12,7 @@ from sqlalchemy import select, text
 
 from . import settings_store
 from .api import admin, auth, jobs, on_premise, payments, subscriptions
+from .api.chat_conversations import router as chat_conversations_router
 from .api.dev_auth import router as dev_auth_router
 from .api.flow_drawings import router as flow_drawings_router
 from .api.gdpr import router as gdpr_router
@@ -98,6 +99,7 @@ app.include_router(gdpr_router)
 app.include_router(v1_router)
 app.include_router(sandboxes_router)
 app.include_router(flow_drawings_router)
+app.include_router(chat_conversations_router)
 if settings.dev_bypass_auth:
     app.include_router(dev_auth_router)
 

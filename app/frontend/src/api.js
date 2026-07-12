@@ -256,4 +256,19 @@ export const api = {
     }),
   deleteFlowDrawings: (jobId) =>
     request(`/api/jobs/${jobId}/flow-drawings`, { method: 'DELETE' }),
+
+  // 에이전트 채팅 대화 이력 (DB 영속화)
+  listChatConversations: (jobId) =>
+    request(`/api/jobs/${jobId}/chat-conversations`),
+  getChatConversation: (jobId, conversationId) =>
+    request(`/api/jobs/${jobId}/chat-conversations/${conversationId}`),
+  saveChatConversation: (jobId, conversationId, data) =>
+    request(`/api/jobs/${jobId}/chat-conversations/${conversationId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  deleteChatConversation: (jobId, conversationId) =>
+    request(`/api/jobs/${jobId}/chat-conversations/${conversationId}`, {
+      method: 'DELETE',
+    }),
 }

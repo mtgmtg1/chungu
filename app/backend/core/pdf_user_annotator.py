@@ -422,12 +422,17 @@ def extract_pdf_annotations(pdf_bytes: bytes) -> list[dict]:
                         annotation["fillColor"] = fill_color
                 elif embed_type == LINE:
                     annotation["color"] = color
-                    # PyMuPDF vertex는 PDF user-space(y↑) 좌표이므로 device-space(y↓)로 flip 필요
-                    start = _parse_point(annot.vertices[0], page_height, page.rect.x0) if annot.vertices else None
-                    end = _parse_point(annot.vertices[1], page_height, page.rect.x0) if annot.vertices and len(annot.vertices) > 1 else None
-                    if start and end:
-                        annotation["start"] = {"x": start.x, "y": start.y}
-                        annotation["end"] = {"x": end.x, "y": end.y}
+                    # [Flow: PyMuPDF vertex는 PDF user-space(y↑) 좌표이므로 device-space(y↓)로 flip]
+                    # _parse_point는 dict 입력을 기대하고 device→user-space 방향이므로,
+                    # PyMuPDF vertex(tuple/Point, PDF user-space)에는 직접 변환 로직을 사용한다.
+                    if annot.vertices and len(annot.vertices) >= 2:
+                        v0 = annot.vertices[0]
+                        v1 = annot.vertices[1]
+                        # PyMuPDF 버전에 따라 tuple 또는 fitz.Point 반환
+                        v0x, v0y = (float(v0[0]), float(v0[1])) if isinstance(v0, (tuple, list)) else (float(v0.x), float(v0.y))
+                        v1x, v1y = (float(v1[0]), float(v1[1])) if isinstance(v1, (tuple, list)) else (float(v1.x), float(v1.y))
+                        annotation["start"] = {"x": v0x - page.rect.x0, "y": page_height - v0y}
+                        annotation["end"] = {"x": v1x - page.rect.x0, "y": page_height - v1y}
                 elif embed_type == FREETEXT:
                     annotation["fontFamily"] = 4  # Helvetica
                     annotation["fontSize"] = info.get("fontsize", 12) or 12

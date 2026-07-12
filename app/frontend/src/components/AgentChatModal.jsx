@@ -6,7 +6,7 @@
 // onRunningCountChange 콜백으로 상위에 보고한다.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { X, MessageSquare } from "lucide-react";
+import { X, MessageSquare, Loader2 } from "lucide-react";
 import { api } from "../api.js";
 import { useAuth } from "../AuthContext.jsx";
 import { useAgentChat } from "../hooks/useAgentChat.js";
@@ -291,6 +291,8 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
   const {
     conversations,
     currentId,
+    isLoadingList,
+    isLoadingMessages,
     createConversation,
     selectConversation,
     saveConversation,
@@ -332,17 +334,19 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
     return [...ids];
   }, [streamingIds, currentId]);
 
-  // [Flow: 모달 열림 시 현재 대화 보장(없으면 최근 대화 선택, 최근 대화 없으면 새로 생성)]
+  // [Flow: 모달 열림 시 현재 대화 보장(없으면 최근 대화 선택, 최근 대화 없으면 새로 생성)
+  //       — DB 목록 로딩 중에는 새 대화 생성을 지연하여 premature 생성 방지]
   useEffect(() => {
     if (!isOpen) return;
     if (!currentId) {
       if (conversations.length > 0) {
         selectConversation(conversations[0].id);
-      } else {
+      } else if (!isLoadingList) {
+        // DB 목록 로딩이 완료된 후에만 새 대화 생성
         createConversation();
       }
     }
-  }, [isOpen, currentId, conversations, createConversation, selectConversation]);
+  }, [isOpen, currentId, conversations, isLoadingList, createConversation, selectConversation]);
 
   // [Flow: 세션 status 변경 핸들러 — streaming/submitted이면 streamingIds에 추가, ready/error면 제거]
   // [Flow: ready/error 전환 시(에이전트 완료) onAgentComplete 호출하여 상위에서 데이터 재로드]
@@ -390,6 +394,23 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
       {sessionIds.map((id) => {
         const isVisible = isOpen && id === currentId;
         const conversation = conversations.find((c) => c.id === id);
+        // [Flow: 현재 대화의 messages가 DB에서 로딩 중이면 ChatSession 대신 spinner 표시
+        //       — initialMessages가 빈 상태로 마운트되는 것을 방지]
+        const isCurrentLoading = isVisible && isLoadingMessages && (!conversation?.messages || conversation.messages.length === 0);
+
+        // [Flow: 로딩 중인 현재 세션은 spinner만 렌더링 (ChatSession 마운트 지연)]
+        if (isCurrentLoading) {
+          return (
+            <div
+              key={id}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+              onClick={onClose}
+            >
+              <Loader2 className="h-8 w-8 animate-spin text-on-surface-variant" />
+            </div>
+          );
+        }
+
         return (
           <ChatSession
             key={id}

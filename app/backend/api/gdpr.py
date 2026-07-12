@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..auth.supabase_auth import CurrentUser, get_current_user
-from ..db.models import ApiKey, ApiUsage, Job, Payment, PointTransaction, User
+from ..db.models import ApiKey, ApiUsage, ChatConversation, Job, Payment, PointTransaction, User
 from ..db.session import get_db
 
 router = APIRouter(prefix="/api/account", tags=["account-gdpr"])
@@ -121,6 +121,23 @@ def export_user_data(
         for u in usage
     ]
 
+    # [Flow: 에이전트 채팅 대화 이력 — GDPR 데이터 내보내기에 포함]
+    conversations = (
+        db.execute(select(ChatConversation).where(ChatConversation.user_id == uid))
+        .scalars()
+        .all()
+    )
+    conversation_list = [
+        {
+            "id": c.id,
+            "job_id": c.job_id,
+            "title": c.title,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+            "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+        }
+        for c in conversations
+    ]
+
     data = {
         "account": account_info,
         "point_transactions": tx_list,
@@ -128,6 +145,7 @@ def export_user_data(
         "jobs": job_list,
         "api_keys": key_list,
         "api_usage": usage_list,
+        "chat_conversations": conversation_list,
     }
 
     return Response(
@@ -181,14 +199,19 @@ def delete_user_account(
         ApiKey.__table__.delete().where(ApiKey.user_id == uid)
     )
 
-    # 6. 사용자 레코드 삭제
+    # 6. 에이전트 채팅 대화 이력 삭제
+    db.execute(
+        ChatConversation.__table__.delete().where(ChatConversation.user_id == uid)
+    )
+
+    # 7. 사용자 레코드 삭제
     db.execute(
         User.__table__.delete().where(User.id == uid)
     )
 
     db.commit()
 
-    # 7. Supabase Auth에서 사용자 삭제 (서비스 롤 키 필요)
+    # 8. Supabase Auth에서 사용자 삭제 (서비스 롤 키 필요)
     supabase_url = os.getenv("SUPABASE_URL")
     service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
     if supabase_url and service_role_key:

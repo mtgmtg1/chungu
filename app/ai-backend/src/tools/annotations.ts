@@ -176,28 +176,42 @@ export function buildAnnotationTools(context: AnnotationContext) {
         summary_only: z.boolean().optional().describe('true면 요약 필드만 반환 (id/type/page_no/color/comment). 생략 시 원본 JSON 전체 반환'),
       }),
       execute: async ({ page_no, summary_only }) => {
-        const { annotations, total } = await proofApi.getAnnotations(jobId, sourceIndex, page_no, authHeaders);
-        // [Flow: 출력 크기 제한 — 80→30개로 축소하여 토큰 소비 절약]
-        const sliced = annotations.slice(0, 30);
-        if (summary_only) {
-          return {
-            annotations: sliced.map((a) => {
-              const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
-                ? (a as any).annotation
-                : a;
-              return {
-                id: inner.id,
-                type: inner.type,
-                page_no: (inner.pageIndex ?? 0) + 1,
-                color: inner.color,
-                comment: inner.contents,
-              };
-            }),
-            total,
-          };
+        // [Flow: Step 1 (FastAPI에서 주석 목록 조회) -> Step 2 (404 시 빈 배열로 폴백)
+        //       -> Step 3 (summary_only면 요약 필드만 추출) -> Step 4 (결과 반환)]
+        // Vercel AI SDK가 tool 에러를 "An error occurred."로 마스킹하므로
+        // try/catch로 명확한 결과를 tool output에 포함한다.
+        try {
+          const { annotations, total } = await proofApi.getAnnotations(jobId, sourceIndex, page_no, authHeaders);
+          // [Flow: 출력 크기 제한 — 80→30개로 축소하여 토큰 소비 절약]
+          const sliced = annotations.slice(0, 30);
+          if (summary_only) {
+            return {
+              annotations: sliced.map((a) => {
+                const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
+                  ? (a as any).annotation
+                  : a;
+                return {
+                  id: inner.id,
+                  type: inner.type,
+                  page_no: (inner.pageIndex ?? 0) + 1,
+                  color: inner.color,
+                  comment: inner.contents,
+                };
+              }),
+              total,
+            };
+          }
+          // 원본 JSON 전체 구조 반환 — EmbedPDF AnnotationTransferItem[] 형식 그대로
+          return { annotations: sliced, total };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // 404는 "주석이 아직 없음"을 의미하므로 에러가 아닌 빈 상태로 반환
+          if (msg.includes('404')) {
+            return { annotations: [], total: 0 };
+          }
+          console.error(`[get_annotations] job=${jobId} sourceIndex=${sourceIndex} page=${page_no}: ${msg}`);
+          return { error: `get_annotations failed: ${msg}`, annotations: [], total: 0 };
         }
-        // 원본 JSON 전체 구조 반환 — EmbedPDF AnnotationTransferItem[] 형식 그대로
-        return { annotations: sliced, total };
       },
     }),
 
@@ -435,8 +449,12 @@ export function buildAnnotationTools(context: AnnotationContext) {
 
     save_annotations: tool({
       description: 'EmbedPDF AnnotationTransferItem[] 형식의 주석 JSON을 직접 전달하여 Storage에 저장하고 뷰어에 반영한다. add_highlight/add_callout + apply_annotations 대신 사용할 수 있으며, view_page나 read_job_json으로 얻은 정보를 바탕으로 정밀한 위치(rect)를 지정해 주석을 만들 때 유용하다.\n' +
-        '각 주석 항목의 구조: { annotation: { id, type (9=highlight, 3=freetext/callout), pageIndex (0-based), rect: {origin: {x, y}, size: {width, height}}, color, strokeColor, opacity, contents, intent? ("FreeTextCallout"), lineEnding? (4=OpenArrow), segmentRects? } }\n' +
-        'rect 좌표계: pdf_user_space=true(기본값)일 때 PDF user-space(y↑, 원점 좌하단)를 사용한다. get_elements의 bbox_pdf = [x0, y0, x1, y1]에서 origin.x = x0, origin.y = y0(하단), size.width = x1-x0, size.height = y1-y0를 그대로 전달하면 자동으로 device-space로 변환된다. read_job_json 등 기존 주석의 device-space 좌표를 그대로 전달할 때는 pdf_user_space=false로 설정한다.',
+        '각 주석 항목의 구조: { annotation: { id, type (9=highlight, 3=freetext/callout), pageIndex (0-based), rect, color, strokeColor, opacity, contents, intent? ("FreeTextCallout"), lineEnding? (4=OpenArrow), segmentRects? } }\n' +
+        'rect 좌표계: pdf_user_space=true(기본값)일 때 PDF user-space(y↑, 원점 좌하단)를 사용한다. 다음 형식을 지원한다:\n' +
+        '  1. bbox_pdf 배열 직접 전달: rect = [x0, y0, x1, y1] (get_elements의 bbox_pdf 그대로 사용)\n' +
+        '  2. {origin, size} 구조: rect = {origin: {x: x0, y: y0}, size: {width: x1-x0, height: y1-y0}} (y0는 PDF user-space 하단)\n' +
+        '  3. annotation.bbox_pdf 필드: bbox_pdf = [x0, y0, x1, y1] (rect 대신 사용 가능)\n' +
+        'get_elements(page_no)로 얻은 bbox_pdf를 그대로 rect에 전달하면 자동으로 device-space로 변환된다. read_job_json으로 읽은 기존 주석(device-space 좌표)을 그대로 전달할 때는 pdf_user_space=false로 설정한다.',
       inputSchema: z.object({
         annotations: z.array(z.record(z.unknown()))
           .describe('EmbedPDF AnnotationTransferItem[] 배열. 각 항목은 { annotation: { id, type, pageIndex, rect, color, ... } } 구조.'),
@@ -530,12 +548,19 @@ export function buildAnnotationTools(context: AnnotationContext) {
 
 /**
  * [Flow: Step 1 (AnnotationTransferItem 수신) -> Step 2 (annotation 객체 추출)
- *       -> Step 3 (rect/segmentRects의 origin.y를 PDF user-space → device-space로 flip)
- *       -> Step 4 (변환된 주석 반환)]
+ *       -> Step 3 (rect 형식 정규화 — 배열 [x0,y0,x1,y1] / {origin,size} / {x,y,width,height} / bbox_pdf 필드)
+ *       -> Step 4 (rect/segmentRects의 origin.y를 PDF user-space → device-space로 flip)
+ *       -> Step 5 (변환된 주석 반환)]
  *
  * PDF user-space(원점 좌하단, y↑)의 rect를 embedpdf device-space(원점 좌상단, y↓)로 변환한다.
  * origin.y가 PDF user-space에서 하단(y0)일 때, device-space에서는 pageHeight - y0 - height = pageHeight - y1이 된다.
  * segmentRects가 있으면 동일하게 변환한다.
+ *
+ * AI가 전달할 수 있는 다양한 rect 형식을 처리한다:
+ * - 배열 [x0, y0, x1, y1] (PDF user-space, get_elements의 bbox_pdf 그대로 전달)
+ * - {origin: {x, y}, size: {width, height}} (origin.y = PDF user-space 하단 y0)
+ * - {x, y, width, height} (레거시 형식, y = PDF user-space 하단 y0)
+ * - bbox_pdf 필드가 별도로 있는 경우 (annotation.bbox_pdf = [x0, y0, x1, y1])
  *
  * @param item AnnotationTransferItem (PDF user-space 좌표)
  * @param pageDims 페이지 번호(1-based) → {width, height} 맵
@@ -551,12 +576,39 @@ function _convertAnnotationToDeviceSpace(
   const dims = pageDims[pageNo] || { width: 612, height: 792 };
   const pageHeight = dims.height;
 
-  // rect 변환: origin.y (PDF user-space 하단) → pageHeight - origin.y - size.height (device-space 상단)
+  // [Flow: bbox_pdf 배열을 {origin, size} rect로 정규화]
+  // AI가 get_elements의 bbox_pdf = [x0, y0, x1, y1]을 그대로 rect로 전달하거나
+  // annotation.bbox_pdf 필드로 전달하는 경우를 처리한다.
+  const normalizeRect = (rect: any): any => {
+    if (!rect) return rect;
+    // 배열 [x0, y0, x1, y1] (PDF user-space) → {origin, size}
+    if (Array.isArray(rect) && rect.length >= 4) {
+      const [x0, y0, x1, y1] = rect.map(Number);
+      return {
+        origin: { x: x0, y: y0 },
+        size: { width: x1 - x0, height: y1 - y0 },
+      };
+    }
+    if (typeof rect !== 'object') return rect;
+    // 이미 {origin, size} 형태
+    if (rect.origin && typeof rect.origin.x === 'number') return rect;
+    // {x, y, width, height} 레거시 형태
+    if (typeof rect.x === 'number' && typeof rect.width === 'number') {
+      return {
+        origin: { x: rect.x, y: rect.y },
+        size: { width: rect.width, height: rect.height || 0 },
+      };
+    }
+    return rect;
+  };
+
+  // rect 변환: origin.y (PDF user-space 하단 y0) → pageHeight - origin.y - size.height (device-space 상단)
   const convertRect = (rect: any): any => {
-    if (!rect || typeof rect !== 'object') return rect;
-    const origin = rect.origin ?? { x: rect.x, y: rect.y };
-    const size = rect.size ?? { width: rect.width, height: rect.height };
-    if (typeof origin.y !== 'number' || typeof size.height !== 'number') return rect;
+    const normalized = normalizeRect(rect);
+    if (!normalized || typeof normalized !== 'object') return rect;
+    const origin = normalized.origin;
+    const size = normalized.size;
+    if (!origin || typeof origin.y !== 'number' || !size || typeof size.height !== 'number') return rect;
     return {
       origin: { x: origin.x, y: pageHeight - origin.y - size.height },
       size: { width: size.width, height: size.height },
@@ -564,6 +616,16 @@ function _convertAnnotationToDeviceSpace(
   };
 
   const convertedInner = { ...inner };
+
+  // [Flow: bbox_pdf 필드가 있으면 rect로 승격 — AI가 annotation.bbox_pdf로 전달하는 경우]
+  if (Array.isArray(convertedInner.bbox_pdf) && !convertedInner.rect) {
+    const [x0, y0, x1, y1] = convertedInner.bbox_pdf.map(Number);
+    convertedInner.rect = {
+      origin: { x: x0, y: y0 },
+      size: { width: x1 - x0, height: y1 - y0 },
+    };
+  }
+
   if (convertedInner.rect) {
     convertedInner.rect = convertRect(convertedInner.rect);
   }

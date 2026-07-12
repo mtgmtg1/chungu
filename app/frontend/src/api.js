@@ -259,14 +259,10 @@ export const api = {
 
   // e-Discovery GraphRAG
   getEdiscovery: (jobId) => request(`/api/jobs/${jobId}/ediscovery`),
-  extractEdiscoveryGraph: (jobId, { total_docs, chunk_size, threshold }, { wait = false } = {}) =>
+  extractEdiscoveryGraph: (jobId, params = { auto: true }, { wait = false } = {}) =>
     request(`/api/jobs/${jobId}/ediscovery/extract?wait=${wait}`, {
       method: 'POST',
-      body: JSON.stringify({
-        max_docs: total_docs,
-        chunk_size,
-        threshold,
-      }),
+      body: JSON.stringify(params),
     }),
   adjustGraphThreshold: (jobId, { threshold }, { wait = false } = {}) =>
     request(`/api/jobs/${jobId}/ediscovery/threshold?wait=${wait}`, {
@@ -275,8 +271,10 @@ export const api = {
     }),
 
   // Evidence-to-Element Mapper — 요건사실 기반 증거 퍼즐 매퍼
-  getLegalElements: (jobId, claimType) =>
-    request(`/api/jobs/${jobId}/legal-elements?claim_type=${encodeURIComponent(claimType)}`),
+  getLegalElements: (jobId, claimType = '') => {
+    const query = claimType ? `?claim_type=${encodeURIComponent(claimType)}` : '';
+    return request(`/api/jobs/${jobId}/legal-elements${query}`);
+  },
   saveElementMappings: (jobId, data) =>
     request(`/api/jobs/${jobId}/legal-elements/mappings`, {
       method: 'PUT',

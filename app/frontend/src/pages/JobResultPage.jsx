@@ -675,7 +675,7 @@ export default function JobResultPage() {
       );
     }
     if (previewMode === "ediscovery" || previewMode === "ediscoveryTimeline" || previewMode === "ediscoveryMapper") {
-      const defaultTab = previewMode === "ediscoveryMapper" ? "mapper" : "graph";
+      const defaultTab = previewMode === "ediscoveryMapper" ? "mapper" : "timeline";
       return (
         <EDiscoveryViewer
           jobId={jobId}

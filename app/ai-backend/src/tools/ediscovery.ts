@@ -22,6 +22,7 @@ interface EdiscoveryMetrics {
   total_docs: number;
   processed_chunks: number;
   threshold: number;
+  anomalies_detected?: number;
 }
 
 interface GraphNode {

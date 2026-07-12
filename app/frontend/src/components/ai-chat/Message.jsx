@@ -163,8 +163,9 @@ function PreviewMessage({
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-2">
             {content}
-            {/* 마지막 어시스턴트 메시지 아래에 재생성 버튼 표시 */}
-            {isLastAssistant && onRegenerate && (
+            {/* 마지막 어시스턴트 메시지 아래에 재생성 버튼 표시
+                (스트리밍 중에는 AgentActivityIndicator가 표시되므로 버튼은 숨김) */}
+            {isLastAssistant && onRegenerate && !isLoading && (
               <div className="flex items-center">
                 <button
                   type="button"

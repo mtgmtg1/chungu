@@ -1,4 +1,11 @@
 // [Flow: Step 1 (개발 모드 mock 핸들러 정의) -> Step 2 (request()에서 devMockEnabled일 때 라우팅)]
+import {
+  SAMPLE_JOB,
+  SAMPLE_EDISCOVERY_GRAPH,
+  SAMPLE_EDISCOVERY_METRICS,
+  SAMPLE_LEGAL_ELEMENTS,
+} from "./ediscoverySampleData.js";
+
 const MOCK_USER = {
   id: "dev-user-001",
   email: "dev@proof.local",
@@ -7,20 +14,30 @@ const MOCK_USER = {
   is_admin: true,
 };
 
-const mockJob = (id) => ({
-  job_id: id,
-  status: "done",
-  pipeline: "vision",
-  total_pages: 1,
-  total_files: 1,
-  points_spent: 0,
-  created_at: new Date().toISOString(),
-  updated_at: new Date().toISOString(),
-  xlsx_basic_converted: false,
-  xlsx_advanced_status: "idle",
-  xlsx_advanced_converted: false,
-  error_message: null,
-});
+// 개발 페이지 전용 샘플 Job — e-Discovery 필드가 채워진 상태로 반환.
+const MOCK_EDISCOVERY_JOB_ID = "dev-ediscovery-sample";
+
+const mockJob = (id) => {
+  // e-Discovery 개발 페이지에서 사용하는 샘플 Job은 그래프/메트릭이 포함된 버전을 반환.
+  if (id === MOCK_EDISCOVERY_JOB_ID) return SAMPLE_JOB;
+  return {
+    job_id: id,
+    status: "done",
+    pipeline: "vision",
+    total_pages: 1,
+    total_files: 1,
+    points_spent: 0,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    xlsx_basic_converted: false,
+    xlsx_advanced_status: "idle",
+    xlsx_advanced_converted: false,
+    error_message: null,
+  };
+};
+
+// 메모리 상의 element_mappings 저장소 — 퍼즐 매퍼 드래그 앤 드롭 상태를 시뮬레이션.
+let mockElementMappings = {};
 
 const handlers = [
   {
@@ -143,6 +160,56 @@ const handlers = [
   {
     match: (path, method) => method === "GET" && /^\/api\/jobs\/[^/]+\/result$/.test(path),
     response: () => ({ markdown: "# Mock result\n\nDevelopment mode preview." }),
+  },
+
+  // --- e-Discovery GraphRAG (개발 페이지 전용 샘플) ---
+  {
+    match: (path, method) => method === "GET" && /^\/api\/jobs\/[^/]+\/ediscovery$/.test(path),
+    response: (path) => {
+      const jobId = path.split("/")[3];
+      if (jobId !== MOCK_EDISCOVERY_JOB_ID) {
+        return { job_id: jobId, ediscovery_status: "", graph_data: { nodes: [], edges: [] }, ediscovery_metrics: {} };
+      }
+      return {
+        job_id: jobId,
+        ediscovery_status: "done",
+        ediscovery_metrics: SAMPLE_EDISCOVERY_METRICS,
+        graph_data: SAMPLE_EDISCOVERY_GRAPH,
+        ediscovery_error: "",
+      };
+    },
+  },
+  {
+    match: (path, method) =>
+      method === "GET" && /^\/api\/jobs\/[^/]+\/legal-elements$/.test(path),
+    response: (path) => {
+      const jobId = path.split("/")[3];
+      const url = new URL(path, "http://localhost");
+      const claimType = url.searchParams.get("claim_type") || "사기죄";
+      // 캐시된 매핑이 있으면 반환, 없으면 샘플 요건사실 반환.
+      if (mockElementMappings.elements?.length > 0 && mockElementMappings.claim_type === claimType) {
+        return { job_id: jobId, element_mappings: mockElementMappings };
+      }
+      return { job_id: jobId, element_mappings: { ...SAMPLE_LEGAL_ELEMENTS, claim_type: claimType } };
+    },
+  },
+  {
+    match: (path, method) =>
+      method === "GET" && /^\/api\/jobs\/[^/]+\/legal-elements\/mappings$/.test(path),
+    response: (path) => {
+      const jobId = path.split("/")[3];
+      return { job_id: jobId, element_mappings: mockElementMappings };
+    },
+  },
+  {
+    match: (path, method) =>
+      method === "PUT" && /^\/api\/jobs\/[^/]+\/legal-elements\/mappings$/.test(path),
+    response: (path, _method, options) => {
+      const jobId = path.split("/")[3];
+      const body = options.body ? JSON.parse(options.body) : {};
+      mockElementMappings = body;
+      return { job_id: jobId, element_mappings: mockElementMappings };
+    },
   },
   // 모든 쓰기/변형 요청은 성공처럼 처리합니다.
   {

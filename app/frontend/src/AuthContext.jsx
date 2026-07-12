@@ -72,11 +72,11 @@ export function AuthProvider({ children }) {
           console.warn("[DEV auto-login] 실패:", e.message);
         }
 
-        // 백엔드 bypass가 없으면 API key 인증으로 mock 사용자 전환 (mock API는 사용하지 않음)
+        // 백엔드 bypass가 없으면 mock 사용자 + mock API 전환으로 UI 독립 테스트
         if (!session) {
           session = MOCK_DEV_SESSION;
-          mode = "apikey";
-          enableDevMock(false);
+          mode = "mock";
+          enableDevMock(true);
         }
       }
 

@@ -864,6 +864,25 @@ def run_job(job_id: str) -> dict:
         _set_status(db, job, "done")
         logger.info(f"[run_job:{job_id}] DB 업데이트 완료: status={job.status}")
 
+        # Step 7b: e-Discovery 자동 분석 시작
+        # 변환이 완료된 문서는 최초 1회 자동으로 GraphRAG 추출을 실행한다.
+        if not job.ediscovery_status or job.ediscovery_status in ("", "error"):
+            try:
+                task = run_ediscovery.delay(
+                    job_id,
+                    chunk_size=None,
+                    threshold=None,
+                    page_range=None,
+                    max_chunks=None,
+                    query=None,
+                )
+                job.ediscovery_status = "processing"
+                job.ediscovery_job_id = task.id
+                db.commit()
+                logger.info(f"[run_job:{job_id}] e-Discovery 자동 분석 시작 task_id={task.id}")
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[run_job:{job_id}] e-Discovery 자동 분석 큐잉 실패: {e}")
+
         # Step 7: 완료 이메일
         try:
             user_lang = "en"
@@ -1249,8 +1268,8 @@ def annotate_edit_job(
 @celery.task(name="backend.workers.tasks.run_ediscovery")
 def run_ediscovery(
     job_id: str,
-    chunk_size: int = pipeline_ediscovery.DEFAULT_CHUNK_SIZE,
-    threshold: float = pipeline_ediscovery.DEFAULT_THRESHOLD,
+    chunk_size: int | None = None,
+    threshold: float | None = None,
     page_range: list[int] | None = None,
     max_chunks: int | None = None,
     query: str | None = None,
@@ -1258,9 +1277,8 @@ def run_ediscovery(
     """[Flow: Step 1 (pipeline_ediscovery.run 호출) -> Step 2 (결과 반환)]
 
     수천 장 법률 문서에서 쟁점/증거 노드를 추출해 그래프 JSON으로 저장한다.
-    chunk_size는 자식 청크 단어 수, threshold는 노드 신뢰도 필터링 기준 (0.0~1.0).
+    chunk_size/threshold/max_chunks가 None이면 LLM이 문서 샘플을 보고 자동 추천한다.
     page_range는 처리할 1-based 페이지 번호 리스트. None이면 전체 페이지를 처리한다.
-    max_chunks는 처리할 최대 페이지(문서) 수로, 전체 문서가 많을 때 상위 페이지부터 제한한다.
     query는 자연어 쿼리로, 지정 시 관련 청크만 처리 대상으로 한다.
     """
     return pipeline_ediscovery.run(

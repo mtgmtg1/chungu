@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["jobs"])
 
+# stale "processing" 상태 판정 기준 — 이 시간(초) 이상 processing 상태가 지속되면 stale로 간주
+EDISCOVERY_STALE_TIMEOUT_SECONDS = 3600  # 1시간
+
 
 def _get_current_user(
     auth: tuple[CurrentUser, Any] = Depends(require_api_key_or_session),
@@ -56,6 +59,79 @@ def _require_job_done(job: Job) -> None:
         raise HTTPException(status_code=400, detail="Only completed jobs can use e-Discovery")
 
 
+def _is_ediscovery_stale(job: Job, db: Session) -> bool:
+    """[Flow: Step 1 (ediscovery_status != processing이면 False) -> Step 2 (ediscovery_job_id 비어있으면 stale)
+          -> Step 3 (Celery AsyncResult 상태 확인: FAILURE/REVOKED/SUCCESS면 stale)
+          -> Step 4 (ediscovery_params.started_at 기준 타임아웃 초과 시 stale)
+          -> Step 5 (결과 백엔드 조회 불가 시 안전하게 stale로 간주)]
+
+    "processing" 상태가 잠긴(deadlock) job을 감지한다.
+    Celery 태스크가 크래시/재시작으로 소실되었거나, 타임아웃을 초과했으면 True를 반환한다.
+    호출측에서 True 반환 시 ediscovery_status를 리셋하고 재추출을 허용한다.
+
+    매개변수:
+        job: Job 모델 인스턴스
+        db: SQLAlchemy 세션 (상태 리셋 시 commit용)
+    반환값:
+        True면 stale (재추출 허용), False면 정상 processing (재추출 거부)
+    """
+    if job.ediscovery_status != "processing":
+        return False
+
+    # Step 2: Celery 태스크 ID가 없으면 추적 불가 → stale
+    task_id = (job.ediscovery_job_id or "").strip()
+    if not task_id:
+        logger.warning(f"[ediscovery-api] stale job={job.id} — processing 상태지만 ediscovery_job_id가 비어 있음")
+        return True
+
+    # Step 3: Celery 결과 백엔드에서 태스크 상태 확인
+    try:
+        from ..celery_app import celery
+        result = celery.AsyncResult(task_id)
+        state = result.state
+        # PENDING/STARTED/RETRY는 실행 중 → stale 아님
+        # SUCCESS/FAILURE/REVOKED는 종료 → stale (status가 done/error로 갱신되지 않았으므로)
+        if state in ("SUCCESS", "FAILURE", "REVOKED"):
+            logger.warning(f"[ediscovery-api] stale job={job.id} — Celery 태스크 {task_id} 상태={state}")
+            return True
+    except Exception as e:  # noqa: BLE001
+        # 결과 백엔드 조회 불가 → 안전하게 stale로 간주 (재추출 허용)
+        logger.warning(f"[ediscovery-api] stale job={job.id} — Celery 결과 조회 실패: {e}")
+        return True
+
+    # Step 4: 타임아웃 기반 stale 판정 — started_at 기준 EDISCOVERY_STALE_TIMEOUT_SECONDS 초과 시 stale
+    params = job.ediscovery_params or {}
+    started_at_str = params.get("started_at")
+    if started_at_str:
+        try:
+            started_at = datetime.fromisoformat(started_at_str)
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=timezone.utc)
+            elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
+            if elapsed > EDISCOVERY_STALE_TIMEOUT_SECONDS:
+                logger.warning(
+                    f"[ediscovery-api] stale job={job.id} — processing {elapsed:.0f}초 경과 "
+                    f"(한도 {EDISCOVERY_STALE_TIMEOUT_SECONDS}초)"
+                )
+                return True
+        except (ValueError, TypeError):
+            pass  # started_at 파싱 실패 시 타임아웃 판정 스킵
+
+    return False
+
+
+def _reset_stale_processing(job: Job, db: Session) -> None:
+    """[Flow: Step 1 (ediscovery_status를 빈값으로 리셋) -> Step 2 (ediscovery_job_id 제거) -> Step 3 (commit)]
+
+    stale "processing" 상태를 리셋하여 재추출이 가능하게 한다.
+    기존 그래프/메트릭은 유지한다 (재추출 시 덮어씀).
+    """
+    job.ediscovery_status = ""
+    job.ediscovery_job_id = ""
+    db.commit()
+    logger.info(f"[ediscovery-api] stale processing 리셋 job={job.id}")
+
+
 def _build_response(job: Job) -> dict:
     """[Flow: Step 1 (Job의 e-Discovery 필드 수집) -> Step 2 (데이터 계약 형식으로 반환)]"""
     return {
@@ -77,11 +153,17 @@ def get_ediscovery(
     user: CurrentUser = Depends(_get_current_user),
     db: Session = Depends(get_db),
 ):
-    """[Flow: Step 1 (Job 조회) -> Step 2 (권한/만료/완료 상태 검증) -> Step 3 (e-Discovery 상태/그래프 반환)]"""
+    """[Flow: Step 1 (Job 조회) -> Step 2 (권한/만료/완료 상태 검증)
+          -> Step 3 (stale processing 감지 시 자동 리셋) -> Step 4 (e-Discovery 상태/그래프 반환)]"""
     job = db.get(Job, job_id)
     _require_job_access(job, user)
     _require_job_not_expired(job)
     _require_job_done(job)
+
+    # stale "processing" 자동 감지 — 폴링 중인 프론트엔드가 무한 대기하지 않도록 리셋
+    if job.ediscovery_status == "processing" and _is_ediscovery_stale(job, db):
+        _reset_stale_processing(job, db)
+
     return _build_response(job)
 
 
@@ -133,7 +215,8 @@ def extract_ediscovery_graph(
     """[Flow: Step 1 (Job 조회 + 파라미터 파싱) -> Step 2 (wait=true면 pipeline_ediscovery.run 동기 실행)
           -> Step 3 (wait=false면 Celery task 큐잉 후 processing 반환) -> Step 4 (결과를 데이터 계약 형식으로 반환)]
 
-    e-Discovery GraphRAG 추출을 실행한다. chunk_size, threshold, max_docs(또는 max_chunks), query, page_range를 조절할 수 있다.
+    e-Discovery GraphRAG 추출을 실행한다.
+    payload.auto=true이거나 chunk_size/threshold/max_docs가 모두 누락되면 LLM이 문서를 보고 자동 파라미터를 결정한다.
     AI 백엔드 도구는 wait 기본값(true)로 즉시 결과를 받고, 프론트엔드는 wait=false로 비동기 폴링할 수 있다.
     """
     job = db.get(Job, job_id)
@@ -141,37 +224,61 @@ def extract_ediscovery_graph(
     _require_job_not_expired(job)
     _require_job_done(job)
 
-    chunk_size = int(payload.get("chunk_size", payload.get("chunkSize", pipeline_ediscovery.DEFAULT_CHUNK_SIZE)))
-    threshold = float(payload.get("threshold", pipeline_ediscovery.DEFAULT_THRESHOLD))
-    threshold = max(0.0, min(1.0, threshold))
-    max_docs = payload.get("max_docs") or payload.get("max_chunks") or payload.get("maxDocs")
-    if max_docs is not None:
-        max_docs = int(max_docs)
+    auto = bool(payload.get("auto", False))
+    if not auto:
+        # chunk_size/threshold/max_docs 중 하나라도 명시되지 않으면 자동 모드로 전환
+        has_chunk = payload.get("chunk_size") is not None or payload.get("chunkSize") is not None
+        has_threshold = payload.get("threshold") is not None
+        has_max_docs = (
+            payload.get("max_docs") is not None
+            or payload.get("max_chunks") is not None
+            or payload.get("maxDocs") is not None
+        )
+        if not (has_chunk and has_threshold and has_max_docs):
+            auto = True
+
+    if auto:
+        chunk_size = None
+        threshold = None
+        max_docs = None
+    else:
+        chunk_size = int(payload.get("chunk_size", payload.get("chunkSize", pipeline_ediscovery.DEFAULT_CHUNK_SIZE)))
+        threshold = float(payload.get("threshold", pipeline_ediscovery.DEFAULT_THRESHOLD))
+        threshold = max(0.0, min(1.0, threshold))
+        max_docs = payload.get("max_docs") or payload.get("max_chunks") or payload.get("maxDocs")
+        if max_docs is not None:
+            max_docs = int(max_docs)
     query = str(payload.get("query", "")).strip() or None
 
     total_pages = job.total_pages if job.total_pages else (job.total_files or 1)
     page_range = _parse_page_range(payload.get("page_range"), total_pages)
 
-    # 요청 파라미터 저장
+    # 요청 파라미터 저장 — started_at은 stale 타임아웃 판정용
     job.ediscovery_params = {
+        "auto": auto,
         "chunk_size": chunk_size,
         "threshold": threshold,
         "max_docs": max_docs,
         "query": query,
         "page_range": page_range,
+        "started_at": datetime.now(timezone.utc).isoformat(),
     }
 
+    # stale "processing" 감지 — Celery 태스크가 소실/종료되었으면 상태 리셋 후 재추출 허용
     if job.ediscovery_status == "processing":
-        return {
-            "job_id": job.id,
-            "status": "processing",
-            "message": "e-Discovery extraction already in progress",
-        }
+        if _is_ediscovery_stale(job, db):
+            _reset_stale_processing(job, db)
+        else:
+            return {
+                "job_id": job.id,
+                "status": "processing",
+                "message": "e-Discovery extraction already in progress",
+            }
 
     job.ediscovery_status = "processing"
     db.commit()
 
-    logger.info(f"[ediscovery-api] extract job={job_id} chunk_size={chunk_size} threshold={threshold} max_docs={max_docs} query={query} page_range={page_range} wait={wait}")
+    logger.info(f"[ediscovery-api] extract job={job_id} auto={auto} chunk_size={chunk_size} threshold={threshold} max_docs={max_docs} query={query} page_range={page_range} wait={wait}")
 
     if not wait:
         from ..workers import tasks
@@ -235,11 +342,14 @@ def adjust_graph_threshold(
     threshold = max(0.0, min(1.0, threshold))
 
     if job.ediscovery_status == "processing":
-        return {
-            "job_id": job.id,
-            "status": "processing",
-            "message": "e-Discovery extraction already in progress",
-        }
+        if _is_ediscovery_stale(job, db):
+            _reset_stale_processing(job, db)
+        else:
+            return {
+                "job_id": job.id,
+                "status": "processing",
+                "message": "e-Discovery extraction already in progress",
+            }
 
     if job.ediscovery_status != "done" or not job.ediscovery_graphs:
         raise HTTPException(
@@ -311,11 +421,15 @@ def get_legal_elements(
     _require_job_done(job)
 
     claim_type = (claim_type or "").strip()
+    cached = job.element_mappings or {}
+
+    # claim_type이 없으면 자동 추출된 element_mappings(저장된 매핑)을 우선 반환
     if not claim_type:
+        if cached.get("elements"):
+            return {"job_id": job.id, "element_mappings": cached}
         raise HTTPException(status_code=400, detail="claim_type query parameter is required")
 
     # 캐시 확인: 같은 claim_type의 저장된 매핑이 있으면 반환
-    cached = job.element_mappings or {}
     if cached.get("claim_type") == claim_type and cached.get("elements"):
         return {"job_id": job.id, "element_mappings": cached}
 

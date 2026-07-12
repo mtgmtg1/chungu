@@ -7,6 +7,7 @@ import "./i18n.js";
 import i18n from "./i18n.js";
 import { AuthProvider } from "./AuthContext.jsx";
 import { LanguageProvider } from "./LanguageContext.jsx";
+import { enableDevMock } from "./api.js";
 import UploadPage from "./pages/UploadPage.jsx";
 import AuthPage from "./pages/AuthPage.jsx";
 import DashboardPage from "./pages/DashboardPage.jsx";
@@ -25,6 +26,13 @@ import PricePage from "./pages/PricePage.jsx";
 import ApiPricingPage from "./pages/ApiPricingPage.jsx";
 import CookieConsent from "./components/CookieConsent.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
+import DevEdiscoveryPage from "./pages/DevEdiscoveryPage.jsx";
+
+// 개발 환경에서 전역 dev mock 활성화 — /dev/* 및 /jobs/:jobId 경로 모두 샘플 데이터로 UI 테스트 가능.
+// production 빌드에서는 import.meta.env.DEV가 false이므로 무시된다.
+if (import.meta.env.DEV) {
+  enableDevMock(true);
+}
 
 const rootEl = document.getElementById("root");
 ReactDOM.createRoot(rootEl).render(
@@ -155,6 +163,12 @@ ReactDOM.createRoot(rootEl).render(
                 path="/refund-policy"
                 element={<LegalRefundPage data-oid="lglrefund" />}
                 data-oid="lglrefund_r" />
+
+              {/* 개발 전용 라우트 — production 빌드에서는 접근해도 mock 데이터만 표시됨 */}
+              <Route
+                path="/dev/ediscovery"
+                element={<DevEdiscoveryPage data-oid="dev-ediscovery-route" />}
+                data-oid="dev-ediscovery-route-r" />
 
             </Routes>
           <CookieConsent data-oid="cookie_consent" />

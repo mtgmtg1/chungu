@@ -32,6 +32,7 @@
     "@tiptap/starter-kit": "^3.27.1",
     "@xyflow/react": "^12.11.2",
     "ai": "^5.0.0",
+    "dayjs": "^1.11.21",
     "elkjs": "^0.11.1",
     "face-api.js": "^0.22.2",
     "fast-json-patch": "^3.1.1",
@@ -41,11 +42,14 @@
     "luckyexcel": "^1.0.1",
     "luckysheet": "^2.1.13",
     "marked": "^18.0.5",
+    "moment": "^2.30.1",
     "ogl": "^1.0.11",
     "pdfjs-dist": "^4.10.38",
     "perfect-freehand": "^1.2.3",
     "postprocessing": "^6.35.0",
     "react": "^18.3.1",
+    "react-calendar-timeline": "^0.30.0-beta.4",
+    "react-chrono": "^2.6.1",
     "react-dom": "^18.3.1",
     "react-i18next": "^15.4.1",
     "react-resizable-panels": "^2.1.7",
@@ -55,7 +59,8 @@
     "turndown": "^7.2.4",
     "tus-js-client": "^4.3.1",
     "uuid": "^14.0.1",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",

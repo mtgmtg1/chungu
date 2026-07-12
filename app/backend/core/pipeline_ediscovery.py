@@ -19,6 +19,7 @@ import fitz  # PyMuPDF
 from .. import settings_store
 from ..config import settings
 from ..core import supabase_client
+from ..core.legal_case_profile import extract_legal_profile
 from ..core.ocr_client import call_text
 from ..db.models import Job
 from ..db.session import SessionLocal
@@ -706,30 +707,189 @@ def assemble_graph(
     return {"nodes": swimlane_nodes + graph_child_nodes, "edges": edges}
 
 
+# --- 자동 파라미터 추천 ------------------------------------------------------
+
+def _build_param_suggestion_prompt(page_texts: dict[int, str]) -> str:
+    """[Flow: Step 1 (처음/중간/끝 페이지 샘플 선택) -> Step 2 (각 샘플을 2000자로 truncate)
+          -> Step 3 (프롬프트 문자열 조합) -> Step 4 (LLM 입력 문자열 반환)]
+
+    전체 문서의 페이지 샘플을 기반으로 chunk_size/threshold/max_docs를 추천하도록 LLM에 지시하는
+    프롬프트를 생성한다. 짧은 문서는 전체 페이지, 긴 문서는 처음/중간/끝 페이지만 샘플링해
+    토큰 비용을 절감한다.
+    """
+    total_pages = len(page_texts)
+    sorted_pages = sorted(page_texts.keys())
+    if total_pages <= 3:
+        sample_pages = sorted_pages
+    else:
+        sample_pages = [sorted_pages[0], sorted_pages[total_pages // 2], sorted_pages[-1]]
+
+    sample_blocks = []
+    for page_no in sample_pages:
+        text = page_texts[page_no].strip()
+        if len(text) > 2000:
+            text = text[:2000] + "..."
+        sample_blocks.append(f"--- 페이지 {page_no} ---\n{text}")
+    sample_text = "\n\n".join(sample_blocks)
+
+    return f"""아래는 법률 문서의 일부 페이지 샘플이다. 이 문서의 특성을 분석하여 e-Discovery GraphRAG 파이프라인에 사용할 최적의 파라미터 3개를 JSON으로 반환하라.
+
+[파라미터 설명]
+- chunk_size: 한 번에 LLM에 전달할 텍스트의 단어 수. 문서가 짧고 단순하면 256~512, 사실관계가 복잡하고 많은 쟁점/주체가 등장하면 1024~2048, 매우 복잡하면 2048~4096.
+- threshold: 노드 추출 신뢰도 임계값(0.0~1.0). 노이즈가 많거나 보수적으로 추출하려면 0.6~0.7, 균형 잡히게 추출하려면 0.45~0.55, 많은 후보를 남기려면 0.3~0.4.
+- max_docs: 처리할 최대 페이지 수. 짧은 문서(50페이지 이하)면 전체 페이지 수, 중간(50~500페이지)이면 50~200, 긴 문서(500페이지 이상)이면 100~500 정도로 샘플링하여 비용과 커버리지를 균형.
+
+[JSON 응답 형식]
+{{
+  "chunk_size": 1024,
+  "threshold": 0.5,
+  "max_docs": 100,
+  "reasoning": "한국어로 1문장 설명"
+}}
+
+결과는 JSON만 반환한다. 다른 설명은 금지.
+
+--- 문서 샘플 ---
+{sample_text}
+"""
+
+
+def _parse_param_suggestion(content: str) -> dict:
+    """[Flow: Step 1 (JSON 펜스 제거) -> Step 2 (JSON 파싱) -> Step 3 (필드 추출/기본값 적용)
+          -> Step 4 (dict 반환)]
+
+    LLM의 파라미터 추천 응답을 파싱한다. 파싱 실패 또는 필드 누락 시 기본값을 채워 반환한다.
+    """
+    cleaned = _strip_json_fence(content).strip()
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        logger.warning(f"[ediscovery] 파라미터 추천 JSON 파싱 실패: {cleaned[:200]}")
+        return {}
+    if not isinstance(data, dict):
+        return {}
+
+    try:
+        chunk_size = int(data.get("chunk_size", DEFAULT_CHUNK_SIZE))
+    except (TypeError, ValueError):
+        chunk_size = DEFAULT_CHUNK_SIZE
+
+    try:
+        threshold = float(data.get("threshold", DEFAULT_THRESHOLD))
+    except (TypeError, ValueError):
+        threshold = DEFAULT_THRESHOLD
+
+    max_docs = data.get("max_docs")
+    if max_docs is not None:
+        try:
+            max_docs = int(max_docs)
+        except (TypeError, ValueError):
+            max_docs = None
+
+    return {
+        "chunk_size": chunk_size,
+        "threshold": threshold,
+        "max_docs": max_docs,
+        "reasoning": str(data.get("reasoning", "")).strip(),
+    }
+
+
+def _clamp_suggested_params(suggested: dict, total_pages: int) -> dict:
+    """[Flow: Step 1 (chunk_size를 128 단위로 256~4096 범위로 clamp)
+          -> Step 2 (threshold를 0.3~0.7 범위로 clamp)
+          -> Step 3 (max_docs를 1~min(전체,5000) 범위로 clamp) -> Step 4 (dict 반환)]
+
+    LLM이 추천한 파라미터를 안전한 범위 내로 조정한다.
+    """
+    raw_chunk = suggested.get("chunk_size", DEFAULT_CHUNK_SIZE)
+    try:
+        raw_chunk = int(raw_chunk)
+    except (TypeError, ValueError):
+        raw_chunk = DEFAULT_CHUNK_SIZE
+    chunk_size = max(256, min(4096, ((raw_chunk // 128) * 128)))
+
+    raw_threshold = suggested.get("threshold", DEFAULT_THRESHOLD)
+    try:
+        raw_threshold = float(raw_threshold)
+    except (TypeError, ValueError):
+        raw_threshold = DEFAULT_THRESHOLD
+    threshold = round(max(0.3, min(0.7, raw_threshold)), 2)
+
+    raw_max_docs = suggested.get("max_docs")
+    if raw_max_docs is None:
+        max_docs = total_pages
+    else:
+        try:
+            max_docs = int(raw_max_docs)
+        except (TypeError, ValueError):
+            max_docs = total_pages
+        max_docs = max(1, min(5000, max_docs))
+    max_docs = min(max_docs, total_pages) if total_pages else max_docs
+
+    return {
+        "chunk_size": chunk_size,
+        "threshold": threshold,
+        "max_docs": max_docs,
+        "reasoning": suggested.get("reasoning", ""),
+    }
+
+
+def _suggest_params(
+    page_texts: dict[int, str],
+    endpoint: str,
+    model: str,
+    api_key: str,
+) -> dict:
+    """[Flow: Step 1 (페이지 샘플 선택 및 프롬프트 구성) -> Step 2 (vLLM 호출)
+          -> Step 3 (응답 파싱) -> Step 4 (권장 범위 내 clamp) -> Step 5 (파라미터 dict 반환)]
+
+    전체 문서의 페이지 샘플을 LLM에 전달해 e-Discovery 파이프라인의 chunk_size/threshold/max_docs를
+    자동 추천받는다. LLM 호출 실패 시 안전한 기본값을 반환한다.
+    """
+    total_pages = len(page_texts)
+    if not page_texts:
+        return _clamp_suggested_params({}, total_pages)
+
+    prompt = _build_param_suggestion_prompt(page_texts)
+    try:
+        content, _ = call_text(prompt, endpoint, model, api_key, max_tokens=500)
+    except Exception as e:
+        logger.warning(f"[ediscovery] 파라미터 추천 LLM 호출 실패: {e}")
+        return _clamp_suggested_params({}, total_pages)
+
+    suggested = _parse_param_suggestion(content)
+    return _clamp_suggested_params(suggested, total_pages)
+
+
 # --- 메인 오케스트레이션 ----------------------------------------------------
 def run(
     job_id: str,
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
-    threshold: float = DEFAULT_THRESHOLD,
+    chunk_size: int | None = None,
+    threshold: float | None = None,
     page_range: list[int] | None = None,
     max_chunks: int | None = None,
     query: str | None = None,
     max_docs: int | None = None,
 ) -> dict:
-    """[Flow: Step 1 (job 로드 + LLM 설정) -> Step 2 (텍스트 추출) -> Step 3 (max_chunks 적용) -> Step 4 (청킹)
-          -> Step 5 (query 필터링) -> Step 6 (병렬 노드 추출) -> Step 7 (임계값 필터 + 그래프 조립) -> Step 8 (jobs 상태 done 갱신) -> Step 9 (예외 시 error + 환불 플래그)]
+    """[Flow: Step 1 (job 로드 + LLM 설정) -> Step 2 (텍스트 추출) -> Step 2b (파라미터 누락 시 LLM 자동 추천)
+          -> Step 3 (max_chunks 적용) -> Step 4 (청킹) -> Step 5 (query 필터링) -> Step 6 (병렬 노드 추출)
+          -> Step 7 (임계값 필터 + 그래프 조립) -> Step 8 (jobs 상태 done 갱신) -> Step 9 (예외 시 error + 환불 플래그)]
 
     e-Discovery 추출 파이프라인을 실행하고 jobs 테이블의 ediscovery_* 필드를 갱신한다.
+    chunk_size/threshold/max_docs 중 하나라도 None이면 LLM이 문서 샘플을 보고 자동으로 추천한다.
     xlsx_advanced_converter.run 과 동일한 상태/환불 패턴을 따른다.
 
     매개변수:
-        max_chunks: 처리할 최대 페이지(문서) 수. 지정 시 페이지 번호 오름차순으로 상위 max_chunks개만 사용.
+        chunk_size: 자식 청크 단어 수. None이면 LLM이 자동 추천.
+        threshold: 노드 신뢰도 임계값. None이면 LLM이 자동 추천.
+        max_chunks: 처리할 최대 페이지(문서) 수. None이면 LLM이 자동 추천.
         query: 자연어 쿼리. 지정 시 쿼리 용어를 포함한 청크만 처리 대상으로 한다.
         max_docs: max_chunks의 별칭 (api/ediscovery.py 호환용). max_chunks가 None일 때만 적용.
     """
     # max_docs → max_chunks 호환 매핑 (api/ediscovery.py의 extract/threshold 엔드포인트 호환)
     if max_chunks is None and max_docs is not None:
         max_chunks = max_docs
+    legal_profile: dict = {}
     db = SessionLocal()
     try:
         job = db.get(Job, job_id)
@@ -744,6 +904,35 @@ def run(
         page_texts = extract_page_texts(job)
         if not page_texts:
             raise ValueError("문서에서 텍스트를 추출할 수 없습니다 (텍스트 레이어/마크다운 모두 비어 있음)")
+
+        # Step 2a: 법률 분야/청구 원인/쟁점/요건사실 자동 추출
+        # LLM이 문서 샘플을 보고 민사/형사/행정/이혼/헌법 등 분야와 입증 요건을 추출한다.
+        legal_profile = extract_legal_profile(page_texts, endpoint, model, api_key)
+        if legal_profile.get("claim_type"):
+            job.element_mappings = {
+                "claim_type": legal_profile["claim_type"],
+                "overall_progress_percent": 0,
+                "elements": legal_profile.get("legal_elements", []),
+            }
+            db.commit()
+            logger.info(
+                f"[ediscovery] job={job_id} legal_profile 추출: "
+                f"legal_domain={legal_profile.get('legal_domain')}, "
+                f"claim_type={legal_profile.get('claim_type')}, "
+                f"elements={len(legal_profile.get('legal_elements', []))}"
+            )
+
+        # Step 2b: 파라미터가 명시되지 않으면 LLM이 전체 문서 샘플을 보고 자동 추천
+        auto_params = None
+        if chunk_size is None or threshold is None or max_chunks is None:
+            auto_params = _suggest_params(page_texts, endpoint, model, api_key)
+            if chunk_size is None:
+                chunk_size = auto_params["chunk_size"]
+            if threshold is None:
+                threshold = auto_params["threshold"]
+            if max_chunks is None:
+                max_chunks = auto_params["max_docs"]
+            logger.info(f"[ediscovery] job={job_id} LLM 추천 파라미터: {auto_params}")
 
         # Step 3: max_chunks 적용 — 페이지 번호 오름차순으로 상위 max_chunks개만 사용
         if max_chunks and len(page_texts) > max_chunks:
@@ -782,12 +971,17 @@ def run(
         metrics = {
             "total_docs": len(page_texts),
             "processed_chunks": len(chunks),
+            "chunk_size": chunk_size,
             "threshold": threshold,
+            "max_docs": max_chunks,
             "raw_nodes": len(raw_nodes),
             "filtered_nodes": len(filtered),
             "anomalies_detected": len(anomalies),
             "graph_nodes": len(graph["nodes"]),
             "graph_edges": len(graph["edges"]),
+            "auto_params": auto_params is not None,
+            "reasoning": auto_params.get("reasoning", "") if auto_params else "",
+            "legal_profile": legal_profile,
         }
         logger.info(f"[ediscovery] job={job_id} 그래프 완성: {metrics}")
 
@@ -810,6 +1004,8 @@ def run(
                 "error": str(e),
                 "traceback": tb[:2000],
             }
+            if legal_profile:
+                job.ediscovery_metrics["legal_profile"] = legal_profile
             db.commit()
         return {"job_id": job_id, "status": "error", "error": str(e)}
     finally:

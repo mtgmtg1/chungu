@@ -3,10 +3,34 @@
 //       -> Step 5 (언마운트 시 mock 비활성화)]
 // 로컬 개발 모드에서 백엔드 없이 e-Discovery UI를 샘플 데이터로 미리보기하는 개발 전용 페이지.
 // import.meta.env.DEV일 때만 라우팅되므로 production 빌드에는 포함되지 않는다.
-import { useEffect } from "react";
+import { useEffect, Component } from "react";
 import EDiscoveryViewer from "../components/EDiscoveryViewer.jsx";
 import { enableDevMock } from "../api.js";
 import { SAMPLE_JOB } from "../dev/ediscoverySampleData.js";
+
+class QAErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null, info: null };
+  }
+  componentDidCatch(error, info) {
+    // eslint-disable-next-line no-console
+    console.error("QA_ERROR_BOUNDARY:", error, info);
+    this.setState({ error, info });
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="p-4 text-red-600 whitespace-pre-wrap">
+          <h1 className="font-bold">Render Error</h1>
+          <p>{this.state.error.message}</p>
+          <p>{this.state.error.stack}</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 /**
  * DevEdiscoveryPage — e-Discovery UI 개발 미리보기 페이지.
@@ -31,11 +55,13 @@ export default function DevEdiscoveryPage() {
       </div>
       {/* e-Discovery 뷰어 — 전체 영역 차지 */}
       <div className="flex-1 min-h-0">
-        <EDiscoveryViewer
-          jobId={SAMPLE_JOB.job_id}
-          job={SAMPLE_JOB}
-          onNodeClick={() => {}}
-        />
+        <QAErrorBoundary>
+          <EDiscoveryViewer
+            jobId={SAMPLE_JOB.job_id}
+            job={SAMPLE_JOB}
+            onNodeClick={() => {}}
+          />
+        </QAErrorBoundary>
       </div>
     </div>
   );

@@ -57,17 +57,27 @@ const handlers = [
     response: (path) => mockJob(path.split("/").pop()),
   },
   {
-    match: (path, method) => method === "GET" && /^\/api\/jobs\/[^/]+\/preview$/.test(path),
+    match: (path, method) => method === "GET" && /^\/api\/jobs\/[^/]+\/preview(?:\?.*)?$/.test(path),
     response: () => ({
       markdown: "# Mock result\n\nDevelopment mode preview.",
       file_markdowns: [],
       image_urls: [],
       source_url: null,
       source_type: "pdf",
+      source_files: [
+        {
+          page_num: 1,
+          type: "pdf",
+          name: "sample.pdf",
+          url: "",
+          preview_url: "",
+          result_markdown: "",
+        },
+      ],
     }),
   },
   {
-    match: (path, method) => method === "GET" && /^\/api\/jobs\/[^/]+\/preview\/pages$/.test(path),
+    match: (path, method) => method === "GET" && /^\/api\/jobs\/[^/]+\/preview\/pages(?:\?.*)?$/.test(path),
     response: () => [],
   },
   {

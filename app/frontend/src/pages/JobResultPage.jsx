@@ -70,6 +70,11 @@ export default function JobResultPage() {
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [now, setNow] = useState(Date.now());
   const pollRef = useRef(null);
+  // [Flow: 중복 loadPreview 방지 — job 완료 상태와 주석 처리 상태의 전이 시점만 추적]
+  // job이 이미 done인 상태에서 주석 폴링 중 loadPreview()가 반복 호출되어 PDF 뷰어가 새로고침되는 문제를 방지.
+  // loadPreview()는 (1) job이 non-done → done으로 전이될 때, (2) 주석이 processing → 완료로 전이될 때만 호출.
+  const prevJobDoneRef = useRef(false);
+  const prevAnnotateProcessingRef = useRef(false);
   const editorRef = useRef(null);
   const pagedViewerRef = useRef(null);
   const sourcePanelApiRef = useRef(null); // SourcePanel imperhandle (scrollToPage) 용
@@ -160,6 +165,11 @@ export default function JobResultPage() {
     return () => clearInterval(timer);
   }, [job?.status]);
 
+  // [Flow: Step 1 (job 상태 조회) -> Step 2 (주석 처리 여부 확인)
+  //       -> Step 3 (job이 done일 때 전이 조건 판단 — 최초 완료 또는 주석 완료 시에만 loadPreview 호출)
+  //       -> Step 4 (폴링 재개 또는 중지)]
+  // 주석 폴링 중에는 job이 이미 done이므로, 매번 loadPreview를 호출하면 PDF 뷰어가 새로고침됨.
+  // prevJobDoneRef/prevAnnotateProcessingRef로 전이 시점을 추적해 불필요한 새로고침을 방지.
   async function loadJob() {
     try {
       const data = await api.getJob(jobId);
@@ -173,13 +183,20 @@ export default function JobResultPage() {
       setAnnotatePolling(hasProcessingAnnotations);
       if (data.status === "done") {
         clearInterval(pollRef.current);
-        await loadPreview();
+        // [Flow: loadPreview 호출 조건 — (1) job이 방금 done으로 전이, (2) 주석이 processing → 완료로 전이]
+        const jobJustDone = !prevJobDoneRef.current;
+        const annotationsJustFinished = prevAnnotateProcessingRef.current && !hasProcessingAnnotations;
+        if (jobJustDone || annotationsJustFinished) {
+          await loadPreview();
+        }
+        prevJobDoneRef.current = true;
       } else if (data.status === "error") {
         clearInterval(pollRef.current);
         setLoading(false);
       } else {
         startPolling();
       }
+      prevAnnotateProcessingRef.current = hasProcessingAnnotations;
     } catch (e) {
       const msg = e.message || "";
       if (msg.includes("Job expired") || msg.includes("Job not found")) {
@@ -206,11 +223,18 @@ export default function JobResultPage() {
         setAnnotatePolling(hasProcessingAnnotations);
         if (data.status === "done") {
           clearInterval(pollRef.current);
-          await loadPreview();
+          // [Flow: loadPreview 호출 조건 — 최초 완료 또는 주석 완료 전이 시에만]
+          const jobJustDone = !prevJobDoneRef.current;
+          const annotationsJustFinished = prevAnnotateProcessingRef.current && !hasProcessingAnnotations;
+          if (jobJustDone || annotationsJustFinished) {
+            await loadPreview();
+          }
+          prevJobDoneRef.current = true;
         } else if (data.status === "error") {
           clearInterval(pollRef.current);
           setLoading(false);
         }
+        prevAnnotateProcessingRef.current = hasProcessingAnnotations;
       } catch {
 
         /* 무시 */}

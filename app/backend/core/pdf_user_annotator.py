@@ -422,9 +422,9 @@ def extract_pdf_annotations(pdf_bytes: bytes) -> list[dict]:
                         annotation["fillColor"] = fill_color
                 elif embed_type == LINE:
                     annotation["color"] = color
-                    # PyMuPDF vertex는 이미 PDF user-space(y↑) 좌표이므로 flip 없이 그대로 사용 (page_height=None)
-                    start = _parse_point(annot.vertices[0]) if annot.vertices else None
-                    end = _parse_point(annot.vertices[1]) if annot.vertices and len(annot.vertices) > 1 else None
+                    # PyMuPDF vertex는 PDF user-space(y↑) 좌표이므로 device-space(y↓)로 flip 필요
+                    start = _parse_point(annot.vertices[0], page_height, page.rect.x0) if annot.vertices else None
+                    end = _parse_point(annot.vertices[1], page_height, page.rect.x0) if annot.vertices and len(annot.vertices) > 1 else None
                     if start and end:
                         annotation["start"] = {"x": start.x, "y": start.y}
                         annotation["end"] = {"x": end.x, "y": end.y}

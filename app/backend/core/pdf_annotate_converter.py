@@ -26,7 +26,7 @@ from . import cache, ocr_client, paddleocr_client, supabase_client
 from .image_deskew import deskew_image
 from .ocr_layout import BBox, OcrRow, OcrTextBlock, parse_layout_result
 from .pdf_annotator import AnnotationTarget, build_embedpdf_annotations
-from .pdf_coords import PDF_POINTS_PER_INCH, clamp_rect_to_page, px_bbox_to_pdf_rect
+from .pdf_coords import clamp_rect_to_page, px_bbox_to_pdf_rect
 from .pdf_text_layer import (
     TextLayerSearcher,
     add_text_layer_from_ocr,
@@ -180,7 +180,7 @@ class AnnotateElement:
     """주석 대상이 될 수 있는 하나의 텍스트 요소 (표 행 또는 텍스트 블록)."""
 
     page_no: int  # 1-based
-    bbox_px: BBox  # 픽셀 좌표 (xmin, ymin, xmax, ymax) — 보정된 이미지 기준
+    bbox_px: BBox  # PDF user-space 좌표 (x0, y0, x1, y1) — paddleocr_service에서 정규화됨
     kind: str  # "table_row" | "text"
     text: str  # LLM에 전달할 텍스트 표현
     # 부분 하이라이트를 위해 필요한 단어/셀 단위 bbox (없으면 전체 bbox만 사용)
@@ -259,9 +259,9 @@ def _collect_page_elements(
 
     Returns:
         (elements, corrected_images, layout_by_page) —
-        elements: 주석 대상 텍스트 요소 목록 (bbox는 보정된 이미지 기준)
+        elements: 주석 대상 텍스트 요소 목록 (bbox는 PDF user-space)
         corrected_images: page_no(1-based) → 정돈된 페이지 이미지 경로
-        layout_by_page: page_no → PaddleOCR layout 원본 dict (overall_ocr_res 포함)
+        layout_by_page: page_no → PaddleOCR layout 원본 dict (overall_ocr_res 포함, bbox PDF user-space)
     """
     image_paths = _get_page_image_paths(job, temp_dir, page_range=page_range)
     elements: list[AnnotateElement] = []
@@ -382,12 +382,10 @@ def collect_elements_for_agent(
 
         results: list[dict] = []
         for el in elements:
-            page_width_pt, page_height_pt = page_point_sizes.get(el.page_no, (0.0, 0.0))
-            page_height_px = page_height_pt * float(dpi) / PDF_POINTS_PER_INCH if page_height_pt else None
-            bbox_pdf = px_bbox_to_pdf_rect(el.bbox_px, dpi, page_height_px)
-            cell_bboxes_pdf = [
-                px_bbox_to_pdf_rect(b, dpi, page_height_px) for b in el.cell_bboxes
-            ]
+            # paddleocr_service에서 bbox를 PDF user-space로 정규화해서 반환하므로
+            # 추가 y축 flip 없이 그대로 bbox_pdf로 사용한다.
+            bbox_pdf = el.bbox_px
+            cell_bboxes_pdf = list(el.cell_bboxes)
             results.append(
                 {
                     "page_no": el.page_no,
@@ -432,8 +430,6 @@ def build_agent_elements_from_ocr_layout(
         page_no = int(page_no_raw) if isinstance(page_no_raw, str) else page_no_raw
         if page_set is not None and page_no not in page_set:
             continue
-        page_width_pt, page_height_pt = page_point_sizes.get(page_no, (0.0, 0.0))
-        page_height_px = page_height_pt * float(dpi) / PDF_POINTS_PER_INCH if page_height_pt else None
         layout = parse_layout_result(layout_raw, page_no=page_no)
         for table in layout.tables:
             for row in table.rows:
@@ -441,14 +437,14 @@ def build_agent_elements_from_ocr_layout(
                     continue
                 results.append({
                     "page_no": page_no,
-                    "bbox_pdf": px_bbox_to_pdf_rect(row.bbox_px, dpi, page_height_px),
+                    "bbox_pdf": row.bbox_px,  # paddleocr_service에서 PDF user-space로 정규화됨
                     "text": _row_to_text(row),
                     "kind": "table_row",
                 })
         for tb in layout.text_blocks:
             results.append({
                 "page_no": page_no,
-                "bbox_pdf": px_bbox_to_pdf_rect(tb.bbox_px, dpi, page_height_px),
+                "bbox_pdf": tb.bbox_px,  # paddleocr_service에서 PDF user-space로 정규화됨
                 "text": _text_block_to_text(tb),
                 "kind": "text",
             })
@@ -746,13 +742,9 @@ def _matches_to_targets(
                     logger.info(f"[pdf_annotate] 텍스트 레이어 검색 실패 page={el.page_no}: '{search_text[:30]}'")
 
         if rect_pdf is None:
-            # 폴백: 픽셀 bbox를 PDF 좌표로 변환 (y축 flip 포함)
-            page_pt = page_point_sizes.get(el.page_no)
-            if page_pt:
-                page_height_px = page_pt[1] * RENDER_DPI / 72.0
-                rect_pdf = px_bbox_to_pdf_rect(bbox_px, dpi=RENDER_DPI, page_height_px=page_height_px)
-            else:
-                rect_pdf = px_bbox_to_pdf_rect(bbox_px, dpi=RENDER_DPI)
+            # paddleocr_service에서 bbox를 PDF user-space로 정규화해서 반환하므로
+            # 폴백 시에도 추가 변환 없이 그대로 사용한다.
+            rect_pdf = bbox_px
 
         page_pt = page_point_sizes.get(el.page_no)
         if page_pt:
@@ -1102,13 +1094,9 @@ def run(
             # 고급주석(Vision LLM) 경로에서는 elements가 비어 있어 충돌 검사 없이 모서리에 배치된다.
             page_elements_bboxes: dict[int, list[tuple[float, float, float, float]]] = {}
             for el in elements:
-                page_pt = page_point_sizes.get(el.page_no)
-                if page_pt:
-                    page_height_px = page_pt[1] * RENDER_DPI / 72.0
-                    rect_pdf = px_bbox_to_pdf_rect(el.bbox_px, dpi=RENDER_DPI, page_height_px=page_height_px)
-                else:
-                    rect_pdf = px_bbox_to_pdf_rect(el.bbox_px, dpi=RENDER_DPI)
-                page_elements_bboxes.setdefault(el.page_no, []).append(rect_pdf)
+                # paddleocr_service에서 bbox를 PDF user-space로 정규화해서 반환하므로
+                # 추가 변환 없이 그대로 수집한다.
+                page_elements_bboxes.setdefault(el.page_no, []).append(el.bbox_px)
 
             embedpdf_annotations = build_embedpdf_annotations(
                 pdf_bytes, targets, mode, annotation_index=next_index,

@@ -6,13 +6,18 @@
 # PaddleOCR-VL 1.6 원본 결과(res.json / AI Studio prunedResult)를 하이라이트/여백 주석 기능에서
 # 공통으로 쓸 수 있는 형태로 정규화한다.
 #
+# 중요: paddleocr_service/main.py에서 PaddleOCR-VL이 반환한 이미지 좌표계 bbox를
+# PDF user-space(bottom-left origin, y↑)로 정규화한 뒤 이 모듈에 전달한다.
+# 따라서 이 모듈이 다루는 BBox는 이미 PDF user-space 좌표이며, 추가 y축 flip 없이
+# 바로 pdf_annotator / pdf_text_layer에 사용할 수 있다.
+#
 # 실측 스키마 (a1 프로덕션에서 실제 AI Studio 응답을 덤프해 확인, 2026-07-05):
 #   { "page_count": null, "width": <px>, "height": <px>,
 #     "layout_det_res": {"boxes": [...]},
 #     "parsing_res_list": [
 #       {"block_label": "table"|"text"|"title"|"seal"|"image"|"figure_title"|...,
 #        "block_content": "<table>...</table>" (표인 경우) 또는 일반 텍스트,
-#        "block_bbox": [xmin, ymin, xmax, ymax],  # 블록 전체 bbox (픽셀), 셀/행 단위 bbox는 없음
+#        "block_bbox": [x0, y0, x1, y1],  # 블록 전체 bbox (PDF user-space), 셀/행 단위 bbox는 없음
 #        "block_id": int, "block_order": int, "group_id": int,
 #        "block_polygon_points": [[x,y], ...]},
 #       ...
@@ -34,7 +39,9 @@ import lxml.html
 
 logger = logging.getLogger(__name__)
 
-BBox = tuple[float, float, float, float]  # (xmin, ymin, xmax, ymax), 픽셀 단위
+BBox = tuple[float, float, float, float]  # (x0, y0, x1, y1), PDF user-space 좌표
+                                            # paddleocr_service가 PaddleOCR-VL 이미지 좌표계를
+                                            # PDF user-space(bottom-left origin, y↑)로 정규화한 뒤 반환한다.
 
 
 @dataclass

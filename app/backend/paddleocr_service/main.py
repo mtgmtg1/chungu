@@ -61,6 +61,10 @@ SUPPORTED_EXTENSIONS = {
 # LibreOffice 변환이 필요한 오피스 문서 확장자
 OFFICE_EXTENSIONS = {".docx", ".doc", ".pptx", ".ppt", ".xlsx", ".xls", ".html", ".htm"}
 
+# PDF user-space 변환 상수
+PDF_POINTS_PER_INCH = 72.0
+OCR_RENDER_DPI = 300  # _pdf_to_images와 동일한 DPI
+
 # 전역 PaddleOCR pipeline (지연 초기화)
 _pipeline = None
 _pipeline_lock = threading.Lock()
@@ -266,22 +270,127 @@ def _run_paddleocr(
     return {"markdown": markdown, "page_count": total_pages, "layout": layout_pages}
 
 
-def _extract_layout_from_result(res: Any) -> dict:
-    """PaddleOCR 결과 객체에서 bbox가 포함된 원본 레이아웃(res.json)을 추출한다.
+def _image_bbox_to_pdf_rect(
+    bbox: list[float] | tuple[float, ...],
+    page_height_px: float,
+    scale: float,
+) -> list[float]:
+    """PaddleOCR-VL 이미지 좌표계(top-left origin, y↓) bbox를 PDF user-space(rect)로 변환한다.
 
-    layout_det_res.boxes[].coordinate, overall_ocr_res.{rec_polys,rec_texts,rec_boxes},
-    table_res_list[].{cell_box_list,pred_html,table_ocr_pred} 등을 그대로 담고 있다.
-    AI Studio API의 prunedResult와 동일한 스키마(input_path/page_index 제외)이므로
-    core/ocr_layout.py의 파서가 두 소스를 동일하게 처리할 수 있다.
+    [Flow: Step 1 (x는 동일 방향으로 스케일) -> Step 2 (y는 페이지 높이에서 뺀 뒤 스케일)
+          -> Step 3 (PDF user-space [x0, y0, x1, y1] 반환)]
+
+    Args:
+        bbox: [xmin, ymin, xmax, ymax] 이미지 좌표계 bbox.
+        page_height_px: 이미지 전체 높이(픽셀).
+        scale: PDF 포인트/픽셀 변환 비율 (PDF_POINTS_PER_INCH / OCR_RENDER_DPI).
+
+    Returns:
+        [x0, y0, x1, y1] PDF user-space 좌표 (y↑, 원점 좌하단).
+    """
+    if not bbox or len(bbox) < 4:
+        return list(bbox) if bbox else []
+    x0, y0, x1, y1 = (float(v) for v in bbox[:4])
+    pdf_y0 = (page_height_px - y1) * scale
+    pdf_y1 = (page_height_px - y0) * scale
+    return [x0 * scale, pdf_y0, x1 * scale, pdf_y1]
+
+
+def _image_polygon_to_pdf_points(
+    points: list[list[float]] | list[tuple[float, ...]],
+    page_height_px: float,
+    scale: float,
+) -> list[list[float]]:
+    """PaddleOCR-VL 이미지 좌표계 다각형 점들을 PDF user-space로 변환한다.
+
+    [Flow: Step 1 (각 점의 x를 스케일) -> Step 2 (y를 페이지 높이에서 뺀 뒤 스케일)
+          -> Step 3 (변환된 점 목록 반환)]
+    """
+    if not points:
+        return []
+    converted: list[list[float]] = []
+    for pt in points:
+        if not pt or len(pt) < 2:
+            converted.append(list(pt) if pt else [])
+            continue
+        x, y = float(pt[0]), float(pt[1])
+        converted.append([x * scale, (page_height_px - y) * scale])
+    return converted
+
+
+def _extract_layout_from_result(res: Any) -> dict:
+    """PaddleOCR 결과 객체에서 bbox를 PDF user-space로 변환한 레이아웃을 반환한다.
+
+    [Flow: Step 1 (res.json 추출) -> Step 2 (페이지 픽셀 높이 확인)
+          -> Step 3 (parsing_res_list / layout_det_res / overall_ocr_res의 bbox 좌표계 변환)
+          -> Step 4 (PDF user-space 기준 layout dict 반환)]
+
+    PaddleOCR-VL-1.6은 이미지 좌표계(top-left origin, y↓)를 사용하므로,
+    이 서비스에서 기본적으로 PDF user-space(bottom-left origin, y↑)로 정규화하여
+    이후 단계(core/ocr_layout.py, core/pdf_text_layer.py, core/pdf_annotate_converter.py)가
+    동일한 좌표계를 가정할 수 있게 한다.
     """
     try:
         if hasattr(res, "json"):
             raw = res.json
-            return raw.get("res", raw) if isinstance(raw, dict) else {}
-        return {}
+            layout = raw.get("res", raw) if isinstance(raw, dict) else {}
+        else:
+            layout = {}
     except Exception as e:
         logger.warning(f"[paddleocr] 레이아웃(bbox) 추출 실패: {e}")
         return {}
+
+    if not isinstance(layout, dict):
+        return layout
+
+    page_height_px = layout.get("height")
+    if not isinstance(page_height_px, (int, float)) or page_height_px <= 0:
+        logger.warning("[paddleocr] layout 높이 정보가 없어 bbox 좌표계 변환을 건너뜁니다.")
+        return layout
+
+    scale = PDF_POINTS_PER_INCH / OCR_RENDER_DPI
+
+    # parsing_res_list 블록 bbox 및 polygon_points 변환
+    for block in layout.get("parsing_res_list", []):
+        if not isinstance(block, dict):
+            continue
+        bbox = block.get("block_bbox")
+        if bbox:
+            block["block_bbox"] = _image_bbox_to_pdf_rect(bbox, page_height_px, scale)
+        points = block.get("block_polygon_points")
+        if points:
+            block["block_polygon_points"] = _image_polygon_to_pdf_points(
+                points, page_height_px, scale
+            )
+
+    # layout_det_res 내부 boxes 변환
+    layout_det = layout.get("layout_det_res") or {}
+    if isinstance(layout_det, dict):
+        for box in layout_det.get("boxes", []):
+            if not isinstance(box, dict):
+                continue
+            coord = box.get("coordinate")
+            if coord:
+                box["coordinate"] = _image_bbox_to_pdf_rect(coord, page_height_px, scale)
+            points = box.get("polygon_points")
+            if points:
+                box["polygon_points"] = _image_polygon_to_pdf_points(
+                    points, page_height_px, scale
+                )
+
+    # overall_ocr_res.rec_boxes 변환
+    ocr_res = layout.get("overall_ocr_res") or {}
+    if isinstance(ocr_res, dict):
+        rec_boxes = ocr_res.get("rec_boxes")
+        if isinstance(rec_boxes, list):
+            ocr_res["rec_boxes"] = [
+                _image_bbox_to_pdf_rect(b, page_height_px, scale)
+                if b and len(b) >= 4
+                else b
+                for b in rec_boxes
+            ]
+
+    return layout
 
 
 def _extract_markdown_from_result(res: Any) -> str:

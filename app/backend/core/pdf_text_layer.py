@@ -11,7 +11,7 @@ from typing import Any
 import fitz  # PyMuPDF
 
 from .ocr_layout import BBox
-from .pdf_coords import PDF_POINTS_PER_INCH, clamp_rect_to_page, px_bbox_to_pdf_rect
+from .pdf_coords import clamp_rect_to_page
 
 logger = logging.getLogger(__name__)
 
@@ -119,13 +119,15 @@ def add_text_layer_from_ocr(
     """이미지 기반 PDF에 PaddleOCR 결과를 투명 텍스트 레이어로 추가한다.
 
     [Flow: Step 1 (PDF 열기) -> Step 2 (페이지별 OCR 텍스트/bbox 순회)
-          -> Step 3 (픽셀 bbox를 PDF 포인트 rect로 변환 및 clamp) -> Step 4 (투명 텍스트 삽입)
+          -> Step 3 (bbox가 이미 PDF user-space이므로 clamp만 적용) -> Step 4 (투명 텍스트 삽입)
           -> Step 5 (PDF bytes 반환)]
 
     Args:
         pdf_bytes: 이미지 기반 PDF bytes
-        page_ocr_results: page_no(1-based) -> [(text, bbox_px), ...]
-        dpi: 이미지 렌더링 DPI (기본 200)
+        page_ocr_results: page_no(1-based) -> [(text, bbox_pdf), ...]
+            paddleocr_service에서 PDF user-space(bottom-left origin)로 정규화된 bbox여야 한다.
+        dpi: 이미지 렌더링 DPI (기본 300). 현재는 좌표계 변환에 사용하지 않지만
+            하위 호환을 위해 시그니처를 유지한다.
         language: 언어 코드 (ko/ja/zh/zht/en). None이면 기본 CJK 폰트 사용.
 
     Returns:
@@ -145,20 +147,16 @@ def add_text_layer_from_ocr(
 
         page_width = page.rect.width
         page_height = page.rect.height
-        # 이미지 픽셀 높이 = PDF 페이지 높이 * dpi / 72
-        page_height_px = page_height * dpi / PDF_POINTS_PER_INCH
 
-        for text, bbox_px in items:
+        for text, bbox_pdf in items:
             text = _normalize_rec_text(text)
             if not text:
                 continue
-            try:
-                rect_pdf = px_bbox_to_pdf_rect(bbox_px, dpi=dpi, page_height_px=page_height_px)
-            except Exception as e:
-                logger.warning(f"[pdf_text_layer] page={page_no} bbox 변환 실패: {e}")
+            if not bbox_pdf or len(bbox_pdf) < 4:
                 continue
 
-            rect = clamp_rect_to_page(rect_pdf, page_width, page_height)
+            # paddleocr_service에서 이미 PDF user-space로 변환된 bbox를 그대로 사용한다.
+            rect = clamp_rect_to_page(bbox_pdf, page_width, page_height)
             if rect[2] <= rect[0] or rect[3] <= rect[1]:
                 continue
 

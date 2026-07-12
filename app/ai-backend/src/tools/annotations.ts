@@ -408,8 +408,10 @@ export function buildAnnotationTools(context: AnnotationContext) {
           for (const pageNo of pageNos) {
             pageDimensions[pageNo] = await loadPageDimensions(pageNo);
           }
+          // [Flow: 좌표계 디버깅용 — add_highlight/add_callout으로 수집된 좌표와 페이지 크기 로깅]
+          console.log(`[apply_annotations] job=${jobId} count=${pending.length} pageDimensions=${JSON.stringify(pageDimensions)}`);
           const annotations = pending.map((pendingAnnotation) =>
-            _buildAnnotationItem(pendingAnnotation, pageDimensions),
+            _buildAnnotationItem(pendingAnnotation, pageDimensions, true),
           );
           let saveSourceIndex = sourceIndex;
           let usedFallback = false;
@@ -487,7 +489,12 @@ export function buildAnnotationTools(context: AnnotationContext) {
             for (const pageNo of pageNos) {
               pageDims[pageNo] = await loadPageDimensions(pageNo);
             }
-            convertedAnnotations = annotations.map((a) => _convertAnnotationToDeviceSpace(a, pageDims));
+            // [Flow: 좌표계 혼동 디버깅용 — 입력값, pdf_user_space, 페이지 높이, 변환 후 좌표를 로깅]
+            console.log(`[save_annotations] job=${jobId} count=${annotations.length} pdf_user_space=${pdf_user_space} shouldConvert=${shouldConvert} pageDims=${JSON.stringify(pageDims)}`);
+            convertedAnnotations = annotations.map((a) => _convertAnnotationToDeviceSpace(a, pageDims, true));
+          } else {
+            // [Flow: 변환 스킵 시에도 입력 좌표를 로깅하여 좌표계 혼동 여부 추적]
+            console.log(`[save_annotations] job=${jobId} count=${annotations.length} pdf_user_space=false (conversion skipped)`);
           }
 
           let toSave = convertedAnnotations;
@@ -564,11 +571,13 @@ export function buildAnnotationTools(context: AnnotationContext) {
  *
  * @param item AnnotationTransferItem (PDF user-space 좌표)
  * @param pageDims 페이지 번호(1-based) → {width, height} 맵
+ * @param verbose true면 변환 전/후 좌표를 콘솔에 로깅
  * @returns device-space로 변환된 AnnotationTransferItem
  */
 function _convertAnnotationToDeviceSpace(
   item: Record<string, unknown>,
   pageDims: Record<number, { width: number; height: number }>,
+  verbose = false,
 ): Record<string, unknown> {
   const inner = (item as any).annotation && typeof (item as any).annotation === 'object'
     ? (item as any).annotation : item;
@@ -603,16 +612,41 @@ function _convertAnnotationToDeviceSpace(
   };
 
   // rect 변환: origin.y (PDF user-space 하단 y0) → pageHeight - origin.y - size.height (device-space 상단)
-  const convertRect = (rect: any): any => {
+  const convertRect = (rect: any, label: string): any => {
     const normalized = normalizeRect(rect);
     if (!normalized || typeof normalized !== 'object') return rect;
     const origin = normalized.origin;
     const size = normalized.size;
     if (!origin || typeof origin.y !== 'number' || !size || typeof size.height !== 'number') return rect;
-    return {
+
+    // [Flow: 좌표계 혼동 방지 — PDF user-space y0은 페이지 높이 이하여야 함]
+    // origin.y + size.height가 pageHeight을 초과하면, 이미 device-space 좌표를
+    // PDF user-space라고 잘못 보낸 경우이므로 경고한다.
+    if (verbose && typeof pageHeight === 'number' && !Number.isNaN(pageHeight)) {
+      const rawBottom = origin.y + size.height;
+      if (rawBottom > pageHeight + 0.1 || origin.y > pageHeight + 0.1) {
+        console.warn(
+          `[_convertAnnotationToDeviceSpace] page=${pageNo} pageHeight=${pageHeight} ` +
+          `입력 ${label}이 PDF user-space가 아닌 것처럼 보임: ` +
+          `origin.y=${origin.y} size.height=${size.height} (rawBottom=${rawBottom} > pageHeight). ` +
+          `device-space 좌표를 pdf_user_space=false로 전달했는지 확인하세요.`
+        );
+      }
+    }
+
+    const converted = {
       origin: { x: origin.x, y: pageHeight - origin.y - size.height },
       size: { width: size.width, height: size.height },
     };
+
+    if (verbose) {
+      console.log(
+        `[_convertAnnotationToDeviceSpace] page=${pageNo} pageHeight=${pageHeight} ` +
+        `${label}: before origin.y=${origin.y} height=${size.height} ` +
+        `→ after origin.y=${converted.origin.y} height=${converted.size.height}`
+      );
+    }
+    return converted;
   };
 
   const convertedInner = { ...inner };
@@ -627,10 +661,10 @@ function _convertAnnotationToDeviceSpace(
   }
 
   if (convertedInner.rect) {
-    convertedInner.rect = convertRect(convertedInner.rect);
+    convertedInner.rect = convertRect(convertedInner.rect, 'rect');
   }
   if (Array.isArray(convertedInner.segmentRects)) {
-    convertedInner.segmentRects = convertedInner.segmentRects.map(convertRect);
+    convertedInner.segmentRects = convertedInner.segmentRects.map((r: any, i: number) => convertRect(r, `segmentRects[${i}]`));
   }
 
   // item이 { annotation: {...} } 구조면 변환된 inner를 다시 감싸서 반환
@@ -654,6 +688,7 @@ function _convertAnnotationToDeviceSpace(
 function _buildAnnotationItem(
   p: PendingAnnotation,
   pageDimensions: Record<number, { width: number; height: number }>,
+  verbose = false,
 ): Record<string, unknown> {
   const [x0, y0, x1, y1] = p.target.bbox_pdf;
   const dims = pageDimensions[p.target.page_no] || { width: 612, height: 792 };
@@ -664,6 +699,14 @@ function _buildAnnotationItem(
   const originY = pageHeight - y1;
   const width = x1 - x0;
   const height = y1 - y0;
+
+  if (verbose) {
+    console.log(
+      `[_buildAnnotationItem] page=${p.target.page_no} pageHeight=${pageHeight} ` +
+      `bbox_pdf=[${x0.toFixed(1)}, ${y0.toFixed(1)}, ${x1.toFixed(1)}, ${y1.toFixed(1)}] ` +
+      `→ rect origin.y=${originY.toFixed(1)} height=${height.toFixed(1)}`
+    );
+  }
 
   const hexColor = _rgbToHex(p.target.color);
 

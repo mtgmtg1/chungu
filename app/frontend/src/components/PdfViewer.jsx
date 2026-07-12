@@ -41,6 +41,19 @@ function sanitizeAnnotationsJson(items) {
       } else {
         return false;
       }
+
+      // [Flow: 좌표계 혼동 가능성 경고 — origin.y가 일반적인 device-space 범위를 벗어나면 로깅]
+      // PDF 뷰어는 rect.origin.y를 페이지 상단에서 아래로 떨어진 device-space 픽셀로 해석한다.
+      // AI가 PDF user-space 좌표를 그대로 넘기면 origin.y가 페이지 높이에 가까워 하단에 렌더링된다.
+      if (typeof rect.origin.y === "number" && rect.origin.y > 2000) {
+        console.warn(
+          "[PdfViewer] 의심스러운 annotation rect.origin.y 감지:",
+          rect,
+          "pageIndex:",
+          item.pageIndex ?? item.annotation?.pageIndex,
+          "PDF user-space 좌표가 device-space로 잘못 전달되었을 가능성이 있습니다."
+        );
+      }
     }
     // page 인덱스가 음수면 제거
     if (typeof item.pageIndex === "number" && item.pageIndex < 0) return false;

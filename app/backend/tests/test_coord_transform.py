@@ -293,6 +293,34 @@ def test_end_to_end_line():
     check("LINE end.y (flip 검증)", end.get("y"), end_dev["y"])
 
 
+# ─── 테스트 8: PyMuPDF page rect에서 추출한 pageDimensions 정합성 ───
+def test_page_dimensions_sanity():
+    section("테스트 8: PyMuPDF pageDimensions 정합성 (get_job_elements 기반)")
+
+    # [Flow: Step 1 (A4 PDF 메모리 생성) -> Step 2 (page.rect.width/height 추출)
+    #       -> Step 3 (양수이고 예상 범위 내인지 검증)]
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    reopened = fitz.open(stream=pdf_bytes, filetype="pdf")
+    page = reopened[0]
+    page_dimensions = {
+        1: {
+            "width": float(page.rect.width),
+            "height": float(page.rect.height),
+        }
+    }
+    reopened.close()
+
+    dims = page_dimensions[1]
+    check("pageDimensions.width == 595", dims["width"], 595.0)
+    check("pageDimensions.height == 842", dims["height"], 842.0)
+    check("pageDimensions.width > 0", dims["width"] > 0, True)
+    check("pageDimensions.height > 0", dims["height"] > 0, True)
+
+
 # ─── 메인 ─────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("\n" + "=" * 60)
@@ -306,6 +334,7 @@ if __name__ == "__main__":
     test_px_bbox_to_pdf_rect()
     test_end_to_end()
     test_end_to_end_line()
+    test_page_dimensions_sanity()
 
     print(f"\n{'='*60}")
     print(f"  결과: {PASS} passed, {FAIL} failed")

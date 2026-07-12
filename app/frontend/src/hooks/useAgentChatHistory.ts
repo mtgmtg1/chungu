@@ -109,10 +109,12 @@ export function useAgentChatHistory(
 
     let cancelled = false;
     setIsLoadingList(true);
+    console.log('[useAgentChatHistory] 대화 목록 로드 시작:', { projectId });
     api
       .listChatConversations(projectId)
       .then((list: Array<{ id: string; title: string; createdAt: number; updatedAt: number }>) => {
         if (cancelled) return;
+        console.log('[useAgentChatHistory] 대화 목록 로드 성공:', { projectId, count: list.length, ids: list.map((i) => i.id) });
         const loaded: ChatConversation[] = list.map((item) => ({
           id: item.id,
           title: item.title || '',
@@ -132,7 +134,7 @@ export function useAgentChatHistory(
       })
       .catch((err) => {
         if (cancelled) return;
-        console.error('[useAgentChatHistory] 목록 로드 실패:', err);
+        console.error('[useAgentChatHistory] 목록 로드 실패:', { projectId, error: err?.message || err, status: err?.status });
         setConversations([]);
         setCurrentId(null);
       })
@@ -148,13 +150,24 @@ export function useAgentChatHistory(
   // [Flow: currentId 변경 시 messages 지연 로드 — 아직 로드되지 않은 대화면 fetch]
   useEffect(() => {
     if (!projectId || !currentId) return;
-    if (loadedIdsRef.current.has(currentId)) return;
+    if (loadedIdsRef.current.has(currentId)) {
+      console.log('[useAgentChatHistory] messages 이미 로드됨:', { projectId, currentId });
+      return;
+    }
 
     setIsLoadingMessages(true);
+    console.log('[useAgentChatHistory] messages 로드 시작:', { projectId, currentId });
     api
       .getChatConversation(projectId, currentId)
       .then((data: { id: string; title: string; messages: UIMessage[]; createdAt: number; updatedAt: number } | null) => {
         loadedIdsRef.current.add(currentId);
+        console.log('[useAgentChatHistory] messages 로드 결과:', {
+          projectId,
+          currentId,
+          found: !!data,
+          messageCount: data?.messages?.length ?? 0,
+          title: data?.title || '',
+        });
         if (!data) {
           // DB에 없는 대화 (예: 방금 생성된 새 대화) — 빈 messages로 처리
           setConversations((prev) =>
@@ -173,7 +186,7 @@ export function useAgentChatHistory(
         );
       })
       .catch((err) => {
-        console.error('[useAgentChatHistory] messages 로드 실패:', err);
+        console.error('[useAgentChatHistory] messages 로드 실패:', { projectId, currentId, error: err?.message || err, status: err?.status });
         loadedIdsRef.current.add(currentId); // 실패해도 재시도 무한루프 방지
       })
       .finally(() => {
@@ -197,12 +210,14 @@ export function useAgentChatHistory(
 
     // DB에 빈 대화 저장 (사용자가 메시지 전송 전에 닫아도 대화 존재)
     if (projectId) {
+      console.log('[useAgentChatHistory] 새 대화 생성/저장:', { projectId, id: newConversation.id });
       api
         .saveChatConversation(projectId, newConversation.id, {
           title: '',
           messages: [],
         })
-        .catch((err) => console.error('[useAgentChatHistory] 새 대화 저장 실패:', err));
+        .then(() => console.log('[useAgentChatHistory] 새 대화 저장 성공:', { projectId, id: newConversation.id }))
+        .catch((err) => console.error('[useAgentChatHistory] 새 대화 저장 실패:', { projectId, id: newConversation.id, error: err?.message || err, status: err?.status }));
     }
 
     return newConversation;
@@ -241,9 +256,14 @@ export function useAgentChatHistory(
 
       // [Flow: DB에는 도구 input/output을 요약한 messages 저장 — 용량 최적화]
       const compactedMessages = compactMessagesForStorage(messages);
+      const payloadSize = JSON.stringify(compactedMessages).length;
+      console.log('[useAgentChatHistory] 대화 저장 시도:', { projectId, id, title, originalMessages: messages.length, compactedMessages: compactedMessages.length, payloadSize });
       api
         .saveChatConversation(projectId, id, { title, messages: compactedMessages })
-        .catch((err) => console.error('[useAgentChatHistory] 대화 저장 실패:', err));
+        .then((res) => {
+          console.log('[useAgentChatHistory] 대화 저장 성공:', { projectId, id, title: res?.title, status: res?.status });
+        })
+        .catch((err) => console.error('[useAgentChatHistory] 대화 저장 실패:', { projectId, id, error: err?.message || err, status: err?.status }));
     },
     [projectId],
   );
@@ -254,10 +274,12 @@ export function useAgentChatHistory(
     (id: string) => {
       if (!projectId) return;
 
+      console.log('[useAgentChatHistory] 대화 삭제 시도:', { projectId, id });
       // DB에서 삭제
       api
         .deleteChatConversation(projectId, id)
-        .catch((err) => console.error('[useAgentChatHistory] 대화 삭제 실패:', err));
+        .then(() => console.log('[useAgentChatHistory] 대화 삭제 성공:', { projectId, id }))
+        .catch((err) => console.error('[useAgentChatHistory] 대화 삭제 실패:', { projectId, id, error: err?.message || err, status: err?.status }));
 
       loadedIdsRef.current.delete(id);
       setConversations((prev) => {

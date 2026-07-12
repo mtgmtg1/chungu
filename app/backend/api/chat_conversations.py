@@ -29,13 +29,14 @@ router = APIRouter(prefix="/api/jobs", tags=["chat-conversations"])
 
 
 def _require_chat_user(
-    auth: tuple[CurrentUser, Any] = Depends(get_current_user_or_api_key),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
 ) -> CurrentUser:
-    """[Flow: Step 1 (API key 또는 세션 인증) -> Step 2 (CurrentUser만 반환)]
+    """[Flow: Step 1 (API key 또는 세션 인증) -> Step 2 (CurrentUser 반환)]
 
     jobs.py와 동일한 패턴으로 웹 세션과 API key를 모두 허용한다.
+    get_current_user_or_api_key은 이미 CurrentUser만 반환하므로 그대로 전달한다.
     """
-    return auth[0]
+    return user
 
 
 class ChatConversationData(BaseModel):
@@ -57,6 +58,7 @@ async def list_chat_conversations(
     사용자의 해당 Job 대화 목록을 반환한다. messages는 제외하여 경량화.
     프론트엔드에서 대화 선택 시 get_chat_conversation로 messages를 별도 로드한다.
     """
+    logger.info("list_chat_conversations: job_id=%s user_id=%s", job_id, user.user_id)
     stmt = (
         select(ChatConversation)
         .where(
@@ -66,6 +68,7 @@ async def list_chat_conversations(
         .order_by(ChatConversation.updated_at.desc())
     )
     records = db.execute(stmt).scalars().all()
+    logger.info("list_chat_conversations: job_id=%s user_id=%s count=%s", job_id, user.user_id, len(records))
     return [
         {
             "id": record.id,
@@ -89,6 +92,7 @@ async def get_chat_conversation(
     단일 대화의 messages 포함 전체 데이터를 반환한다.
     프론트엔드에서 대화 선택 시 호출하여 이전 메시지를 복원한다.
     """
+    logger.info("get_chat_conversation: job_id=%s conversation_id=%s user_id=%s", job_id, conversation_id, user.user_id)
     stmt = select(ChatConversation).where(
         ChatConversation.id == conversation_id,
         ChatConversation.job_id == job_id,
@@ -96,7 +100,9 @@ async def get_chat_conversation(
     )
     record = db.execute(stmt).scalar_one_or_none()
     if not record:
+        logger.warning("get_chat_conversation: not found job_id=%s conversation_id=%s user_id=%s", job_id, conversation_id, user.user_id)
         return None
+    logger.info("get_chat_conversation: found job_id=%s conversation_id=%s user_id=%s message_count=%s", job_id, conversation_id, user.user_id, len(record.messages or []))
     return {
         "id": record.id,
         "title": record.title or "",
@@ -119,6 +125,7 @@ async def save_chat_conversation(
     사용자의 대화를 upsert 한다 (대화ID 단위 1레코드).
     클라이언트가 생성한 conversation_id를 PK로 그대로 사용한다.
     """
+    logger.info("save_chat_conversation: job_id=%s conversation_id=%s user_id=%s title=%s message_count=%s", job_id, conversation_id, user.user_id, data.title, len(data.messages or []))
     stmt = select(ChatConversation).where(
         ChatConversation.id == conversation_id,
         ChatConversation.job_id == job_id,
@@ -141,6 +148,7 @@ async def save_chat_conversation(
         db.add(record)
 
     db.commit()
+    logger.info("save_chat_conversation: success job_id=%s conversation_id=%s user_id=%s updated_at=%s", job_id, conversation_id, user.user_id, record.updated_at)
     return {
         "status": "ok",
         "id": record.id,
@@ -161,6 +169,7 @@ async def delete_chat_conversation(
 
     사용자의 단일 대화를 삭제한다.
     """
+    logger.info("delete_chat_conversation: job_id=%s conversation_id=%s user_id=%s", job_id, conversation_id, user.user_id)
     stmt = select(ChatConversation).where(
         ChatConversation.id == conversation_id,
         ChatConversation.job_id == job_id,
@@ -168,8 +177,10 @@ async def delete_chat_conversation(
     )
     record = db.execute(stmt).scalar_one_or_none()
     if not record:
+        logger.warning("delete_chat_conversation: not found job_id=%s conversation_id=%s user_id=%s", job_id, conversation_id, user.user_id)
         raise HTTPException(status_code=404, detail="Chat conversation not found")
 
     db.delete(record)
     db.commit()
+    logger.info("delete_chat_conversation: success job_id=%s conversation_id=%s user_id=%s", job_id, conversation_id, user.user_id)
     return {"status": "ok"}

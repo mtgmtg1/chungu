@@ -107,9 +107,20 @@ function ChatSession({
   // [Flow: 컴포넌트 언마운트 시(대화 전환/완료) 최신 메시지 저장]
   useEffect(() => {
     return () => {
+      console.log('[ChatSession] 언마운트 시 저장:', { chatId, messageCount: messagesRef.current?.length });
       onMessagesChangeRef.current(messagesRef.current);
     };
   }, []);
+
+  // [Flow: messages 변경 시 debounce 백업 저장 — 탭 닫기/새로고침 등 언마운트 저장이 보장되지 않을 때 대비]
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const timer = setTimeout(() => {
+      console.log('[ChatSession] debounce 백업 저장:', { chatId, messageCount: messagesRef.current?.length });
+      onMessagesChangeRef.current(messagesRef.current);
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [messages]);
 
   // [Flow: 전송 핸들러]
   const handleSubmit = () => {
@@ -299,6 +310,19 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
     isMessageLoaded,
   } = useAgentChatHistory(jobId);
 
+  // [Flow: 디버깅 — 대화 상태 변화 추적]
+  useEffect(() => {
+    console.log('[AgentChatModal] 상태 업데이트:', {
+      jobId,
+      isOpen,
+      conversationsCount: conversations.length,
+      currentId,
+      isLoadingList,
+      isLoadingMessages,
+      ids: conversations.map((c) => ({ id: c.id, title: c.title, messageCount: c.messages?.length, updatedAt: c.updatedAt })),
+    });
+  }, [jobId, isOpen, conversations, currentId, isLoadingList, isLoadingMessages]);
+
   // [Flow: 사용자 승인 모드 로드 — api.me()에서 ai_tool_approval_mode 조회]
   const [approvalMode, setApprovalMode] = useState("ask");
   useEffect(() => {
@@ -339,11 +363,14 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
   //       — DB 목록 로딩 중에는 새 대화 생성을 지연하여 premature 생성 방지]
   useEffect(() => {
     if (!isOpen) return;
+    console.log('[AgentChatModal] 모달 열림/현재 대화 보장 effect:', { isOpen, currentId, conversationsCount: conversations.length, isLoadingList });
     if (!currentId) {
       if (conversations.length > 0) {
+        console.log('[AgentChatModal] 기존 대화 선택:', { selectedId: conversations[0].id });
         selectConversation(conversations[0].id);
       } else if (!isLoadingList) {
         // DB 목록 로딩이 완료된 후에만 새 대화 생성
+        console.log('[AgentChatModal] 새 대화 생성 (목록 비어있음)');
         createConversation();
       }
     }
@@ -352,6 +379,7 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
   // [Flow: 세션 status 변경 핸들러 — streaming/submitted이면 streamingIds에 추가, ready/error면 제거]
   // [Flow: ready/error 전환 시(에이전트 완료) onAgentComplete 호출하여 상위에서 데이터 재로드]
   const handleStatusChange = useCallback((id, status) => {
+    console.log('[AgentChatModal] 세션 status 변경:', { id, status });
     const isStreaming = status === "streaming" || status === "submitted";
     setStreamingIds((prev) => {
       const has = prev.has(id);
@@ -374,6 +402,7 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
   // [Flow: 메시지 저장 핸들러 — 안정화하여 ChatSession의 effect 재실행 방지]
   const handleMessagesChange = useCallback(
     (id) => (messages) => {
+      console.log('[AgentChatModal] 메시지 저장 트리거:', { id, messageCount: messages?.length });
       saveConversation(id, messages);
     },
     [saveConversation],

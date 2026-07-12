@@ -220,6 +220,8 @@
       "chatTitle": "PROOF AI",
       "emptyHint": "Ask for PDF annotations, markdown edits, or spreadsheet changes in natural language.",
       "toolRunning": "Running tool…",
+      "investigating": "investigating…",
+      "thinking": "thinking…",
       "newChat": "New chat",
       "noConversations": "No previous conversations",
       "untitled": "Untitled",

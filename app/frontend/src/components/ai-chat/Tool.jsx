@@ -263,9 +263,15 @@ export default function Tool({
   // [Flow: 펼침 가능 여부 — 승인 버튼, 에러, 또는 관리자 디버그 모드일 때 펼침 가능]
   const canExpand = showApprovalButtons || hasError || isAdmin;
 
+  const isRunning = state === "input-available" || state === "input-streaming";
+
   return (
     <div
-      className="ai-chat-tool-open group mb-3 w-full rounded-lg border border-outline-variant/60 bg-surface-container-lowest/80"
+      className={`ai-chat-tool-open group mb-3 w-full rounded-lg border bg-surface-container-lowest/80 ${
+        isRunning
+          ? "border-primary/60 animate-pulse"
+          : "border-outline-variant/60"
+      }`}
       data-oid="ai-chat-tool"
     >
       {/* 헤더 (승인/에러가 있을 때만 토글 가능) */}

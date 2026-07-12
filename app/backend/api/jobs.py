@@ -2983,8 +2983,11 @@ def save_user_annotations(
 
     source_index = payload.get("source_index")
     annotations = payload.get("annotations")
+    input_space = payload.get("input_space", "device")
     if not isinstance(source_index, int) or not isinstance(annotations, list):
         raise HTTPException(status_code=400, detail="Invalid source_index or annotations")
+    if input_space not in ("device", "pdf_user"):
+        raise HTTPException(status_code=400, detail="Invalid input_space")
 
     def _has_annotation(item):
         if not isinstance(item, dict):
@@ -3004,7 +3007,7 @@ def save_user_annotations(
     # 별도의 주석 PDF 파일을 생성하지 않고, 원본 PDF 뷰어에서 annotations_json_url로 로드한다.
     # source_index >= 0이면 파일별로 분리된 user_annotations_{source_index}.json에 저장한다.
     if source_index < 0:
-        return _save_user_annotations_json(job, valid_annotations, db)
+        return _save_user_annotations_json(job, valid_annotations, db, source_index, input_space)
 
     # [Flow: source_index >= 0 — AI 주석 PDF가 있는지 확인]
     # AI 주석 PDF가 있으면 기존 동작 (주석 PDF에 병합), 없으면 파일별 주석 JSON으로 저장.
@@ -3055,7 +3058,9 @@ def save_user_annotations(
     try:
         client = supabase_client.get_service_client()
         pdf_bytes = client.storage.from_("results").download(storage_path)
-        new_pdf_bytes = pdf_user_annotator.apply_user_annotations(pdf_bytes, valid_annotations)
+        new_pdf_bytes = pdf_user_annotator.apply_user_annotations(
+            pdf_bytes, valid_annotations, input_space=input_space
+        )
         client.storage.from_("results").upload(
             storage_path,
             new_pdf_bytes,
@@ -3149,10 +3154,17 @@ def _is_user_annotation(item: dict) -> bool:
     return True
 
 
-def _save_user_annotations_json(job: Job, annotations: list, db: Session, source_index: int = -1) -> dict:
+def _save_user_annotations_json(
+    job: Job,
+    annotations: list,
+    db: Session,
+    source_index: int = -1,
+    input_space: str = "device",
+) -> dict:
     """[Flow: Step 1 (사용자 주석만 필터링) -> Step 2 (AI 주석 JSON 다운로드)
-          -> Step 3 (중복 제거 후 병합) -> Step 4 (results 버킷에 저장)
-          -> Step 5 (preview 캐시 무효화)]
+          -> Step 3 (input_space가 pdf_user이면 PDF user-space → device-space 변환)
+          -> Step 4 (중복 제거 후 병합) -> Step 5 (results 버킷에 저장)
+          -> Step 6 (preview 캐시 무효화)]
 
     원본 PDF에 대한 사용자 주석을 JSON 형태로만 저장한다.
     별도의 주석 PDF 파일을 생성하지 않고, 원본 PDF 뷰어에서 annotations_json_url로 로드한다.
@@ -3165,6 +3177,7 @@ def _save_user_annotations_json(job: Job, annotations: list, db: Session, source
         db: DB 세션
         source_index: 파일 인덱스 (-1이면 기존 공유 user_annotations.json, 0 이상이면
             user_annotations_{source_index}.json에 저장하여 파일별 주석 분리)
+        input_space: 입력 좌표계 ("device" 또는 "pdf_user")
 
     반환값:
         저장 결과 dict (ok, annotations_json_storage_path)
@@ -3179,6 +3192,20 @@ def _save_user_annotations_json(job: Job, annotations: list, db: Session, source
         client = supabase_client.get_service_client()
         # AI 주석은 제외하고 사용자가 추가/편집한 주석만 저장한다.
         user_annotations = [a for a in annotations if _is_user_annotation(a)]
+
+        # [Flow: AI 백엔드가 보내는 PDF user-space 좌표를 device-space로 변환]
+        # 뷰어는 항상 device-space를 기대하므로, JSON 저장 전에 좌표계를 맞춘다.
+        if input_space == "pdf_user" and user_annotations:
+            original_path = job.pdf_storage_path
+            if original_path:
+                try:
+                    pdf_bytes = client.storage.from_("pdfs").download(original_path)
+                    user_annotations = pdf_user_annotator._convert_annotations_to_device_space(
+                        user_annotations, pdf_bytes
+                    )
+                except Exception as e:
+                    logger.warning(f"[_save_user_annotations_json] {job_id} PDF user-space 변환 실패: {e}")
+
         user_annotations = _deduplicate_annotations(user_annotations)
         client.storage.from_("results").upload(
             storage_path,

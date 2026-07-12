@@ -220,6 +220,8 @@
       "chatTitle": "PROOF AI",
       "emptyHint": "PDF 주석, 마크다운, 엑셀 작업을 자연어로 요청해보세요.",
       "toolRunning": "도구 실행 중…",
+      "investigating": "investigating…",
+      "thinking": "thinking…",
       "newChat": "새 대화",
       "noConversations": "이전 대화가 없습니다",
       "untitled": "제목 없음",

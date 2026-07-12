@@ -28,18 +28,28 @@ STAMP = 13
 INK = 15
 
 
-def apply_user_annotations(pdf_bytes: bytes, annotations: list[dict]) -> bytes:
+def apply_user_annotations(
+    pdf_bytes: bytes,
+    annotations: list[dict],
+    input_space: str = "device",
+) -> bytes:
     """[Flow: Step 1 (PDF 열기) -> Step 2 (각 항목에서 annotation 객체 추출)
-          -> Step 3 (페이지별 주석 그룹화) -> Step 4 (각 주석을 PyMuPDF로 적용)
-          -> Step 5 (새 PDF bytes 반환)]
+          -> Step 3 (input_space가 pdf_user이면 PDF user-space → device-space 변환)
+          -> Step 4 (페이지별 주석 그룹화) -> Step 5 (각 주석을 PyMuPDF로 적용)
+          -> Step 6 (새 PDF bytes 반환)]
 
     원본 PDF에 사용자가 편집한 EmbedPDF 형식의 주석을 추가한다.
     입력은 EmbedPDF exportAnnotations()가 반환하는 AnnotationTransferItem[] 형식이며,
-    하위 호환을 위해 annotation 객체 배열도 수용한다.
+    하위 호용을 위해 annotation 객체 배열도 수용한다.
+
+    input_space="pdf_user"로 설정하면, AI 백엔드가 보내는 PDF user-space 좌표를
+    먼저 device-space로 변환한 뒤 기존 로직을 타도록 한다. 이렇게 하면 좌표 변환을
+    AI 백엔드가 아닌 실제 PDF를 다루는 이 함수 한 곳에서만 수행할 수 있다.
 
     Args:
         pdf_bytes: 원본 PDF 바이트
         annotations: EmbedPDF AnnotationTransferItem[] 또는 annotation 객체 배열
+        input_space: "device"(기본) 또는 "pdf_user". 입력 좌표계를 지정한다.
 
     Returns:
         주석이 추가된 PDF bytes
@@ -56,18 +66,22 @@ def apply_user_annotations(pdf_bytes: bytes, annotations: list[dict]) -> bytes:
         page_number = page_index + 1  # EmbedPDF는 0-based, PyMuPDF는 0-based이나 로직상 1-based로 처리
         by_page.setdefault(page_number, []).append(a)
 
+    convert_from_pdf_user = input_space == "pdf_user"
     applied = 0
     for page_no, page_annotations in by_page.items():
         if page_no > doc.page_count:
             logger.warning(f"[pdf_user_annotator] 잘못된 pageIndex {page_no - 1} (총 {doc.page_count}페이지), 건너뜀")
             continue
         page = doc[page_no - 1]
-        for a in page_annotations:
+        page_height = page.rect.height
+        page_x0 = page.rect.x0
+        for raw in page_annotations:
             try:
+                a = _convert_annotation_to_device_space(raw, page_height, page_x0) if convert_from_pdf_user else raw
                 _apply_annotation(page, a)
                 applied += 1
             except Exception as e:
-                logger.warning(f"[pdf_user_annotator] 주석 적용 실패 {a.get('id')}: {e}")
+                logger.warning(f"[pdf_user_annotator] 주석 적용 실패 {raw.get('id')}: {e}")
 
     logger.info(f"[pdf_user_annotator] 총 {len(annotations)}개 항목 중 {applied}개 주석 적용 완료")
     return doc.tobytes()
@@ -322,6 +336,137 @@ def _parse_ink_list(ink_list: Any, page_height: float | None = None, page_x0: fl
         if len(points) >= 2:
             strokes.append(points)
     return strokes if strokes else None
+
+
+def _convert_annotation_to_device_space(
+    raw: dict,
+    page_height: float,
+    page_x0: float = 0.0,
+) -> dict:
+    """[Flow: Step 1 (PDF user-space annotation 수신) -> Step 2 (rect/segmentRects/points를 device-space로 변환)
+          -> Step 3 (변환된 annotation 반환)]
+
+    AI 백엔드가 보내는 PDF user-space 좌표를 embedpdf device-space로 변환한다.
+    변환된 좌표는 기존 `_apply_annotation`이 device-space를 PDF user-space로 변환하는
+    로직을 그대로 타도록 하기 위한 중간 형태이다.
+
+    PDF user-space: origin 좌하단, y↑
+    device-space: origin 좌상단, y↓
+    """
+    a = dict(raw)
+
+    def _pdf_rect_to_device(rect: Any) -> dict | None:
+        if not rect:
+            return None
+        if isinstance(rect, list) and len(rect) >= 4:
+            try:
+                x0, y0, x1, y1 = (float(v) for v in rect[:4])
+            except (ValueError, TypeError):
+                return None
+            return {
+                "origin": {"x": x0 - page_x0, "y": page_height - y1},
+                "size": {"width": max(0.0, x1 - x0), "height": max(0.0, y1 - y0)},
+            }
+        if not isinstance(rect, dict):
+            return None
+        x = rect.get("x", rect.get("origin", {}).get("x"))
+        y = rect.get("y", rect.get("origin", {}).get("y"))
+        w = rect.get("width", rect.get("size", {}).get("width"))
+        h = rect.get("height", rect.get("size", {}).get("height"))
+        if x is None or y is None or w is None or h is None:
+            return None
+        try:
+            x, y, w, h = float(x), float(y), float(w), float(h)
+        except (ValueError, TypeError):
+            return None
+        return {
+            "origin": {"x": x - page_x0, "y": page_height - y - h},
+            "size": {"width": max(0.0, w), "height": max(0.0, h)},
+        }
+
+    def _pdf_point_to_device(p: Any) -> dict | None:
+        if not isinstance(p, dict):
+            return None
+        x = p.get("x")
+        y = p.get("y")
+        if x is None or y is None:
+            return None
+        try:
+            return {"x": float(x) - page_x0, "y": page_height - float(y)}
+        except (ValueError, TypeError):
+            return None
+
+    if "rect" in a:
+        converted = _pdf_rect_to_device(a["rect"])
+        if converted:
+            a["rect"] = converted
+    if "segmentRects" in a and isinstance(a["segmentRects"], list):
+        a["segmentRects"] = [(_pdf_rect_to_device(r) or r) for r in a["segmentRects"]]
+    if "start" in a:
+        converted = _pdf_point_to_device(a["start"])
+        if converted:
+            a["start"] = converted
+    if "end" in a:
+        converted = _pdf_point_to_device(a["end"])
+        if converted:
+            a["end"] = converted
+    if "inkList" in a and isinstance(a["inkList"], list):
+        a["inkList"] = [
+            {
+                **ink,
+                "points": [(_pdf_point_to_device(p) or p) for p in ink.get("points", [])],
+            }
+            for ink in a["inkList"]
+            if isinstance(ink, dict)
+        ]
+    if "paths" in a and isinstance(a["paths"], list):
+        a["paths"] = [
+            [(_pdf_point_to_device(p) or p) for p in stroke]
+            for stroke in a["paths"]
+            if isinstance(stroke, list)
+        ]
+    return a
+
+
+def _convert_annotations_to_device_space(
+    annotations: list[dict],
+    pdf_bytes: bytes,
+) -> list[dict]:
+    """[Flow: Step 1 (PDF 열기) -> Step 2 (페이지별 높이/오프셋 캐시)
+          -> Step 3 (각 annotation의 pageIndex로 해당 페이지 높이/오프셋 조회)
+          -> Step 4 (PDF user-space → device-space 변환) -> Step 5 (변환된 목록 반환)]
+
+    AI 백엔드가 보내는 PDF user-space 좌표를 embedpdf device-space로 일괄 변환한다.
+    source_index < 0로 JSON만 저장할 때도 뷰어가 올바른 좌표계로 해석할 수 있도록 사용한다.
+    """
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        page_heights: dict[int, float] = {}
+        page_x0s: dict[int, float] = {}
+        for page in doc:
+            page_no = page.number + 1
+            page_heights[page_no] = page.rect.height
+            page_x0s[page_no] = page.rect.x0
+    finally:
+        doc.close()
+
+    converted: list[dict] = []
+    for raw in annotations:
+        a = _extract_annotation(raw)
+        if not a:
+            converted.append(raw)
+            continue
+        page_index = a.get("pageIndex")
+        if not isinstance(page_index, int) or page_index < 0:
+            converted.append(raw)
+            continue
+        page_no = page_index + 1
+        page_height = page_heights.get(page_no)
+        if page_height is None:
+            converted.append(raw)
+            continue
+        converted.append(_convert_annotation_to_device_space(raw, page_height, page_x0s.get(page_no, 0.0)))
+    return converted
 
 
 # [Flow: Step 1 (PyMuPDF 색상 튜플 수신) -> Step 2 (0-255 변환) -> Step 3 (hex 문자열 반환)]

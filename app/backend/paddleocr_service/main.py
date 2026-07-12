@@ -767,8 +767,10 @@ def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, A
             md_images = md.get("images", {}) if isinstance(md, dict) else {}
             # prunedResult == 로컬 파이프라인 res.json에서 input_path/page_index만 제거한 것과 동일 스키마.
             # PDF 하이라이트/여백 주석 기능의 bbox 소스로 그대로 사용한다 (core/ocr_layout.py에서 파싱).
+            # PaddleOCR-VL은 이미지 좌표계(top-left, y↓)를 사용하므로, 이후 단계와 좌표계를 맞추기 위해
+            # PDF user-space(bottom-left, y↑)로 변환한다.
             pruned = lpr.get("prunedResult", {}) or {}
-            layout_pages.append(pruned)
+            layout_pages.append(_extract_layout_from_result(pruned))
             # doc_preprocessor_res.angle 추출 (0/1/2/3 = 0°/90°/180°/270°, -1 = 미적용)
             doc_pre = pruned.get("doc_preprocessor_res", {}) if isinstance(pruned, dict) else {}
             angle_code = doc_pre.get("angle", -1) if isinstance(doc_pre, dict) else -1

@@ -212,6 +212,16 @@ body {
   animation: ai-chat-shimmer 1.5s ease-in-out infinite;
 }
 
+/* Agent activity: investigating... ↔ thinking... 깜빡깜빡 전환 */
+@keyframes agent-activity-blink {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+.agent-activity-blink {
+  display: inline-block;
+  animation: agent-activity-blink 2s ease-in-out infinite;
+}
+
 /* 메시지 등장 애니메이션 (fade-up) */
 @keyframes ai-chat-fade-up {
   from { opacity: 0; transform: translateY(8px); }

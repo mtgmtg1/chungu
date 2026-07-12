@@ -536,19 +536,6 @@ function GraphCanvas({ jobId, job, onNodeClick }) {
     [onNodeClick]
   );
 
-  // [Flow: Step 1 (Job prop의 e-Discovery 결과 확인) -> Step 2 (done 상태이면 그래프 빌드) -> Step 3 (processing 상태이면 폴링 재개)]
-  useEffect(() => {
-    if (job?.ediscovery_status === "done" && job?.ediscovery_graphs?.nodes?.length > 0) {
-      setMetrics(job.ediscovery_metrics || { total_docs: 0, processed_chunks: 0, threshold: 0 });
-      buildGraph(job.ediscovery_graphs);
-    } else if (job?.ediscovery_status === "processing") {
-      startPolling();
-    } else {
-      setNodes([]);
-      setEdges([]);
-    }
-  }, [job?.ediscovery_status, job?.ediscovery_graphs, job?.ediscovery_metrics, buildGraph, setEdges, setNodes, startPolling]);
-
   const pollRef = useRef(null);
 
   // [Flow: Step 1 (폴링 클리어업) -> Step 2 (언마운트 시 남은 interval 제거)]
@@ -590,6 +577,19 @@ function GraphCanvas({ jobId, job, onNodeClick }) {
       }
     }, 2000);
   }, [buildGraph, jobId, t]);
+
+  // [Flow: Step 1 (Job prop의 e-Discovery 결과 확인) -> Step 2 (done 상태이면 그래프 빌드) -> Step 3 (processing 상태이면 폴링 재개)]
+  useEffect(() => {
+    if (job?.ediscovery_status === "done" && job?.ediscovery_graphs?.nodes?.length > 0) {
+      setMetrics(job.ediscovery_metrics || { total_docs: 0, processed_chunks: 0, threshold: 0 });
+      buildGraph(job.ediscovery_graphs);
+    } else if (job?.ediscovery_status === "processing") {
+      startPolling();
+    } else {
+      setNodes([]);
+      setEdges([]);
+    }
+  }, [job?.ediscovery_status, job?.ediscovery_graphs, job?.ediscovery_metrics, buildGraph, setEdges, setNodes, startPolling]);
 
   /**
    * [Flow: Step 1 (현재 파라미터 수집) -> Step 2 (FastAPI /ediscovery/extract POST with wait=false)

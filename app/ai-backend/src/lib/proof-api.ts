@@ -333,24 +333,26 @@ export async function updateAnnotation(
 }
 
 /**
- * [Flow: Step 1 (job_id, source_index, annotations 수신) -> Step 2 (/api/jobs/{id}/user-annotations 저장)
+ * [Flow: Step 1 (job_id, source_index, annotations, input_space 수신) -> Step 2 (/api/jobs/{id}/user-annotations 저장)
  *       -> Step 3 (저장 결과 반환)]
  *
  * @param jobId Job ID
  * @param sourceIndex source_files 인덱스
  * @param annotations EmbedPDF AnnotationTransferItem[]
+ * @param inputSpace 입력 좌표계: "device"(embedpdf device-space, 프론트엔드) 또는 "pdf_user"(PDF user-space, AI 백엔드)
  * @param authHeaders 인증 헤더
  */
 export async function saveAnnotations(
   jobId: string,
   sourceIndex: number,
   annotations: Array<Record<string, unknown>>,
+  inputSpace: 'device' | 'pdf_user' = 'device',
   authHeaders?: AuthHeaders,
 ): Promise<Record<string, unknown>> {
   return request<Record<string, unknown>>(
     `/api/jobs/${jobId}/user-annotations`,
     'POST',
-    { source_index: sourceIndex, annotations },
+    { source_index: sourceIndex, annotations, input_space: inputSpace },
     authHeaders,
   );
 }

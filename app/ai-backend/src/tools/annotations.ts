@@ -68,7 +68,6 @@ interface PendingAnnotation {
 
 interface CachedElements {
   elements: Array<Record<string, unknown>>;
-  pageDimensions: Record<number, { width: number; height: number }>;
 }
 
 /**
@@ -99,19 +98,10 @@ export function buildAnnotationTools(context: AnnotationContext) {
   async function loadElements(pageNo?: number): Promise<CachedElements> {
     const key = pageNo ?? 'all';
     if (pageCache.has(key)) return pageCache.get(key)!;
-    const { elements, pageDimensions } = await proofApi.getElements(jobId, pageNo, authHeaders);
-    const cache: CachedElements = { elements, pageDimensions };
+    const { elements } = await proofApi.getElements(jobId, pageNo, authHeaders);
+    const cache: CachedElements = { elements };
     pageCache.set(key, cache);
     return cache;
-  }
-
-  /**
-   * [Flow: Step 1 (page_no 캐시 확인) -> Step 2 (필요 시 loadElements 호출)
-   *       -> Step 3 (해당 페이지 크기 반환)]
-   */
-  async function loadPageDimensions(pageNo: number): Promise<{ width: number; height: number }> {
-    const cache = await loadElements(pageNo);
-    return cache.pageDimensions[pageNo] || { width: 612, height: 792 };
   }
 
   return {
@@ -411,28 +401,22 @@ export function buildAnnotationTools(context: AnnotationContext) {
         }
 
         try {
-          const pageNos = [...new Set(pending.map((p) => p.target.page_no))];
-          const pageDimensions: Record<number, { width: number; height: number }> = {};
-          for (const pageNo of pageNos) {
-            pageDimensions[pageNo] = await loadPageDimensions(pageNo);
-          }
-          // [Flow: 좌표계 디버깅용 — add_highlight/add_callout으로 수집된 좌표와 페이지 크기 로깅]
-          console.log(`[apply_annotations] job=${jobId} count=${pending.length} pageDimensions=${JSON.stringify(pageDimensions)}`);
-          const annotations = pending.map((pendingAnnotation) =>
-            _buildAnnotationItem(pendingAnnotation, pageDimensions, true),
-          );
+          // [Flow: AI 백엔드는 좌표 변환을 하지 않고 PDF user-space 그대로 전송
+          //       -> 변환은 FastAPI pdf_user_annotator.apply_user_annotations에서 수행]
+          console.log(`[apply_annotations] job=${jobId} count=${pending.length} input_space=pdf_user`);
+          const annotations = pending.map((pendingAnnotation) => _buildAnnotationItem(pendingAnnotation));
           let saveSourceIndex = sourceIndex;
           let usedFallback = false;
 
           // [Flow: Step 1 (source_index로 주석 PDF 저장) -> Step 2 (404/실패 감지)
           //       -> Step 3 (source_index=-1로 원본 PDF의 JSON 저장)]
           try {
-            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, authHeaders);
+            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'pdf_user', authHeaders);
           } catch (firstError) {
             if (saveSourceIndex < 0) throw firstError;
             saveSourceIndex = -1;
             usedFallback = true;
-            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, authHeaders);
+            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'pdf_user', authHeaders);
           }
 
           // 같은 실행에서 모델이 apply_annotations를 반복 호출해도 중복 저장하지 않는다.
@@ -460,52 +444,29 @@ export function buildAnnotationTools(context: AnnotationContext) {
     save_annotations: tool({
       description: 'EmbedPDF AnnotationTransferItem[] 형식의 주석 JSON을 직접 전달하여 Storage에 저장하고 뷰어에 반영한다. add_highlight/add_callout + apply_annotations 대신 사용할 수 있으며, view_page나 read_job_json으로 얻은 정보를 바탕으로 정밀한 위치(rect)를 지정해 주석을 만들 때 유용하다.\n' +
         '각 주석 항목의 구조: { annotation: { id, type (9=highlight, 3=freetext/callout), pageIndex (0-based), rect, color, strokeColor, opacity, contents, intent? ("FreeTextCallout"), lineEnding? (4=OpenArrow), segmentRects? } }\n' +
-        'rect 좌표계: pdf_user_space=true(기본값)일 때 PDF user-space(y↑, 원점 좌하단)를 사용한다. 다음 형식을 지원한다:\n' +
+        'rect 좌표계: PDF user-space(y↑, 원점 좌하단)를 사용한다. 다음 형식을 지원한다:\n' +
         '  1. bbox_pdf 배열 직접 전달: rect = [x0, y0, x1, y1] (get_elements의 bbox_pdf 그대로 사용)\n' +
         '  2. {origin, size} 구조: rect = {origin: {x: x0, y: y0}, size: {width: x1-x0, height: y1-y0}} (y0는 PDF user-space 하단)\n' +
         '  3. annotation.bbox_pdf 필드: bbox_pdf = [x0, y0, x1, y1] (rect 대신 사용 가능)\n' +
-        'get_elements(page_no)로 얻은 bbox_pdf를 그대로 rect에 전달하면 자동으로 device-space로 변환된다. read_job_json으로 읽은 기존 주석(device-space 좌표)을 그대로 전달할 때는 pdf_user_space=false로 설정한다.',
+        '좌표 변환은 FastAPI pdf_user_annotator.apply_user_annotations에서 실제 PDF page_height를 기준으로 수행한다.',
       inputSchema: z.object({
         annotations: z.array(z.record(z.unknown()))
           .describe('EmbedPDF AnnotationTransferItem[] 배열. 각 항목은 { annotation: { id, type, pageIndex, rect, color, ... } } 구조.'),
         merge: z.boolean().optional()
           .describe('true면 기존 주석과 병합 (기본값). false면 기존 주석을 모두 대체.'),
-        pdf_user_space: z.boolean().optional()
-          .describe('true면 rect 좌표가 PDF user-space(y↑)임 — 자동으로 device-space(y↓)로 변환. 기본값 true. 기존 주석의 device-space 좌표를 그대로 전달할 때는 false로 설정.'),
       }),
-      execute: async ({ annotations, merge, pdf_user_space }) => {
+      execute: async ({ annotations, merge }) => {
         if (!annotations || annotations.length === 0) {
           return { saved: false, reason: 'No annotations provided' };
         }
         try {
           const shouldMerge = merge !== false;
-          const shouldConvert = pdf_user_space !== false;
 
-          // [Flow: Step 1 (PDF user-space → device-space 좌표 변환)
-          //       -> Step 2 (저장할 source_index 결정)
-          //       -> Step 3 (merge면 기존 주석 읽어 병합) -> Step 4 (FastAPI로 저장)]
-          // AI가 get_elements의 bbox_pdf(PDF user-space)를 그대로 전달하는 경우,
-          // Y축이 뒤집힌 상태로 저장되는 것을 방지하기 위해 자동 변환을 수행한다.
-          let convertedAnnotations = annotations;
-          if (shouldConvert) {
-            const pageNos = [...new Set(annotations.map((a) => {
-              const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
-                ? (a as any).annotation : a;
-              return (Number(inner.pageIndex ?? 0) + 1);
-            }))];
-            const pageDims: Record<number, { width: number; height: number }> = {};
-            for (const pageNo of pageNos) {
-              pageDims[pageNo] = await loadPageDimensions(pageNo);
-            }
-            // [Flow: 좌표계 혼동 디버깅용 — 입력값, pdf_user_space, 페이지 높이, 변환 후 좌표를 로깅]
-            console.log(`[save_annotations] job=${jobId} count=${annotations.length} pdf_user_space=${pdf_user_space} shouldConvert=${shouldConvert} pageDims=${JSON.stringify(pageDims)}`);
-            convertedAnnotations = annotations.map((a) => _convertAnnotationToDeviceSpace(a, pageDims, true));
-          } else {
-            // [Flow: 변환 스킵 시에도 입력 좌표를 로깅하여 좌표계 혼동 여부 추적]
-            console.log(`[save_annotations] job=${jobId} count=${annotations.length} pdf_user_space=false (conversion skipped)`);
-          }
+          // [Flow: AI 백엔드는 좌표 변환을 하지 않고 PDF user-space 그대로 전송
+          //       -> 변환은 FastAPI pdf_user_annotator.apply_user_annotations에서 수행]
+          console.log(`[save_annotations] job=${jobId} count=${annotations.length} input_space=pdf_user`);
 
-          let toSave = convertedAnnotations;
+          let toSave = annotations;
           let saveSourceIndex = sourceIndex;
           let usedFallback = false;
           if (shouldMerge) {
@@ -516,7 +477,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
                   ? (a as any).annotation : a;
                 return inner.id;
               }));
-              const newOnes = convertedAnnotations.filter((a) => {
+              const newOnes = annotations.filter((a) => {
                 const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
                   ? (a as any).annotation : a;
                 return !existingIds.has(inner.id);
@@ -526,18 +487,18 @@ export function buildAnnotationTools(context: AnnotationContext) {
               // 기존 주석 파일이 없으면 source_index = -1로 fallback (원본 PDF에 JSON 저장)
               saveSourceIndex = -1;
               usedFallback = true;
-              toSave = convertedAnnotations;
+              toSave = annotations;
             }
           }
 
           try {
-            await proofApi.saveAnnotations(jobId, saveSourceIndex, toSave as Array<Record<string, unknown>>, authHeaders);
+            await proofApi.saveAnnotations(jobId, saveSourceIndex, toSave as Array<Record<string, unknown>>, 'pdf_user', authHeaders);
           } catch (firstErr) {
             // source_index=0으로 실패하면 -1로 재시도 (원본 PDF fallback)
             if (saveSourceIndex >= 0) {
               saveSourceIndex = -1;
               usedFallback = true;
-              await proofApi.saveAnnotations(jobId, saveSourceIndex, toSave as Array<Record<string, unknown>>, authHeaders);
+              await proofApi.saveAnnotations(jobId, saveSourceIndex, toSave as Array<Record<string, unknown>>, 'pdf_user', authHeaders);
             } else {
               throw firstErr;
             }
@@ -545,9 +506,8 @@ export function buildAnnotationTools(context: AnnotationContext) {
           return {
             saved: true,
             count: toSave.length,
-            new_count: convertedAnnotations.length,
+            new_count: annotations.length,
             merged: shouldMerge,
-            pdf_user_space_converted: shouldConvert,
             source_index: saveSourceIndex,
             used_fallback: usedFallback,
           };
@@ -562,159 +522,20 @@ export function buildAnnotationTools(context: AnnotationContext) {
 }
 
 /**
- * [Flow: Step 1 (AnnotationTransferItem 수신) -> Step 2 (annotation 객체 추출)
- *       -> Step 3 (rect 형식 정규화 — 배열 [x0,y0,x1,y1] / {origin,size} / {x,y,width,height} / bbox_pdf 필드)
- *       -> Step 4 (rect/segmentRects의 origin.y를 PDF user-space → device-space로 flip)
- *       -> Step 5 (변환된 주석 반환)]
+ * [Flow: Step 1 (PendingAnnotation 수신) -> Step 2 (PDF user-space AnnotationTransferItem 생성) -> Step 3 (반환)]
  *
- * PDF user-space(원점 좌하단, y↑)의 rect를 embedpdf device-space(원점 좌상단, y↓)로 변환한다.
- * origin.y가 PDF user-space에서 하단(y0)일 때, device-space에서는 pageHeight - y0 - height = pageHeight - y1이 된다.
- * segmentRects가 있으면 동일하게 변환한다.
+ * AI 백엔드는 좌표 변환을 하지 않고 PDF user-space 좌표를 그대로 전달한다.
+ * 변환은 FastAPI의 pdf_user_annotator.apply_user_annotations에서 실제 PDF page_height를 기준으로 수행한다.
  *
- * AI가 전달할 수 있는 다양한 rect 형식을 처리한다:
- * - 배열 [x0, y0, x1, y1] (PDF user-space, get_elements의 bbox_pdf 그대로 전달)
- * - {origin: {x, y}, size: {width, height}} (origin.y = PDF user-space 하단 y0)
- * - {x, y, width, height} (레거시 형식, y = PDF user-space 하단 y0)
- * - bbox_pdf 필드가 별도로 있는 경우 (annotation.bbox_pdf = [x0, y0, x1, y1])
- *
- * @param item AnnotationTransferItem (PDF user-space 좌표)
- * @param pageDims 페이지 번호(1-based) → {width, height} 맵
- * @param verbose true면 변환 전/후 좌표를 콘솔에 로깅
- * @returns device-space로 변환된 AnnotationTransferItem
- */
-function _convertAnnotationToDeviceSpace(
-  item: Record<string, unknown>,
-  pageDims: Record<number, { width: number; height: number }>,
-  verbose = false,
-): Record<string, unknown> {
-  const inner = (item as any).annotation && typeof (item as any).annotation === 'object'
-    ? (item as any).annotation : item;
-  const pageNo = Number(inner.pageIndex ?? 0) + 1;
-  const dims = pageDims[pageNo] || { width: 612, height: 792 };
-  const pageHeight = dims.height;
-
-  // [Flow: bbox_pdf 배열을 {origin, size} rect로 정규화]
-  // AI가 get_elements의 bbox_pdf = [x0, y0, x1, y1]을 그대로 rect로 전달하거나
-  // annotation.bbox_pdf 필드로 전달하는 경우를 처리한다.
-  const normalizeRect = (rect: any): any => {
-    if (!rect) return rect;
-    // 배열 [x0, y0, x1, y1] (PDF user-space) → {origin, size}
-    if (Array.isArray(rect) && rect.length >= 4) {
-      const [x0, y0, x1, y1] = rect.map(Number);
-      return {
-        origin: { x: x0, y: y0 },
-        size: { width: x1 - x0, height: y1 - y0 },
-      };
-    }
-    if (typeof rect !== 'object') return rect;
-    // 이미 {origin, size} 형태
-    if (rect.origin && typeof rect.origin.x === 'number') return rect;
-    // {x, y, width, height} 레거시 형태
-    if (typeof rect.x === 'number' && typeof rect.width === 'number') {
-      return {
-        origin: { x: rect.x, y: rect.y },
-        size: { width: rect.width, height: rect.height || 0 },
-      };
-    }
-    return rect;
-  };
-
-  // rect 변환: origin.y (PDF user-space 하단 y0) → pageHeight - origin.y - size.height (device-space 상단)
-  const convertRect = (rect: any, label: string): any => {
-    const normalized = normalizeRect(rect);
-    if (!normalized || typeof normalized !== 'object') return rect;
-    const origin = normalized.origin;
-    const size = normalized.size;
-    if (!origin || typeof origin.y !== 'number' || !size || typeof size.height !== 'number') return rect;
-
-    // [Flow: 좌표계 혼동 방지 — PDF user-space y0은 페이지 높이 이하여야 함]
-    // origin.y + size.height가 pageHeight을 초과하면, 이미 device-space 좌표를
-    // PDF user-space라고 잘못 보낸 경우이므로 경고한다.
-    if (verbose && typeof pageHeight === 'number' && !Number.isNaN(pageHeight)) {
-      const rawBottom = origin.y + size.height;
-      if (rawBottom > pageHeight + 0.1 || origin.y > pageHeight + 0.1) {
-        console.warn(
-          `[_convertAnnotationToDeviceSpace] page=${pageNo} pageHeight=${pageHeight} ` +
-          `입력 ${label}이 PDF user-space가 아닌 것처럼 보임: ` +
-          `origin.y=${origin.y} size.height=${size.height} (rawBottom=${rawBottom} > pageHeight). ` +
-          `device-space 좌표를 pdf_user_space=false로 전달했는지 확인하세요.`
-        );
-      }
-    }
-
-    const converted = {
-      origin: { x: origin.x, y: pageHeight - origin.y - size.height },
-      size: { width: size.width, height: size.height },
-    };
-
-    if (verbose) {
-      console.log(
-        `[_convertAnnotationToDeviceSpace] page=${pageNo} pageHeight=${pageHeight} ` +
-        `${label}: before origin.y=${origin.y} height=${size.height} ` +
-        `→ after origin.y=${converted.origin.y} height=${converted.size.height}`
-      );
-    }
-    return converted;
-  };
-
-  const convertedInner = { ...inner };
-
-  // [Flow: bbox_pdf 필드가 있으면 rect로 승격 — AI가 annotation.bbox_pdf로 전달하는 경우]
-  if (Array.isArray(convertedInner.bbox_pdf) && !convertedInner.rect) {
-    const [x0, y0, x1, y1] = convertedInner.bbox_pdf.map(Number);
-    convertedInner.rect = {
-      origin: { x: x0, y: y0 },
-      size: { width: x1 - x0, height: y1 - y0 },
-    };
-  }
-
-  if (convertedInner.rect) {
-    convertedInner.rect = convertRect(convertedInner.rect, 'rect');
-  }
-  if (Array.isArray(convertedInner.segmentRects)) {
-    convertedInner.segmentRects = convertedInner.segmentRects.map((r: any, i: number) => convertRect(r, `segmentRects[${i}]`));
-  }
-
-  // item이 { annotation: {...} } 구조면 변환된 inner를 다시 감싸서 반환
-  if ((item as any).annotation && typeof (item as any).annotation === 'object') {
-    return { ...item, annotation: convertedInner };
-  }
-  return convertedInner;
-}
-
-/**
- * [Flow: Step 1 (PendingAnnotation + pageDimensions 수신) -> Step 2 (페이지 크기로 y축 flip)
- *       -> Step 3 (embedpdf AnnotationTransferItem 생성) -> Step 4 (반환)]
- *
- * Python pdf_annotator.py의 _rect_to_embedpdf_rect 와 동일한 변환을 수행한다.
- * PDF user-space(원점 좌하단, y↑) → embedpdf device-space(원점 좌상단, y↓).
+ * PDF user-space rect: origin.y = y0 (페이지 하단 기준), size.height = y1 - y0.
  *
  * @param p pending 주석
- * @param pageDimensions 페이지 번호 → {width, height} 맵
- * @returns embedpdf AnnotationTransferItem
+ * @returns PDF user-space 기반 AnnotationTransferItem
  */
-function _buildAnnotationItem(
-  p: PendingAnnotation,
-  pageDimensions: Record<number, { width: number; height: number }>,
-  verbose = false,
-): Record<string, unknown> {
+function _buildAnnotationItem(p: PendingAnnotation): Record<string, unknown> {
   const [x0, y0, x1, y1] = p.target.bbox_pdf;
-  const dims = pageDimensions[p.target.page_no] || { width: 612, height: 792 };
-  const pageHeight = dims.height;
-
-  // PDF 좌표계(y↑) → embedpdf 좌표계(y↓): origin.y = page_height - y1
-  const originX = x0;
-  const originY = pageHeight - y1;
   const width = x1 - x0;
   const height = y1 - y0;
-
-  if (verbose) {
-    console.log(
-      `[_buildAnnotationItem] page=${p.target.page_no} pageHeight=${pageHeight} ` +
-      `bbox_pdf=[${x0.toFixed(1)}, ${y0.toFixed(1)}, ${x1.toFixed(1)}, ${y1.toFixed(1)}] ` +
-      `→ rect origin.y=${originY.toFixed(1)} height=${height.toFixed(1)}`
-    );
-  }
 
   const hexColor = _rgbToHex(p.target.color);
 
@@ -724,8 +545,8 @@ function _buildAnnotationItem(
         id: p.id,
         type: 9, // embedpdf HIGHLIGHT
         pageIndex: p.target.page_no - 1,
-        rect: { origin: { x: originX, y: originY }, size: { width, height } },
-        segmentRects: [{ origin: { x: originX, y: originY }, size: { width, height } }],
+        rect: { origin: { x: x0, y: y0 }, size: { width, height } },
+        segmentRects: [{ origin: { x: x0, y: y0 }, size: { width, height } }],
         strokeColor: hexColor,
         color: hexColor,
         opacity: p.target.opacity,
@@ -741,7 +562,7 @@ function _buildAnnotationItem(
       type: 3, // embedpdf FREETEXT
       intent: 'FreeTextCallout',
       pageIndex: p.target.page_no - 1,
-      rect: { origin: { x: originX, y: originY }, size: { width: Math.max(width, 80), height: Math.max(height, 24) } },
+      rect: { origin: { x: x0, y: y0 }, size: { width: Math.max(width, 80), height: Math.max(height, 24) } },
       strokeColor: hexColor,
       color: hexColor,
       opacity: p.target.opacity,

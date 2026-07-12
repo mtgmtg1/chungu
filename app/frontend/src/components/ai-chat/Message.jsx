@@ -7,7 +7,7 @@ import { memo, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { marked } from "marked";
 import { RefreshCw, Sparkles } from "lucide-react";
-import Shimmer from "./Shimmer.jsx";
+import AgentActivityIndicator, { getActiveToolLabels } from "./AgentActivityIndicator.jsx";
 import Tool from "./Tool.jsx";
 
 // [Flow: 마크다운 텍스트 -> HTML 변환 (XSS 방지를 위해 marked 옵션 설정)]
@@ -129,21 +129,19 @@ function PreviewMessage({
   });
 
   // [Flow: 어시스턴트 + 로딩 중 + 콘텐츠 없음 -> Thinking shimmer]
-  const hasAnyContent = message.parts?.some(
-    (part) =>
-      (part.type === "text" && part.text?.trim().length > 0) ||
-      (typeof part.type === "string" && part.type.startsWith("tool-"))
+  // 툴 콜이 진행 중일 때도 동작 중임을 표시하기 위해, 진행 중인 tool part가 있으면 activity indicator를 표시한다.
+  const hasAnyText = message.parts?.some(
+    (part) => part.type === "text" && part.text?.trim().length > 0
   );
-  const isThinking = isAssistant && isLoading && !hasAnyContent;
+  const activeToolLabels = useMemo(() => getActiveToolLabels(t, message), [t, message]);
+  const hasActiveToolCall = activeToolLabels.length > 0;
+  const isThinking = isAssistant && isLoading && (!hasAnyText || hasActiveToolCall);
 
-  const content = isThinking ? (
-    <div className="flex items-center text-[13px] leading-[1.65]">
-      <Shimmer className="font-medium" duration={1.5}>
-        Thinking...
-      </Shimmer>
-    </div>
-  ) : (
-    parts
+  const content = (
+    <>
+      {isThinking && <AgentActivityIndicator toolLabels={activeToolLabels} />}
+      {parts}
+    </>
   );
 
   return (
@@ -194,25 +192,8 @@ function PreviewMessage({
 
 /**
  * ThinkingMessage — 어시스턴트 응답 대기 중 표시하는 로딩 메시지.
- * Sparkles 아바타 + "Thinking..." shimmer.
+ * "investigating..."과 "thinking..."을 번갈아 깜빡이는 AgentActivityIndicator를 사용한다.
  */
-export const ThinkingMessage = () => {
-  return (
-    <div className="group/message w-full" data-role="assistant" data-testid="message-assistant-loading">
-      <div className="flex items-start gap-3">
-        <div className="flex h-[calc(13px*1.65)] shrink-0 items-center">
-          <div className="flex size-7 items-center justify-center rounded-lg bg-surface-container-high/80 text-primary ring-1 ring-outline-variant/40">
-            <Sparkles size={14} />
-          </div>
-        </div>
-        <div className="flex items-center text-[13px] leading-[1.65]">
-          <Shimmer className="font-medium" duration={1.5}>
-            Thinking...
-          </Shimmer>
-        </div>
-      </div>
-    </div>
-  );
-};
+export const ThinkingMessage = () => <AgentActivityIndicator toolLabels={[]} />;
 
 export default memo(PreviewMessage);

@@ -220,6 +220,8 @@
       "chatTitle": "PROOF AI",
       "emptyHint": "PDF注釈、マークダウン編集、スプレッドシート操作を自然言語でリクエストできます。",
       "toolRunning": "ツールを実行中…",
+      "investigating": "investigating…",
+      "thinking": "thinking…",
       "newChat": "新規チャット",
       "noConversations": "過去の会話はありません",
       "untitled": "無題",

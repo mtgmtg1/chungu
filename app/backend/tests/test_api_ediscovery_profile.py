@@ -114,8 +114,50 @@ def test_analyze_legal_profile_no_text():
     raise AssertionError("HTTPException이 발생하지 않음")
 
 
-def test_analyze_legal_profile_analysis_failure():
-    """법률 프로필 추출이 실패하면 502 예외를 발생시킨다."""
+def test_analyze_legal_profile_with_agent_collected_context():
+    """에이전트가 수집한 e-Discovery 그래프 요약을 additional_context로 전달하면
+    프롬프트에 반영되고 더 구체적인 법률 프로필이 나온다."""
+    job = _make_job()
+    db = _make_db(job)
+    user = _make_user()
+
+    expected_profile = {
+        "legal_domain": "민사",
+        "claim_type": "대여금반환",
+        "claim_summary": "원고가 피고에게 대여금 반환을 청구함",
+        "issues": ["변제기 도래", "피고의 변제 항변"],
+        "legal_elements": [
+            {"id": "element_1", "name": "금전 대여", "description": "원고가 피고에게 금전을 대여했음"},
+            {"id": "element_2", "name": "변제기 도래", "description": "반환할 기한이 도래했음"},
+        ],
+        "confidence": 0.92,
+    }
+
+    graph_summary = "e-Discovery 그래프: 원고 A가 피고 B에게 1천만 원 대여, 피고 B는 변제 완료 주장"
+
+    with patch("backend.api.ediscovery.pipeline_ediscovery.extract_page_texts") as mock_extract, \
+         patch("backend.api.ediscovery.legal_case_profile.extract_legal_profile") as mock_profile:
+        mock_extract.return_value = {1: "대여계약서", 2: "변제 독촉 내용", 3: "소장"}
+        mock_profile.return_value = expected_profile
+
+        result = analyze_legal_profile(
+            "job-123",
+            {
+                "claim_type_hint": "대여금반환",
+                "additional_context": graph_summary,
+            },
+            user,
+            db,
+        )
+
+    assert result["legal_profile"] == expected_profile
+    call_kwargs = mock_profile.call_args.kwargs
+    assert call_kwargs["claim_type_hint"] == "대여금반환"
+    assert call_kwargs["additional_context"] == graph_summary
+
+
+def test_analyze_legal_profile_rejects_generic_result():
+    """LLM이 기타/정보부족 같은 fallback을 반환하면 502 예외를 발생시킨다."""
     job = _make_job()
     db = _make_db(job)
     user = _make_user()

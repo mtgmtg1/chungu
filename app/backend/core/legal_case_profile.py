@@ -178,12 +178,25 @@ def _strip_json_fence(content: str) -> str:
     return content
 
 
+def _is_generic_fallback(legal_domain: str, claim_type: str) -> bool:
+    """[Flow: Step 1 (legal_domain/claim_type 소문자화) -> Step 2 (금지어 집합 비교) -> Step 3 (fallback 여부 반환)]
+
+    모델이 판단을 회피하고 "기타" 또는 "정보부족" 같은 placeholder로 채웠는지 확인한다.
+    한영/띄어쓰기 변형을 처리하기 위해 공백을 제거하고 소문자로 비교한다.
+    """
+    normalized_domain = legal_domain.lower().replace(" ", "")
+    normalized_claim = claim_type.lower().replace(" ", "")
+    fallback_domains = {"기타", "etc", "정보없음", "unknown"}
+    fallback_claims = {"기타", "etc", "정보부족", "정보없음", "unknown", "미정", "불명"}
+    return normalized_domain in fallback_domains or normalized_claim in fallback_claims
+
+
 def _parse_legal_profile(content: str) -> dict:
     """[Flow: Step 1 (JSON 펜스 제거) -> Step 2 (JSON 파싱) -> Step 3 (필드 스키마 검증/보정)
-          -> Step 4 (legal_profile dict 반환)]
+          -> Step 4 (fallback placeholder 거부) -> Step 5 (legal_profile dict 반환)]
 
     LLM 응답 문자열을 법률 프로필 데이터 계약 형식으로 변환한다.
-    JSON 파싱 실패 시 빈 dict를 반환한다.
+    JSON 파싱 실패하거나 "기타"/"정보부족" 같은 fallback이면 빈 dict를 반환한다.
     """
     cleaned = _strip_json_fence(content)
     try:
@@ -240,6 +253,12 @@ def _parse_legal_profile(content: str) -> dict:
     issues = _list_of_strings(data.get("issues"))
     legal_elements = _elements(data.get("legal_elements"))
     confidence = _clamp_confidence(data.get("confidence"))
+
+    if _is_generic_fallback(legal_domain, claim_type):
+        logger.warning(
+            f"[legal-case-profile] fallback 결과 거부: legal_domain={legal_domain}, claim_type={claim_type}"
+        )
+        return {}
 
     if len(legal_elements) < MIN_ELEMENTS:
         logger.warning(

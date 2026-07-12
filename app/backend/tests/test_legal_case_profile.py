@@ -71,6 +71,25 @@ class TestLegalProfileParser(unittest.TestCase):
         self.assertEqual(len(result["legal_elements"]), 1)
         self.assertEqual(result["legal_elements"][0]["id"], "element_1")
 
+    def test_parse_rejects_generic_fallback(self):
+        """legal_domain/claim_type이 기타/정보부족 등 placeholder면 빈 dict를 반환한다."""
+        content = '{"legal_domain": "기타", "claim_type": "정보부족", "issues": [], "legal_elements": []}'
+        result = _parse_legal_profile(content)
+        self.assertEqual(result, {})
+
+    def test_parse_rejects_unknown_domain(self):
+        """legal_domain이 unknown이면 빈 dict를 반환한다."""
+        content = '{"legal_domain": "unknown", "claim_type": "대여금반환", "issues": [], "legal_elements": []}'
+        result = _parse_legal_profile(content)
+        self.assertEqual(result, {})
+
+    def test_parse_accepts_valid_profile(self):
+        """구체적인 legal_domain/claim_type은 정상적으로 파싱한다."""
+        content = '{"legal_domain": "민사", "claim_type": "대여금반환", "issues": [], "legal_elements": []}'
+        result = _parse_legal_profile(content)
+        self.assertEqual(result["legal_domain"], "민사")
+        self.assertEqual(result["claim_type"], "대여금반환")
+
 
 class TestExtractLegalProfile(unittest.TestCase):
     """[Flow: Step 1 (call_text mock) -> Step 2 (extract_legal_profile 호출) -> Step 3 (결과 검증)]"""

@@ -507,7 +507,7 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
       </div>
 
       {/* ===== 하단 — React Chrono Horizontal All Dashboard (고정 높이) ===== */}
-      <div className="h-80 flex-shrink-0 relative border-t border-outline-variant bg-surface-container-lowest" data-oid="ediscovery-chrono-section">
+      <div className="h-96 flex-shrink-0 relative border-t border-outline-variant bg-surface-container-lowest" data-oid="ediscovery-chrono-section">
         {/* 타임라인 헤더 라벨 */}
         {chronoItems.length > 0 && (
           <div className="absolute top-1 left-2 z-10 text-[10px] font-bold uppercase tracking-wide text-on-surface-variant bg-surface-container-lowest/80 px-2 py-0.5 rounded">
@@ -517,16 +517,16 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
 
         {/* React Chrono — Horizontal All Dashboard */}
         {chronoItems.length > 0 && (
-          <div className="absolute inset-0 overflow-auto pt-5" data-oid="ediscovery-chrono">
+          <div className="absolute inset-0 overflow-auto" data-oid="ediscovery-chrono">
             <Chrono
               items={chronoItems}
               mode="HORIZONTAL_ALL"
               showAllCardsHorizontal
               cardWidth={240}
-              cardHeight={240}
+              cardHeight={220}
               itemWidth={260}
               cardPositionHorizontal="TOP"
-              mediaHeight={120}
+              mediaHeight={100}
               mediaSettings={{ align: "center", imageFit: "cover" }}
               timelinePointDimension={16}
               timelinePointShape="circle"

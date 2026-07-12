@@ -3001,7 +3001,7 @@ def save_user_annotations(
     valid_count = len(valid_annotations)
     logger.info(f"[save_user_annotations] {job_id} source_index={source_index} raw={len(annotations)} valid={valid_count}")
     if valid_count == 0:
-        raise HTTPException(status_code=400, detail="No valid annotations found")
+        return {"ok": True, "annotations_json_storage_path": None}
 
     # [Flow: source_index가 -1이면 원본 PDF에 대한 사용자 주석을 JSON으로만 저장한다]
     # 별도의 주석 PDF 파일을 생성하지 않고, 원본 PDF 뷰어에서 annotations_json_url로 로드한다.

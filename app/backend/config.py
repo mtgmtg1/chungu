@@ -88,10 +88,10 @@ class Settings(BaseSettings):
     paddle_api_key: str = ""
 
     # 로컬 개발 전용 인증 bypass (절대 프로덕션에서 활성화하지 마세요)
+    # dev_bypass_password는 더 이상 사용하지 않음 — dev_auth.py가 SUPABASE_JWT_SECRET으로 직접 JWT를 발급
     dev_bypass_auth: bool = False
     dev_bypass_email: str = "dev@proof.local"
     dev_bypass_user_id: str = "00000000-0000-0000-0000-000000000001"
-    dev_bypass_password: str = "dev1234!"
 
     # Node.js AI 백엔드 (Vercel AI SDK 5.x 기반 에이전트 채팅)
     # FastAPI가 /api/ai/* 요청을 이 주소로 리버스 프록시한다.

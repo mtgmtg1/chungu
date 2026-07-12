@@ -6,11 +6,12 @@
 // onRunningCountChange 콜백으로 상위에 보고한다.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { X, MessageSquare, Loader2 } from "lucide-react";
+import { X, MessageSquare, Loader2, AlertCircle } from "lucide-react";
 import { api } from "../api.js";
 import { useAuth } from "../AuthContext.jsx";
 import { useAgentChat } from "../hooks/useAgentChat.js";
-import { useAgentChatHistory } from "../hooks/useAgentChatHistory.js";
+import { useAgentChatHistory, makeConversationTitle } from "../hooks/useAgentChatHistory.js";
+import { compactMessagesForStorage } from "../utils/chatMessageUtils.js";
 import { useIsMobile } from "../hooks/useMediaQuery.js";
 import Messages from "./ai-chat/Messages.jsx";
 import PromptInput from "./ai-chat/PromptInput.jsx";
@@ -19,6 +20,15 @@ import AgentChatSidebar from "./AgentChatSidebar.jsx";
 
 // [Flow: 관리자 이메일 — 디버깅용 도구 JSON 표시 대상]
 const ADMIN_EMAIL = "mtgmtg@naver.com";
+
+// [Flow: 개발 모드에서만 콘솔 로그 출력 — production 빌드 노이즈 방지]
+const isDev = typeof import.meta !== "undefined" && import.meta.env?.DEV === true;
+function debugLog(...args) {
+  if (isDev) console.log(...args);
+}
+function debugError(...args) {
+  if (isDev) console.error(...args);
+}
 
 /**
  * [Flow: Step 1 (단일 대화 세션 초기화) -> Step 2 (useAgentChat로 메시지/상태 관리)
@@ -53,6 +63,8 @@ function ChatSession({
   isAdmin = false,
   onApprovalModeChange,
   onFlowDrawingsUpdate,
+  error,
+  clearError,
 }) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
@@ -107,7 +119,7 @@ function ChatSession({
   // [Flow: 컴포넌트 언마운트 시(대화 전환/완료) 최신 메시지 저장]
   useEffect(() => {
     return () => {
-      console.log('[ChatSession] 언마운트 시 저장:', { chatId, messageCount: messagesRef.current?.length });
+      debugLog('[ChatSession] 언마운트 시 저장:', { chatId, messageCount: messagesRef.current?.length });
       onMessagesChangeRef.current(messagesRef.current);
     };
   }, []);
@@ -116,11 +128,34 @@ function ChatSession({
   useEffect(() => {
     if (messages.length === 0) return;
     const timer = setTimeout(() => {
-      console.log('[ChatSession] debounce 백업 저장:', { chatId, messageCount: messagesRef.current?.length });
+      debugLog('[ChatSession] debounce 백업 저장:', { chatId, messageCount: messagesRef.current?.length });
       onMessagesChangeRef.current(messagesRef.current);
     }, 3000);
     return () => clearTimeout(timer);
   }, [messages]);
+
+  // [Flow: 탭 닫기/새로고침 전 keepalive fetch로 최신 메시지 저장]
+  useEffect(() => {
+    const jobId = context?.jobId;
+    if (!jobId || !chatId) return;
+
+    const handleBeforeUnload = () => {
+      const currentMessages = messagesRef.current;
+      if (!currentMessages?.length) return;
+
+      const title = makeConversationTitle(currentMessages);
+      const compactedMessages = compactMessagesForStorage(currentMessages);
+      fetch(`/api/jobs/${jobId}/chat-conversations/${chatId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, messages: compactedMessages }),
+        keepalive: true,
+      });
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [context?.jobId, chatId]);
 
   // [Flow: 전송 핸들러]
   const handleSubmit = () => {
@@ -242,9 +277,26 @@ function ChatSession({
               aria-label={t("common:close", "닫기")}
               data-oid="agent-chat-close"
             >
-              <X size={18} />
+              <X size={20} />
             </button>
           </div>
+
+          {/* [Flow: API 에러 배너 — 백엔드 요청 실패 시 사용자에게 상태 노출] */}
+          {error && (
+            <div className="flex flex-shrink-0 items-start gap-2 bg-error/10 px-4 py-2.5 text-xs text-on-surface">
+              <AlertCircle size={16} className="mt-0.5 flex-shrink-0 text-error" />
+              <div className="flex-1 leading-relaxed">
+                {error.message}
+              </div>
+              <button
+                type="button"
+                onClick={clearError}
+                className="ml-2 flex-shrink-0 text-on-surface-variant hover:text-on-surface underline"
+              >
+                {t("common:dismiss", "닫기")}
+              </button>
+            </div>
+          )}
 
           {/* 메시지 영역 */}
           <Messages
@@ -304,6 +356,8 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
     currentId,
     isLoadingList,
     isLoadingMessages,
+    error,
+    clearError,
     createConversation,
     selectConversation,
     saveConversation,
@@ -312,7 +366,7 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
 
   // [Flow: 디버깅 — 대화 상태 변화 추적]
   useEffect(() => {
-    console.log('[AgentChatModal] 상태 업데이트:', {
+    debugLog('[AgentChatModal] 상태 업데이트:', {
       jobId,
       isOpen,
       conversationsCount: conversations.length,
@@ -360,26 +414,28 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
   }, [streamingIds, currentId]);
 
   // [Flow: 모달 열림 시 현재 대화 보장(없으면 최근 대화 선택, 최근 대화 없으면 새로 생성)
-  //       — DB 목록 로딩 중에는 새 대화 생성을 지연하여 premature 생성 방지]
+  //       — DB 목록 로딩 중에는 새 대화 생성을 지연하여 premature 생성 방지
+  //       — API 에러 발생 시에는 자동 생성을 막아 사용자가 상태를 인지할 수 있게 함]
   useEffect(() => {
     if (!isOpen) return;
-    console.log('[AgentChatModal] 모달 열림/현재 대화 보장 effect:', { isOpen, currentId, conversationsCount: conversations.length, isLoadingList });
+    debugLog('[AgentChatModal] 모달 열림/현재 대화 보장 effect:', { isOpen, currentId, conversationsCount: conversations.length, isLoadingList, hasError: !!error });
+    if (error) return;
     if (!currentId) {
       if (conversations.length > 0) {
-        console.log('[AgentChatModal] 기존 대화 선택:', { selectedId: conversations[0].id });
+        debugLog('[AgentChatModal] 기존 대화 선택:', { selectedId: conversations[0].id });
         selectConversation(conversations[0].id);
       } else if (!isLoadingList) {
         // DB 목록 로딩이 완료된 후에만 새 대화 생성
-        console.log('[AgentChatModal] 새 대화 생성 (목록 비어있음)');
+        debugLog('[AgentChatModal] 새 대화 생성 (목록 비어있음)');
         createConversation();
       }
     }
-  }, [isOpen, currentId, conversations, isLoadingList, createConversation, selectConversation]);
+  }, [isOpen, currentId, conversations, isLoadingList, error, createConversation, selectConversation]);
 
   // [Flow: 세션 status 변경 핸들러 — streaming/submitted이면 streamingIds에 추가, ready/error면 제거]
   // [Flow: ready/error 전환 시(에이전트 완료) onAgentComplete 호출하여 상위에서 데이터 재로드]
   const handleStatusChange = useCallback((id, status) => {
-    console.log('[AgentChatModal] 세션 status 변경:', { id, status });
+    debugLog('[AgentChatModal] 세션 status 변경:', { id, status });
     const isStreaming = status === "streaming" || status === "submitted";
     setStreamingIds((prev) => {
       const has = prev.has(id);
@@ -402,7 +458,7 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
   // [Flow: 메시지 저장 핸들러 — 안정화하여 ChatSession의 effect 재실행 방지]
   const handleMessagesChange = useCallback(
     (id) => (messages) => {
-      console.log('[AgentChatModal] 메시지 저장 트리거:', { id, messageCount: messages?.length });
+      debugLog('[AgentChatModal] 메시지 저장 트리거:', { id, messageCount: messages?.length });
       saveConversation(id, messages);
     },
     [saveConversation],
@@ -458,6 +514,8 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
             isAdmin={isAdmin}
             onApprovalModeChange={setApprovalMode}
             onFlowDrawingsUpdate={onFlowDrawingsUpdate}
+            error={isVisible ? error : null}
+            clearError={isVisible ? clearError : () => {}}
           />
         );
       })}

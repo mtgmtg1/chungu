@@ -6,9 +6,54 @@ import type { AuthHeaders } from './auth.js';
 
 const PROOF_API_URL = process.env.PROOF_API_URL || 'http://localhost:8000';
 
+// [Flow: Step 1 (연결 실패 시 재시도 설정) -> Step 2 (재시도 가능한 오류 판별)
+//       -> Step 3 (지수 백오프 후 재시도) -> Step 4 (최종 실패 시 throw)]
+// FastAPI와의 일시적 네트워크 단절(컨테이너 재시작, DNS 지연 등)을 회복하기 위한 설정.
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 500;
+const RETRYABLE_ERROR_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ECONNABORTED',
+]);
+
+/**
+ * [Flow: Step 1 (Error 객체 여부 확인) -> Step 2 (cause 코드 또는 메시지로 재시도 대상 판별)
+ *       -> Step 3 (boolean 반환)]
+ *
+ * Node.js fetch의 connection-level 오류(예: "fetch failed", ECONNREFUSED)를 재시도 대상으로 판별한다.
+ *
+ * @param err catch한 오류 객체
+ * @returns 재시도 가능 여부
+ */
+function isRetryableError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const cause = (err as any).cause;
+  if (cause && cause.code && RETRYABLE_ERROR_CODES.has(cause.code)) return true;
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes('fetch failed') ||
+    msg.includes('socket hang up') ||
+    msg.includes('network error') ||
+    msg.includes('disconnect')
+  );
+}
+
+/**
+ * [Flow: Step 1 (지연 시간 수신) -> Step 2 (Promise로 setTimeout 감싸기) -> Step 3 (반환)]
+ *
+ * @param ms 대기 시간(밀리초)
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * [Flow: Step 1 (path, method, body, authHeaders 수신) -> Step 2 (fetch 요청)
- *       -> Step 3 (JSON 파싱 및 에러 throw) -> Step 4 (데이터 반환)]
+ *       -> Step 3 (연결 실패 시 지수 백오프 재시도) -> Step 4 (JSON 파싱 및 에러 throw) -> Step 5 (데이터 반환)]
  *
  * @param path FastAPI 엔드포인트 경로 (예: /api/jobs/123)
  * @param method HTTP 메서드
@@ -37,21 +82,43 @@ export async function request<T>(
     options.body = body;
   }
 
-  try {
-    const res = await fetch(url, options);
-    const isJson = (res.headers.get('content-type') || '').includes('application/json');
-    const data = isJson ? await res.json() : await res.text();
-    if (!res.ok) {
-      const body = data as any;
-      const detail = isJson ? (body.detail || JSON.stringify(body)) : body;
-      throw new Error(`Proof API error ${res.status}: ${detail}`);
+  // POST/PUT/PATCH는 중복 생성 위험이 있으므로 connection-level 실패라도 재시도하지 않는다.
+  const isRetryableMethod = method === 'GET' || method === 'DELETE';
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(url, options);
+      const isJson = (res.headers.get('content-type') || '').includes('application/json');
+      const data = isJson ? await res.json() : await res.text();
+      if (!res.ok) {
+        const body = data as any;
+        const detail = isJson ? (body.detail || JSON.stringify(body)) : body;
+        throw new Error(`Proof API error ${res.status}: ${detail}`);
+      }
+      return data as T;
+    } catch (err) {
+      lastError = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      const cause = err instanceof Error ? (err as any).cause : undefined;
+      const causeCode = cause?.code;
+      const causeMessage = cause instanceof Error ? cause.message : undefined;
+
+      console.error(
+        `[request] ${method} ${url} attempt=${attempt + 1}/${MAX_RETRIES + 1} failed: ${msg}`,
+        { baseUrl: PROOF_API_URL, causeCode, causeMessage, headers: Object.keys(headers) },
+      );
+
+      const canRetry = isRetryableMethod && attempt < MAX_RETRIES && isRetryableError(err);
+      if (!canRetry) break;
+
+      const delay = Math.min(RETRY_BASE_DELAY_MS * 2 ** attempt, 4000);
+      console.log(`[request] retrying ${method} ${url} in ${delay}ms...`);
+      await sleep(delay);
     }
-    return data as T;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[request] ${method} ${url} failed: ${msg}`, { headers: Object.keys(headers) });
-    throw err;
   }
+
+  throw lastError;
 }
 
 /**
@@ -130,25 +197,21 @@ export async function getElements(
   elements: Array<Record<string, unknown>>;
   pageDimensions: Record<number, { width: number; height: number }>;
 }> {
-  try {
-    const res = await request<{
-      elements: Array<Record<string, unknown>>;
-      page_dimensions?: Record<string, { width: number; height: number }>;
-    }>(
-      `/api/jobs/${jobId}/elements${pageNo !== undefined ? `?page_no=${pageNo}` : ''}`,
-      'GET',
-      undefined,
-      authHeaders,
-    );
-    // page_dimensions의 키가 문자열이므로 number 키로 변환
-    const pageDimensions: Record<number, { width: number; height: number }> = {};
-    for (const [k, v] of Object.entries(res.page_dimensions || {})) {
-      pageDimensions[Number(k)] = v;
-    }
-    return { elements: res.elements || [], pageDimensions };
-  } catch {
-    return { elements: [], pageDimensions: {} };
+  const res = await request<{
+    elements: Array<Record<string, unknown>>;
+    page_dimensions?: Record<string, { width: number; height: number }>;
+  }>(
+    `/api/jobs/${jobId}/elements${pageNo !== undefined ? `?page_no=${pageNo}` : ''}`,
+    'GET',
+    undefined,
+    authHeaders,
+  );
+  // page_dimensions의 키가 문자열이므로 number 키로 변환
+  const pageDimensions: Record<number, { width: number; height: number }> = {};
+  for (const [k, v] of Object.entries(res.page_dimensions || {})) {
+    pageDimensions[Number(k)] = v;
   }
+  return { elements: res.elements || [], pageDimensions };
 }
 
 /**

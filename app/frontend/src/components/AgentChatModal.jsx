@@ -296,6 +296,7 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
     createConversation,
     selectConversation,
     saveConversation,
+    isMessageLoaded,
   } = useAgentChatHistory(jobId);
 
   // [Flow: 사용자 승인 모드 로드 — api.me()에서 ai_tool_approval_mode 조회]
@@ -396,7 +397,9 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
         const conversation = conversations.find((c) => c.id === id);
         // [Flow: 현재 대화의 messages가 DB에서 로딩 중이면 ChatSession 대신 spinner 표시
         //       — initialMessages가 빈 상태로 마운트되는 것을 방지]
-        const isCurrentLoading = isVisible && isLoadingMessages && (!conversation?.messages || conversation.messages.length === 0);
+        // loadedIdsRef에 없으면 아직 fetch가 시작되지 않았거나 진행 중이므로 spinner 표시.
+        const hasLoaded = isMessageLoaded(id);
+        const isCurrentLoading = isVisible && (!hasLoaded || isLoadingMessages);
 
         // [Flow: 로딩 중인 현재 세션은 spinner만 렌더링 (ChatSession 마운트 지연)]
         if (isCurrentLoading) {

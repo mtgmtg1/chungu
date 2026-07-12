@@ -108,6 +108,17 @@ async def require_api_key_or_session(
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API key or login session required")
 
 
+def get_current_user_or_api_key(
+    auth: tuple[CurrentUser, ApiKey | None] = Depends(require_api_key_or_session),
+) -> CurrentUser:
+    """[Flow: Step 1 (API key 또는 세션 인증) -> Step 2 (CurrentUser만 반환)]
+
+    웹 포털 세션과 API key를 모두 허용하면서 CurrentUser 의존성과 호환되는
+    간편한 의존성 래퍼. 여러 API 모듈에서 재사용할 수 있도록 api_key_auth에 둔다.
+    """
+    return auth[0]
+
+
 def require_scope(scope: str):
     def _check(
         auth: tuple[CurrentUser, ApiKey] = Depends(get_current_api_key),

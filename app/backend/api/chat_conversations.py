@@ -19,12 +19,23 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..auth.supabase_auth import CurrentUser, get_current_user
+from ..auth.api_key_auth import get_current_user_or_api_key
+from ..auth.supabase_auth import CurrentUser
 from ..db.models import ChatConversation
 from ..db.session import get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/jobs", tags=["chat-conversations"])
+
+
+def _require_chat_user(
+    auth: tuple[CurrentUser, Any] = Depends(get_current_user_or_api_key),
+) -> CurrentUser:
+    """[Flow: Step 1 (API key 또는 세션 인증) -> Step 2 (CurrentUser만 반환)]
+
+    jobs.py와 동일한 패턴으로 웹 세션과 API key를 모두 허용한다.
+    """
+    return auth[0]
 
 
 class ChatConversationData(BaseModel):
@@ -37,7 +48,7 @@ class ChatConversationData(BaseModel):
 @router.get("/{job_id}/chat-conversations", response_model=None)
 async def list_chat_conversations(
     job_id: str,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(_require_chat_user),
     db: Session = Depends(get_db),
 ) -> list[dict]:
     """[Flow: Step 1 (job_id + user_id 로 조회) -> Step 2 (updated_at DESC 정렬)
@@ -70,7 +81,7 @@ async def list_chat_conversations(
 async def get_chat_conversation(
     job_id: str,
     conversation_id: str,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(_require_chat_user),
     db: Session = Depends(get_db),
 ) -> dict | None:
     """[Flow: Step 1 (job_id + user_id + conversation_id 로 조회) -> Step 2 (messages 포함 전체 데이터 반환)]
@@ -100,7 +111,7 @@ async def save_chat_conversation(
     job_id: str,
     conversation_id: str,
     data: ChatConversationData,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(_require_chat_user),
     db: Session = Depends(get_db),
 ) -> dict:
     """[Flow: Step 1 (기존 레코드 조회) -> Step 2 (있으면 UPDATE, 없으면 INSERT) -> Step 3 (저장된 데이터 반환)]
@@ -143,7 +154,7 @@ async def save_chat_conversation(
 async def delete_chat_conversation(
     job_id: str,
     conversation_id: str,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(_require_chat_user),
     db: Session = Depends(get_db),
 ) -> dict:
     """[Flow: Step 1 (job_id + user_id + conversation_id 로 조회) -> Step 2 (레코드 삭제)]

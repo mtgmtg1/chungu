@@ -21,15 +21,20 @@ export interface AgentContext {
 }
 
 /**
- * [Flow: Step 1 (Supabase 세션 토큰 획득) -> Step 2 (JWT + dev API key 헤더 구성)]
+ * [Flow: Step 1 (Supabase 세션 토큰 획득) -> Step 2 (JWT 우선, 없을 때만 dev API key 사용)]
  *
  * useChat의 DefaultChatTransport에 전달할 인증 헤더를 동적으로 생성한다.
- * AI 백엔드가 FastAPI 도구 호출 시 이 헤더를 전달하므로 인증이 필요하다.
+ * FastAPI는 X-Api-Key를 Authorization보다 먼저 검사하므로, 유효한 JWT가 있을 때
+ * 무효한 dev API key를 함께내면 401이 발생한다. api.js와 동일하게 JWT가 있으면
+ * API key를 보내지 않는다.
  */
 async function buildAuthHeaders(): Promise<Record<string, string>> {
   const token = await getToken();
   const h: Record<string, string> = {};
-  if (token && token.startsWith('eyJ')) h['Authorization'] = `Bearer ${token}`;
+  if (token && token.startsWith('eyJ')) {
+    h['Authorization'] = `Bearer ${token}`;
+    return h;
+  }
   const devKey = import.meta.env.DEV
     ? (import.meta.env.VITE_DEV_API_KEY || 'chu_live_testkey12345')
     : '';
@@ -81,8 +86,14 @@ export function useAgentChat(context: AgentContext, options: UseAgentChatOptions
     [],
   );
 
+  // [Flow: useChat은 id별로 전역 상태를 저장하고 같은 id로 remount될 때
+  //       저장된 상태를 복원할 수 있다. ChatSession은 이미 key={chatId}로 remount되므로
+  //       인스턴스마다 고유한 id를 사용해 전역 상태 복원을 막고,
+  //       initialMessages를 항상 사용하도록 한다.]
+  const instanceIdRef = useRef(`chat-${Math.random().toString(36).slice(2, 11)}`);
+
   const chat = useChat({
-    id: chatId || 'default',
+    id: instanceIdRef.current,
     messages: initialMessages,
     transport,
     // 도구 실행은 AI 백엔드의 streamText(stopWhen: stepCountIs(5))가 한 번의 스트림 안에서

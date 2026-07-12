@@ -29,6 +29,7 @@ export interface UseAgentChatHistoryResult {
   selectConversation: (id: string) => void;
   saveConversation: (id: string, messages: UIMessage[]) => void;
   deleteConversation: (id: string) => void;
+  isMessageLoaded: (id: string) => boolean;
 }
 
 /**
@@ -286,6 +287,9 @@ export function useAgentChatHistory(
     [conversations, currentId],
   );
 
+  // [Flow: Step 1 (대화 ID) -> Step 2 (ref에서 로드 여부 확인) -> Step 3 (결과 반환)]
+  const isMessageLoaded = useCallback((id: string) => loadedIdsRef.current.has(id), []);
+
   return {
     conversations,
     currentConversation,
@@ -296,5 +300,6 @@ export function useAgentChatHistory(
     selectConversation,
     saveConversation,
     deleteConversation,
+    isMessageLoaded,
   };
 }

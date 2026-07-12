@@ -133,9 +133,17 @@ export function buildAnnotationTools(context: AnnotationContext) {
         page_no: z.number().optional().describe('1-based 페이지 번호. 생략 시 모든 페이지를 OCR(느림)'),
       }),
       execute: async ({ page_no }) => {
-        const { elements } = await loadElements(page_no);
-        // [Flow: 출력 크기 제한 — 50→20개로 축소하여 토큰 소비 절약]
-        return { elements: elements.slice(0, 20), total: elements.length };
+        // [Flow: Step 1 (loadElements로 FastAPI 조회) -> Step 2 (성공 시 20개로 제한 반환)
+        //       -> Step 3 (연결 실패 등 오류 발생 시 에러 메시지 반환)]
+        try {
+          const { elements } = await loadElements(page_no);
+          // [Flow: 출력 크기 제한 — 50→20개로 축소하여 토큰 소비 절약]
+          return { elements: elements.slice(0, 20), total: elements.length };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[get_elements] job=${jobId} page=${page_no}: ${msg}`);
+          return { error: `get_elements failed: ${msg}`, elements: [], total: 0 };
+        }
       },
     }),
 

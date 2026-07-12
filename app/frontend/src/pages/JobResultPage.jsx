@@ -16,6 +16,7 @@ import {
   PanelLeftClose,
   PanelRight,
   PanelRightClose,
+  Network,
   RefreshCw,
   Trash2,
   Workflow,
@@ -31,6 +32,7 @@ import AgentChatModal from "../components/AgentChatModal.jsx";
 import SandboxBrowser from "../components/SandboxBrowser.jsx";
 import UploadPopup from "../components/UploadPopup.jsx";
 import FlowViewer from "../components/FlowViewer.jsx";
+import EDiscoveryViewer from "../components/EDiscoveryViewer.jsx";
 import { api } from "../api.js";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { SkeletonPageResult } from "../components/Skeleton.jsx";
@@ -88,7 +90,7 @@ export default function JobResultPage() {
     if (node) setRightPanelHandle(node);
   }, []);
 
-  const [previewMode, setPreviewMode] = useState("markdown"); // "markdown" | "xlsxBasic" | "xlsxAdvanced"
+  const [previewMode, setPreviewMode] = useState("markdown"); // "markdown" | "xlsxBasic" | "xlsxAdvanced" | "flow" | "ediscovery"
   const [basicUrl, setBasicUrl] = useState(null);
   const [advancedUrl, setAdvancedUrl] = useState(null);
   const [xlsxAdvancedPolling, setXlsxAdvancedPolling] = useState(false);
@@ -671,6 +673,21 @@ export default function JobResultPage() {
         />
       );
     }
+    if (previewMode === "ediscovery") {
+      return (
+        <EDiscoveryViewer
+          jobId={jobId}
+          job={job}
+          onNodeClick={(node) => {
+            // [Flow: e-Discovery 노드 클릭 -> SourcePanel PDF 해당 페이지로 스크롤]
+            const page = node.data?.page;
+            if (page && sourcePanelApiRef.current) {
+              sourcePanelApiRef.current.scrollToPage(page);
+            }
+          }}
+        />
+      );
+    }
     if (previewMode === "xlsxBasic") {
       return basicUrl
         ? <SpreadsheetEditor downloadUrl={basicUrl} jobId={jobId} fileName={job?.original_filename || "result.xlsx"} />
@@ -843,7 +860,7 @@ export default function JobResultPage() {
 
         <div className="flex items-center gap-2 md:gap-3 flex-1 justify-end" data-oid="header-actions">
           {/* [Flow: Step 1 (완료된 작업의 뷰 모드 드롭다운) -> Step 2 (Markdown / Excel / Excel Advanced / Flow 선택)] */}
-          {job?.status === "done" && !needsPagedMode(job) &&
+          {job?.status === "done" &&
           <div
             className="relative shrink-0"
             onMouseEnter={() => openDropdown(setViewModeDropdownOpen, viewModeDropdownTimerRef)}
@@ -856,6 +873,7 @@ export default function JobResultPage() {
             {previewMode === "xlsxBasic" && t("page:result.excel")}
             {previewMode === "xlsxAdvanced" && "Excel Advanced"}
             {previewMode === "flow" && t("page:result.flow")}
+            {previewMode === "ediscovery" && t("page:result.ediscovery")}
             <ChevronDown size={14} />
           </button>
           <div
@@ -897,6 +915,13 @@ export default function JobResultPage() {
               <Workflow size={16} className="text-primary flex-shrink-0" />
               {t("page:result.flow")}
             </button>
+            <button
+              onClick={() => setPreviewMode("ediscovery")}
+              className={`flex items-center gap-2 text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface ${previewMode === "ediscovery" ? "font-bold text-primary" : ""}`}
+              data-oid="view-mode-ediscovery">
+              <Network size={16} className="text-primary flex-shrink-0" />
+              {t("page:result.ediscovery")}
+            </button>
           </div>
         </div>
         }
@@ -920,7 +945,7 @@ export default function JobResultPage() {
             }
             </button>
           }
-          {job?.status === "done" && !needsPagedMode(job) && !isMobile &&
+          {job?.status === "done" && !isMobile && (!needsPagedMode(job) || previewMode !== "markdown") &&
           <button
             onClick={() => setRightPanelOpen((v) => !v)}
             title={rightPanelOpen ? t("page:result.hideResultPanel") : t("page:result.showResultPanel")}
@@ -1073,7 +1098,7 @@ export default function JobResultPage() {
       </div>
       }
 
-      {job?.status === "done" && !loading && needsPagedMode(job) &&
+      {job?.status === "done" && !loading && needsPagedMode(job) && previewMode === "markdown" &&
       <PagedResultViewer
         ref={pagedViewerRef}
         jobId={jobId}
@@ -1088,7 +1113,7 @@ export default function JobResultPage() {
 
       }
 
-      {job?.status === "done" && !loading && !needsPagedMode(job) &&
+      {job?.status === "done" && !loading && (!needsPagedMode(job) || previewMode !== "markdown") &&
       <div className="flex-1 flex flex-col overflow-hidden min-h-0" data-oid="ww-27ni">
           {previewMode !== "markdown" && xlsxAdvancedPolling &&
           <div className="px-4 py-2 bg-blue-50 text-blue-700 text-sm border-b border-blue-200 flex items-center gap-2 flex-shrink-0" data-oid="advanced-progress">

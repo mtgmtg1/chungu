@@ -2423,6 +2423,7 @@ def xlsx_advanced_action(
     return {"job_id": task.id, "status": "processing"}
 
 
+
 @router.post("/jobs/{job_id}/annotate")
 def annotate_job(
     job_id: str,
@@ -2958,6 +2959,9 @@ def annotate_edit_job_endpoint(
         db.commit()
         raise HTTPException(status_code=500, detail="주석 편집 큐잉에 실패했습니다. 다시 시도해주세요.")
     return {"job_id": task.id, "status": "processing", "annotation_index": annotation_index}
+
+
+
 
 
 @router.post("/jobs/{job_id}/user-annotations")
@@ -4184,6 +4188,11 @@ def _job_summary(job: Job) -> dict:
         "annotate_mode": job.annotate_mode,
         "annotate_comment_mode": job.annotate_comment_mode,
         "annotate_advanced": bool(job.annotate_advanced),
+        "ediscovery_status": job.ediscovery_status,
+        "ediscovery_job_id": job.ediscovery_job_id,
+        "ediscovery_graphs": job.ediscovery_graphs,
+        "ediscovery_metrics": job.ediscovery_metrics,
+        "ediscovery_refundable": job.ediscovery_refundable,
     }
 
 

@@ -269,6 +269,15 @@ body {
   animation: agent-badge-pulse 1.4s ease-in-out infinite;
 }
 
+/* e-Discovery 모순(anomaly) 엣지 — 빨간 점선 흐름 효과 */
+@keyframes dash {
+  to { stroke-dashoffset: -20; }
+}
+.animate-dash {
+  stroke-dasharray: 6 4;
+  animation: dash 1s linear infinite;
+}
+
 /* 마크다운 렌더링 (메시지 본문) */
 .ai-chat-markdown {
   font-size: 13px;

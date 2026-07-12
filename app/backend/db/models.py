@@ -112,6 +112,25 @@ class Job(Base):
     annotated_pdf_files: Mapped[list] = mapped_column(JSON, default=list)
     annotated_pdf_next_index: Mapped[int] = mapped_column(Integer, default=0)
 
+    # e-Discovery GraphRAG (수천 장 법률 문서 → 쟁점/증거 그래프 추출)
+    # annotate_* / xlsx_advanced_* 필드 그룹과 동일한 상태 추적/환불 패턴을 따른다.
+    # ediscovery_status: "" | processing | done | error
+    # ediscovery_graphs: {nodes: [{id, type, data:{label, page}}], edges: [{id, source, target, type}]}
+    # ediscovery_metrics: {total_docs, processed_chunks, threshold}
+    # ediscovery_params:   사용자 지정 파라미터 (chunk_size, threshold, page_range)
+    ediscovery_status: Mapped[str] = mapped_column(String(20), default="")
+    ediscovery_job_id: Mapped[str] = mapped_column(String(64), default="")
+    ediscovery_graphs: Mapped[dict] = mapped_column(JSON, default=dict)
+    ediscovery_metrics: Mapped[dict] = mapped_column(JSON, default=dict)
+    ediscovery_params: Mapped[dict] = mapped_column(JSON, default=dict)
+    ediscovery_refundable: Mapped[bool] = mapped_column(Boolean, default=False)
+    ediscovery_reserved_pages: Mapped[int] = mapped_column(Integer, default=0)
+    ediscovery_reserved_period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Evidence-to-Element Mapper — 청구 원인별 법적 요건사실 슬롯에 증거를 매핑한 퍼즐 상태.
+    # element_mappings: {claim_type, overall_progress_percent, elements: [{id, name, description, mapped_evidence: []}]}
+    element_mappings: Mapped[dict] = mapped_column(JSON, default=dict)
+
     # Supabase Storage 경로 (로컬 경로 대체)
     pdf_storage_path: Mapped[str] = mapped_column(String(1024), default="")
     result_csv_storage_path: Mapped[str] = mapped_column(String(1024), default="")

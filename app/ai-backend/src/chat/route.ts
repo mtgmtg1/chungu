@@ -16,7 +16,9 @@ import { compressToolResults, shouldCompress } from '../lib/llmlingua.js';
 import { buildModel } from '../lib/model.js';
 import { buildAnnotationTools } from '../tools/annotations.js';
 import { createBrowserlessTools } from '../tools/browserless.js';
+import { buildEdiscoveryTools } from '../tools/ediscovery.js';
 import { buildFlowTools } from '../tools/flow.js';
+import { buildMapperTools } from '../tools/mapper.js';
 import { buildMarkdownTools } from '../tools/markdown.js';
 import { createSandboxTools } from '../tools/sandbox.js';
 import { buildSpreadsheetTools } from '../tools/spreadsheet.js';
@@ -76,6 +78,17 @@ Available tool categories:
    - IMPORTANT: Always call get_flow_layout first to get node positions before placing drawings or notes. Coordinates are in the flow coordinate system.
    - IMPORTANT: Always call save_flow_drawings after any drawing/note/edge changes. Without it, changes are lost.
    - Heading tools (add/delete/rename/move_flow_heading) directly edit the markdown and are persisted immediately. Do NOT mix with apply_edits.
+8. e-Discovery Graph Analysis (when user asks to extract legal issues, evidence, parties, or build a case graph from large document sets):
+   - extract_ediscovery_graph: run the GraphRAG pipeline to extract issue/plaintiff/defendant/evidence nodes and their relationships
+   - adjust_graph_threshold: re-filter the extracted graph by changing the relevance/confidence threshold
+   - IMPORTANT: After extraction, persist or summarize the results by calling save_flow_drawings (e.g., add note nodes for key issues/evidence) or another state-update tool.
+   - The graph data contract is: nodes have id, type (issue|plaintiff|defendant|evidence), and data.label/data.page; edges have id, source, target, and type.
+
+9. Evidence-to-Element Mapper (when user asks to build a case theory, map evidence to legal elements, or calculate proof progress for a claim):
+   - get_legal_elements: extract 3~5 legal elements (요건사실) for a given claim type (e.g. 사기죄, 대여금반환) via vLLM. Returns empty slots (mapped_evidence:[]).
+   - save_element_mappings: persist the completed puzzle state (claim_type + elements with mapped evidence) to Supabase. overall_progress_percent is recomputed server-side.
+   - get_element_mappings: retrieve the saved mapping state (for restore or progress check).
+   - Workflow: first call extract_ediscovery_graph to get evidence nodes, then get_legal_elements to generate element slots, then save_element_mappings with evidence mapped to each element. The data contract is: {claim_type, overall_progress_percent, elements: [{id, name, description, mapped_evidence: [{evidence_id, text_snippet, source_doc}]}]}.
 
 Rules:
 - Always use the provided tools to make changes; do not just describe them.
@@ -149,6 +162,8 @@ export async function chatHandler(req: Request, res: Response) {
       ...createSandboxTools(toolContext),
       ...createBrowserlessTools(),
       ...buildFlowTools(toolContext),
+      ...buildEdiscoveryTools(toolContext),
+      ...buildMapperTools(toolContext),
     },
     // [Flow: maxOutputTokens 8192 — vLLM 기본값(128~256)은 툴콜 결과 분석에 부족]
     maxOutputTokens: MAX_OUTPUT_TOKENS,

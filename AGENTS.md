@@ -8,6 +8,119 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### Evidence-to-Element Mapper — 요건 사실 기반 증거 퍼즐 매퍼 (DnD + 입증 달성도 시각화)
+
+- **목표**: 변호사가 사건 기획을 직관적으로 할 수 있도록 돕는 '요건 사실 기반 증거 퍼즐 매퍼' 추가. 청구 원인(예: 사기죄)에 따른 법적 요건 빈 슬롯을 제공하고, e-Discovery 그래프에서 추출된 증거(evidence) 노드를 @dnd-kit 드래그 앤 드롭으로 슬롯에 채우면 입증 달성도(%)를 시각화. 기존 EDiscoveryViewer 내 'Graph'/'Mapper' 탭 전환으로 통합.
+- **의존성 추가**: `app/frontend/package.json`에 `@dnd-kit/core@^6.1.0`, `@dnd-kit/utilities@^3.2.2` 추가 — DnD 인프라 (deprecated된 react-beautiful-dnd 대체).
+- **Phase 1: DB 마이그레이션 & 모델** (`app/backend/db/migrations/032_add_element_mappings.sql` 신규):
+  - `jobs` 테이블에 `element_mappings JSONB NOT NULL DEFAULT '{}'::jsonb` 컬럼 추가.
+  - `app/backend/db/models.py`: `Job` 클래스에 `element_mappings: Mapped[dict] = mapped_column(JSON, default=dict)` 추가 (ediscovery_* 필드 그룹 뒤).
+- **Phase 2: 요건사실 추출 모듈** (`app/backend/core/legal_elements.py` 신규):
+  - `extract_legal_elements(claim_type, endpoint, model, api_key)`: vLLM `call_text`로 청구명 → 법적 요건사실 3~5개 JSON 추출. `_build_legal_elements_prompt` — 한국 법률 체계 기준, 데이터 계약 스키마 준수. `_parse_legal_elements` — JSON 펜스 제거 + 스키마 검증 + 빈 슬롯 `mapped_evidence:[]` 주입.
+  - `compute_overall_progress(mappings)`: 1개 이상 증거가 매핑된 요건의 비율(%) 계산.
+- **Phase 3: FastAPI 엔드포인트** (`app/backend/api/ediscovery.py`에 추가, 기존 라우터 재사용):
+  - `GET /api/jobs/{job_id}/legal-elements?claim_type={범죄명}`: vLLM으로 요건사실 추출. 같은 claim_type 재요청 시 캐시(저장된 element_mappings) 반환.
+  - `PUT /api/jobs/{job_id}/legal-elements/mappings`: 퍼즐 상태를 `element_mappings` JSONB에 영속화. `overall_progress_percent` 서버 재계산.
+  - `GET /api/jobs/{job_id}/legal-elements/mappings`: 저장된 매핑 조회 (페이지 새로고침 후 복원용).
+  - `_resolve_llm_settings`: job.endpoint → settings_store → settings 기본값 순서로 LLM 설정 해석 (pipeline_ediscovery.run 패턴 준수).
+- **Phase 4: 프론트엔드 DnD 인프라** (`app/frontend/src/components/mapper/` 신규 디렉토리):
+  - `EvidenceMapperPanel.jsx`: 최상단 `<DndContext collisionDetection={closestCenter}>` 래퍼. 좌측 증거 카드 리스트(e-Discovery graph의 evidence 노드) + 우측 ElementDroppableSlots + 상단 ProgressBadge. claim_type 자유 텍스트 입력 + '요건사실 추출' 버튼. 드롭 시 요건 슬롯에 증거 append + `overall_progress_percent` 재계산 + PUT /mappings 자동 영속화. 페이지 로드 시 저장된 매핑 복원.
+  - `EvidenceDraggableCard.jsx`: `useDraggable` 훅으로 증거 카드 감싸기. drag 시 `CSS.Transform.toString(transform)` 적용, 투명도/스케일 피드백. 이미 매핑된 증거는 disabled.
+  - `ElementDroppableSlots.jsx`: 각 요건별 `useDroppable` 슬롯. 점선 테두리(`border-dashed border-2 border-gray-300 rounded-lg p-4`). 드래그 오버 시 `border-blue-500 bg-blue-50` 하이라이트. 매핑된 증거 카드 + 제거 버튼.
+  - `ProgressBadge.jsx`: 상단 프로그레스 바(`bg-blue-600 transition-all duration-500`) + 도넛 차트 뱃지(SVG circle stroke-dasharray). shadcn/ui 없이 Tailwind + SVG로만 구현.
+- **Phase 5: EDiscoveryViewer 통합** (`app/frontend/src/components/EDiscoveryViewer.jsx`):
+  - 헤더에 'Graph'/'Mapper' 탭 전환 UI 추가 (`activeTab` state). Network/Puzzle 아이콘.
+  - Mapper 탭에 `<EvidenceMapperPanel jobId job />` 렌더링. job.ediscovery_graphs에서 evidence 노드 추출해 mapper로 전달.
+- **Phase 6: 프론트엔드 API 클라이언트** (`app/frontend/src/api.js`):
+  - `getLegalElements(jobId, claimType)`, `saveElementMappings(jobId, data)`, `getElementMappings(jobId)` 메서드 추가.
+- **Phase 7: AI 백엔드 도구** (`app/ai-backend/src/tools/mapper.ts` 신규):
+  - `buildMapperTools(context)`: `get_legal_elements`(요건사실 추출), `save_element_mappings`(퍼즐 상태 저장), `get_element_mappings`(저장된 매핑 조회). ediscovery.ts 패턴 준수.
+  - `app/ai-backend/src/lib/proof-api.ts`: `ElementMappings`/`LegalElement`/`MappedEvidence` 타입 정의 + `getLegalElements`/`saveElementMappings`/`getElementMappings` 클라이언트 메서드 추가.
+  - `app/ai-backend/src/chat/route.ts`: `buildMapperTools` import + toolContext 등록 + 시스템 프롬프트 "9. Evidence-to-Element Mapper" 카테고리 추가.
+- **Phase 8: i18n**: `app/frontend/src/locales/{ko,en,ja}/page.json`에 매퍼 키 14개 추가 (`mapperTabGraph` ~ `mapperRemoveEvidence`).
+- **검증**: 백엔드 Job.element_mappings 필드 import 성공, legal_elements 모듈 import 성공, FastAPI 라우터 3개 등록 확인, compute_overall_progress 단위 테스트(50% 계산) 통과, 프론트엔드 Vite 빌드 성공 (2327 모듈 변환), AI 백엔드 TypeScript 빌드 성공 (에러 0).
+- **배포 시 주의**: DB 마이그레이션 `032_add_element_mappings.sql`을 서버 `supabase-chungu-db` 컨테이너에 수동 적용 필요 (AGENTS.md "Deployment" 섹션 참조).
+- **핵심 파일**: `app/backend/db/migrations/032_add_element_mappings.sql`, `app/backend/db/models.py`, `app/backend/core/legal_elements.py`, `app/backend/api/ediscovery.py`, `app/frontend/src/components/mapper/EvidenceMapperPanel.jsx`, `app/frontend/src/components/mapper/EvidenceDraggableCard.jsx`, `app/frontend/src/components/mapper/ElementDroppableSlots.jsx`, `app/frontend/src/components/mapper/ProgressBadge.jsx`, `app/frontend/src/components/EDiscoveryViewer.jsx`, `app/frontend/src/api.js`, `app/ai-backend/src/tools/mapper.ts`, `app/ai-backend/src/lib/proof-api.ts`, `app/ai-backend/src/chat/route.ts`, `app/frontend/src/locales/{ko,en,ja}/page.json`.
+
+### e-Discovery 타임라인 시각화 고도화 — 스윔레인 + 모순점(Anomaly) 탐지 + 점진적 탐색 패널
+
+- **목표**: 기존 평면 노드 그래프를 법률 전문가용 'e-Discovery 타임라인 시각화 뷰'로 고도화. 주체별 스윔레인 배치, 진술-증거 모순 자동 탐지(2차 LLM 패스), 점진적 탐색 오버레이, 쟁점 필터 디밍을 구현. 인지 과부하 최소화 및 모순점 직관적 파악이 핵심.
+- **데이터 계약 변경**: `ediscovery_graphs` JSONB에 신규 스키마 도입 — `type: "swimlane"` 최상위 노드(원고/피고/제3자/쟁점 4레인), 자식 노드의 `parentId` 매핑, `type: "anomaly"` 엣지 + `data.conflict_reason`. 기존 평면 스키마 job은 그대로 유지되며 EDiscoveryViewer가 두 스키마를 모두 렌더링(폴백 포함).
+- **Phase 1: 백엔드 추출 프롬프트/파싱 확장** (`app/backend/core/pipeline_ediscovery.py`):
+  - `EdiscoveryNode` 데이터클래스에 `entity`, `date_text`, `date_iso`, `summary`, `parent_id` 필드 추가.
+  - `_build_extraction_prompt` 확장 — entity(행위 주체), date(시간 표현), summary(1~2문 요약) 필드 추가 추출.
+  - `_normalize_date(text)` 헬퍼 — 한국식(년/월/일)/일본식(年/月/日)/서양식(. - /) 날짜를 ISO YYYY-MM-DD로 정규화. 시간순 정렬용.
+  - `_classify_entity(node_type, item_entity)` 헬퍼 — LLM 명시 entity 우선, 누락 시 node_type에서 추론.
+  - `_parse_nodes` 확장 — 새 필드 파싱 + 날짜 정규화 + entity 분류.
+- **Phase 2: 2차 LLM 모순(Anomaly) 탐지** (`pipeline_ediscovery.py`):
+  - `AnomalyPair` 데이터클래스 — source_id, target_id, conflict_reason.
+  - `_build_anomaly_prompt(nodes_batch)` — 추출된 노드 목록에서 진술(plaintiff/defendant) vs 객관적 증거(evidence) 충돌 쌍 탐지 프롬프트.
+  - `_parse_anomalies(content, valid_ids)` — 응답 파싱 + 존재하지 않는 id 필터링.
+  - `detect_anomalies_concurrent(nodes, endpoint, model, api_key)` — MAX_ANOMALY_NODES(200) 상한 적용 → 배치(40개) 분할 → ThreadPoolExecutor 병렬 2차 LLM 호출 → 중복 제거.
+- **Phase 3: 스윔레인 구성 + 그래프 조립 재작성** (`pipeline_ediscovery.py`):
+  - `SWIMLANE_IDS`/`SWIMLANE_LABELS` 상수 — 4개 swimlane 고정 ID + 표시 라벨.
+  - `_build_swimlanes(nodes)` — 등장한 entity별 swimlane 노드 생성 + 각 노드에 parentId 주입. 미등장 주체는 swimlane 미생성.
+  - `assemble_graph(nodes, anomalies)` 재작성 — 중복 제거 → 노드 수 상한 → swimlane 생성 → 시간순 정렬(date_iso → page → id) → 같은 swimlane 내 인접 노드 간 smoothstep 엣지 + 모순 쌍 간 anomaly 엣지 조립. 데이터 계약 스키마 준수.
+- **Phase 4: run 오케스트레이션 갱신** (`pipeline_ediscovery.py`):
+  - `run`에 2차 LLM 패스 삽입 — 노드 추출 → 임계값 필터 → `detect_anomalies_concurrent` → `assemble_graph(filtered, anomalies)`.
+  - metrics에 `anomalies_detected` 키 추가.
+- **Phase 5: ELK 스윔레인 레이아웃** (`app/frontend/src/utils/elkLayout.js`):
+  - `calculateElkSwimlaneLayout(nodes, edges)` 신규 — `elk.algorithm: 'layered'` + `elk.partitioning.activate: 'true'`. 부모(swimlane) 내부에 자식을 중첩한 ELK JSON 구성. React Flow v12 규칙에 따라 `node.measured?.width` 우선 참조, 폴백 `node.data?.width`. 부모가 없으면 `calculateElkLayout` 평면 레이아웃으로 폴백. 기존 `calculateElkLayout`은 FlowViewer 호환성을 위해 유지.
+- **Phase 6: AnomalyEdge 컴포넌트** (`app/frontend/src/components/flow/AnomalyEdge.jsx` 신규):
+  - `BaseEdge` + `getBezierPath`로 빨간 점선 패스 렌더링. `animate-dash` 클래스로 stroke-dashoffset 흐름 애니메이션.
+  - `EdgeLabelRenderer` 포털로 중앙에 "모순 발생" 경고 뱛지(빨간 배경 + AlertTriangle 아이콘). 호버 시 `data.conflict_reason` 툴팁 표시.
+- **Phase 7: index.css 애니메이션** (`app/frontend/src/index.css`):
+  - `@keyframes dash` + `.animate-dash` 클래스 추가 — stroke-dasharray: 6 4, 1s linear infinite.
+- **Phase 8: EDiscoveryViewer 고도화** (`app/frontend/src/components/EDiscoveryViewer.jsx`):
+  - `SwimlaneNode` 컴포넌트 — entity별 색상 코딩(원고=파랑/피고=주황/제3자=보라/쟁점=빨강) + 점선 테두리.
+  - `dimClass(data)` 헬퍼 — `data.dimmed` 시 `opacity-20 grayscale transition-opacity duration-300` 적용. 모든 노드 컴포넌트에 디밍 적용.
+  - `nodeTypes`에 `eDiscovery-swimlane` 등록, `edgeTypes`에 `anomaly: AnomalyEdge` 등록.
+  - `buildGraph` 신/구 스키마 분기 — `parentId` 보유 노드가 있으면 `calculateElkSwimlaneLayout`, 없으면 `calculateElkLayout` 폴백. 엣지 type 보존(anomaly 엣지가 AnomalyEdge로 렌더링되도록).
+  - `IssueFilterBar` 컴포넌트 — 그래프에서 고유 issue 라벨 추출 → 토글 칩 렌더링. 미선택 쟁점 노드는 hidden 대신 디밍.
+  - `DetailOverlayPanel` 컴포넌트 — 노드 클릭 시 우측 슬라이드인 패널(`animate-stagger-enter`). label/summary/page/confidence/date 표시 + "원본 PDF 보기" 버튼 → `onNodeClick` 콜백으로 SourcePanel scrollToPage 연동.
+  - `applyIssueFilter` — 선택된 쟁점 집합 기반 노드 data.dimmed 플래그 갱신. swimlane은 필터 제외.
+  - `handleNodeClick` — swimlane 클릭 시 오버레이 미표시, 일반 노드 클릭 시 오버레이 + 외부 onNodeClick 호출.
+  - `useRef` import 누락 버그 수정 (pollRef용).
+- **Phase 9: AI 백엔드 인터페이스 갱신** (`app/ai-backend/src/tools/ediscovery.ts`):
+  - `GraphNode` 인터페이스에 `parentId?`, `entity?`, `date?`, `summary?`, `issue?` 추가.
+  - `GraphEdge` 인터페이스에 `data?: { conflict_reason? }` 추가.
+- **Phase 10: i18n** (`app/frontend/src/locales/{ko,en,ja}/page.json`):
+  - 신규 키 12개 추가 — `ediscoveryAnomalyBadge`, `ediscoveryIssueFilter`, `ediscoveryDetailTitle`, `ediscoveryViewSource`, `ediscoveryClose`, `ediscoverySummary`, `ediscoveryPage`, `ediscoveryConfidence`, `ediscoverySwimlanePlaintiff`/`Defendant`/`ThirdParty`/`Issue`.
+- **검증**: 백엔드 import 성공 + 단위 테스트(날짜 정규화/주체 분류/swimlane 조립/anomaly 파싱) 통과, 기존 43개 테스트 회귀 없음, 프론트엔드 Vite 빌드 성공(2320 모듈), AI 백엔드 TypeScript 빌드 성공(에러 0).
+- **배포 시 주의**: DB 마이그레이션 불필요 (`ediscovery_graphs`는 JSONB라 스키마 변경에 컬럼 추가 없음). 다만 `ediscovery_metrics`에 `anomalies_detected` 키가 추가되어 기존 job은 해당 키가 0/없음으로 표시됨.
+- **핵심 파일**: `app/backend/core/pipeline_ediscovery.py`, `app/frontend/src/utils/elkLayout.js`, `app/frontend/src/components/flow/AnomalyEdge.jsx`, `app/frontend/src/components/EDiscoveryViewer.jsx`, `app/frontend/src/index.css`, `app/ai-backend/src/tools/ediscovery.ts`, `app/frontend/src/locales/{ko,en,ja}/page.json`.
+
+### e-Discovery GraphRAG 백엔드 파이프라인 — 법률 문서 쟁점/증거 그래프 추출
+
+- **목표**: 수천 장 단위의 법률 문서에서 쟁점(issue)/원고(plaintiff)/피고(defendant)/증거(evidence) 노드를 추출해 React Flow 시각화용 그래프 JSON으로 조립하는 e-Discovery 파이프라인을 백엔드(Python/FastAPI/Celery)에 추가. 기존 `annotate`/`xlsx_advanced`의 과금·상태 추적·Celery 큐잉 패턴을 재사용.
+- **Phase 1: DB 마이그레이션** (`app/backend/db/migrations/031_add_ediscovery_fields.sql` 신규):
+  - `jobs` 테이블에 8개 컬럼 추가: `ediscovery_status`, `ediscovery_job_id`, `ediscovery_graphs`(JSONB), `ediscovery_metrics`(JSONB), `ediscovery_params`(JSONB), `ediscovery_refundable`, `ediscovery_reserved_pages`, `ediscovery_reserved_period_start`.
+  - `ediscovery_status` 부분 인덱스 생성 (`WHERE ediscovery_status <> ''`).
+  - 번호 030은 기존 `030_add_chat_conversations.sql`이 사용 중이므로 031 사용.
+- **Phase 2: 모델 업데이트** (`app/backend/db/models.py`):
+  - `Job` 클래스에 8개 `ediscovery_*` 필드 매핑 추가 (기존 `annotate_*` 필드 그룹 패턴 준수).
+- **Phase 3: 추출 파이프라인** (`app/backend/core/pipeline_ediscovery.py` 신규):
+  - `extract_page_texts(job)`: `searchable_pdf_storage_path` → `pdf_storage_path` → `result_md_storage_path` 순서 폴백. PyMuPDF `page.get_text("blocks")`로 페이지별 텍스트 추출 (pdf_annotate_converter 패턴 재사용).
+  - `build_parent_child_chunks(page_texts, chunk_size, overlap, page_range)`: 부모=페이지 전체, 자식=슬라이딩 윈도우(단어 단위, 기본 512단어 + 64 overlap). 페이지 메타데이터 보존.
+  - `extract_nodes_from_chunk(chunk, endpoint, model, api_key)`: vLLM Proxy(`call_text`) 호출 → 쟁점/원고/피고/증거 노드 JSON 추출. 데이터 계약 스키마 준수.
+  - `extract_nodes_concurrent(chunks, ...)`: ThreadPoolExecutor로 청크별 vLLM 호출 병렬화 (MAX_LLM_WORKERS=16 상한).
+  - `filter_nodes_by_threshold(nodes, threshold)`: confidence 임계값 필터링 (파이프라인 방식).
+  - `assemble_graph(nodes)`: 중복 제거(label+type 기준) + 같은 페이지 내 smoothstep 엣지 생성. 노드 수 상한 5000.
+  - `run(job_id, chunk_size, threshold, page_range, max_chunks, query, max_docs)`: 전체 오케스트레이션. 상태 갱신(done/error), 환불 플래그, `ediscovery_graphs`/`ediscovery_metrics` JSONB 저장. `max_docs`는 `max_chunks`의 별칭(api/ediscovery.py 호환용).
+- **Phase 4: Celery 태스크** (`app/backend/workers/tasks.py`):
+  - `@celery.task run_ediscovery(job_id, chunk_size, threshold, page_range, max_chunks, query)` 등록 → `pipeline_ediscovery.run` 호출.
+- **Phase 5: FastAPI 엔드포인트** (`app/backend/api/jobs.py`):
+  - `POST /api/jobs/{job_id}/ediscovery/extract`: Celery 백그라운드 큐잉. 파라미터: chunk_size, threshold, max_chunks, query, page_range. 관리자 무료 / 일반 사용자 `premium_pages` 차감 + 환불 가능. 같은 파라미터 재사용 시 캐시 반환.
+  - `GET /api/jobs/{job_id}/ediscovery`: 상태/그래프/메트릭 반환 (폴링용).
+  - `POST /api/jobs/{job_id}/ediscovery/threshold`: 저장된 그래프에서 confidence 기준 재필터링 (재추출 없이 엣지/노드만 재구성).
+  - `_job_summary()`에 `ediscovery_status`, `ediscovery_graphs`, `ediscovery_metrics`, `ediscovery_refundable` 필드 추가.
+- **Phase 6: 병렬 에이전트 충돌 조정**:
+  - `app/backend/api/ediscovery.py`에 동일 경로의 동기 처리 엔드포인트가 별도 존재했으나, `jobs.py`의 Celery 기반 엔드포인트와 중복되어 `main.py`에서 `ediscovery_router` 등록을 제거. `jobs.router`가 정식 제공자.
+  - `pipeline_ediscovery.run`에 `max_docs` 별칭 파라미터 추가 — `api/ediscovery.py`의 `extract`/`threshold` 엔드포인트가 `max_docs=` 키워드로 호출하므로 호환성 유지.
+- **검증**: Job 모델 필드 8개 import 성공, pipeline_ediscovery import 성공, run_ediscovery Celery 태스크 import 성공, run 시그니처 호환(max_docs/max_chunks/query 포함), FastAPI 라우터 3개 등록 확인(중복 없음), 청킹/필터/그래프 조립 단위 테스트 통과, 데이터 계약 스키마 준수 확인, 기존 43개 테스트 회귀 없음.
+- **배포 시 주의**: DB 마이그레이션 `031_add_ediscovery_fields.sql`을 서버 `supabase-chungu-db` 컨테이너에 수동 적용 필요 (AGENTS.md "Deployment" 섹션 참조).
+- **핵심 파일**: `app/backend/db/migrations/031_add_ediscovery_fields.sql`, `app/backend/db/models.py`, `app/backend/core/pipeline_ediscovery.py`, `app/backend/workers/tasks.py`, `app/backend/api/jobs.py`, `app/backend/main.py`.
+
 ### Flow Panel 에이전트 조작 도구 확장 — 드로잉/주석/노트/엣지/헤딩 노드 CRUD
 
 - **목표**: 플로우뷰(React Flow)의 드로잉, 텍스트 주석, 노트 노드, 커스텀 엣지, 헤딩 노드 구조를 에이전트가 조작할 수 있도록 AI 백엔드 도구를 확장. 기존 `flow.ts`에는 읽기/분석 전용 도구 2개만 있었고, 드로잉/주석 CRUD, 노트/엣지 영속화, 헤딩 노드 조작 도구가 전무했음. 백엔드 `flow_drawings` API와 프론트엔드 저장 로직은 사용자 수동 조작용으로만 구현되어 있었음.

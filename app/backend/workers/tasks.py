@@ -18,7 +18,7 @@ from sqlalchemy import text as sql_text
 from ..celery_app import celery
 from celery.signals import worker_ready
 from ..config import settings
-from ..core import archive_handler, converter, excel_writer, media_loader, merge, pdf_annotate_converter, pdf_text_layer, subscription_service, supabase_client, xlsx_advanced_converter
+from ..core import archive_handler, converter, excel_writer, media_loader, merge, pdf_annotate_converter, pdf_text_layer, pipeline_ediscovery, subscription_service, supabase_client, xlsx_advanced_converter
 from ..core.ocr_client import has_pdf_text_layer
 from ..core.pipeline_docling import run_docling, run_hwp
 from ..core.pipeline_hybrid import run_hybrid
@@ -1243,6 +1243,33 @@ def annotate_edit_job(
     """
     return pdf_annotate_converter.run_edit(
         job_id, instruction, page_range, annotation_index,
+    )
+
+
+@celery.task(name="backend.workers.tasks.run_ediscovery")
+def run_ediscovery(
+    job_id: str,
+    chunk_size: int = pipeline_ediscovery.DEFAULT_CHUNK_SIZE,
+    threshold: float = pipeline_ediscovery.DEFAULT_THRESHOLD,
+    page_range: list[int] | None = None,
+    max_chunks: int | None = None,
+    query: str | None = None,
+) -> dict:
+    """[Flow: Step 1 (pipeline_ediscovery.run 호출) -> Step 2 (결과 반환)]
+
+    수천 장 법률 문서에서 쟁점/증거 노드를 추출해 그래프 JSON으로 저장한다.
+    chunk_size는 자식 청크 단어 수, threshold는 노드 신뢰도 필터링 기준 (0.0~1.0).
+    page_range는 처리할 1-based 페이지 번호 리스트. None이면 전체 페이지를 처리한다.
+    max_chunks는 처리할 최대 페이지(문서) 수로, 전체 문서가 많을 때 상위 페이지부터 제한한다.
+    query는 자연어 쿼리로, 지정 시 관련 청크만 처리 대상으로 한다.
+    """
+    return pipeline_ediscovery.run(
+        job_id,
+        chunk_size=chunk_size,
+        threshold=threshold,
+        page_range=page_range,
+        max_chunks=max_chunks,
+        query=query,
     )
 
 

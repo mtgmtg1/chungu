@@ -257,6 +257,34 @@ export const api = {
   deleteFlowDrawings: (jobId) =>
     request(`/api/jobs/${jobId}/flow-drawings`, { method: 'DELETE' }),
 
+  // e-Discovery GraphRAG
+  getEdiscovery: (jobId) => request(`/api/jobs/${jobId}/ediscovery`),
+  extractEdiscoveryGraph: (jobId, { total_docs, chunk_size, threshold }, { wait = false } = {}) =>
+    request(`/api/jobs/${jobId}/ediscovery/extract?wait=${wait}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        max_docs: total_docs,
+        chunk_size,
+        threshold,
+      }),
+    }),
+  adjustGraphThreshold: (jobId, { threshold }, { wait = false } = {}) =>
+    request(`/api/jobs/${jobId}/ediscovery/threshold?wait=${wait}`, {
+      method: 'POST',
+      body: JSON.stringify({ threshold }),
+    }),
+
+  // Evidence-to-Element Mapper — 요건사실 기반 증거 퍼즐 매퍼
+  getLegalElements: (jobId, claimType) =>
+    request(`/api/jobs/${jobId}/legal-elements?claim_type=${encodeURIComponent(claimType)}`),
+  saveElementMappings: (jobId, data) =>
+    request(`/api/jobs/${jobId}/legal-elements/mappings`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  getElementMappings: (jobId) =>
+    request(`/api/jobs/${jobId}/legal-elements/mappings`),
+
   // 에이전트 채팅 대화 이력 (DB 영속화)
   listChatConversations: (jobId) =>
     request(`/api/jobs/${jobId}/chat-conversations`),

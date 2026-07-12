@@ -6,6 +6,39 @@ import type { AuthHeaders } from './auth.js';
 
 const PROOF_API_URL = process.env.PROOF_API_URL || 'http://localhost:8000';
 
+// ========================================
+// Evidence-to-Element Mapper 타입 정의
+// ========================================
+
+/**
+ * 매핑된 증거 — 요건사실 슬롯에 드롭된 증거 카드.
+ */
+export interface MappedEvidence {
+  evidence_id: string;
+  text_snippet: string;
+  source_doc: string;
+}
+
+/**
+ * 법적 요건사실 슬롯 — 청구 원인별 입증 요건.
+ */
+export interface LegalElement {
+  id: string;
+  name: string;
+  description: string;
+  mapped_evidence: MappedEvidence[];
+}
+
+/**
+ * 요건사실 퍼즐 매퍼 상태 (Data Contract).
+ * overall_progress_percent = 1개 이상 증거가 매핑된 요건의 비율 (%).
+ */
+export interface ElementMappings {
+  claim_type: string;
+  overall_progress_percent: number;
+  elements: LegalElement[];
+}
+
 // [Flow: Step 1 (연결 실패 시 재시도 설정) -> Step 2 (재시도 가능한 오류 판별)
 //       -> Step 3 (지수 백오프 후 재시도) -> Step 4 (최종 실패 시 throw)]
 // FastAPI와의 일시적 네트워크 단절(컨테이너 재시작, DNS 지연 등)을 회복하기 위한 설정.
@@ -676,4 +709,153 @@ export async function deleteFlowDrawings(
   authHeaders?: AuthHeaders,
 ): Promise<{ status: string }> {
   return request(`/api/jobs/${jobId}/flow-drawings`, 'DELETE', undefined, authHeaders);
+}
+
+// ========================================
+// e-Discovery GraphRAG API 메서드
+// ========================================
+
+/**
+ * [Flow: Step 1 (job_id 수신) -> Step 2 (GET /api/jobs/{id}/ediscovery) -> Step 3 (상태/결과 반환)]
+ *
+ * e-Discovery 추출의 현재 상태와 결과를 조회한다 (폴링용).
+ *
+ * @param jobId Job ID
+ * @param authHeaders 인증 헤더
+ * @returns 상태, 메트릭, 그래프 데이터
+ */
+export async function getEdiscoveryStatus(
+  jobId: string,
+  authHeaders?: AuthHeaders,
+): Promise<{
+  job_id: string;
+  ediscovery_status: string;
+  ediscovery_metrics: Record<string, unknown>;
+  graph_data: Record<string, unknown>;
+  ediscovery_error?: string;
+}> {
+  return request(`/api/jobs/${jobId}/ediscovery`, 'GET', undefined, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (job_id + 추출 옵션 수신) -> Step 2 (POST /api/jobs/{id}/ediscovery/extract)
+ *       -> Step 3 (GraphRAG 추출 결과 반환)]
+ *
+ * 수천 장 규모의 법률 문서에서 쟁점(issue)/원고(plaintiff)/피고(defendant)/증거(evidence)
+ * 노드와 관계 에지를 추출한다. vLLM Proxy(Gemma-4) 기반의 Python FastAPI GraphRAG 파이프라인을 동기 호출.
+ *
+ * @param jobId Job ID
+ * @param options 추출 옵션 (query, threshold, max_docs, chunk_size, page_range)
+ * @param authHeaders 인증 헤더
+ * @returns e-Discovery Graph JSON (job_id, ediscovery_metrics, graph_data)
+ */
+export async function extractEdiscoveryGraph(
+  jobId: string,
+  options: {
+    query?: string;
+    threshold?: number;
+    max_docs?: number;
+    chunk_size?: number;
+    page_range?: string | number | number[];
+  } = {},
+  authHeaders?: AuthHeaders,
+): Promise<{
+  job_id: string;
+  ediscovery_metrics: { total_docs: number; processed_chunks: number; threshold: number };
+  graph_data: {
+    nodes: Array<{ id: string; type: string; data: { label: string; page: number } }>;
+    edges: Array<{ id: string; source: string; target: string; type: string }>;
+  };
+}> {
+  return request(`/api/jobs/${jobId}/ediscovery/extract`, 'POST', options, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (job_id + threshold 수신) -> Step 2 (POST /api/jobs/{id}/ediscovery/threshold)
+ *       -> Step 3 (재필터링된 그래프 반환)]
+ *
+ * 기존 추출 그래프의 관련도/신뢰도 임계값을 변경하여 노드/에지를 재필터링.
+ *
+ * @param jobId Job ID
+ * @param threshold 새 임계값 (0.0 ~ 1.0)
+ * @param authHeaders 인증 헤더
+ * @returns 재필터링된 e-Discovery Graph JSON
+ */
+export async function adjustGraphThreshold(
+  jobId: string,
+  threshold: number,
+  authHeaders?: AuthHeaders,
+): Promise<{
+  job_id: string;
+  ediscovery_metrics: { total_docs: number; processed_chunks: number; threshold: number };
+  graph_data: {
+    nodes: Array<{ id: string; type: string; data: { label: string; page: number } }>;
+    edges: Array<{ id: string; source: string; target: string; type: string }>;
+  };
+}> {
+  return request(`/api/jobs/${jobId}/ediscovery/threshold`, 'POST', { threshold }, authHeaders);
+}
+
+// ========================================
+// Evidence-to-Element Mapper API 메서드
+// ========================================
+
+/**
+ * [Flow: Step 1 (job_id + claim_type 수신) -> Step 2 (GET /api/jobs/{id}/legal-elements?claim_type=...)
+ *       -> Step 3 (법적 요건사실 빈 슬롯 스키마 반환)]
+ *
+ * 청구 원인(예: 사기죄)에 따른 법적 요건사실 3~5개를 vLLM으로 추출.
+ * 빈 슬롯(mapped_evidence:[])이 포함된 퍼즐 매퍼 데이터 계약 형식으로 반환.
+ *
+ * @param jobId Job ID
+ * @param claimType 청구 원인 (예: "사기죄", "대여금반환")
+ * @param authHeaders 인증 헤더
+ * @returns 요건사실 퍼즐 매퍼 상태 (job_id, element_mappings)
+ */
+export async function getLegalElements(
+  jobId: string,
+  claimType: string,
+  authHeaders?: AuthHeaders,
+): Promise<{
+  job_id: string;
+  element_mappings: ElementMappings;
+}> {
+  const qs = `?claim_type=${encodeURIComponent(claimType)}`;
+  return request(`/api/jobs/${jobId}/legal-elements${qs}`, 'GET', undefined, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (job_id + 퍼즐 상태 수신) -> Step 2 (PUT /api/jobs/{id}/legal-elements/mappings)
+ *       -> Step 3 (영속화된 요건사실 매핑 상태 반환)]
+ *
+ * 프론트엔드에서 완성된 퍼즐 상태를 Supabase jobs 테이블의 element_mappings JSONB에 저장.
+ * overall_progress_percent는 서버에서 재계산.
+ *
+ * @param jobId Job ID
+ * @param mappings 퍼즐 매퍼 상태 (Data Contract)
+ * @param authHeaders 인증 헤더
+ * @returns 저장된 요건사실 매핑 상태
+ */
+export async function saveElementMappings(
+  jobId: string,
+  mappings: ElementMappings,
+  authHeaders?: AuthHeaders,
+): Promise<{ job_id: string; element_mappings: ElementMappings }> {
+  return request(`/api/jobs/${jobId}/legal-elements/mappings`, 'PUT', mappings, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (job_id 수신) -> Step 2 (GET /api/jobs/{id}/legal-elements/mappings) -> Step 3 (저장된 매핑 반환)]
+ *
+ * 저장된 요건사실 퍼즐 매핑 상태를 조회한다 (페이지 새로고침 후 복원용).
+ *
+ * @param jobId Job ID
+ * @param authHeaders 인증 헤더
+ * @returns 저장된 요건사실 매핑 상태 (없으면 빈 스키마)
+ */
+export async function getElementMappings(
+  jobId: string,
+  authHeaders?: AuthHeaders,
+): Promise<{ job_id: string; element_mappings: ElementMappings }> {
+  return request(`/api/jobs/${jobId}/legal-elements/mappings`, 'GET', undefined, authHeaders);
 }

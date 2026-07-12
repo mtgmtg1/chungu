@@ -519,6 +519,7 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
         {chronoItems.length > 0 && (
           <div className="absolute inset-0 overflow-auto" data-oid="ediscovery-chrono">
             <Chrono
+              key={previewData ? "chrono-loaded" : "chrono-loading"}
               items={chronoItems}
               mode="HORIZONTAL_ALL"
               showAllCardsHorizontal

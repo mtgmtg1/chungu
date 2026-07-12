@@ -435,8 +435,8 @@ export function buildAnnotationTools(context: AnnotationContext) {
 
     save_annotations: tool({
       description: 'EmbedPDF AnnotationTransferItem[] 형식의 주석 JSON을 직접 전달하여 Storage에 저장하고 뷰어에 반영한다. add_highlight/add_callout + apply_annotations 대신 사용할 수 있으며, view_page나 read_job_json으로 얻은 정보를 바탕으로 정밀한 위치(rect)를 지정해 주석을 만들 때 유용하다.\n' +
-        '각 주석 항목의 구조: { annotation: { id, type (9=highlight, 3=freetext/callout), pageIndex (0-based), rect: {x, y, width, height}, color, strokeColor, opacity, contents, intent? ("FreeTextCallout"), lineEnding? (4=OpenArrow), segmentRects? } }\n' +
-        'rect 좌표계는 embedpdf device-space (원점 좌상단, y↓)이다. PDF user-space(y↑)에서 변환하려면 originY = pageHeight - y1 를 사용한다.',
+        '각 주석 항목의 구조: { annotation: { id, type (9=highlight, 3=freetext/callout), pageIndex (0-based), rect: {origin: {x, y}, size: {width, height}}, color, strokeColor, opacity, contents, intent? ("FreeTextCallout"), lineEnding? (4=OpenArrow), segmentRects? } }\n' +
+        'rect 좌표계는 embedpdf device-space (원점 좌상단, y↓)이다. get_elements로 얻은 bbox_pdf는 PDF user-space(y↑)이므로 변환이 필요하다: origin.y = pageHeight - bbox_pdf_y1, origin.x = bbox_pdf_x0, size.width = bbox_pdf_x1 - bbox_pdf_x0, size.height = bbox_pdf_y1 - bbox_pdf_y0. pageHeight는 get_elements 응답의 page_dimensions[page_no].height를 사용한다.',
       inputSchema: z.object({
         annotations: z.array(z.record(z.unknown()))
           .describe('EmbedPDF AnnotationTransferItem[] 배열. 각 항목은 { annotation: { id, type, pageIndex, rect, color, ... } } 구조.'),
@@ -542,8 +542,8 @@ function _buildAnnotationItem(
         id: p.id,
         type: 9, // embedpdf HIGHLIGHT
         pageIndex: p.target.page_no - 1,
-        rect: { x: originX, y: originY, width, height },
-        segmentRects: [{ x: originX, y: originY, width, height }],
+        rect: { origin: { x: originX, y: originY }, size: { width, height } },
+        segmentRects: [{ origin: { x: originX, y: originY }, size: { width, height } }],
         strokeColor: hexColor,
         color: hexColor,
         opacity: p.target.opacity,
@@ -559,7 +559,7 @@ function _buildAnnotationItem(
       type: 3, // embedpdf FREETEXT
       intent: 'FreeTextCallout',
       pageIndex: p.target.page_no - 1,
-      rect: { x: originX, y: originY, width: Math.max(width, 80), height: Math.max(height, 24) },
+      rect: { origin: { x: originX, y: originY }, size: { width: Math.max(width, 80), height: Math.max(height, 24) } },
       strokeColor: hexColor,
       color: hexColor,
       opacity: p.target.opacity,

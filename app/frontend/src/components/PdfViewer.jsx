@@ -31,7 +31,17 @@ function sanitizeAnnotationsJson(items) {
     if (!item || typeof item !== "object") return false;
     // annotation 객체에 rect 가 있으면 origin/size 검증
     const rect = item.rect ?? item.annotation?.rect;
-    if (rect && (!rect.origin || typeof rect.origin.x !== "number" || !rect.size)) return false;
+    if (rect) {
+      if (rect.origin && typeof rect.origin.x === "number" && rect.size) {
+        // 정상 포맷: {origin: {x, y}, size: {width, height}}
+      } else if (typeof rect.x === "number" && typeof rect.y === "number" && typeof rect.width === "number") {
+        // 하위 호환: {x, y, width, height} 포맷를 {origin, size}로 정규화
+        rect.origin = { x: rect.x, y: rect.y };
+        rect.size = { width: rect.width, height: rect.height || 0 };
+      } else {
+        return false;
+      }
+    }
     // page 인덱스가 음수면 제거
     if (typeof item.pageIndex === "number" && item.pageIndex < 0) return false;
     return true;

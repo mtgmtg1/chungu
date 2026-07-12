@@ -275,63 +275,6 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
   }, [jobId, job?.status]);
 
   /**
-   * [Flow: Step 1 (chronoItems 변경) -> Step 2 (selectedNode가 items에 없으면 첫 항목으로 초기화)
-   *       -> Step 3 (selectedNode가 null이면서 items가 있으면 첫 항목 선택)]
-   */
-  useEffect(() => {
-    if (chronoItems.length === 0) {
-      setSelectedNode(null);
-      return;
-    }
-    const exists = selectedNode && chronoItems.some((item) => item.node.id === selectedNode.id);
-    if (!exists) {
-      setSelectedNode(chronoItems[0].node);
-    }
-  }, [chronoItems]);
-
-  /**
-   * [Flow: Step 1 (selectedNode/previewData 변경) -> Step 2 (sourceFile.result_markdown 우선 사용)
-   *       -> Step 3 (result_markdown이 없으면 GET /preview?page=page&end_page=page로 원문 로드)
-   *       -> Step 4 (로딩 상태 갱신 + selectedPageText 설정)]
-   */
-  useEffect(() => {
-    if (!selectedNode || !previewData || !jobId) {
-      setSelectedPageText("");
-      setSelectedPageLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    const loadOriginalText = async () => {
-      setSelectedPageLoading(true);
-      setSelectedPageText("");
-
-      const sourceFile = getNodeSourceFile(selectedNode, previewData);
-      const rawText = sourceFile?.result_markdown;
-      if (rawText && rawText.trim().length > 0) {
-        if (!cancelled) setSelectedPageText(rawText);
-        if (!cancelled) setSelectedPageLoading(false);
-        return;
-      }
-
-      const page = getNodePage(selectedNode);
-      try {
-        const data = await api.previewJob(jobId, page, page);
-        if (!cancelled) setSelectedPageText(data.markdown || "");
-      } catch (err) {
-        console.warn("[EdiscoveryTimelinePanel] original text load failed:", err);
-        if (!cancelled) setSelectedPageText("");
-      }
-      if (!cancelled) setSelectedPageLoading(false);
-    };
-
-    loadOriginalText();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedNode, previewData, jobId]);
-
-  /**
    * [Flow: Step 1 (GET /ediscovery 상태 조회) -> Step 2 (done이면 metrics 갱신 + 폴링 중지)
    *       -> Step 3 (error이면 오류 표시 + 폴링 중지) -> Step 4 (빈 상태이면 폴링 중지)
    *       -> Step 5 (processing이면 계속 폴링, 타임아웃 초과 시 중단)]
@@ -456,6 +399,63 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
   );
 
   const isEmpty = !loading && chronoItems.length === 0 && !error && job?.ediscovery_status === "done";
+
+  /**
+   * [Flow: Step 1 (chronoItems 변경) -> Step 2 (selectedNode가 items에 없으면 첫 항목으로 초기화)
+   *       -> Step 3 (selectedNode가 null이면서 items가 있으면 첫 항목 선택)]
+   */
+  useEffect(() => {
+    if (chronoItems.length === 0) {
+      setSelectedNode(null);
+      return;
+    }
+    const exists = selectedNode && chronoItems.some((item) => item.node.id === selectedNode.id);
+    if (!exists) {
+      setSelectedNode(chronoItems[0].node);
+    }
+  }, [chronoItems]);
+
+  /**
+   * [Flow: Step 1 (selectedNode/previewData 변경) -> Step 2 (sourceFile.result_markdown 우선 사용)
+   *       -> Step 3 (result_markdown이 없으면 GET /preview?page=page&end_page=page로 원문 로드)
+   *       -> Step 4 (로딩 상태 갱신 + selectedPageText 설정)]
+   */
+  useEffect(() => {
+    if (!selectedNode || !previewData || !jobId) {
+      setSelectedPageText("");
+      setSelectedPageLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const loadOriginalText = async () => {
+      setSelectedPageLoading(true);
+      setSelectedPageText("");
+
+      const sourceFile = getNodeSourceFile(selectedNode, previewData);
+      const rawText = sourceFile?.result_markdown;
+      if (rawText && rawText.trim().length > 0) {
+        if (!cancelled) setSelectedPageText(rawText);
+        if (!cancelled) setSelectedPageLoading(false);
+        return;
+      }
+
+      const page = getNodePage(selectedNode);
+      try {
+        const data = await api.previewJob(jobId, page, page);
+        if (!cancelled) setSelectedPageText(data.markdown || "");
+      } catch (err) {
+        console.warn("[EdiscoveryTimelinePanel] original text load failed:", err);
+        if (!cancelled) setSelectedPageText("");
+      }
+      if (!cancelled) setSelectedPageLoading(false);
+    };
+
+    loadOriginalText();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedNode, previewData, jobId]);
 
   return (
     <div className="h-full w-full flex flex-col relative" data-oid="ediscovery-courtroom">

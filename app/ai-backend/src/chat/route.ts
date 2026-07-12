@@ -81,14 +81,16 @@ Available tool categories:
 8. e-Discovery Graph Analysis (when user asks to extract legal issues, evidence, parties, or build a case graph from large document sets):
    - extract_ediscovery_graph: run the GraphRAG pipeline to extract issue/plaintiff/defendant/evidence nodes and their relationships
    - adjust_graph_threshold: re-filter the extracted graph by changing the relevance/confidence threshold
+   - analyze_legal_profile: infer legal domain, claim type, key issues, and required legal elements from the document. The agent decides when to call this and can pass collected context as additionalContext.
    - IMPORTANT: After extraction, persist or summarize the results by calling save_flow_drawings (e.g., add note nodes for key issues/evidence) or another state-update tool.
    - The graph data contract is: nodes have id, type (issue|plaintiff|defendant|evidence), and data.label/data.page; edges have id, source, target, and type.
 
 9. Evidence-to-Element Mapper (when user asks to build a case theory, map evidence to legal elements, or calculate proof progress for a claim):
+   - analyze_legal_profile: agent-driven inference of claim_type and legal elements. Use this first if the claim type is unknown.
    - get_legal_elements: extract 3~5 legal elements (요건사실) for a given claim type (e.g. 사기죄, 대여금반환) via vLLM. Returns empty slots (mapped_evidence:[]).
    - save_element_mappings: persist the completed puzzle state (claim_type + elements with mapped evidence) to Supabase. overall_progress_percent is recomputed server-side.
    - get_element_mappings: retrieve the saved mapping state (for restore or progress check).
-   - Workflow: first call extract_ediscovery_graph to get evidence nodes, then get_legal_elements to generate element slots, then save_element_mappings with evidence mapped to each element. The data contract is: {claim_type, overall_progress_percent, elements: [{id, name, description, mapped_evidence: [{evidence_id, text_snippet, source_doc}]}]}.
+   - Workflow: first call extract_ediscovery_graph to get evidence nodes, then analyze_legal_profile (or get_legal_elements if claim_type is already known) to generate element slots, then save_element_mappings with evidence mapped to each element. The data contract is: {claim_type, overall_progress_percent, elements: [{id, name, description, mapped_evidence: [{evidence_id, text_snippet, source_doc}]}]}.
 
 Rules:
 - Always use the provided tools to make changes; do not just describe them.

@@ -177,5 +177,32 @@ export function buildEdiscoveryTools(context: EdiscoveryToolContext) {
         }
       },
     }),
+
+    analyze_legal_profile: tool({
+      description:
+        '법률 문서에서 법률 분야(legal_domain), 청구 원인(claim_type), 핵심 쟁점(issues), 입증 요건(legal_elements)을 추출. 에이전트가 사건 맥락을 판단하여 호출하며, 추가 힌트(claim_type_hint, additional_context)를 전달할 수 있다. 분석이 모호하면 search_text, extract_ediscovery_graph 등 다른 도구로 수집한 맥락을 additional_context에 담아 재호출할 것.',
+      inputSchema: z.object({
+        jobId: z.string().optional().describe('Job ID (context의 jobId 사용 시 생략 가능)'),
+        claimTypeHint: z.string().optional().describe('에이전트가 판단한 청구 원인 힌트 (예: "손해배상", "대여금반환")'),
+        additionalContext: z.string().optional().describe('에이전트가 수집한 추가 맥락 (예: e-Discovery 그래프 요약, 검색 결과)'),
+      }),
+      execute: async ({ jobId: jid, claimTypeHint, additionalContext }) => {
+        const id = jid || jobId;
+        if (!id) return { error: 'jobId is required' };
+
+        try {
+          const response = await proofApi.analyzeLegalProfile(
+            id,
+            { claimTypeHint, additionalContext },
+            authHeaders,
+          );
+          return response;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[analyze_legal_profile] job=${id} failed: ${msg}`);
+          return { error: `Legal profile analysis failed: ${msg}` };
+        }
+      },
+    }),
   };
 }

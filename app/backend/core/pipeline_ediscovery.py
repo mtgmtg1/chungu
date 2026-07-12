@@ -19,7 +19,6 @@ import fitz  # PyMuPDF
 from .. import settings_store
 from ..config import settings
 from ..core import supabase_client
-from ..core.legal_case_profile import extract_legal_profile
 from ..core.ocr_client import call_text
 from ..db.models import Job
 from ..db.session import SessionLocal
@@ -889,7 +888,6 @@ def run(
     # max_docs → max_chunks 호환 매핑 (api/ediscovery.py의 extract/threshold 엔드포인트 호환)
     if max_chunks is None and max_docs is not None:
         max_chunks = max_docs
-    legal_profile: dict = {}
     db = SessionLocal()
     try:
         job = db.get(Job, job_id)
@@ -905,31 +903,7 @@ def run(
         if not page_texts:
             raise ValueError("문서에서 텍스트를 추출할 수 없습니다 (텍스트 레이어/마크다운 모두 비어 있음)")
 
-        # Step 2a: 법률 분야/청구 원인/쟁점/요건사실 자동 추출
-        # LLM이 문서 샘플을 보고 민사/형사/행정/이혼/헌법 등 분야와 입증 요건을 추출한다.
-        legal_profile = extract_legal_profile(
-            page_texts,
-            endpoint,
-            model,
-            api_key,
-            original_filename=job.original_filename,
-            total_pages=len(page_texts),
-        )
-        if legal_profile.get("claim_type"):
-            job.element_mappings = {
-                "claim_type": legal_profile["claim_type"],
-                "overall_progress_percent": 0,
-                "elements": legal_profile.get("legal_elements", []),
-            }
-            db.commit()
-            logger.info(
-                f"[ediscovery] job={job_id} legal_profile 추출: "
-                f"legal_domain={legal_profile.get('legal_domain')}, "
-                f"claim_type={legal_profile.get('claim_type')}, "
-                f"elements={len(legal_profile.get('legal_elements', []))}"
-            )
-
-        # Step 2b: 파라미터가 명시되지 않으면 LLM이 전체 문서 샘플을 보고 자동 추천
+        # Step 2a: 파라미터가 명시되지 않으면 LLM이 전체 문서 샘플을 보고 자동 추천
         auto_params = None
         if chunk_size is None or threshold is None or max_chunks is None:
             auto_params = _suggest_params(page_texts, endpoint, model, api_key)
@@ -988,7 +962,6 @@ def run(
             "graph_edges": len(graph["edges"]),
             "auto_params": auto_params is not None,
             "reasoning": auto_params.get("reasoning", "") if auto_params else "",
-            "legal_profile": legal_profile,
         }
         logger.info(f"[ediscovery] job={job_id} 그래프 완성: {metrics}")
 
@@ -1011,8 +984,6 @@ def run(
                 "error": str(e),
                 "traceback": tb[:2000],
             }
-            if legal_profile:
-                job.ediscovery_metrics["legal_profile"] = legal_profile
             db.commit()
         return {"job_id": job_id, "status": "error", "error": str(e)}
     finally:

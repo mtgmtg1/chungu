@@ -107,6 +107,30 @@ class TestExtractLegalProfile(unittest.TestCase):
             result = extract_legal_profile(page_texts, "http://test", "model", "key")
         self.assertEqual(result, {})
 
+    def test_extract_legal_profile_uses_agent_hints(self):
+        """claim_type_hint와 additional_context가 프롬프트에 포함된다."""
+        page_texts = {1: "원고 A는 계약 위반을 주장한다."}
+        with patch("backend.core.legal_case_profile.call_text") as mock_call:
+            mock_call.return_value = (
+                '{"legal_domain": "민사", "claim_type": "손해배상", "issues": [], "legal_elements": []}',
+                None,
+            )
+            result = extract_legal_profile(
+                page_texts,
+                "http://test",
+                "model",
+                "key",
+                original_filename="test.pdf",
+                total_pages=1,
+                claim_type_hint="손해배상",
+                additional_context="사고로 인한 손해배상 청구",
+            )
+        self.assertEqual(result["claim_type"], "손해배상")
+        prompt = mock_call.call_args[0][0]
+        self.assertIn("손해배상", prompt)
+        self.assertIn("사고로 인한 손해배상 청구", prompt)
+        self.assertIn("test.pdf", prompt)
+
 
 class TestSampleTextBuilder(unittest.TestCase):
     """[Flow: Step 1 (page_texts 입력) -> Step 2 (최대 글자수 내 샘플 구성) -> Step 3 (검증)]"""

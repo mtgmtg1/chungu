@@ -100,12 +100,19 @@ def build_legal_profile_sample_text(page_texts: dict[int, str], max_chars: int =
     return "\n\n".join(parts)
 
 
-def _build_legal_profile_prompt(sample_text: str, original_filename: str | None = None, total_pages: int | None = None) -> str:
-    """[Flow: Step 1 (문서 메타데이터/샘플 수집) -> Step 2 (법률 분류/쟁점/요건사실 추출 지시)
+def _build_legal_profile_prompt(
+    sample_text: str,
+    original_filename: str | None = None,
+    total_pages: int | None = None,
+    claim_type_hint: str | None = None,
+    additional_context: str | None = None,
+) -> str:
+    """[Flow: Step 1 (문서 메타데이터/에이전트 힌트 수집) -> Step 2 (법률 분류/쟁점/요건사실 추출 지시)
           -> Step 3 (JSON 스키마 명시) -> Step 4 (맥락 활용 및 fallback 금지 주의사항 추가)
           -> Step 5 (샘플 텍스트 삽입)]
 
-    문서 샘플과 파일 메타데이터를 보고 법률 분야, 청구 원인, 쟁점, 법적 요건사실을 추출하는 LLM 프롬프트를 구성한다.
+    문서 샘플, 파일 메타데이터, 그리고 에이전트가 제공한 추가 맥락을 바탕으로
+    법률 분야, 청구 원인, 쟁점, 법적 요건사실을 추출하는 LLM 프롬프트를 구성한다.
     반환은 JSON 객체 하나만 한다.
     """
     meta_parts: list[str] = []
@@ -115,13 +122,21 @@ def _build_legal_profile_prompt(sample_text: str, original_filename: str | None 
         meta_parts.append(f"총 페이지 수: {total_pages}")
     metadata_line = " | ".join(meta_parts) if meta_parts else "메타데이터 없음"
 
+    hint_section = ""
+    if claim_type_hint or additional_context:
+        hint_lines: list[str] = []
+        if claim_type_hint:
+            hint_lines.append(f"- 사용자/에이전트가 제안한 청구 원인 힌트: {claim_type_hint}")
+        if additional_context:
+            hint_lines.append(f"- 추가 맥락: {additional_context}")
+        hint_section = "\n아래 힌트를 참고할 수 있다. 힌트가 자료와 모순되면 자료 내용을 우선한다.\n" + "\n".join(hint_lines) + "\n"
+
     return f"""아래는 법률 관련 자료에서 추출한 텍스트 샘플이다. 이 자료를 보고 다음 항목을 추출하라.
 
 중요: 문서가 길 경우 샘플은 시작/중간/끝 부분을 골고루 포함하고 있다. 전체 맥락을 종합해서 판단해야 한다.
 분류가 애매하더라도 "기타"나 "정보부족"으로 대체하지 말고, 자료에 실제로 드러난 가장 구체적인 법률 분야와 청구 원인을 적어라.
 
-{metadata_line}
-
+{metadata_line}{hint_section}
 1. legal_domain: 자료가 다루는 법률 분야. 다음 예시 중 가장 적절한 것을 선택하되, 예시에 없더라도 구체적 용어를 사용한다.
    예: 민사, 형사, 행정, 가사(이혼/양육/상속), 헌법, 노동, 지식재산권, 상사, 손해배상(위약금/하자보수), 부동산(임대차/매매), 채무, 국제, 보험, 세무, 형사고소
    (단, "기타"는 자료의 내용이 법률 분류 전혀 불가능할 때만 사용)
@@ -248,21 +263,31 @@ def extract_legal_profile(
     api_key: str,
     original_filename: str | None = None,
     total_pages: int | None = None,
+    claim_type_hint: str | None = None,
+    additional_context: str | None = None,
     max_tokens: int = MAX_TOKENS,
 ) -> dict:
-    """[Flow: Step 1 (페이지 텍스트 + 파일 메타데이터 수집) -> Step 2 (프롬프트 구성)
-          -> Step 3 (vLLM 호출) -> Step 4 (응답 파싱) -> Step 5 (legal_profile 반환 / 예외 시 빈 dict)]
+    """[Flow: Step 1 (페이지 텍스트 + 파일 메타데이터 + 에이전트 힌트 수집)
+          -> Step 2 (프롬프트 구성) -> Step 3 (vLLM 호출) -> Step 4 (응답 파싱)
+          -> Step 5 (legal_profile 반환 / 예외 시 빈 dict)]
 
     자료에서 LLM을 통해 법률 분야, 청구 원인, 쟁점, 법적 요건사실을 추출한다.
-    문서가 길 경우 시작/중간/끝을 골고루 샘플링하고, 원본 파일명/총 페이지 수 같은
-    맥락을 함께 주입해 "기타/정보부족"으로 빠지는 것을 방지한다.
+    문서가 길 경우 시작/중간/끝을 골고루 샘플링하고, 원본 파일명/총 페이지 수/
+    에이전트가 제공한 claim_type_hint/additional_context를 함께 주입해
+    "기타/정보부족"으로 빠지는 것을 방지한다.
     LLM 호출 실패나 파싱 실패 시 예외를 전파하지 않고 빈 dict를 반환한다.
     """
     sample_text = build_legal_profile_sample_text(page_texts)
     if not sample_text:
         return {}
 
-    prompt = _build_legal_profile_prompt(sample_text, original_filename=original_filename, total_pages=total_pages)
+    prompt = _build_legal_profile_prompt(
+        sample_text,
+        original_filename=original_filename,
+        total_pages=total_pages,
+        claim_type_hint=claim_type_hint,
+        additional_context=additional_context,
+    )
     try:
         content, _ = call_text(prompt, endpoint, model, api_key, max_tokens=max_tokens)
         return _parse_legal_profile(content)

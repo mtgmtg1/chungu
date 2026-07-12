@@ -861,3 +861,41 @@ export async function getElementMappings(
 ): Promise<{ job_id: string; element_mappings: ElementMappings }> {
   return request(`/api/jobs/${jobId}/legal-elements/mappings`, 'GET', undefined, authHeaders);
 }
+
+// ========================================
+// Legal Case Profile API 메서드
+// ========================================
+
+/**
+ * [Flow: Step 1 (job_id + 선택적 힌트 수신) -> Step 2 (POST /api/jobs/{id}/legal-profile/analyze)
+ *       -> Step 3 (법률 프로필 분석 결과 반환)]
+ *
+ * 문서 텍스트를 보고 법률 분야, 청구 원인, 쟁점, 요건사실을 추출한다.
+ * 에이전트가 추가 맥락(claim_type_hint, additional_context)을 전달하면 프롬프트에
+ * 반영되어 더 구체적인 판단을 내릴 수 있다.
+ *
+ * @param jobId Job ID
+ * @param options 분석 힌트 (claim_type_hint, additional_context)
+ * @param authHeaders 인증 헤더
+ * @returns 법률 프로필 분석 결과 (job_id, legal_profile)
+ */
+export async function analyzeLegalProfile(
+  jobId: string,
+  options: {
+    claimTypeHint?: string;
+    additionalContext?: string;
+  } = {},
+  authHeaders?: AuthHeaders,
+): Promise<{
+  job_id: string;
+  legal_profile: {
+    legal_domain: string;
+    claim_type: string;
+    claim_summary: string;
+    issues: string[];
+    legal_elements: Array<{ id: string; name: string; description: string; mapped_evidence: unknown[] }>;
+    confidence: number;
+  };
+}> {
+  return request(`/api/jobs/${jobId}/legal-profile/analyze`, 'POST', options, authHeaders);
+}

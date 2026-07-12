@@ -14,7 +14,7 @@ from ..auth.api_key_auth import require_api_key_or_session
 from ..auth.supabase_auth import CurrentUser
 from .. import settings_store
 from ..config import settings
-from ..core import legal_elements, pipeline_ediscovery
+from ..core import legal_case_profile, legal_elements, pipeline_ediscovery
 from ..db.models import Job
 from ..db.session import get_db
 
@@ -497,4 +497,59 @@ def get_element_mappings(
 
     mappings = job.element_mappings or {}
     return {"job_id": job.id, "element_mappings": mappings}
+
+
+# ============================================================
+# Legal Case Profile — 에이전트가 판단한 법률 분야/청구 원인/쟁점 분석
+# ============================================================
+
+@router.post("/jobs/{job_id}/legal-profile/analyze")
+def analyze_legal_profile(
+    job_id: str,
+    payload: dict = Body(default={}),
+    user: CurrentUser = Depends(_get_current_user),
+    db: Session = Depends(get_db),
+):
+    """[Flow: Step 1 (Job 조회 + 권한 검증) -> Step 2 (문서 텍스트 추출)
+          -> Step 3 (LLM 설정 해결) -> Step 4 (legal_case_profile.extract_legal_profile 호출)
+          -> Step 5 (분석 결과 반환)]
+
+    에이전트가 법률 분야, 청구 원인, 쟁점, 요건사실을 판단할 수 있도록
+    문서 텍스트와 선택적 힌트(claim_type_hint, additional_context)를 입력으로
+    LLM 기반 법률 프로필 분석을 실행한다.
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+    _require_job_done(job)
+
+    page_texts = pipeline_ediscovery.extract_page_texts(job)
+    if not page_texts:
+        raise HTTPException(status_code=400, detail="문서에서 텍스트를 추출할 수 없습니다")
+
+    endpoint, model, api_key = _resolve_llm_settings(job, db)
+
+    claim_type_hint = str(payload.get("claim_type_hint", "")).strip() or None
+    additional_context = str(payload.get("additional_context", "")).strip() or None
+
+    profile = legal_case_profile.extract_legal_profile(
+        page_texts,
+        endpoint,
+        model,
+        api_key,
+        original_filename=job.original_filename,
+        total_pages=len(page_texts),
+        claim_type_hint=claim_type_hint,
+        additional_context=additional_context,
+    )
+
+    if not profile:
+        raise HTTPException(status_code=502, detail="법률 프로필 분석에 실패했습니다")
+
+    logger.info(f"[legal-profile-api] job={job_id} domain={profile.get('legal_domain')} claim={profile.get('claim_type')}")
+
+    return {
+        "job_id": job.id,
+        "legal_profile": profile,
+    }
 

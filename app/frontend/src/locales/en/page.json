@@ -379,6 +379,8 @@
     "flowUndo": "Undo",
     "flowClear": "Clear All",
     "ediscovery": "e-Discovery (GraphRAG)",
+    "ediscoveryTimeline": "e-Discovery Timeline",
+    "ediscoveryMapper": "e-Discovery Puzzle Mapper",
     "ediscoveryView": "e-Discovery GraphRAG",
     "ediscoveryParams": "Analysis Parameters",
     "ediscoveryDocScale": "Document Scale",

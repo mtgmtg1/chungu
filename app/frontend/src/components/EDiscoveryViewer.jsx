@@ -793,9 +793,9 @@ function GraphCanvas({ jobId, job, onNodeClick }) {
  * @param {Object} props.job - Job 객체 (ediscovery_* 필드 포함)
  * @param {Function} [props.onNodeClick] - 노드 클릭 시 호출될 콜백 (node) => void
  */
-export default function EDiscoveryViewer({ jobId, job, onNodeClick }) {
+export default function EDiscoveryViewer({ jobId, job, onNodeClick, defaultTab = "graph" }) {
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState("graph"); // "graph" | "mapper"
+  const [activeTab, setActiveTab] = useState(defaultTab); // "graph" | "mapper"
 
   return (
     <div className="h-full flex flex-col" data-oid="ediscovery-viewer">

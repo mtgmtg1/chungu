@@ -17,6 +17,7 @@ import {
   PanelRight,
   PanelRightClose,
   Network,
+  Puzzle,
   RefreshCw,
   Trash2,
   Workflow,
@@ -90,7 +91,7 @@ export default function JobResultPage() {
     if (node) setRightPanelHandle(node);
   }, []);
 
-  const [previewMode, setPreviewMode] = useState("markdown"); // "markdown" | "xlsxBasic" | "xlsxAdvanced" | "flow" | "ediscovery"
+  const [previewMode, setPreviewMode] = useState("markdown"); // "markdown" | "xlsxBasic" | "xlsxAdvanced" | "flow" | "ediscoveryTimeline" | "ediscoveryMapper"
   const [basicUrl, setBasicUrl] = useState(null);
   const [advancedUrl, setAdvancedUrl] = useState(null);
   const [xlsxAdvancedPolling, setXlsxAdvancedPolling] = useState(false);
@@ -673,11 +674,13 @@ export default function JobResultPage() {
         />
       );
     }
-    if (previewMode === "ediscovery") {
+    if (previewMode === "ediscovery" || previewMode === "ediscoveryTimeline" || previewMode === "ediscoveryMapper") {
+      const defaultTab = previewMode === "ediscoveryMapper" ? "mapper" : "graph";
       return (
         <EDiscoveryViewer
           jobId={jobId}
           job={job}
+          defaultTab={defaultTab}
           onNodeClick={(node) => {
             // [Flow: e-Discovery 노드 클릭 -> SourcePanel PDF 해당 페이지로 스크롤]
             const page = node.data?.page;
@@ -873,6 +876,8 @@ export default function JobResultPage() {
             {previewMode === "xlsxBasic" && t("page:result.excel")}
             {previewMode === "xlsxAdvanced" && "Excel Advanced"}
             {previewMode === "flow" && t("page:result.flow")}
+            {previewMode === "ediscoveryTimeline" && t("page:result.ediscoveryTimeline")}
+            {previewMode === "ediscoveryMapper" && t("page:result.ediscoveryMapper")}
             {previewMode === "ediscovery" && t("page:result.ediscovery")}
             <ChevronDown size={14} />
           </button>
@@ -916,11 +921,18 @@ export default function JobResultPage() {
               {t("page:result.flow")}
             </button>
             <button
-              onClick={() => setPreviewMode("ediscovery")}
-              className={`flex items-center gap-2 text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface ${previewMode === "ediscovery" ? "font-bold text-primary" : ""}`}
-              data-oid="view-mode-ediscovery">
+              onClick={() => setPreviewMode("ediscoveryTimeline")}
+              className={`flex items-center gap-2 text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface ${previewMode === "ediscoveryTimeline" ? "font-bold text-primary" : ""}`}
+              data-oid="view-mode-ediscovery-timeline">
               <Network size={16} className="text-primary flex-shrink-0" />
-              {t("page:result.ediscovery")}
+              {t("page:result.ediscoveryTimeline")}
+            </button>
+            <button
+              onClick={() => setPreviewMode("ediscoveryMapper")}
+              className={`flex items-center gap-2 text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface ${previewMode === "ediscoveryMapper" ? "font-bold text-primary" : ""}`}
+              data-oid="view-mode-ediscovery-mapper">
+              <Puzzle size={16} className="text-primary flex-shrink-0" />
+              {t("page:result.ediscoveryMapper")}
             </button>
           </div>
         </div>

@@ -379,6 +379,8 @@
     "flowUndo": "실행 취소",
     "flowClear": "전체 지우기",
     "ediscovery": "e-Discovery (GraphRAG)",
+    "ediscoveryTimeline": "e-Discovery 타임라인",
+    "ediscoveryMapper": "e-Discovery 퍼즐 매퍼",
     "ediscoveryView": "e-Discovery GraphRAG",
     "ediscoveryParams": "분석 파라미터",
     "ediscoveryDocScale": "문서 규모",

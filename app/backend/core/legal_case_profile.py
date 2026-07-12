@@ -17,51 +17,116 @@ logger = logging.getLogger(__name__)
 MIN_ELEMENTS = 3   # 최소 요건사실 개수
 MAX_ELEMENTS = 5   # 최대 요건사실 개수
 MAX_TOKENS = 2000  # LLM 응답 토큰 상한
-MAX_SAMPLE_CHARS = 8000  # LLM 프롬프트에 전달할 문서 텍스트 샘플 상한
+MAX_SAMPLE_CHARS = 16000  # LLM 프롬프트에 전달할 문서 텍스트 샘플 상한
 
 
-def build_legal_profile_sample_text(page_texts: dict[int, str], max_chars: int = MAX_SAMPLE_CHARS) -> str:
-    """[Flow: Step 1 (페이지 번호 오름차순 정렬) -> Step 2 (페이지별 텍스트 연결)
-          -> Step 3 (max_chars 초과 시 마지막 페이지에서 자름) -> Step 4 (샘플 문자열 반환)]
+def _concat_pages_in_order(pages: list[tuple[int, str]], budget: int) -> str:
+    """[Flow: Step 1 (페이지 순서대로 마커 추가) -> Step 2 (budget 초과 시 마지막 페이지에서 자름)
+          -> Step 3 (결과 문자열 반환)]
 
-    페이지별 텍스트를 최대 글자수 내에서 하나의 샘플 텍스트로 결합한다.
-    페이지 번호가 불연속적이거나 순서가 뒤바뀐 입력도 안전하게 처리한다.
+    주어진 페이지 목록을 페이지 번호 순서대로 하나의 샘플 텍스트로 결합한다.
+    budget(글자수)을 초과하면 마지막 페이지에서 잘라낸다.
     """
-    if not page_texts:
+    if not pages or budget <= 0:
         return ""
 
-    sorted_pages = sorted(page_texts.items(), key=lambda item: item[0])
     parts: list[str] = []
     total = 0
 
-    for page_no, text in sorted_pages:
-        if not text or not text.strip():
-            continue
+    for page_no, text in pages:
         marker = f"--- 페이지 {page_no} ---"
         chunk = f"{marker}\n{text.strip()}"
-        if total + len(chunk) + 1 > max_chars:
-            remaining = max_chars - total - len(marker) - 2
+        if total + len(chunk) + 2 > budget:
+            remaining = budget - total - len(marker) - 3
             if remaining > 0:
                 parts.append(f"{marker}\n{text.strip()[:remaining]}")
             break
         parts.append(chunk)
-        total += len(chunk) + 1
+        total += len(chunk) + 2
 
     return "\n\n".join(parts)
 
 
-def _build_legal_profile_prompt(sample_text: str) -> str:
-    """[Flow: Step 1 (법률 분류/쟁점/요건사실 추출 지시) -> Step 2 (JSON 스키마 명시)
-          -> Step 3 (주의사항) -> Step 4 (샘플 텍스트 삽입)]
+def build_legal_profile_sample_text(page_texts: dict[int, str], max_chars: int = MAX_SAMPLE_CHARS) -> str:
+    """[Flow: Step 1 (비어 있지 않은 페이지 필터링 + 정렬)
+          -> Step 2 (문서가 짧으면 전체 사용, 길면 시작/중간/끝 샘플링)
+          -> Step 3 (예산별 페이지 텍스트 결합) -> Step 4 (샘플 문자열 반환)]
 
-    문서 샘플을 보고 법률 분야, 청구 원인, 쟁점, 법적 요건사실을 추출하는 LLM 프롬프트를 구성한다.
+    페이지별 텍스트를 최대 글자수 내에서 하나의 샘플 텍스트로 결합한다.
+    페이지 수가 많을 때는 문서의 시작, 중간, 끝 부분을 골고루 샘플링해
+    전체적인 쟁점/분야 파악에 필요한 맥락이 누락되지 않도록 한다.
+    """
+    if not page_texts:
+        return ""
+
+    pages = sorted(
+        ((page_no, text.strip()) for page_no, text in page_texts.items() if text and text.strip()),
+        key=lambda item: item[0],
+    )
+    if not pages:
+        return ""
+
+    total_pages = len(pages)
+    if total_pages <= 3 or max_chars <= 0:
+        return _concat_pages_in_order(pages, max_chars)
+
+    # 긴 문서: 시작 35%, 중간 35%, 끝 30% 예산으로 분할 샘플링
+    begin_budget = int(max_chars * 0.35)
+    middle_budget = int(max_chars * 0.35)
+    end_budget = max_chars - begin_budget - middle_budget
+
+    middle_window = max(1, total_pages // 3)
+    middle_start = max(0, total_pages // 2 - middle_window // 2)
+    end_window = max(1, total_pages // 3)
+
+    begin_pages = pages
+    middle_pages = pages[middle_start:middle_start + middle_window]
+    end_pages = pages[-end_window:]
+
+    parts: list[str] = []
+    remaining = max_chars
+    for budget, segment_pages in (
+        (begin_budget, begin_pages),
+        (middle_budget, middle_pages),
+        (end_budget, end_pages),
+    ):
+        if not segment_pages:
+            continue
+        segment_text = _concat_pages_in_order(segment_pages, min(budget, remaining))
+        if segment_text:
+            parts.append(segment_text)
+            remaining -= len(segment_text) + 2
+
+    return "\n\n".join(parts)
+
+
+def _build_legal_profile_prompt(sample_text: str, original_filename: str | None = None, total_pages: int | None = None) -> str:
+    """[Flow: Step 1 (문서 메타데이터/샘플 수집) -> Step 2 (법률 분류/쟁점/요건사실 추출 지시)
+          -> Step 3 (JSON 스키마 명시) -> Step 4 (맥락 활용 및 fallback 금지 주의사항 추가)
+          -> Step 5 (샘플 텍스트 삽입)]
+
+    문서 샘플과 파일 메타데이터를 보고 법률 분야, 청구 원인, 쟁점, 법적 요건사실을 추출하는 LLM 프롬프트를 구성한다.
     반환은 JSON 객체 하나만 한다.
     """
+    meta_parts: list[str] = []
+    if original_filename:
+        meta_parts.append(f"원본 파일명: {original_filename}")
+    if total_pages:
+        meta_parts.append(f"총 페이지 수: {total_pages}")
+    metadata_line = " | ".join(meta_parts) if meta_parts else "메타데이터 없음"
+
     return f"""아래는 법률 관련 자료에서 추출한 텍스트 샘플이다. 이 자료를 보고 다음 항목을 추출하라.
 
-1. legal_domain: 자료가 다루는 법률 분야. 다음 중 가장 적절한 것을 선택하거나, "기타"를 사용할 수 있다.
-   예: 민사, 형사, 행정, 이혼, 헌법, 노동, 지식재산권, 상사, 손해배상, 국제, 기타
-2. claim_type: 구체적인 청구 원인 또는 법적 쟁점. 예: 대여금반환, 사기죄, 행정처분취소, 재판상 이혼, 헌법소원
+중요: 문서가 길 경우 샘플은 시작/중간/끝 부분을 골고루 포함하고 있다. 전체 맥락을 종합해서 판단해야 한다.
+분류가 애매하더라도 "기타"나 "정보부족"으로 대체하지 말고, 자료에 실제로 드러난 가장 구체적인 법률 분야와 청구 원인을 적어라.
+
+{metadata_line}
+
+1. legal_domain: 자료가 다루는 법률 분야. 다음 예시 중 가장 적절한 것을 선택하되, 예시에 없더라도 구체적 용어를 사용한다.
+   예: 민사, 형사, 행정, 가사(이혼/양육/상속), 헌법, 노동, 지식재산권, 상사, 손해배상(위약금/하자보수), 부동산(임대차/매매), 채무, 국제, 보험, 세무, 형사고소
+   (단, "기타"는 자료의 내용이 법률 분류 전혀 불가능할 때만 사용)
+2. claim_type: 구체적인 청구 원인 또는 법적 쟁점. "정보부족"이나 "기타"로 쓰지 말고, 자료에 나타난 실제 청구/주장을 적어라.
+   예: 대여금반환, 사기죄, 행정처분취소, 재판상 이혼, 헌법소원, 채무부존재확인, 부당이득반환, 손해배상(교통사고/하자보수), 임대차보증금반환, 근로관계유지/해지, 산업재해
 3. claim_summary: 1~2문장으로 자료의 핵심 사실관계를 요약
 4. issues: 다투어지는 쟁점(주장)을 1~5개의 간결한 한국어 문자열로 나열
 5. legal_elements: claim_type을 입증하기 위해 필요한 법적 요건사실을 {MIN_ELEMENTS}~{MAX_ELEMENTS}개로 정리
@@ -181,19 +246,23 @@ def extract_legal_profile(
     endpoint: str,
     model: str,
     api_key: str,
+    original_filename: str | None = None,
+    total_pages: int | None = None,
     max_tokens: int = MAX_TOKENS,
 ) -> dict:
-    """[Flow: Step 1 (페이지 텍스트 샘플링) -> Step 2 (프롬프트 구성) -> Step 3 (vLLM 호출)
-          -> Step 4 (응답 파싱) -> Step 5 (legal_profile 반환 / 예외 시 빈 dict)]
+    """[Flow: Step 1 (페이지 텍스트 + 파일 메타데이터 수집) -> Step 2 (프롬프트 구성)
+          -> Step 3 (vLLM 호출) -> Step 4 (응답 파싱) -> Step 5 (legal_profile 반환 / 예외 시 빈 dict)]
 
     자료에서 LLM을 통해 법률 분야, 청구 원인, 쟁점, 법적 요건사실을 추출한다.
+    문서가 길 경우 시작/중간/끝을 골고루 샘플링하고, 원본 파일명/총 페이지 수 같은
+    맥락을 함께 주입해 "기타/정보부족"으로 빠지는 것을 방지한다.
     LLM 호출 실패나 파싱 실패 시 예외를 전파하지 않고 빈 dict를 반환한다.
     """
     sample_text = build_legal_profile_sample_text(page_texts)
     if not sample_text:
         return {}
 
-    prompt = _build_legal_profile_prompt(sample_text)
+    prompt = _build_legal_profile_prompt(sample_text, original_filename=original_filename, total_pages=total_pages)
     try:
         content, _ = call_text(prompt, endpoint, model, api_key, max_tokens=max_tokens)
         return _parse_legal_profile(content)

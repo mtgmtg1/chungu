@@ -131,6 +131,16 @@ class TestSampleTextBuilder(unittest.TestCase):
         self.assertLessEqual(len(sample), 1500)
         self.assertIn("a" * 1000, sample)
 
+    def test_build_sample_text_stratified_sampling(self):
+        """페이지 수가 많을 때 시작/중간/끝 부분을 골고루 샘플링한다."""
+        page_texts = {i: f"페이지 {i} 내용" for i in range(1, 11)}
+        sample = build_legal_profile_sample_text(page_texts, max_chars=5000)
+        self.assertIn("--- 페이지 1 ---", sample)
+        self.assertIn("--- 페이지 10 ---", sample)
+        # 중간 페이지(4~7) 중 하나는 포함되어 있어야 함
+        middle_found = any(f"--- 페이지 {i} ---" in sample for i in range(4, 8))
+        self.assertTrue(middle_found, "중간 부분 샘플이 포함되지 않음")
+
 
 if __name__ == "__main__":
     unittest.main()

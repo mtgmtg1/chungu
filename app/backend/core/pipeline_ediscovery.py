@@ -907,7 +907,14 @@ def run(
 
         # Step 2a: 법률 분야/청구 원인/쟁점/요건사실 자동 추출
         # LLM이 문서 샘플을 보고 민사/형사/행정/이혼/헌법 등 분야와 입증 요건을 추출한다.
-        legal_profile = extract_legal_profile(page_texts, endpoint, model, api_key)
+        legal_profile = extract_legal_profile(
+            page_texts,
+            endpoint,
+            model,
+            api_key,
+            original_filename=job.original_filename,
+            total_pages=len(page_texts),
+        )
         if legal_profile.get("claim_type"):
             job.element_mappings = {
                 "claim_type": legal_profile["claim_type"],

@@ -3,16 +3,15 @@
 //       -> Step 4 (중앙 양측 주장/증거 카드 + 하단 React Chrono HORIZONTAL_ALL 대시보드 렌더링)
 //       -> Step 5 (Chrono 카드/타이틀 클릭 시 SourcePanel 원문 페이지로 스크롤 연동)
 //       -> Step 6 (양측 카드 클릭 시에도 SourcePanel 원문 페이지로 스크롤 연동)
-//       -> Step 7 (쟁점 필터 토글 시 items 필터 갱신)
+//       -> Step 7 (재분석 버튼 클릭 시 컨텍스트 입력 팝업 노출)
 //       -> Step 8 (재분석 API 호출 + 폴링으로 진행상황 추적)]
 // e-Discovery GraphRAG 결과를 중앙 양측 주장/증거 카드 + 하단 React Chrono 타임라인으로 시각화하는 패널.
-// 상단: 쟁점 필터 + 메트릭, 중앙: CLIENT ARGUMENTS (PLAINTIFF) / OPPONENT REBUTTALS (DEFENDANT), 하단: 전체 타임라인.
+// 상단: 재분석 버튼만 배치. 중앙: CLIENT ARGUMENTS (PLAINTIFF) / OPPONENT REBUTTALS (DEFENDANT), 하단: 전체 타임라인.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, Loader2, RefreshCw, AlertCircle, Network } from "lucide-react";
+import { Loader2, RefreshCw, AlertCircle, Network, X } from "lucide-react";
 import { api } from "../../api.js";
-import IssueFilterBar from "../flow/IssueFilterBar.jsx";
 import ResizableCourtroomCards from "./ResizableCourtroomCards.jsx";
 import EdiscoveryTimelineStrip from "./EdiscoveryTimelineStrip.jsx";
 import { classifyNodesBySide } from "../../utils/ediscoveryTimelineUtils.js";
@@ -20,7 +19,7 @@ import { classifyNodesBySide } from "../../utils/ediscoveryTimelineUtils.js";
 /** 하단 타임라인 최소/최대 높이 (px) */
 const MIN_TIMELINE_HEIGHT = 160;
 const MAX_TIMELINE_HEIGHT = 600;
-const DEFAULT_TIMELINE_HEIGHT = 384;
+const DEFAULT_TIMELINE_HEIGHT = 280;
 
 /** entity 코드 → i18n 키 매핑. */
 const SWIMLANE_LABEL_KEYS = {
@@ -128,8 +127,10 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
 
   // React Chrono 상호작용 상태
   const [selectedNode, setSelectedNode] = useState(null);
+  const [connectionPopupNode, setConnectionPopupNode] = useState(null);
   const [selectedIssues, setSelectedIssues] = useState(new Set());
   const [issueList, setIssueList] = useState([]);
+  const [reanalyzeOpen, setReanalyzeOpen] = useState(false);
 
   // 메트릭 + 로딩 + 에러
   const [metrics, setMetrics] = useState({
@@ -172,6 +173,8 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
       setIssueList([]);
       setSelectedIssues(new Set());
       setSelectedNode(null);
+      setConnectionPopupNode(null);
+      setReanalyzeOpen(false);
       return;
     }
 
@@ -282,18 +285,6 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
   }, [jobId, loading, startPolling, context]);
 
   /**
-   * [Flow: Step 1 (쟁점 토글) -> Step 2 (선택 집합 갱신)]
-   */
-  const handleToggleIssue = useCallback((issue) => {
-    setSelectedIssues((prev) => {
-      const next = new Set(prev);
-      if (next.has(issue)) next.delete(issue);
-      else next.add(issue);
-      return next;
-    });
-  }, []);
-
-  /**
    * [Flow: Step 1 (수직 리사이즈 핸들에서 pointer 이벤트 시작)
    *       -> Step 2 (pointer move 시 타임라인 높이 갱신) -> Step 3 (pointer up 시 전역 리스너 제거)]
    */
@@ -349,6 +340,7 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
       const node = chronoItems[selected.index]?.node;
       if (node) {
         setSelectedNode(node);
+        setConnectionPopupNode(node);
         onNodeClick?.(node);
       }
     },
@@ -384,6 +376,7 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
   const handleCardClick = useCallback(
     (node) => {
       setSelectedNode(node);
+      setConnectionPopupNode(node);
       onNodeClick?.(node);
     },
     [onNodeClick]
@@ -391,56 +384,17 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
 
   return (
     <div className="h-full w-full flex flex-col relative" data-oid="ediscovery-courtroom">
-      {/* ===== 상단 (판사석): 쟁점 필터 + 메트릭 + 재분석 ===== */}
-      <div className="flex-shrink-0 flex items-center justify-between gap-3 px-3 py-2 border-b border-outline-variant bg-surface-container-lowest">
-        {/* 쟁점 필터 */}
-        {issueList.length > 0 && chronoItems.length > 0 && (
-          <div className="flex-1 overflow-x-auto">
-            <IssueFilterBar issues={issueList} selectedIssues={selectedIssues} onToggle={handleToggleIssue} />
-          </div>
-        )}
-        {/* 메트릭 + 컨텍스트 입력 + 재분석 버튼 */}
-        <div className="flex items-center gap-3 flex-shrink-0">
-          <div className="hidden md:flex items-center gap-3 text-xs text-on-surface-variant">
-            <span>
-              {t("page:result.ediscoveryTotalDocs")}: <strong className="text-on-surface">{metrics.total_docs || 0}</strong>
-            </span>
-            <span>
-              {t("page:result.ediscoveryProcessedChunks")}: <strong className="text-on-surface">{metrics.processed_chunks || 0}</strong>
-            </span>
-            {metrics.anomalies_detected ? (
-              <span className="flex items-center gap-1">
-                <AlertTriangle size={11} className="text-red-600" />
-                <strong className="text-on-surface">{metrics.anomalies_detected}</strong>
-              </span>
-            ) : null}
-          </div>
-          {/* e-Discovery 분석 컨텍스트 입력 — 프로젝트 주요/중요 사항을 분석에 반영 */}
-          <div className="hidden sm:flex flex-col items-start gap-1 w-48 md:w-64" data-oid="ediscovery-context-field">
-            <label htmlFor="ediscovery-context-input" className="text-[10px] font-medium text-on-surface-variant uppercase tracking-wide">
-              {t("page:result.ediscoveryContextLabel")}
-            </label>
-            <textarea
-              id="ediscovery-context-input"
-              value={context}
-              onChange={(e) => setContext(e.target.value)}
-              placeholder={t("page:result.ediscoveryContextPlaceholder")}
-              rows={2}
-              disabled={loading}
-              className="w-full text-xs text-on-surface bg-surface border border-outline-variant rounded-md p-1.5 focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none disabled:opacity-50"
-              data-oid="ediscovery-context-textarea"
-            />
-          </div>
-          <button
-            onClick={handleAnalyze}
-            disabled={loading}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white text-xs font-medium rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-            data-oid="ediscovery-analyze-btn"
-          >
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-            {loading ? t("page:result.ediscoveryAnalyzing") : t("page:result.ediscoveryReanalyze")}
-          </button>
-        </div>
+      {/* ===== 상단 (판사석): 재분석 버튼만 배치 ===== */}
+      <div className="flex-shrink-0 flex items-center justify-end gap-3 px-3 py-2 border-b border-outline-variant bg-surface-container-lowest">
+        <button
+          onClick={() => setReanalyzeOpen(true)}
+          disabled={loading}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white text-xs font-medium rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+          data-oid="ediscovery-analyze-btn"
+        >
+          {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+          {loading ? t("page:result.ediscoveryAnalyzing") : t("page:result.ediscoveryReanalyze")}
+        </button>
       </div>
 
       {/* ===== 중앙 — 양측 주장/증거 카드 (끝부분 드래그로 너비 조절, 원문은 왼쪽 SourcePanel에서 제공) ===== */}
@@ -495,6 +449,102 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
             <RefreshCw size={16} />
             {t("page:result.ediscoveryReanalyze")}
           </button>
+        </div>
+      )}
+
+      {/* 연결 근거 팝업 — 카드/타임라인 클릭 시 LLM이 설명한 원문 연결 이유 표시 */}
+      {connectionPopupNode && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setConnectionPopupNode(null)}
+          data-oid="ediscovery-connection-popup"
+        >
+          <div
+            className="bg-surface max-w-md w-full rounded-xl shadow-lg border border-outline-variant p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <h3 className="text-sm font-bold text-on-surface">{connectionPopupNode.data?.label || connectionPopupNode.id}</h3>
+              <button
+                onClick={() => setConnectionPopupNode(null)}
+                className="p-1 hover:bg-surface-container-high rounded text-on-surface-variant"
+                aria-label={t("page:result.ediscoveryClose")}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="text-xs text-on-surface-variant mb-3 space-y-1">
+              <p>
+                {t("page:result.ediscoveryOriginalText")}: {connectionPopupNode.data?.source_file || "-"}
+              </p>
+              <p>
+                {t("page:result.ediscoveryPage")}: {connectionPopupNode.data?.original_page || connectionPopupNode.data?.page || "-"}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] font-medium uppercase tracking-wide text-on-surface-variant mb-1">
+                {t("page:result.ediscoveryConnectionReason")}
+              </p>
+              <div className="bg-surface-container-lowest rounded-lg p-3 text-sm text-on-surface leading-relaxed max-h-60 overflow-y-auto">
+                {connectionPopupNode.data?.connection_reason || t("page:result.ediscoveryConnectionReasonEmpty")}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 재분석 컨텍스트 입력 팝업 — 긴 텍스트로 분석 맥락을 입력받는다 */}
+      {reanalyzeOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setReanalyzeOpen(false)}
+          data-oid="ediscovery-reanalyze-popup"
+        >
+          <div
+            className="bg-surface max-w-lg w-full rounded-xl shadow-lg border border-outline-variant p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <h3 className="text-sm font-bold text-on-surface">{t("page:result.ediscoveryReanalyze")}</h3>
+              <button
+                onClick={() => setReanalyzeOpen(false)}
+                className="p-1 hover:bg-surface-container-high rounded text-on-surface-variant"
+                aria-label={t("page:result.ediscoveryClose")}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-xs text-on-surface-variant mb-2">{t("page:result.ediscoveryContextLabel")}</p>
+            <textarea
+              value={context}
+              onChange={(e) => setContext(e.target.value)}
+              placeholder={t("page:result.ediscoveryContextPlaceholder")}
+              rows={8}
+              disabled={loading}
+              className="w-full text-sm text-on-surface bg-surface border border-outline-variant rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none min-h-[160px] disabled:opacity-50"
+              data-oid="ediscovery-reanalyze-textarea"
+            />
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setReanalyzeOpen(false)}
+                disabled={loading}
+                className="px-3 py-1.5 text-xs font-medium text-on-surface-variant hover:bg-surface-container-high rounded-lg transition-colors disabled:opacity-50"
+              >
+                {t("page:result.ediscoveryClose")}
+              </button>
+              <button
+                onClick={() => {
+                  setReanalyzeOpen(false);
+                  handleAnalyze();
+                }}
+                disabled={loading}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white text-xs font-medium rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                {loading ? t("page:result.ediscoveryAnalyzing") : t("page:result.ediscoveryReanalyze")}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

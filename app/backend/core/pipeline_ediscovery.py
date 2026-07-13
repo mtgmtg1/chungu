@@ -91,6 +91,7 @@ class EdiscoveryNode:
     date_text: str = ""     # 원본 날짜 표현 (예: "2023년 4월 5일")
     date_iso: str = ""      # 정규화된 ISO 날짜 (예: "2023-04-05") — 시간순 정렬용
     summary: str = ""       # 1~2문 요약 — 점진적 탐색 패널 표시용
+    connection_reason: str = "" # 해당 페이지 원문에서 이 노드를 추출한 근거 (LLM이 설명)
     parent_id: str = ""     # 소속 swimlane 노드 ID (assemble_graph에서 주입)
     source_file: str = ""   # 원본 파일명 (SourcePanel에서 파일 전환용)
     original_page: int = 0    # 원본 파일 내 페이지 번호 (1-based, 0이면 미상)
@@ -299,7 +300,8 @@ def _extract_all_source_files(job: Job) -> tuple[dict[int, str], dict[int, dict]
         if not file_page_texts:
             continue
 
-        filename = Path(info.get("path", info.get("storage_path", "unknown"))).name
+        # sourceFiles.name과 정확히 일치하도록 info.path 전체를 우선 사용한다.
+        filename = info.get("path") or info.get("storage_path") or "unknown"
         for page_no in sorted(file_page_texts.keys()):
             text = file_page_texts[page_no].strip()
             if not text:
@@ -332,7 +334,7 @@ def extract_page_texts(job: Job) -> tuple[dict[int, str], dict[int, dict]]:
     # pdf_storage_path가 폴더 prefix이면 단일 파일이 아니므로 건너뛴다.
     if job.pdf_storage_path and not job.pdf_storage_path.endswith("/"):
         pdf_bytes = _download_pdf_bytes(job)
-        filename = Path(job.pdf_storage_path).name
+        filename = job.pdf_storage_path or ""
     else:
         pdf_bytes = None
         filename = ""
@@ -356,7 +358,7 @@ def extract_page_texts(job: Job) -> tuple[dict[int, str], dict[int, dict]]:
             page_texts = _extract_page_texts_from_markdown(markdown)
             if page_texts:
                 logger.info(f"[ediscovery] 마크다운에서 {len(page_texts)}페이지 추출: {storage_path}")
-                filename = Path(storage_path).name
+                filename = storage_path or ""
                 for p in sorted(page_texts.keys()):
                     page_meta[p] = {"source_file": filename, "original_page": p}
                 return page_texts, page_meta
@@ -506,6 +508,7 @@ def _build_extraction_prompt(chunk_text: str, page_no: int, context: str = "") -
     "entity": "plaintiff | defendant | third_party | issue",
     "date": "해당 사건/증거의 날짜 표현 (예: 2023년 4월 5일, 2023-04-05). 없으면 빈 문자열",
     "summary": "1~2문장 상세 설명. label보다 구체적인 맥락을 포함",
+    "connection_reason": "해당 페이지 원문에서 이 노드를 추출한 근거. 어떤 문구/기록/사실이 이 노드의 출처인지 1~2문장으로 구체적으로 설명 (예: 'A의 진술조서 3페이지에서 A가 B에게 1천만 원을 대여했다고 진술한 내용을 근거로 함').",
     "confidence": 0.0~1.0
   }}
 ]
@@ -516,6 +519,7 @@ def _build_extraction_prompt(chunk_text: str, page_no: int, context: str = "") -
 - entity는 이 노드의 행위 주체가 누구인지 분류한다. issue 노드는 "issue", 청구/원고 측은 "plaintiff", 대응/피고 측은 "defendant", 그 외 제3자/감정인/증인/중립 기록은 "third_party".
 - date는 텍스트에 명시된 날짜를 원문 그대로 추출. 날짜가 없으면 빈 문자열.
 - summary는 label보다 구체적인 1~2문장 설명 (점진적 탐색 패널에 표시됨).
+- connection_reason은 반드시 해당 페이지 원문에 근거를 두고 작성. label/summary가 아닌, 원문과의 연결 고리를 설명.
 - confidence는 해당 노드가 텍스트에 명확히 나타나는 정도 (0.0=불확실, 1.0=명확).
 - label은 간결하게 한국어로 작성 (20자 이내 권장).
 - 텍스트에 관련 정보가 전혀 없을 때만 빈 배열 [] 반환. 정보가 있다면 반드시 노드를 생성할 것.
@@ -553,6 +557,7 @@ def _build_fallback_extraction_prompt(chunk_text: str, page_no: int, context: st
     "entity": "plaintiff | defendant | third_party | issue",
     "date": "YYYY-MM-DD 또는 원문 날짜, 없으면 빈 문자열",
     "summary": "1~2문장 상세 설명",
+    "connection_reason": "해당 페이지 원문에서 이 노드를 추출한 근거. 어떤 문구/기록/사실이 이 노드의 출처인지 1~2문장으로 구체적으로 설명.",
     "confidence": 0.0~1.0
   }}
 ]
@@ -561,6 +566,7 @@ def _build_fallback_extraction_prompt(chunk_text: str, page_no: int, context: st
 - 인물명, 회사명, 날짜, 금액, 문서명이 보이면 반드시 노드로 추출한다.
 - 관련 주체를 알 수 없으면 entity를 "third_party"로 한다.
 - 날짜가 없어도 다른 정보가 있으면 노드를 생성한다.
+- connection_reason은 반드시 해당 페이지 원문에 근거를 두고 작성.
 
 --- 텍스트 ---
 {chunk_text}
@@ -670,10 +676,12 @@ def _parse_nodes(content: str, page_no: int, source_file: str = "", original_pag
         date_iso = _normalize_date(date_text)
         entity = _classify_entity(node_type, str(item.get("entity", "")).strip())
         summary = str(item.get("summary", "")).strip()
+        connection_reason = str(item.get("connection_reason", "")).strip()
         node_id = f"{node_type}-{page_no}-{idx}"
         nodes.append(EdiscoveryNode(
             id=node_id, type=node_type, label=label, page=page_no, confidence=confidence,
             entity=entity, date_text=date_text, date_iso=date_iso, summary=summary,
+            connection_reason=connection_reason,
             source_file=source_file, original_page=original_page,
         ))
     if skipped:
@@ -893,19 +901,66 @@ def filter_nodes_by_threshold(
     return [n for n in nodes if n.confidence >= threshold]
 
 
+# 쟁점(issue) 중복 판별용 상수 -------------------------------------------------
+_ISSUE_STOPWORDS = {
+    "의", "에", "에서", "로", "으로", "는", "은", "이", "가", "을", "를", "과", "와",
+    "한", "할", "하는", "된", "된다", "되며", "및", "등", "또는", "에 대한", "에 대해",
+    "에 따른", "the", "a", "an", "and", "or", "of", "in", "on", "at", "to", "for",
+    "with", "by",
+}
+
+
+def _normalize_issue_key(label: str) -> str:
+    """공백/특수문자를 제거하고 소문자로 변환해 issue dedup 키를 만든다.
+
+    예: "계약 위반" -> "계약위반", "A의 계약 위반!" -> "A의계약위반"
+    """
+    text = re.sub(r"\s+", "", label.lower())
+    text = re.sub(r"[^\w가-힣a-z0-9]", "", text)
+    return text
+
+
+def _issue_token_set(label: str) -> set[str]:
+    """issue label을 공백/특수문자로 분리하고 불용어를 제거한 토큰 집합을 반환한다."""
+    tokens = re.split(r"\s+|[\.,;!?()\[\]{}:：\"'‘’“”]", label.lower())
+    return {t for t in tokens if t and t not in _ISSUE_STOPWORDS and len(t) > 1}
+
+
+def _is_similar_issue(label_a: str, label_b: str) -> bool:
+    """두 issue label이 의미상 동일하거나 거의 같으면 True를 반환한다.
+
+    판단 기준:
+    1. 정규화(공백/특수문자 제거) 후 동일
+    2. 한쪽이 다른 쪽에 포함
+    3. 토큰 집합의 Jaccard 유사도 >= 0.6
+    """
+    norm_a = _normalize_issue_key(label_a)
+    norm_b = _normalize_issue_key(label_b)
+    if norm_a == norm_b:
+        return True
+    if not norm_a or not norm_b:
+        return False
+    if norm_a in norm_b or norm_b in norm_a:
+        return True
+    tokens_a = _issue_token_set(label_a)
+    tokens_b = _issue_token_set(label_b)
+    if not tokens_a or not tokens_b:
+        return False
+    union = tokens_a | tokens_b
+    return len(tokens_a & tokens_b) / len(union) >= 0.6
+
+
 def _deduplicate_nodes(nodes: list[EdiscoveryNode]) -> list[EdiscoveryNode]:
-    """[Flow: Step 1 (label 기준 그룹화) -> Step 2 (같은 label+type은 confidence 최댓값으로 병합 + date/summary 보존) -> Step 3 (고유 노드 목록 반환)]
+    """[Flow: Step 1 (label 기준 그룹화 + issue는 의미 중복도 병합)
+          -> Step 2 (같은 label+type은 confidence 최댓값으로 병합 + date/summary 보존)
+          -> Step 3 (고유 노드 목록 반환)]
 
     같은 type+label을 가진 노드를 병합한다 (여러 청크에서 중복 추출 방지).
+    issue 노드는 단어 순서/공백/조사만 다른 유사 label도 하나로 묶어 쟁점 필터 중복을 줄인다.
     페이지 번호는 가장 빠른 페이지를, date는 가장 이른 날짜를, summary는 가장 긴 것을 유지한다.
     """
-    by_key: dict[tuple[str, str], EdiscoveryNode] = {}
-    for node in nodes:
-        key = (node.type, node.label.lower())
-        if key not in by_key:
-            by_key[key] = node
-            continue
-        existing = by_key[key]
+
+    def merge(existing: EdiscoveryNode, node: EdiscoveryNode) -> None:
         existing.confidence = max(existing.confidence, node.confidence)
         # 더 빠른 글로벌 페이지를 우선으로 병합; 페이지가 갱신되면 원본 파일 정보도 함께 동기화
         if node.page < existing.page:
@@ -916,9 +971,39 @@ def _deduplicate_nodes(nodes: list[EdiscoveryNode]) -> list[EdiscoveryNode]:
         if node.date_iso and (not existing.date_iso or node.date_iso < existing.date_iso):
             existing.date_iso = node.date_iso
             existing.date_text = node.date_text
-        # 더 구체적인 summary 우선
+        # 더 구체적인 summary 우선; summary가 갱신되면 연결 근거도 함께 동기화
         if len(node.summary) > len(existing.summary):
             existing.summary = node.summary
+            existing.connection_reason = node.connection_reason
+
+    by_key: dict[tuple[str, str], EdiscoveryNode] = {}
+    # issue 노드는 의미상 중복도 병합하기 위해 정규화 키로 추가 색인
+    by_issue_norm: dict[str, EdiscoveryNode] = {}
+
+    for node in nodes:
+        # issue 노드: fuzzy dedup — "계약 위반"과 "계약위반", "A의 계약 위반" 등을 하나로 묶음
+        if node.type == "issue":
+            norm = _normalize_issue_key(node.label)
+            if norm in by_issue_norm:
+                merge(by_issue_norm[norm], node)
+                continue
+            similar = next(
+                ((k, n) for k, n in by_issue_norm.items() if _is_similar_issue(node.label, n.label)),
+                None,
+            )
+            if similar:
+                _, existing = similar
+                merge(existing, node)
+                by_issue_norm[norm] = existing
+                continue
+            by_issue_norm[norm] = node
+
+        key = (node.type, node.label.lower())
+        if key not in by_key:
+            by_key[key] = node
+            continue
+        merge(by_key[key], node)
+
     return list(by_key.values())
 
 
@@ -999,6 +1084,7 @@ def assemble_graph(
                 "entity": n.entity,
                 "date": n.date_text,
                 "summary": n.summary,
+                "connection_reason": n.connection_reason,
                 "issue": n.label if n.type == "issue" else "",
                 "source_file": n.source_file,
                 "original_page": n.original_page if n.original_page > 0 else n.page,

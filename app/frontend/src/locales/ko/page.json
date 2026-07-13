@@ -425,6 +425,8 @@
     "ediscoveryResizePanels": "패널 크기 조절",
     "ediscoveryOriginalText": "원문",
     "ediscoverySelectItem": "타임라인 항목을 선택하면 정보와 원문이 여기에 표시됩니다",
+    "ediscoveryConnectionReason": "원문과의 연결 근거",
+    "ediscoveryConnectionReasonEmpty": "연결 근거가 제공되지 않았습니다.",
     "ediscoveryContextLabel": "분석 맥락",
     "ediscoveryContextPlaceholder": "프로젝트 주제나 중요한 사항을 입력하세요",
     "mapperTabGraph": "그래프",

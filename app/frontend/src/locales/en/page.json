@@ -425,6 +425,8 @@
     "ediscoveryResizePanels": "Resize panels",
     "ediscoveryOriginalText": "Original text",
     "ediscoverySelectItem": "Select a timeline item to view its details and original text",
+    "ediscoveryConnectionReason": "Connection to source",
+    "ediscoveryConnectionReasonEmpty": "No connection reason provided.",
     "ediscoveryContextLabel": "Analysis Context",
     "ediscoveryContextPlaceholder": "Enter the project topic or important details",
     "mapperTabGraph": "Graph",

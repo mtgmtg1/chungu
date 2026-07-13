@@ -7,9 +7,9 @@
 import { Chrono } from "react-chrono";
 
 /** HORIZONTAL 모드에서 카드 하나의 너비/높이 (px). */
-const CARD_WIDTH = 160;
-const CARD_HEIGHT = 90;
-const ITEM_WIDTH = 180;
+const CARD_WIDTH = 140;
+const CARD_HEIGHT = 75;
+const ITEM_WIDTH = 160;
 const MEDIA_HEIGHT = 0;
 
 /**
@@ -49,7 +49,7 @@ export default function EdiscoveryTimelineStrip({
       >
         {/* 타임라인 헤더 라벨 */}
         {items.length > 0 && (
-          <div className="absolute top-1 left-2 z-10 text-[10px] font-bold uppercase tracking-wide text-on-surface-variant bg-surface-container-lowest/80 px-2 py-0.5 rounded">
+          <div className="absolute top-0 left-2 z-10 text-[10px] font-bold uppercase tracking-wide text-on-surface-variant bg-surface-container-lowest/80 px-2 py-0.5 rounded">
             {title}
           </div>
         )}
@@ -90,10 +90,10 @@ export default function EdiscoveryTimelineStrip({
                 title: "0.6rem",
               }}
               classNames={{
-                card: "ediscovery-chrono-card max-h-[90px] overflow-hidden !p-2 !my-0 shadow-sm",
-                cardTitle: "ediscovery-chrono-card-title !mb-0.5 leading-tight",
-                cardSubTitle: "ediscovery-chrono-card-subtitle !mb-0.5 leading-tight",
-                cardDetailedText: "ediscovery-chrono-card-text line-clamp-2 !leading-tight",
+                card: "ediscovery-chrono-card max-h-[75px] overflow-hidden !p-1.5 !my-0 shadow-sm",
+                cardTitle: "ediscovery-chrono-card-title !mb-0.5 leading-tight text-[11px]",
+                cardSubTitle: "ediscovery-chrono-card-subtitle !mb-0.5 leading-tight text-[10px]",
+                cardDetailedText: "ediscovery-chrono-card-text line-clamp-1 !leading-tight text-[10px]",
                 controls: "ediscovery-chrono-controls",
                 activeProgressBar: "ediscovery-chrono-progress",
               }}

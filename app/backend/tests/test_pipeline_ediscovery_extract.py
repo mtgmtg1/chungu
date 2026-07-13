@@ -100,8 +100,8 @@ def test_extract_page_texts_fallback_to_main_pdf():
         result, page_meta = extract_page_texts(job)
 
     assert result == {1: "page1", 2: "page2"}
-    assert page_meta[1] == {"source_file": "job.pdf", "original_page": 1}
-    assert page_meta[2] == {"source_file": "job.pdf", "original_page": 2}
+    assert page_meta[1] == {"source_file": "pdfs/job.pdf", "original_page": 1}
+    assert page_meta[2] == {"source_file": "pdfs/job.pdf", "original_page": 2}
 
 
 def test_extract_all_source_files_skips_empty_and_media():

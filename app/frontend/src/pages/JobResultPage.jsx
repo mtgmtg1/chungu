@@ -695,6 +695,8 @@ export default function JobResultPage() {
               const idx = sourceFiles.findIndex((f) => f.name === sourceFileName);
               if (idx >= 0) fileIndex = idx;
             }
+            // PdfViewer의 page prop과 scrollToPage가 모두 동기화되도록 currentPage도 갱신한다.
+            setCurrentPage(page);
             sourcePanelApiRef.current.scrollToPage({ fileIndex, pageNum: page });
           }}
         />

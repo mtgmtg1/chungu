@@ -165,6 +165,52 @@ body {
   text-decoration: underline;
 }
 
+/* 노션 스타일 토글 헤딩 — 제목 옆 토글 버튼으로 아래 본문 숨기기/보이기 */
+.collapsible-heading-wrapper {
+  position: relative;
+  padding-left: 1.5rem;
+}
+
+.collapsible-heading-toggle {
+  position: absolute;
+  left: 0;
+  top: 0.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+  color: #6b7280;
+}
+
+.collapsible-heading-toggle:hover {
+  color: #1f2937;
+}
+
+.collapsible-heading-wrapper[data-collapsed="true"] .collapsible-heading-toggle {
+  transform: rotate(0deg);
+}
+
+.collapsible-heading-wrapper[data-collapsed="false"] .collapsible-heading-toggle {
+  transform: rotate(90deg);
+}
+
+/* TOC 미니맵 사이드바 */
+.toc-sidebar,
+.toc-sidebar-collapsed {
+  flex-shrink: 0;
+  height: 100%;
+}
+
+.toc-sidebar .custom-scrollbar {
+  scrollbar-width: thin;
+}
+
 /* 결제 금액 입력: 스피너 항상 표시 (모바일에서 호버 불가 문제 해결) */
 .payment-amount-input::-webkit-inner-spin-button,
 .payment-amount-input::-webkit-outer-spin-button {
@@ -286,37 +332,6 @@ body {
 .animate-dash {
   stroke-dasharray: 6 4;
   animation: dash 1s linear infinite;
-}
-
-/* e-Discovery Timeline Chrono — 아이템이 많을 때 가로 스크롤이 생기도록 루트 너비를 콘텐츠 기준으로 확장 */
-[data-oid="ediscovery-chrono"] > div {
-  width: max-content !important;
-  min-width: 100%;
-}
-
-/* e-Discovery Timeline 카드 — 높이 제한 + 상하 여백 최소화 */
-.ediscovery-chrono-card {
-  max-height: 75px !important;
-  overflow: hidden !important;
-  margin-top: 0.125rem !important;
-  margin-bottom: 0.125rem !important;
-}
-.ediscovery-chrono-card-text {
-  display: -webkit-box !important;
-  -webkit-line-clamp: 2 !important;
-  line-clamp: 2 !important;
-  -webkit-box-orient: vertical !important;
-  overflow: hidden !important;
-}
-
-/* e-Discovery Timeline Chrono — React Chrono 기본 컨테이너 상하 여백 최소화 */
-.ediscovery-chrono-section .react-chrono {
-  padding: 0 !important;
-}
-.ediscovery-chrono-section .react-chrono-horizontal .timeline-horizontal-container,
-.ediscovery-chrono-section .react-chrono-horizontal .timeline-card-content {
-  margin-top: 0.125rem !important;
-  margin-bottom: 0.125rem !important;
 }
 
 /* 마크다운 렌더링 (메시지 본문) */

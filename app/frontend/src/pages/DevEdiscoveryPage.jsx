@@ -60,6 +60,7 @@ export default function DevEdiscoveryPage() {
             jobId={SAMPLE_JOB.job_id}
             job={SAMPLE_JOB}
             onNodeClick={() => {}}
+            onJobRefresh={() => Promise.resolve()}
           />
         </QAErrorBoundary>
       </div>

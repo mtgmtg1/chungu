@@ -8,6 +8,79 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### IRAC Argument Map — 쟁점/주장/근거 3단계 행렬 + 원문 스크롤 연동 뷰 모드
+
+- **목표**: `JobResultPage`에 신규 "IRAC 공방 맵" 뷰 모드를 추가. Issue-Claim Tree API(`/legal-issue-tree`, `/legal-issue-tree/mappings`) 데이터를 좌우 분할 행렬(쟁점 ↔ 주장 ↔ 근거)로 시각화하고, 증거 클릭 시 `SourcePanel.scrollToPage`로 원본 PDF 해당 페이지로 스크롤 연동.
+- **Phase 1: 신규 컴포넌트** (`app/frontend/src/components/irac/IracArgumentMap.jsx`):
+  - `getIssueTreeMappings`로 저장된 트리 로드 → 없으면 청구 원인 입력 후 `getLegalIssueTree`로 추출.
+  - 쟁점(Issue) → 주장(Claim) → 근거(Evidence) 3열 행렬 렌더링. 원고/피고 주장을 `party` 키워드로 분류.
+  - 증거/주장/쟁점 클릭 시 우측 슬라이드인 상세 패널 + "원본 PDF 보기" 버튼 → `onNodeClick` 콜백으로 `SourcePanel` 해당 파일/페이지 스크롤.
+  - Proven/Contested/Weak 상태 뱃지는 `mapped_evidence` 개수 기반 휴리스틱 표시.
+- **Phase 2: JobResultPage 통합** (`app/frontend/src/pages/JobResultPage.jsx`):
+  - `previewMode`에 `"irac"` 추가. 뷰 모드 드롭다운에 IRAC 메뉴(`Scale` 아이콘) 추가.
+  - `renderRightContent`에 `irac` 분기 추가 — `onNodeClick`에서 `node.data.original_page`/`source_file`로 `sourcePanelApiRef.current.scrollToPage({ fileIndex, pageNum })` 호출.
+- **Phase 3: i18n** (`app/frontend/src/locales/{ko,en,ja}/page.json`): `irac`, `iracTitle`, `iracExtract`, `iracPlaintiff`, `iracDefendant`, `iracContention`, `iracEvidence`, `iracStatusProven`, `iracStatusContested`, `iracStatusWeak`, `iracDetailTitle` 등 23개 키 추가.
+- **검증**: 프론트엔드 `npm run build` 성공, `npm run test` 14 passed.
+- **배포 시 주의**: 백엔드 변경 없이 기존 `/legal-issue-tree` API 재사용. DB 마이그레이션 불필요.
+- **핵심 파일**: `app/frontend/src/components/irac/IracArgumentMap.jsx`, `app/frontend/src/pages/JobResultPage.jsx`, `app/frontend/src/locales/{ko,en,ja}/page.json`.
+
+### e-Discovery Timeline 단일화 — React Chrono 3.x alternating + 상세 카드 통합
+
+- **목표**: 기존 "상단 재분석 버튼 + 중앙 양측 주장/증거 카드 + 하단 수평 타임라인 스트립" 3단 구조를 단일 React Chrono 3.x 수직 alternating 타임라인으로 단순화. 코드 중복 제거 및 인지 과부하 감소.
+- **의존성 업그레이드**: `app/frontend/package.json` — `react-chrono` 2.6.1 → `^3.3.0`.
+- **Phase 1: 삭제 컴포넌트** (`app/frontend/src/components/timeline/`):
+  - `CourtroomColumn.jsx`/`.test.jsx`, `EdiscoveryTimelineStrip.jsx`/`.test.jsx`, `ResizableCourtroomCards.jsx`/`.test.jsx` 제거 — 양측 카드/수평 스트립/리사이즈 래퍼 기능이 Chrono 기본 UI로 흡수.
+  - `app/frontend/src/utils/ediscoveryTimelineUtils.js`(`classifyNodesBySide`), `app/frontend/src/utils/ediscoveryToTimeline.js` 제거 — 변환 로직이 `EdiscoveryTimelinePanel` 내부로 인라인.
+- **Phase 2: EdiscoveryTimelinePanel 재작성** (`app/frontend/src/components/timeline/EdiscoveryTimelinePanel.jsx`):
+  - `<Chrono mode="VERTICAL_ALTERNATING">`로 전체 영역 렌더링. `media` prop으로 썸네일/이미지 표시.
+  - 카드/타이틀/포인트 클릭 시 상위 `onItemClick(node)` 콜백 → 미리보기 패널 + SourcePanel 연동.
+  - `applyIssueDimmingToNodes`/`sortByDateOrPage` 헬퍼 제거, `getNodePage`/`findSourceFile` 헬퍼 추가.
+  - 폴링 로직(재분석)은 `EDiscoveryViewer`로 이동.
+- **Phase 3: 신규 컴포넌트** (`app/frontend/src/components/timeline/`):
+  - `EdiscoveryDetailCard.jsx` — 선택 노드 + 미리보기 메타데이터 + 원문 텍스트를 좌우 분할 카드로 표시. 드래그 핸들로 좌우 비율 조절. `marked`로 원문 렌더링, 페이지 마커 제거.
+  - `TimelinePreviewCard.jsx` — 노드 미리보기 썸네일 카드.
+- **Phase 4: EDiscoveryViewer 고도화** (`app/frontend/src/components/EDiscoveryViewer.jsx`):
+  - 헤더 재분석 버튼 + 컨텍스트 입력 팝업 + 폴링(`POLL_TIMEOUT_MS=600000`, `POLL_INTERVAL_MS=2000`) 추가.
+  - `preview API`로 `source_files` 로드하여 자식 컴포넌트에 전달.
+  - `previewNode` 상태로 상세 카드 표시, 원문 `result_markdown` 렌더링.
+  - `onJobRefresh` prop 추가 — 재분석 완료 시 상위 `loadJob` 호출.
+- **Phase 5: DevEdiscoveryTimelinePage 단순화** (`app/frontend/src/pages/DevEdiscoveryTimelinePage.jsx`):
+  - `EdiscoveryTimelineStrip` 직접 렌더링 제거 → `EdiscoveryTimelinePanel`에 `SAMPLE_JOB` 전달.
+- **Phase 6: DevEdiscoveryPage** (`app/frontend/src/pages/DevEdiscoveryPage.jsx`): `onJobRefresh={() => Promise.resolve()}` prop 추가.
+- **Phase 7: index.css 정리** (`app/frontend/src/index.css`): `ediscovery-chrono` 관련 커스텀 CSS(가로 스크롤, 카드 높이 제한, React Chrono 기본 여백 오버라이드) 제거.
+- **검증**: 프론트엔드 `npm run build` 성공, `npm run test` 14 passed.
+- **배포 시 주의**: 프론트엔드 전용 변경. 백엔드/DB 변경 없음.
+- **핵심 파일**: `app/frontend/src/components/timeline/EdiscoveryTimelinePanel.jsx`, `app/frontend/src/components/timeline/EdiscoveryDetailCard.jsx`, `app/frontend/src/components/timeline/TimelinePreviewCard.jsx`, `app/frontend/src/components/EDiscoveryViewer.jsx`, `app/frontend/src/pages/DevEdiscoveryTimelinePage.jsx`, `app/frontend/src/pages/DevEdiscoveryPage.jsx`, `app/frontend/src/index.css`, `app/frontend/package.json`.
+
+### SimpleEditor 고도화 — 노션 스타일 토글 헤딩 + TOC 미니맵 사이드바
+
+- **목표**: TipTap 에디터에 노션 스타일 "제목 토글로 아래 본문 숨기기/보이기" 기능과 우측 TOC(목차) 미니맵 사이드바를 추가. 긴 문서 작성 시 탐색성 개선.
+- **의존성 추가** (`app/frontend/package.json`):
+  - `@tiptap/extension-heading@^3.27.1` — 커스텀 헤딩 확장 베이스.
+  - `@tiptap/extension-table-of-contents@^3.27.1` — TOC anchor 수집.
+  - `@tiptap/extension-unique-id@^3.27.1` — 헤딩에 고유 id 부여(TOC 스크롤 대상).
+- **Phase 1: CollapsibleHeading 확장** (`app/frontend/src/components/editor/CollapsibleHeading.jsx` 신규):
+  - `heading` 노드에 `collapsed` boolean attribute 추가. `ReactNodeViewRenderer`로 토글 버튼 + 본문 렌더링.
+  - ProseMirror plugin으로 `view.update` 후 같거나 상위 레벨의 다음 헤딩이 나올 때까지 형제 블록 DOM을 숨김.
+  - doc 구조는 변경하지 않고 view 레이어에서만 숨김 → `marked`/`turndown` 마크다운 라운드트립에 영향 없음.
+- **Phase 2: TocSidebar 컴포넌트** (`app/frontend/src/components/editor/TocSidebar.jsx` 신규):
+  - `TableOfContents` 확장의 `onUpdate`에서 anchors 배열 수신.
+  - heading depth별 들여쓰기 + 활성 heading 하이라이트. 클릭 시 해당 heading id로 `scrollIntoView`.
+  - 펼침/접힘 토글 버튼.
+- **Phase 3: SimpleEditor 통합** (`app/frontend/src/components/SimpleEditor.jsx`):
+  - `StarterKit.configure({ heading: false })` 후 `CollapsibleHeading.configure({ levels: [1,2,3,4] })` + `UniqueID` + `TableOfContents` 확장 추가.
+  - `expandAllHeadings`/`collapseAllHeadings` 헬퍼 — doc 내 모든 heading 노드 순회하며 `collapsed` 일괄 트랜잭션.
+  - 툴바에 `ChevronsDownUp`/`ChevronsUpDown` 버튼 추가.
+  - 레이아웃을 `flex`로 변경 — 좌측 에디터 콘텐츠 + 우측 `TocSidebar`.
+- **Phase 4: index.css 스타일** (`app/frontend/src/index.css`):
+  - `.collapsible-heading-wrapper`/`.collapsible-heading-toggle` — 토글 버튼 절대 위치 + 회전 애니메이션.
+  - `.toc-sidebar`/`.toc-sidebar-collapsed` — 사이드바 레이아웃.
+- **Phase 5: 테스트** (`app/frontend/src/components/editor/__tests__/collapsibleHeading.test.jsx`): `getHeadingLevel` 헬퍼 단위 테스트.
+- **Phase 6: 신규 에셋** (`app/frontend/public/assets/`): `audio-thumbnail.svg`, `pdf-thumbnail.svg` — 미디어 타입 썸네일.
+- **검증**: 프론트엔드 `npm run build` 성공, `npm run test` 14 passed.
+- **배포 시 주의**: 프론트엔드 전용 변경. 백엔드/DB 변경 없음.
+- **핵심 파일**: `app/frontend/src/components/editor/CollapsibleHeading.jsx`, `app/frontend/src/components/editor/TocSidebar.jsx`, `app/frontend/src/components/SimpleEditor.jsx`, `app/frontend/src/index.css`, `app/frontend/package.json`, `app/frontend/public/assets/audio-thumbnail.svg`, `app/frontend/public/assets/pdf-thumbnail.svg`.
+
 ### 통합 크레딧(포인트) 시스템 마이그레이션 — 페이지/오디오/비디오/에이전트 스텝 통합 과금
 
 - **목표**: 기존 개별 사용량 제한(기본/프리미엄 페이지, 오디오/비디오 초)을 하나의 `points_balance` 크레딧 잔액으로 통합. 페이지/오디오/비디오/AI 에이전트 스텝 모두 포인트에서 차감되며, 월간 구독으로 크레딧을 지급한다.

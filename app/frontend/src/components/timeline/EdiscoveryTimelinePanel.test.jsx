@@ -1,52 +1,67 @@
-// [Flow: Step 1 (가짜 e-Discovery graph 노드 생성)
-//       -> Step 2 (classifyNodesBySide 호출) -> Step 3 (원고/피고 측 주장/증거 분류 결과 검증)]
-// EdiscoveryTimelinePanel이 graph 노드를 원고/피고 양측 주장·증거로 올바르게 분류하는지 검증.
+// [Flow: Step 1 (가짜 e-Discovery graph 노드 + sourceFiles 생성)
+//       -> Step 2 (buildChronoItem 호출) -> Step 3 (media prop 생성 여부 및 타입 검증)]
+// EdiscoveryTimelinePanel의 buildChronoItem이 sourceFiles 타입에 따라 올바른 React Chrono media prop을 생성하는지 검증.
 
 import { describe, it, expect } from "vitest";
-import { classifyNodesBySide } from "../../utils/ediscoveryTimelineUtils.js";
+import { buildChronoItem } from "./EdiscoveryTimelinePanel.jsx";
 
-const nodes = [
-  { id: "p-claim", type: "plaintiff", data: { label: "원고 주장", page: 2, entity: "plaintiff" } },
-  { id: "d-claim", type: "defendant", data: { label: "피고 반박", page: 4, entity: "defendant" } },
-  { id: "p-ev", type: "evidence", data: { label: "원고 증거", page: 3, entity: "plaintiff" } },
-  { id: "d-ev", type: "evidence", data: { label: "피고 증거", page: 5, entity: "defendant" } },
-  { id: "neutral-ev", type: "evidence", data: { label: "중립 증거", page: 6, entity: "third_party" } },
-  { id: "issue", type: "issue", data: { label: "쟁점", page: 1 } },
-  { id: "legacy", type: "evidence", data: { label: "구식 증거", page: 7 } },
-];
+/** 테스트용 i18n translate 함수. */
+const t = (key) => key;
 
-describe("classifyNodesBySide", () => {
-  it("원고 측에는 plaintiff 타입 + plaintiff entity 증거를 포함한다", () => {
-    const { plaintiff } = classifyNodesBySide(nodes);
-    const ids = plaintiff.claims.map((n) => n.id).concat(plaintiff.evidence.map((n) => n.id));
-    expect(ids).toContain("p-claim");
-    expect(ids).toContain("p-ev");
-    expect(ids).not.toContain("d-claim");
-    expect(ids).not.toContain("d-ev");
+/**
+ * 테스트용 e-Discovery 노드를 생성한다.
+ *
+ * @param {string} id - 노드 ID
+ * @param {string} type - 노드 타입
+ * @param {string} entity - entity 값
+ * @param {number} page - 페이지 번호
+ * @param {string} label - 라벨
+ * @returns {Object} e-Discovery graph 노드
+ */
+function baseNode(id, type, entity, page, label = id) {
+  return {
+    id,
+    type,
+    data: { label, page, entity, summary: `${label} summary` },
+  };
+}
+
+describe("buildChronoItem", () => {
+  it("image sourceFile이면 IMAGE media prop을 생성한다", () => {
+    const node = baseNode("img-1", "evidence", "third_party", 1, "image evidence");
+    const sourceFiles = [{ page_num: 1, type: "image", url: "https://example.com/img.jpg", name: "img.jpg" }];
+    const item = buildChronoItem(node, sourceFiles, t);
+    expect(item.media).toEqual({ type: "IMAGE", source: { url: "https://example.com/img.jpg" }, name: "img.jpg" });
   });
 
-  it("피고 측에는 defendant 타입 + defendant entity 증거를 포함한다", () => {
-    const { defendant } = classifyNodesBySide(nodes);
-    const ids = defendant.claims.map((n) => n.id).concat(defendant.evidence.map((n) => n.id));
-    expect(ids).toContain("d-claim");
-    expect(ids).toContain("d-ev");
-    expect(ids).not.toContain("p-claim");
-    expect(ids).not.toContain("p-ev");
+  it("video sourceFile이면 VIDEO media prop을 생성한다", () => {
+    const node = baseNode("vid-1", "evidence", "third_party", 2, "video evidence");
+    const sourceFiles = [{ page_num: 2, type: "video", url: "https://example.com/vid.mp4", name: "vid.mp4" }];
+    const item = buildChronoItem(node, sourceFiles, t);
+    expect(item.media).toEqual({
+      type: "VIDEO",
+      source: { url: "https://example.com/vid.mp4", type: "mp4" },
+      name: "vid.mp4",
+    });
   });
 
-  it("entity가 없는 증거는 제3자/중립으로 분류되지 않는다", () => {
-    const { plaintiff, defendant } = classifyNodesBySide(nodes);
-    const allIds = plaintiff.claims.concat(plaintiff.evidence, defendant.claims, defendant.evidence).map((n) => n.id);
-    expect(allIds).not.toContain("neutral-ev");
-    expect(allIds).not.toContain("legacy");
-    expect(allIds).not.toContain("issue");
+  it("pdf sourceFile이면 PDF 썸네일 media prop을 생성한다", () => {
+    const node = baseNode("pdf-1", "evidence", "third_party", 3, "pdf evidence");
+    const sourceFiles = [{ page_num: 3, type: "pdf", url: "https://example.com/doc.pdf", name: "doc.pdf" }];
+    const item = buildChronoItem(node, sourceFiles, t);
+    expect(item.media).toEqual({ type: "IMAGE", source: { url: "/assets/pdf-thumbnail.svg" }, name: "doc.pdf" });
   });
 
-  it("빈 배열 입력 시 양측 모두 빈 claims/evidence를 반환한다", () => {
-    const result = classifyNodesBySide([]);
-    expect(result.plaintiff.claims).toEqual([]);
-    expect(result.plaintiff.evidence).toEqual([]);
-    expect(result.defendant.claims).toEqual([]);
-    expect(result.defendant.evidence).toEqual([]);
+  it("audio sourceFile이면 오디오 썸네일 media prop을 생성한다", () => {
+    const node = baseNode("aud-1", "evidence", "third_party", 4, "audio evidence");
+    const sourceFiles = [{ page_num: 4, type: "audio", url: "https://example.com/aud.mp3", name: "aud.mp3" }];
+    const item = buildChronoItem(node, sourceFiles, t);
+    expect(item.media).toEqual({ type: "IMAGE", source: { url: "/assets/audio-thumbnail.svg" }, name: "aud.mp3" });
+  });
+
+  it("sourceFiles가 없으면 media prop이 없다", () => {
+    const node = baseNode("empty-1", "issue", "issue", 5, "empty issue");
+    const item = buildChronoItem(node, [], t);
+    expect(item.media).toBeUndefined();
   });
 });

@@ -19,6 +19,7 @@ import {
   Network,
   Puzzle,
   RefreshCw,
+  Scale,
   Trash2,
   Workflow,
   XCircle } from
@@ -34,6 +35,7 @@ import SandboxBrowser from "../components/SandboxBrowser.jsx";
 import UploadPopup from "../components/UploadPopup.jsx";
 import FlowViewer from "../components/FlowViewer.jsx";
 import EDiscoveryViewer from "../components/EDiscoveryViewer.jsx";
+import IracArgumentMap from "../components/irac/IracArgumentMap.jsx";
 import { api } from "../api.js";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { SkeletonPageResult } from "../components/Skeleton.jsx";
@@ -91,7 +93,7 @@ export default function JobResultPage() {
     if (node) setRightPanelHandle(node);
   }, []);
 
-  const [previewMode, setPreviewMode] = useState("markdown"); // "markdown" | "xlsxBasic" | "xlsxAdvanced" | "flow" | "ediscoveryTimeline" | "ediscoveryMapper"
+  const [previewMode, setPreviewMode] = useState("markdown"); // "markdown" | "xlsxBasic" | "xlsxAdvanced" | "flow" | "ediscoveryTimeline" | "ediscoveryMapper" | "irac"
   const [basicUrl, setBasicUrl] = useState(null);
   const [advancedUrl, setAdvancedUrl] = useState(null);
   const [xlsxAdvancedPolling, setXlsxAdvancedPolling] = useState(false);
@@ -683,6 +685,7 @@ export default function JobResultPage() {
           jobId={jobId}
           job={job}
           defaultTab={defaultTab}
+          onJobRefresh={loadJob}
           onNodeClick={(node) => {
             // [Flow: e-Discovery 노드 클릭 -> SourcePanel 원본 파일/페이지로 스크롤]
             // 백엔드가 source_file/original_page를 제공하면 해당 파일로 전환, 아니면 기존 page만 사용.
@@ -696,6 +699,28 @@ export default function JobResultPage() {
               if (idx >= 0) fileIndex = idx;
             }
             // PdfViewer의 page prop과 scrollToPage가 모두 동기화되도록 currentPage도 갱신한다.
+            setCurrentPage(page);
+            sourcePanelApiRef.current.scrollToPage({ fileIndex, pageNum: page });
+          }}
+        />
+      );
+    }
+    if (previewMode === "irac") {
+      return (
+        <IracArgumentMap
+          jobId={jobId}
+          job={job}
+          onNodeClick={(node) => {
+            // [Flow: IRAC 증거 클릭 -> SourcePanel 원본 파일/페이지로 스크롤]
+            const page = node.data?.original_page || node.data?.page;
+            const sourceFileName = node.data?.source_file;
+            if (!page || !sourcePanelApiRef.current) return;
+
+            let fileIndex = 0;
+            if (sourceFileName && sourceFiles?.length > 1) {
+              const idx = sourceFiles.findIndex((f) => f.name === sourceFileName);
+              if (idx >= 0) fileIndex = idx;
+            }
             setCurrentPage(page);
             sourcePanelApiRef.current.scrollToPage({ fileIndex, pageNum: page });
           }}
@@ -890,6 +915,7 @@ export default function JobResultPage() {
             {previewMode === "ediscoveryTimeline" && t("page:result.ediscoveryTimeline")}
             {previewMode === "ediscoveryMapper" && t("page:result.ediscoveryMapper")}
             {previewMode === "ediscovery" && t("page:result.ediscovery")}
+            {previewMode === "irac" && t("page:result.irac")}
             <ChevronDown size={14} />
           </button>
           <div
@@ -944,6 +970,14 @@ export default function JobResultPage() {
               data-oid="view-mode-ediscovery-mapper">
               <Puzzle size={16} className="text-primary flex-shrink-0" />
               {t("page:result.ediscoveryMapper")}
+            </button>
+            <div className="h-px bg-outline-variant my-1" />
+            <button
+              onClick={() => setPreviewMode("irac")}
+              className={`flex items-center gap-2 text-left px-4 py-2 text-sm hover:bg-surface-container-high text-on-surface ${previewMode === "irac" ? "font-bold text-primary" : ""}`}
+              data-oid="view-mode-irac">
+              <Scale size={16} className="text-primary flex-shrink-0" />
+              {t("page:result.irac")}
             </button>
           </div>
         </div>

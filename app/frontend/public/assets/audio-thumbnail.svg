@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80" fill="none">
+  <rect width="120" height="80" rx="8" fill="#f8fafc"/>
+  <circle cx="60" cy="38" r="20" fill="#e2e8f0"/>
+  <path d="M53 32v12l10-6-10-6z" fill="#64748b"/>
+  <text x="60" y="68" text-anchor="middle" font-size="12" fill="#64748b" font-family="system-ui, sans-serif">AUDIO</text>
+</svg>

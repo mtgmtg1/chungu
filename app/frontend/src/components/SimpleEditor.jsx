@@ -17,6 +17,8 @@ import TaskItem from "@tiptap/extension-task-item";
 import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
+import { TableOfContents } from "@tiptap/extension-table-of-contents";
+import { UniqueID } from "@tiptap/extension-unique-id";
 import { marked } from "marked";
 import TurndownService from "turndown";
 import {
@@ -40,9 +42,13 @@ import {
   Heading1,
   Heading2,
   Heading3,
-  Heading4 } from
+  Heading4,
+  ChevronsDownUp,
+  ChevronsUpDown } from
 "lucide-react";
 import AiMenu from "./AiMenu.jsx";
+import CollapsibleHeading from "./editor/CollapsibleHeading.jsx";
+import TocSidebar from "./editor/TocSidebar.jsx";
 
 
 const turndown = new TurndownService({
@@ -150,6 +156,8 @@ ref)
 {
   const { t } = useTranslation();
   const [headingOpen, setHeadingOpen] = useState(false);
+  const [anchors, setAnchors] = useState([]);
+  const [tocOpen, setTocOpen] = useState(true);
   const containerRef = useRef(null);
   const observedPageRef = useRef(null);
   const onChangeRef = useRef(onChange);
@@ -167,7 +175,12 @@ ref)
 
   const editor = useEditor({
     extensions: [
-    StarterKit,
+    StarterKit.configure({ heading: false }),
+    CollapsibleHeading.configure({ levels: [1, 2, 3, 4] }),
+    UniqueID.configure({ types: ["heading"] }),
+    TableOfContents.configure({
+      onUpdate: (content) => setAnchors(content),
+    }),
     PageMarkerNode,
     Table.configure({ resizable: true }),
     TableRow,
@@ -304,6 +317,36 @@ ref)
     focus().
     insertTable({ rows: 3, cols: 3, withHeaderRow: true }).
     run();
+  };
+
+  /**
+   * [Flow: Step 1 (doc 내 모든 heading 노드 순회) -> Step 2 (collapsed=false로 일괄 트랜잭션) -> Step 3 (plugin이 DOM 표시 적용)]
+   */
+  const expandAllHeadings = () => {
+    if (!editor) return;
+    const tr = editor.state.tr;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === "heading" && node.attrs.collapsed) {
+        tr.setNodeMarkup(pos, undefined, { ...node.attrs, collapsed: false });
+      }
+      return true;
+    });
+    if (tr.docChanged) editor.view.dispatch(tr);
+  };
+
+  /**
+   * [Flow: Step 1 (doc 내 모든 heading 노드 순회) -> Step 2 (collapsed=true로 일괄 트랜잭션) -> Step 3 (plugin이 DOM 숨김 적용)]
+   */
+  const collapseAllHeadings = () => {
+    if (!editor) return;
+    const tr = editor.state.tr;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === "heading" && !node.attrs.collapsed) {
+        tr.setNodeMarkup(pos, undefined, { ...node.attrs, collapsed: true });
+      }
+      return true;
+    });
+    if (tr.docChanged) editor.view.dispatch(tr);
   };
 
   const headingIcon = editor.isActive("heading", { level: 1 }) ?
@@ -480,27 +523,46 @@ ref)
           data-oid="5ow0_b6">
           <TableIcon size={18} data-oid="k-unaiu" />
         </ToolbarButton>
+        <ToolbarDivider data-oid="toggle-divider" />
+        <ToolbarButton
+          onClick={expandAllHeadings}
+          data-oid="expand-all">
+          <ChevronsDownUp size={18} data-oid="expand-all-icon" />
+        </ToolbarButton>
+        <ToolbarButton
+          onClick={collapseAllHeadings}
+          data-oid="collapse-all">
+          <ChevronsUpDown size={18} data-oid="collapse-all-icon" />
+        </ToolbarButton>
       </div>
-      <div
-        className="flex-1 overflow-y-auto p-6 custom-scrollbar"
-        data-oid="qjrci2n">
+      <div className="flex-1 flex overflow-hidden" data-oid="editor-toc-layout">
+        <div
+          className="flex-1 overflow-y-auto p-6 custom-scrollbar"
+          data-oid="qjrci2n">
 
-        <EditorContent
+          <EditorContent
+            editor={editor}
+            className="prose max-w-none focus:outline-none"
+            data-oid="adafms.">
+
+            {editor && (
+              <BubbleMenu
+                editor={editor}
+                tippyOptions={{ duration: 100, placement: "top-start" }}
+                className="flex items-center gap-1 px-2 py-1.5 bg-white rounded-lg shadow-lg border border-outline-variant z-50">
+
+                <AiMenu editor={editor} editable={editable} fullMarkdown={markdown} />
+              </BubbleMenu>
+            )}
+          </EditorContent>
+
+        </div>
+        <TocSidebar
+          anchors={anchors}
           editor={editor}
-          className="prose max-w-none focus:outline-none"
-          data-oid="adafms.">
-
-          {editor && (
-            <BubbleMenu
-              editor={editor}
-              tippyOptions={{ duration: 100, placement: "top-start" }}
-              className="flex items-center gap-1 px-2 py-1.5 bg-white rounded-lg shadow-lg border border-outline-variant z-50">
-
-              <AiMenu editor={editor} editable={editable} fullMarkdown={markdown} />
-            </BubbleMenu>
-          )}
-        </EditorContent>
-
+          open={tocOpen}
+          onToggle={() => setTocOpen((v) => !v)}
+          data-oid="toc-sidebar-comp" />
       </div>
     </div>);
 

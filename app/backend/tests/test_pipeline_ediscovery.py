@@ -17,6 +17,10 @@ from backend.core.pipeline_ediscovery import (
     _parse_param_suggestion,
     _clamp_suggested_params,
     _suggest_params,
+    _build_fallback_extraction_prompt,
+    _extract_fallback_nodes,
+    _parse_nodes,
+    ChildChunk,
     DEFAULT_CHUNK_SIZE,
     DEFAULT_THRESHOLD,
 )
@@ -96,6 +100,80 @@ def test_clamp_suggested_params_max_docs_defaults_to_total_pages():
     """max_docs가 None이면 전체 페이지 수를 사용한다."""
     result = _clamp_suggested_params({}, total_pages=42)
     assert result["max_docs"] == 42
+
+
+def test_build_fallback_prompt_extracts_entities_from_logs():
+    """폴백 프롬프트가 일지/명단/거래내역에서도 인물·회사·날짜·문서 추출을 지시한다."""
+    prompt = _build_fallback_extraction_prompt("일부 텍스트", page_no=3)
+    assert "일지" in prompt or "명단" in prompt
+    assert "issue | plaintiff | defendant | evidence" in prompt
+    assert "3페이지" in prompt
+
+
+def test_extract_fallback_nodes_parses_llm_response():
+    """폴백 추출이 LLM JSON 응답을 정확히 노드로 변환한다."""
+    chunks = [
+        ChildChunk(page_no=1, text="A회사가 B에게 2023-04-05 1천만 원을 대여함", index=0),
+        ChildChunk(page_no=2, text="C가 D업체와 계약을 체결함", index=0),
+    ]
+
+    def fake_call_text(prompt: str, *args, **kwargs):
+        return (
+            '[{"type":"plaintiff","label":"A회사","entity":"plaintiff","date":"","summary":"대여금 채권자","confidence":0.9},'
+            '{"type":"defendant","label":"B","entity":"defendant","date":"","summary":"대여금 채무자","confidence":0.8},'
+            '{"type":"issue","label":"2023-04-05 대여","entity":"issue","date":"2023-04-05","summary":"1천만 원 대여 사건","confidence":0.95}]',
+            None,
+        )
+
+    with patch("backend.core.pipeline_ediscovery.call_text", side_effect=fake_call_text):
+        nodes = _extract_fallback_nodes(chunks, "http://endpoint", "model", "key")
+
+    assert len(nodes) == 3
+    assert any(n.label == "A회사" and n.type == "plaintiff" for n in nodes)
+    assert any(n.label == "B" and n.type == "defendant" for n in nodes)
+    assert any(n.label == "2023-04-05 대여" and n.type == "issue" for n in nodes)
+
+
+def test_extract_fallback_nodes_limits_sample_size():
+    """폴백 추출은 비용 폭증을 막기 위해 최대 max_sample개 청크만 LLM에 보낸다."""
+    chunks = [ChildChunk(page_no=i, text=f"page {i}", index=0) for i in range(1, 21)]
+    call_count = 0
+
+    def fake_call_text(prompt: str, *args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return "[]", None
+
+    with patch("backend.core.pipeline_ediscovery.call_text", side_effect=fake_call_text):
+        _extract_fallback_nodes(chunks, "http://endpoint", "model", "key", max_sample=5)
+
+    assert call_count == 5
+
+
+def test_extract_fallback_nodes_gracefully_handles_invalid_json():
+    """LLM 응답이 JSON이 아니면 빈 노드 목록을 반환한다."""
+    chunks = [ChildChunk(page_no=1, text="text", index=0)]
+
+    with patch("backend.core.pipeline_ediscovery.call_text", return_value=("이것은 JSON이 아님", None)):
+        nodes = _extract_fallback_nodes(chunks, "http://endpoint", "model", "key")
+
+    assert nodes == []
+
+
+def test_parse_nodes_accepts_single_object():
+    """LLM이 단일 JSON 객체를 반환해도 리스트로 감싸서 파싱한다."""
+    content = '{"type":"issue","label":"계약 위반","entity":"issue","date":"","summary":"","confidence":0.9}'
+    nodes = _parse_nodes(content, page_no=1)
+    assert len(nodes) == 1
+    assert nodes[0].label == "계약 위반"
+
+
+def test_parse_nodes_skips_invalid_type():
+    """허용되지 않은 type은 무시하고 유효한 노드만 반환한다."""
+    content = '[{"type":"invalid","label":"x"},{"type":"evidence","label":"계약서","entity":"third_party"}]'
+    nodes = _parse_nodes(content, page_no=1)
+    assert len(nodes) == 1
+    assert nodes[0].type == "evidence"
 
 
 def test_clamp_suggested_params_max_docs_capped_by_total_pages():

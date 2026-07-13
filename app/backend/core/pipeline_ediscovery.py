@@ -424,20 +424,27 @@ def _classify_entity(node_type: str, item_entity: str) -> str:
 
 
 def _build_extraction_prompt(chunk_text: str, page_no: int) -> str:
-    """[Flow: Step 1 (노드 타입/필드 안내) -> Step 2 (JSON 스키마 명시) -> Step 3 (주의사항) -> Step 4 (청크 텍스트 삽입)]
+    """[Flow: Step 1 (노드 타입/필드 안내) -> Step 2 (JSON 스키마 명시)
+          -> Step 3 (일지/명단/계약 등 비소송 자료 포함 주의사항) -> Step 4 (청크 텍스트 삽입)]
 
     청크 텍스트에서 쟁점/원고/피고/증거 노드를 추출하는 LLM 프롬프트를 구성한다.
     시간순 타임라인 + 주체별 스윔레인 배치를 위해 entity/date/summary 필드를 함께 추출한다.
     반환 JSON 스키마는 프론트엔드/AI 백엔드 데이터 계약을 따른다.
     """
-    return f"""아래는 법률 문서의 {page_no}페이지에서 추출한 텍스트 일부이다.
-이 텍스트에서 다음 4가지 유형의 노드를 추출하라:
-- issue: 문서의 핵심 쟁점(법적 다툼의 대상이 되는 사실/권리)
-- plaintiff: 원고(소송을 제기한 측)의 이름/주장
-- defendant: 피고(소송을 대응하는 측)의 이름/주장
-- evidence: 증거(문서/증인/감정 결과 등)
+    return f"""아래는 문서의 {page_no}페이지(글로벌 페이지 번호)에서 추출한 텍스트 일부이다.
+이 텍스트에서 다음 4가지 유형의 노드를 추출하라.
+소송 서류뿐 아니라 일지, 명단, 계약서, 보고서, 회의록, 거래 내역 등에 등장하는 인물, 회사, 날짜, 거래, 문서도 아래 기준에 맞춰 반드시 추출한다.
 
-각 노드는 다음 JSON 형식으로 반환하라. 결과는 JSON 배열만 반환한다 (다른 설명 금지).
+- issue: 문서의 핵심 쟁점, 거래, 사건, 갈등, 또는 중요한 사실관계
+  예: "2023-04-05 대여금 반환 청구", "A업체와의 계약 위반", "B인의 퇴사 및 비밀유지 위반 의혹"
+- plaintiff: 청구/주장/요구를 하는 측, 또는 손해를 입었다고 하는 측
+  예: 원고, 채권자, 고소인, 감사 요청자, 계약 해제를 요구한 측
+- defendant: 청구에 대응하거나 부인/방어하는 측
+  예: 피고, 채무자, 피고소인, 계약 해제에 이의를 제기한 측
+- evidence: 사실관계를 뒷받침하는 문서, 기록, 물증, 증언
+  예: 일지, 명단, 거래내역서, 이메일, 녹음, 사진, 계약서, 감정서
+
+각 노드는 다음 JSON 형식으로 반환하라. 결과는 JSON 배열만 반환한다 (다른 설명, 마크다운, 코드 펜스 금지).
 [
   {{
     "type": "issue | plaintiff | defendant | evidence",
@@ -450,16 +457,96 @@ def _build_extraction_prompt(chunk_text: str, page_no: int) -> str:
 ]
 
 주의:
-- entity는 이 노드의 행위 주체가 누구인지 분류한다. issue 노드는 "issue", 원고 관련은 "plaintiff", 피고 관련은 "defendant", 그 외 제3자/감정인/증인은 "third_party".
+- 텍스트에 등장하는 사람 이름, 회사/기관명, 날짜, 금액, 문서/기록 이름은 반드시 노드로 추출한다.
+- 일지/명단/거래내역이라도 특정 인물/회사/날짜/사실이 언급되면 plaintiff/defendant/issue/evidence로 분류한다.
+- entity는 이 노드의 행위 주체가 누구인지 분류한다. issue 노드는 "issue", 청구/원고 측은 "plaintiff", 대응/피고 측은 "defendant", 그 외 제3자/감정인/증인/중립 기록은 "third_party".
 - date는 텍스트에 명시된 날짜를 원문 그대로 추출. 날짜가 없으면 빈 문자열.
 - summary는 label보다 구체적인 1~2문장 설명 (점진적 탐색 패널에 표시됨).
 - confidence는 해당 노드가 텍스트에 명확히 나타나는 정도 (0.0=불확실, 1.0=명확).
-- label은 간결하게 한국어로 작성.
-- 텍스트에 해당 정보가 없으면 빈 배열 [] 반환.
+- label은 간결하게 한국어로 작성 (20자 이내 권장).
+- 텍스트에 관련 정보가 전혀 없을 때만 빈 배열 [] 반환. 정보가 있다면 반드시 노드를 생성할 것.
 
 --- 텍스트 ---
 {chunk_text}
 """
+
+
+def _build_fallback_extraction_prompt(chunk_text: str, page_no: int) -> str:
+    """[Flow: Step 1 (폴백 추출 지시) -> Step 2 (JSON 스키마 명시) -> Step 3 (청크 텍스트 삽입)]
+
+    1차 법률 노드 추출이 빈 결과를 낸 경우, 텍스트에 등장하는 사람/기관/날짜/거래/문서/사실을
+    보다 개방적으로 추출하기 위한 폴백 프롬프트를 구성한다.
+    """
+    return f"""아래 문서의 {page_no}페이지 텍스트에서 등장하는 사람, 회사/기관, 날짜, 거래/사건, 문서/기록을 모두 추출하라.
+소송 서류가 아니더라도 일지, 명단, 계약서, 보고서, 거래내역, 회의록에 있는 핵심 정보도 추출한다.
+
+추출 항목은 다음 4가지 유형으로 분류해 JSON 배열로만 반환한다 (다른 설명 금지):
+- issue: 특정 사건, 거래, 갈등, 날짜가 명시된 사실관계
+- plaintiff: 청구/요구/주장을 하는 측 (원고, 채권자, 고소인, 요구자)
+- defendant: 그 청구에 대응하거나 부인/방어하는 측 (피고, 채무자, 피고소인)
+- evidence: 사실관계를 뒷받침하는 문서, 일지, 명단, 거래내역, 녹음, 사진, 감정서
+
+[
+  {{
+    "type": "issue | plaintiff | defendant | evidence",
+    "label": "간결한 한국어 요약",
+    "entity": "plaintiff | defendant | third_party | issue",
+    "date": "YYYY-MM-DD 또는 원문 날짜, 없으면 빈 문자열",
+    "summary": "1~2문장 상세 설명",
+    "confidence": 0.0~1.0
+  }}
+]
+
+주의:
+- 인물명, 회사명, 날짜, 금액, 문서명이 보이면 반드시 노드로 추출한다.
+- 관련 주체를 알 수 없으면 entity를 "third_party"로 한다.
+- 날짜가 없어도 다른 정보가 있으면 노드를 생성한다.
+
+--- 텍스트 ---
+{chunk_text}
+"""
+
+
+def _extract_fallback_nodes(
+    chunks: list[ChildChunk],
+    endpoint: str,
+    model: str,
+    api_key: str,
+    max_sample: int = 5,
+) -> list[EdiscoveryNode]:
+    """[Flow: Step 1 (청크 존재 여부 확인) -> Step 2 (대표 청크 샘플링)
+          -> Step 3 (폴백 프롬프트로 LLM 호출) -> Step 4 (노드 파싱/취합)
+          -> Step 5 (label+type 기준 중복 제거) -> Step 6 (노드 목록 반환)]
+
+    1차 노드 추출이 0개일 때, 문서 전체를 소급(retrospective) 검토하는 폴백 추출을 수행한다.
+    너무 많은 청크를 다시 호출하면 비용이 폭증하므로 최대 max_sample개의 대표 청크만 사용한다.
+    """
+    if not chunks:
+        return []
+
+    step = max(1, len(chunks) // max_sample)
+    sample_chunks = chunks[::step][:max_sample]
+
+    all_nodes: list[EdiscoveryNode] = []
+    for chunk in sample_chunks:
+        prompt = _build_fallback_extraction_prompt(chunk.text, chunk.page_no)
+        try:
+            content, _ = call_text(prompt, endpoint, model, api_key, max_tokens=2000)
+            all_nodes.extend(_parse_nodes(content, chunk.page_no))
+        except Exception as e:
+            logger.warning(f"[ediscovery] 폴백 청크 추출 실패 page={chunk.page_no}: {e}")
+
+    seen: set[tuple[str, str]] = set()
+    unique_nodes: list[EdiscoveryNode] = []
+    for node in all_nodes:
+        key = (node.label, node.type)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_nodes.append(node)
+
+    logger.info(f"[ediscovery] 폴백 추출로 {len(unique_nodes)}개 노드 생성 (샘플 청크 {len(sample_chunks)}개)")
+    return unique_nodes
 
 
 def _strip_json_fence(content: str) -> str:
@@ -471,7 +558,8 @@ def _strip_json_fence(content: str) -> str:
 
 
 def _parse_nodes(content: str, page_no: int) -> list[EdiscoveryNode]:
-    """[Flow: Step 1 (JSON 펜스 제거) -> Step 2 (JSON 파싱) -> Step 3 (노드 스키마 검증/변환 + entity/date/summary 추출)
+    """[Flow: Step 1 (JSON 펜스 제거) -> Step 2 (JSON 파싱: 객체이면 리스트로 변환)
+          -> Step 3 (노드 스키마 검증/변환 + entity/date/summary 추출)
           -> Step 4 (EdiscoveryNode 목록 반환)]
 
     LLM 응답 문자열을 EdiscoveryNode 목록으로 변환한다.
@@ -484,18 +572,26 @@ def _parse_nodes(content: str, page_no: int) -> list[EdiscoveryNode]:
     except json.JSONDecodeError:
         logger.warning(f"[ediscovery] 노드 JSON 파싱 실패 page={page_no}: {cleaned[:200]}")
         return []
+    if isinstance(items, dict):
+        # 단일 객체 반환 시 리스트로 감싸서 처리
+        items = [items]
     if not isinstance(items, list):
+        logger.warning(f"[ediscovery] 노드 파싱 실패 page={page_no}: list/dict가 아님 ({type(items).__name__})")
         return []
 
     nodes: list[EdiscoveryNode] = []
+    skipped = 0
     for idx, item in enumerate(items):
         if not isinstance(item, dict):
+            skipped += 1
             continue
         node_type = str(item.get("type", "")).lower().strip()
         if node_type not in VALID_NODE_TYPES:
+            skipped += 1
             continue
         label = str(item.get("label", "")).strip()
         if not label:
+            skipped += 1
             continue
         try:
             confidence = float(item.get("confidence", 1.0))
@@ -511,6 +607,8 @@ def _parse_nodes(content: str, page_no: int) -> list[EdiscoveryNode]:
             id=node_id, type=node_type, label=label, page=page_no, confidence=confidence,
             entity=entity, date_text=date_text, date_iso=date_iso, summary=summary,
         ))
+    if skipped:
+        logger.debug(f"[ediscovery] page={page_no} 노드 {skipped}개 스키마 불일치로 건너뜀")
     return nodes
 
 
@@ -1089,6 +1187,11 @@ def run(
         # Step 6: 병렬 노드 추출
         raw_nodes = extract_nodes_concurrent(chunks, endpoint, model, api_key)
         logger.info(f"[ediscovery] job={job_id} 원시 노드 {len(raw_nodes)}개 추출")
+
+        # Step 6b: 1차 추출이 0개면 폴백 추출 시도 (일지/명단 등 비소송 자료 대응)
+        if not raw_nodes and chunks:
+            logger.warning(f"[ediscovery] job={job_id} 1차 노드 추출 0개, 폴백 추출 시도")
+            raw_nodes = _extract_fallback_nodes(chunks, endpoint, model, api_key)
 
         # Step 7: 임계값 필터 + 2차 LLM 패스 모순 탐지 + 그래프 조립
         filtered = filter_nodes_by_threshold(raw_nodes, threshold)

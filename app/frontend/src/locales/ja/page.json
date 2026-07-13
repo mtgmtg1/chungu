@@ -417,6 +417,7 @@
     "ediscoveryAudio": "音声",
     "ediscoveryText": "テキスト",
     "ediscoveryNoPreview": "プレビューなし",
+    "ediscoveryResizePanels": "パネルサイズ調整",
     "ediscoveryOriginalText": "原文",
     "ediscoverySelectItem": "タイムライン項目を選択すると、詳細と原文が表示されます",
     "mapperTabGraph": "グラフ",

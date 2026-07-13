@@ -16,6 +16,11 @@ import IssueFilterBar from "../flow/IssueFilterBar.jsx";
 import TimelinePreviewCard from "./TimelinePreviewCard.jsx";
 import EdiscoveryDetailCard from "./EdiscoveryDetailCard.jsx";
 
+/** 하단 타임라인 최소/최대 높이 (px) */
+const MIN_TIMELINE_HEIGHT = 160;
+const MAX_TIMELINE_HEIGHT = 600;
+const DEFAULT_TIMELINE_HEIGHT = 384;
+
 /** entity 코드 → i18n 키 매핑. */
 const SWIMLANE_LABEL_KEYS = {
   plaintiff: "ediscoverySwimlanePlaintiff",
@@ -183,6 +188,10 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
 
   // 자료 미리보기 메타데이터 (sourceFiles 기반)
   const [previewData, setPreviewData] = useState(null);
+
+  // 중앙 상세 카드와 하단 타임라인 사이의 수직 리사이저 상태
+  const [timelineHeight, setTimelineHeight] = useState(DEFAULT_TIMELINE_HEIGHT);
+  const resizeStartRef = useRef({ y: 0, height: DEFAULT_TIMELINE_HEIGHT });
 
   const pollRef = useRef(null);
   const pollStartRef = useRef(0);
@@ -353,6 +362,32 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
   }, []);
 
   /**
+   * [Flow: Step 1 (수직 리사이즈 핸들에서 pointer 이벤트 시작)
+   *       -> Step 2 (pointer move 시 타임라인 높이 갱신) -> Step 3 (pointer up 시 전역 리스너 제거)]
+   */
+  const handleTimelineResizeMove = useCallback((e) => {
+    const delta = resizeStartRef.current.y - e.clientY;
+    const next = Math.max(MIN_TIMELINE_HEIGHT, Math.min(MAX_TIMELINE_HEIGHT, resizeStartRef.current.height + delta));
+    setTimelineHeight(next);
+  }, []);
+
+  const handleTimelineResizeUp = useCallback(() => {
+    window.removeEventListener("pointermove", handleTimelineResizeMove);
+    window.removeEventListener("pointerup", handleTimelineResizeUp);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  }, [handleTimelineResizeMove]);
+
+  const handleTimelineResizeDown = useCallback((e) => {
+    e.preventDefault();
+    resizeStartRef.current = { y: e.clientY, height: timelineHeight };
+    window.addEventListener("pointermove", handleTimelineResizeMove);
+    window.addEventListener("pointerup", handleTimelineResizeUp);
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+  }, [timelineHeight, handleTimelineResizeMove, handleTimelineResizeUp]);
+
+  /**
    * [Flow: Step 1 (rawNodes + selectedIssues로 dimmedNodes 생성)
    *       -> Step 2 (dimmed=false인 노드만 필터) -> Step 3 (날짜/페이지 정렬)
    *       -> Step 4 (React Chrono items로 변환)]
@@ -506,8 +541,20 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
         />
       </div>
 
-      {/* ===== 하단 — React Chrono Horizontal All Dashboard (고정 높이) ===== */}
-      <div className="h-96 flex-shrink-0 relative border-t border-outline-variant bg-surface-container-lowest" data-oid="ediscovery-chrono-section">
+      {/* ===== 중앙-하단 수직 리사이저 ===== */}
+      <div
+        className="h-2 flex-shrink-0 cursor-row-resize bg-outline-variant hover:bg-primary transition-colors border-y border-transparent"
+        onPointerDown={handleTimelineResizeDown}
+        title={t("page:result.ediscoveryResizePanels")}
+        data-oid="ediscovery-vertical-resizer"
+      />
+
+      {/* ===== 하단 — React Chrono Horizontal All Dashboard (가변 높이) ===== */}
+      <div
+        className="flex-shrink-0 relative bg-surface-container-lowest"
+        style={{ height: timelineHeight }}
+        data-oid="ediscovery-chrono-section"
+      >
         {/* 타임라인 헤더 라벨 */}
         {chronoItems.length > 0 && (
           <div className="absolute top-1 left-2 z-10 text-[10px] font-bold uppercase tracking-wide text-on-surface-variant bg-surface-container-lowest/80 px-2 py-0.5 rounded">

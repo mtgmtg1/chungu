@@ -417,6 +417,7 @@
     "ediscoveryAudio": "Audio",
     "ediscoveryText": "Text",
     "ediscoveryNoPreview": "No preview",
+    "ediscoveryResizePanels": "Resize panels",
     "ediscoveryOriginalText": "Original text",
     "ediscoverySelectItem": "Select a timeline item to view its details and original text",
     "mapperTabGraph": "Graph",

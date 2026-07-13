@@ -417,6 +417,7 @@
     "ediscoveryAudio": "오디오",
     "ediscoveryText": "텍스트",
     "ediscoveryNoPreview": "미리보기 없음",
+    "ediscoveryResizePanels": "패널 크기 조절",
     "ediscoveryOriginalText": "원문",
     "ediscoverySelectItem": "타임라인 항목을 선택하면 정보와 원문이 여기에 표시됩니다",
     "mapperTabGraph": "그래프",

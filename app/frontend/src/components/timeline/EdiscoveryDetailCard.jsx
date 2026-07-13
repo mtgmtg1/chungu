@@ -1,14 +1,20 @@
 // [Flow: Step 1 (선택 노드 + 미리보기 메타데이터 + 원문 텍스트 수신)
 //       -> Step 2 (좌측 미리보기 카드 + 우측 정보/원문 패널로 구성)
-//       -> Step 3 (원문이 markdown이면 marked로 렌더링, 페이지 마커 제거)
-//       -> Step 4 (원본 PDF 보기 버튼 → onViewSource 호출)]
+//       -> Step 3 (드래그 핸들로 좌우 카드 크기 조절)
+//       -> Step 4 (원문이 markdown이면 marked로 렌더링, 페이지 마커 제거)
+//       -> Step 5 (원본 PDF 보기 버튼 → onViewSource 호출)]
 // e-Discovery Timeline의 중앙에 표시되는 노드 상세 카드.
 // 오른쪽 슬라이드인 탭 대신 한 화면에서 미리보기 + 정보 + 원문을 같이 보여준다.
 
+import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { marked } from "marked";
 import { FileText, ChevronRight, AlertCircle } from "lucide-react";
 import TimelinePreviewCard from "./TimelinePreviewCard.jsx";
+
+/** 좌우 분할 최소/최대 비율 (%) */
+const MIN_LEFT_PERCENT = 20;
+const MAX_LEFT_PERCENT = 80;
 
 /**
  * 원문 텍스트에서 페이지/파일 마커 주석을 제거하고 HTML로 변환한다.
@@ -35,6 +41,37 @@ function renderOriginalText(text) {
 export default function EdiscoveryDetailCard({ node, previewData, originalText, originalLoading, onViewSource }) {
   const { t } = useTranslation();
 
+  // [Flow: 좌측 미리보기 카드 너비 상태 초기화 -> 드래그 시작/이동/종료 핸들러 등록]
+  const containerRef = useRef(null);
+  const [leftWidthPercent, setLeftWidthPercent] = useState(60);
+
+  const startRef = useRef({ x: 0, width: 60 });
+
+  const handlePointerDown = useCallback((e) => {
+    e.preventDefault();
+    startRef.current = { x: e.clientX, width: leftWidthPercent };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, [leftWidthPercent]);
+
+  const handlePointerMove = useCallback((e) => {
+    if (!containerRef.current) return;
+    const containerRect = containerRef.current.getBoundingClientRect();
+    if (containerRect.width === 0) return;
+    const deltaPercent = ((e.clientX - startRef.current.x) / containerRect.width) * 100;
+    const next = Math.max(MIN_LEFT_PERCENT, Math.min(MAX_LEFT_PERCENT, startRef.current.width + deltaPercent));
+    setLeftWidthPercent(next);
+  }, []);
+
+  const handlePointerUp = useCallback(() => {
+    window.removeEventListener("pointermove", handlePointerMove);
+    window.removeEventListener("pointerup", handlePointerUp);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  }, [handlePointerMove]);
+
   if (!node) {
     return (
       <div className="h-full w-full flex items-center justify-center text-on-surface-variant gap-2 bg-surface-container-lowest">
@@ -49,16 +86,29 @@ export default function EdiscoveryDetailCard({ node, previewData, originalText, 
   const html = renderOriginalText(originalText);
 
   return (
-    <div className="h-full w-full flex flex-col md:flex-row bg-surface-container-lowest border border-outline-variant rounded-lg overflow-hidden">
+    <div ref={containerRef} className="h-full w-full flex flex-col md:flex-row bg-surface-container-lowest border border-outline-variant rounded-lg overflow-hidden">
       {/* 좌측 — 미리보기 */}
-      <div className="w-full md:w-3/5 h-1/2 md:h-full flex flex-col border-b md:border-b-0 md:border-r border-outline-variant min-h-0">
+      <div
+        className="w-full h-1/2 md:w-auto md:h-full flex flex-col border-b md:border-b-0 md:border-r border-outline-variant min-h-0"
+        style={{ width: window.innerWidth >= 768 ? `${leftWidthPercent}%` : undefined }}
+      >
         <div className="flex-1 min-h-0 p-2">
           <TimelinePreviewCard node={node} previewData={previewData} />
         </div>
       </div>
 
+      {/* 드래그 핸들 — md 이상에서만 표시 */}
+      <div
+        className="hidden md:block w-1 flex-shrink-0 cursor-col-resize bg-outline-variant hover:bg-primary transition-colors"
+        onPointerDown={handlePointerDown}
+        title={t("page:result.ediscoveryResizePanels")}
+      />
+
       {/* 우측 — 정보 + 원문 */}
-      <div className="w-full md:w-2/5 h-1/2 md:h-full flex flex-col min-h-0">
+      <div
+        className="w-full h-1/2 md:w-auto md:h-full flex flex-col min-h-0"
+        style={{ width: window.innerWidth >= 768 ? `${100 - leftWidthPercent}%` : undefined }}
+      >
         {/* 헤더 */}
         <div className="flex-shrink-0 px-4 py-3 border-b border-outline-variant bg-surface-container-low">
           <div className="text-[10px] font-bold uppercase tracking-wide text-on-surface-variant mb-1">

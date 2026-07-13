@@ -288,6 +288,24 @@ body {
   animation: dash 1s linear infinite;
 }
 
+/* e-Discovery Timeline Chrono — 아이템이 많을 때 가로 스크롤이 생기도록 루트 너비를 콘텐츠 기준으로 확장 */
+[data-oid="ediscovery-chrono"] > div {
+  width: max-content !important;
+  min-width: 100%;
+}
+
+/* e-Discovery Timeline 카드 — 높이 초과 시 콘텐츠를 줄이고 잘리지 않도록 스크롤 허용 */
+.ediscovery-chrono-card {
+  max-height: 120px !important;
+  overflow: hidden !important;
+}
+.ediscovery-chrono-card-text {
+  display: -webkit-box !important;
+  -webkit-line-clamp: 2 !important;
+  -webkit-box-orient: vertical !important;
+  overflow: hidden !important;
+}
+
 /* 마크다운 렌더링 (메시지 본문) */
 .ai-chat-markdown {
   font-size: 13px;

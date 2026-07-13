@@ -1,20 +1,22 @@
 // [Flow: Step 1 (job.ediscovery_graphs/status 수신) -> Step 2 (노드 분류 + Chrono items 변환)
 //       -> Step 3 (자료 미리보기 메타데이터 로드: sourceFiles + 페이지 정보)
-//       -> Step 4 (중앙 상세 카드 + 하단 React Chrono HORIZONTAL_ALL 대시보드 렌더링)
-//       -> Step 5 (Chrono 카드/타이틀 클릭 시 중앙 카드가 해당 노드 정보 + 원문으로 갱신)
-//       -> Step 6 (쟁점 필터 토글 시 items 필터 갱신)
-//       -> Step 7 (재분석 API 호출 + 폴링으로 진행상황 추적)]
-// e-Discovery GraphRAG 결과를 중앙 상세 카드 + 하단 React Chrono 타임라인으로 시각화하는 패널.
-// 상단: 쟁점 필터 + 메트릭, 중앙: 선택 노드의 미리보기 + 정보 + 원문, 하단: 전체 타임라인.
+//       -> Step 4 (중앙 양측 주장/증거 카드 + 하단 React Chrono HORIZONTAL_ALL 대시보드 렌더링)
+//       -> Step 5 (Chrono 카드/타이틀 클릭 시 SourcePanel 원문 페이지로 스크롤 연동)
+//       -> Step 6 (양측 카드 클릭 시에도 SourcePanel 원문 페이지로 스크롤 연동)
+//       -> Step 7 (쟁점 필터 토글 시 items 필터 갱신)
+//       -> Step 8 (재분석 API 호출 + 폴링으로 진행상황 추적)]
+// e-Discovery GraphRAG 결과를 중앙 양측 주장/증거 카드 + 하단 React Chrono 타임라인으로 시각화하는 패널.
+// 상단: 쟁점 필터 + 메트릭, 중앙: CLIENT ARGUMENTS (PLAINTIFF) / OPPONENT REBUTTALS (DEFENDANT), 하단: 전체 타임라인.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Chrono } from "react-chrono";
 import { AlertTriangle, Loader2, RefreshCw, AlertCircle, Network } from "lucide-react";
 import { api } from "../../api.js";
 import IssueFilterBar from "../flow/IssueFilterBar.jsx";
 import TimelinePreviewCard from "./TimelinePreviewCard.jsx";
-import EdiscoveryDetailCard from "./EdiscoveryDetailCard.jsx";
+import ResizableCourtroomCards from "./ResizableCourtroomCards.jsx";
+import EdiscoveryTimelineStrip from "./EdiscoveryTimelineStrip.jsx";
+import { classifyNodesBySide } from "../../utils/ediscoveryTimelineUtils.js";
 
 /** 하단 타임라인 최소/최대 높이 (px) */
 const MIN_TIMELINE_HEIGHT = 160;
@@ -111,7 +113,7 @@ function getNodeSourceFile(node, previewData) {
  * @param {Function} t - i18n translate 함수
  * @returns {Object} React Chrono item 객체
  */
-function buildChronoItem(node, previewData, t) {
+export function buildChronoItem(node, previewData, t) {
   const data = node.data || {};
   const entity = data.entity || (node.type === "evidence" ? "third_party" : node.type);
   const label = data.label || node.id;
@@ -154,7 +156,7 @@ function buildChronoItem(node, previewData, t) {
 }
 
 /**
- * EdiscoveryTimelinePanel — e-Discovery 결과를 중앙 상세 카드 + 하단 React Chrono 대시보드로 렌더링.
+ * EdiscoveryTimelinePanel — e-Discovery 결과를 중앙 양측 주장/증거 카드 + 하단 React Chrono 대시보드로 렌더링.
  *
  * @param {Object} props
  * @param {string} props.jobId - 현재 Job ID
@@ -168,10 +170,6 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedIssues, setSelectedIssues] = useState(new Set());
   const [issueList, setIssueList] = useState([]);
-
-  // 중앙 상세 카드 원문
-  const [selectedPageText, setSelectedPageText] = useState("");
-  const [selectedPageLoading, setSelectedPageLoading] = useState(false);
 
   // 메트릭 + 로딩 + 에러
   const [metrics, setMetrics] = useState({
@@ -437,16 +435,6 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
     [chronoItems, onNodeClick]
   );
 
-  /**
-   * [Flow: Step 1 (원본 PDF 보기 버튼) -> Step 2 (onNodeClick에 { data: { page } } 전달)]
-   */
-  const handleViewSource = useCallback(
-    (page) => {
-      onNodeClick?.({ data: { page } });
-    },
-    [onNodeClick]
-  );
-
   const isEmpty = !loading && chronoItems.length === 0 && !error && job?.ediscovery_status === "done";
 
   /**
@@ -465,46 +453,21 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
   }, [chronoItems]);
 
   /**
-   * [Flow: Step 1 (selectedNode/previewData 변경) -> Step 2 (sourceFile.result_markdown 우선 사용)
-   *       -> Step 3 (result_markdown이 없으면 GET /preview?page=page&end_page=page로 원문 로드)
-   *       -> Step 4 (로딩 상태 갱신 + selectedPageText 설정)]
+   * [Flow: Step 1 (rawNodes 기반) -> Step 2 (classifyNodesBySide로 양측 주장/증거 분류)
+   *       -> Step 3 (디밍 플래그 적용 후 중앙 양측 카드에 전달)]
    */
-  useEffect(() => {
-    if (!selectedNode || !previewData || !jobId) {
-      setSelectedPageText("");
-      setSelectedPageLoading(false);
-      return;
-    }
+  const classifiedSides = useMemo(() => {
+    const dimmedNodes = applyIssueDimmingToNodes(rawNodes, selectedIssues);
+    return classifyNodesBySide(dimmedNodes);
+  }, [rawNodes, selectedIssues]);
 
-    let cancelled = false;
-    const loadOriginalText = async () => {
-      setSelectedPageLoading(true);
-      setSelectedPageText("");
-
-      const sourceFile = getNodeSourceFile(selectedNode, previewData);
-      const rawText = sourceFile?.result_markdown;
-      if (rawText && rawText.trim().length > 0) {
-        if (!cancelled) setSelectedPageText(rawText);
-        if (!cancelled) setSelectedPageLoading(false);
-        return;
-      }
-
-      const page = getNodePage(selectedNode);
-      try {
-        const data = await api.previewJob(jobId, page, page);
-        if (!cancelled) setSelectedPageText(data.markdown || "");
-      } catch (err) {
-        console.warn("[EdiscoveryTimelinePanel] original text load failed:", err);
-        if (!cancelled) setSelectedPageText("");
-      }
-      if (!cancelled) setSelectedPageLoading(false);
-    };
-
-    loadOriginalText();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedNode, previewData, jobId]);
+  const handleCardClick = useCallback(
+    (node) => {
+      setSelectedNode(node);
+      onNodeClick?.(node);
+    },
+    [onNodeClick]
+  );
 
   return (
     <div className="h-full w-full flex flex-col relative" data-oid="ediscovery-courtroom">
@@ -560,86 +523,20 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
         </div>
       </div>
 
-      {/* ===== 중앙 — 선택 노드 상세 카드 (미리보기 + 정보 + 원문) ===== */}
-      <div className="flex-1 min-h-0 p-3" data-oid="ediscovery-detail-card">
-        <EdiscoveryDetailCard
-          node={selectedNode}
-          previewData={previewData}
-          originalText={selectedPageText}
-          originalLoading={selectedPageLoading}
-          onViewSource={handleViewSource}
-        />
+      {/* ===== 중앙 — 양측 주장/증거 카드 (끝부분 드래그로 너비 조절, 원문은 왼쪽 SourcePanel에서 제공) ===== */}
+      <div className="flex-1 min-h-0 p-3" data-oid="ediscovery-courtroom-cards">
+        <ResizableCourtroomCards classifiedSides={classifiedSides} onNodeClick={handleCardClick} />
       </div>
 
-      {/* ===== 중앙-하단 수직 리사이저 ===== */}
-      <div
-        className="h-2 flex-shrink-0 cursor-row-resize bg-outline-variant hover:bg-primary transition-colors border-y border-transparent"
-        onPointerDown={handleTimelineResizeDown}
-        title={t("page:result.ediscoveryResizePanels")}
-        data-oid="ediscovery-vertical-resizer"
+      {/* ===== 하단 — 타임라인 스트립 (별도 컴포넌트로 분리해 디버깅/재사용 가능) ===== */}
+      <EdiscoveryTimelineStrip
+        items={chronoItems}
+        activeItemIndex={activeItemIndex}
+        onItemSelected={handleItemSelected}
+        timelineHeight={timelineHeight}
+        onResizePointerDown={handleTimelineResizeDown}
+        title={t("page:result.ediscoveryCourtroomTimeline")}
       />
-
-      {/* ===== 하단 — React Chrono Horizontal All Dashboard (가변 높이) ===== */}
-      <div
-        className="flex-shrink-0 relative bg-surface-container-lowest"
-        style={{ height: timelineHeight }}
-        data-oid="ediscovery-chrono-section"
-      >
-        {/* 타임라인 헤더 라벨 */}
-        {chronoItems.length > 0 && (
-          <div className="absolute top-1 left-2 z-10 text-[10px] font-bold uppercase tracking-wide text-on-surface-variant bg-surface-container-lowest/80 px-2 py-0.5 rounded">
-            {t("page:result.ediscoveryCourtroomTimeline")}
-          </div>
-        )}
-
-        {/* React Chrono — Horizontal All Dashboard */}
-        {chronoItems.length > 0 && (
-          <div className="absolute inset-0 overflow-auto" data-oid="ediscovery-chrono">
-            <Chrono
-              key={previewData ? "chrono-loaded" : "chrono-loading"}
-              items={chronoItems}
-              mode="HORIZONTAL_ALL"
-              showAllCardsHorizontal
-              cardWidth={240}
-              cardHeight={220}
-              itemWidth={260}
-              cardPositionHorizontal="TOP"
-              mediaHeight={100}
-              mediaSettings={{ align: "center", imageFit: "cover" }}
-              timelinePointDimension={16}
-              timelinePointShape="circle"
-              activeItemIndex={activeItemIndex}
-              focusActiveItemOnLoad
-              onItemSelected={handleItemSelected}
-              highlightCardsOnHover
-              enableQuickJump
-              enableLayoutSwitch
-              useReadMore={false}
-              theme={{
-                primary: "#2563eb",
-                secondary: "#f59e0b",
-                cardBgColor: "#ffffff",
-                cardTitleColor: "#111827",
-                cardSubtitleColor: "#6b7280",
-                cardDetailsColor: "#374151",
-                titleColor: "#6b7280",
-                titleColorActive: "#2563eb",
-                textColor: "#1f2937",
-                iconBackgroundColor: "#eff6ff",
-                toolbarBgColor: "#f3f4f6",
-                toolbarBtnBgColor: "#ffffff",
-                toolbarTextColor: "#374151",
-              }}
-              fontSizes={{
-                cardTitle: "0.75rem",
-                cardSubtitle: "0.65rem",
-                cardText: "0.7rem",
-                title: "0.65rem",
-              }}
-            />
-          </div>
-        )}
-      </div>
 
       {/* 로딩 오버레이 */}
       {loading && (

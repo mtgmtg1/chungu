@@ -27,6 +27,7 @@ import ApiPricingPage from "./pages/ApiPricingPage.jsx";
 import CookieConsent from "./components/CookieConsent.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import DevEdiscoveryPage from "./pages/DevEdiscoveryPage.jsx";
+import DevEdiscoveryTimelinePage from "./pages/DevEdiscoveryTimelinePage.jsx";
 
 // 개발 환경에서 전역 dev mock 활성화 — /dev/* 및 /jobs/:jobId 경로 모두 샘플 데이터로 UI 테스트 가능.
 // production 빌드에서는 import.meta.env.DEV가 false이므로 무시된다.
@@ -169,6 +170,10 @@ ReactDOM.createRoot(rootEl).render(
                 path="/dev/ediscovery"
                 element={<DevEdiscoveryPage data-oid="dev-ediscovery-route" />}
                 data-oid="dev-ediscovery-route-r" />
+              <Route
+                path="/dev/ediscovery-timeline"
+                element={<DevEdiscoveryTimelinePage data-oid="dev-ediscovery-timeline-route" />}
+                data-oid="dev-ediscovery-timeline-route-r" />
 
             </Routes>
           <CookieConsent data-oid="cookie_consent" />

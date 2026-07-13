@@ -407,6 +407,8 @@
     "ediscoverySwimlaneThirdParty": "Third Party",
     "ediscoverySwimlaneIssue": "Issue",
     "ediscoveryTabTimeline": "Timeline",
+    "ediscoveryClientArguments": "CLIENT ARGUMENTS (PLAINTIFF)",
+    "ediscoveryOpponentRebuttals": "OPPONENT REBUTTALS (DEFENDANT)",
     "ediscoveryCourtroomPlaintiff": "Plaintiff · Prosecutor",
     "ediscoveryCourtroomDefendant": "Defendant",
     "ediscoveryCourtroomClaims": "Claims",

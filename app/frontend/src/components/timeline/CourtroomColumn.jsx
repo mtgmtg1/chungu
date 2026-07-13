@@ -10,17 +10,19 @@ import { AlertTriangle, FileText, MessageSquare, Scale } from "lucide-react";
  *
  * @param {Object} props
  * @param {string} props.side - "plaintiff" | "defendant"
+ * @param {string} [props.headerKey] - 컬럼 헤더에 사용할 i18n 키 (기본값: side별 기본 키)
  * @param {Array<Object>} props.claims - 주장 노드 배열 (type: plaintiff/defendant)
  * @param {Array<Object>} props.evidence - 증거 노드 배열 (type: evidence)
  * @param {Function} props.onNodeClick - 카드 클릭 콜백 (node) => void
  */
-export default function CourtroomColumn({ side, claims, evidence, onNodeClick }) {
+export default function CourtroomColumn({ side, headerKey, claims, evidence, onNodeClick }) {
   const { t } = useTranslation();
 
   const isPlaintiff = side === "plaintiff";
-  const headerKey = isPlaintiff
+  const defaultHeaderKey = isPlaintiff
     ? "page:result.ediscoveryCourtroomPlaintiff"
     : "page:result.ediscoveryCourtroomDefendant";
+  const resolvedHeaderKey = headerKey || defaultHeaderKey;
   const headerColor = isPlaintiff ? "text-blue-700" : "text-amber-700";
   const headerBg = isPlaintiff ? "bg-blue-50" : "bg-amber-50";
   const headerBorder = isPlaintiff ? "border-blue-200" : "border-amber-200";
@@ -31,7 +33,7 @@ export default function CourtroomColumn({ side, claims, evidence, onNodeClick })
       {/* 컬럼 헤더 — 주체명 */}
       <div className={`flex items-center gap-2 px-3 py-2 border-b ${headerBorder} ${headerBg} flex-shrink-0`}>
         <Scale size={14} className={headerColor} />
-        <span className={`text-sm font-bold ${headerColor}`}>{t(headerKey)}</span>
+        <span className={`text-sm font-bold ${headerColor}`}>{t(resolvedHeaderKey)}</span>
         <span className="ml-auto text-[10px] text-on-surface-variant">
           {claims.length + evidence.length}건
         </span>

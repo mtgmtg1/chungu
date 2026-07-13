@@ -407,6 +407,8 @@
     "ediscoverySwimlaneThirdParty": "第三者",
     "ediscoverySwimlaneIssue": "争点",
     "ediscoveryTabTimeline": "タイムライン",
+    "ediscoveryClientArguments": "CLIENT ARGUMENTS (PLAINTIFF)",
+    "ediscoveryOpponentRebuttals": "OPPONENT REBUTTALS (DEFENDANT)",
     "ediscoveryCourtroomPlaintiff": "原告 · 検察",
     "ediscoveryCourtroomDefendant": "被告",
     "ediscoveryCourtroomClaims": "主張",

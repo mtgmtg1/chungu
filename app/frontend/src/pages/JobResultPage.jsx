@@ -177,6 +177,7 @@ export default function JobResultPage() {
     try {
       const data = await api.getJob(jobId);
       setJob(data);
+      if (!data) throw new Error(t("page:errors.loadFailed"));
       if (data.xlsx_advanced_status === "done" || data.xlsx_advanced_status === "error") {
         setXlsxAdvancedPolling(false);
       }
@@ -217,6 +218,7 @@ export default function JobResultPage() {
       try {
         const data = await api.getJob(jobId);
         setJob(data);
+        if (!data) return;
         if (data.xlsx_advanced_status === "done" || data.xlsx_advanced_status === "error") {
           setXlsxAdvancedPolling(false);
         }

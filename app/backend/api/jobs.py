@@ -1117,6 +1117,7 @@ def get_job(job_id: str, user: CurrentUser = Depends(get_current_user_or_api_key
             "reason_basic": check_basic["reason"],
             "reason_premium": check_premium["reason"],
         }
+    return summary
 
 
 @router.delete("/jobs/{job_id}")

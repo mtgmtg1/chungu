@@ -72,7 +72,8 @@ export default function TimelinePreviewCard({ node, previewData }) {
   const summary = getNodeSummary(node);
 
   const type = sourceFile?.type;
-  const url = sourceFile?.preview_url || sourceFile?.url;
+  // HTTPS 사이트에서 HTTP 리소스를 로드하면 Mixed Content 에러가 발생하므로 scheme를 강제 변환한다.
+  const url = (sourceFile?.preview_url || sourceFile?.url || "").replace(/^http:/, "https:");
   const name = sourceFile?.name || "";
 
   /**

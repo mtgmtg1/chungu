@@ -63,7 +63,8 @@ function buildMedia(node, sourceFiles) {
   const sourceFile = findSourceFile(node, sourceFiles);
   if (!sourceFile) return null;
   const { type, preview_url, url, name } = sourceFile;
-  const mediaUrl = preview_url || url;
+  // HTTPS 사이트에서 HTTP 리소스를 로드하면 Mixed Content 에러가 발생하므로 scheme를 강제 변환한다.
+  const mediaUrl = (preview_url || url || "").replace(/^http:/, "https:");
   if (!mediaUrl) return null;
 
   if (type === "image") {

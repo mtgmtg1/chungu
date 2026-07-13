@@ -243,13 +243,33 @@ def upload_image(job_id: str, local_path: Path, filename: str) -> str:
     return storage_path
 
 
+def _publicize_url(url: str, internal_url: str | None = None, public_url: str | None = None) -> str:
+    """내부 Supabase URL을 외부 공개 URL로 변환합니다. 서명 쿼리는 유지됩니다.
+
+    매개변수:
+        url: 변환할 URL
+        internal_url: 내부 Supabase URL (None이면 settings.supabase_url 사용)
+        public_url: 외부 공개 URL (None이면 settings.supabase_public_url 사용)
+    """
+    if not url:
+        return url
+    internal = (internal_url or settings.supabase_url).rstrip("/")
+    public = (public_url or settings.supabase_public_url).rstrip("/")
+    if not public or public == internal:
+        return url
+    from urllib.parse import urlparse, urlunparse
+    parsed = urlparse(url)
+    public_parsed = urlparse(public)
+    if not parsed.scheme or not parsed.netloc:
+        return url
+    rewritten = parsed._replace(scheme=public_parsed.scheme, netloc=public_parsed.netloc)
+    return urlunparse(rewritten)
+
+
 def get_signed_download_url_with_client(client: Client, storage_path: str, bucket: str = "results", expires_in: int = 3600) -> str:
     """지정한 Supabase 클라이언트로 서명된 다운로드 URL을 생성합니다. 외부 노출 URL로 재작성합니다."""
     url = client.storage.from_(bucket).create_signed_url(storage_path, expires_in).get("signedURL", "")
-    if url and settings.supabase_public_url:
-        internal = settings.supabase_url.rstrip("/")
-        url = url.replace(internal, settings.supabase_public_url.rstrip("/"))
-    return url
+    return _publicize_url(url, settings.supabase_url, settings.supabase_public_url)
 
 
 def get_signed_download_url(storage_path: str, bucket: str = "results", expires_in: int = 3600) -> str:

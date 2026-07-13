@@ -64,4 +64,11 @@ describe("buildChronoItem", () => {
     const item = buildChronoItem(node, [], t);
     expect(item.media).toBeUndefined();
   });
+
+  it("HTTP URL이면 HTTPS로 강제 변환하여 Mixed Content를 방지한다", () => {
+    const node = baseNode("img-http", "evidence", "third_party", 6, "http image");
+    const sourceFiles = [{ page_num: 6, type: "image", url: "http://example.com/img.jpg", name: "img.jpg" }];
+    const item = buildChronoItem(node, sourceFiles, t);
+    expect(item.media.source.url).toBe("https://example.com/img.jpg");
+  });
 });

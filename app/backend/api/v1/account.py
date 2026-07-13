@@ -80,7 +80,8 @@ def get_pricing(
             "basic_page_milli_usd": int(settings_store.get_setting(db, "cost_basic_page_krw") or "1"),
             "premium_page_milli_usd": int(settings_store.get_setting(db, "cost_premium_page_krw") or "5"),
             "premium_audio_sec_milli_usd": int(settings_store.get_setting(db, "cost_premium_audio_sec_krw") or "1"),
-            "premium_video_sec_milli_usd": int(settings_store.get_setting(db, "cost_premium_video_sec_krw") or "5"),
+            "premium_video_sec_milli_usd": int(settings_store.get_setting(db, "cost_premium_video_sec_krw") or "10"),
+            "agent_step_milli_usd": int(settings_store.get_setting(db, "cost_agent_step_krw") or "1"),
             "docling_refinement_page_milli_usd": int(settings_store.get_setting(db, "cost_per_docling_refinement_page_krw") or "3"),
         },
     }

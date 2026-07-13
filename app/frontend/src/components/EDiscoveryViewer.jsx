@@ -1,6 +1,6 @@
 // [Flow: Step 1 (EDiscoveryViewer 마운트) -> Step 2 (Timeline/Mapper 탭 전환)
 //       -> Step 3 (Timeline 탭: EdiscoveryTimelinePanel 렌더링)
-//       -> Step 4 (Mapper 탭: EvidenceMapperPanel 렌더링)]
+//       -> Step 4 (Mapper 탭: IssueTreeMapperPanel 렌더링)]
 // e-Discovery GraphRAG 결과를 탭으로 전환하며 보여주는 뷰어.
 // Graph 탭은 react-calendar-timeline 기반 수평 타임라인으로 대체되었다.
 
@@ -8,7 +8,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CalendarDays, Puzzle } from "lucide-react";
 import EdiscoveryTimelinePanel from "./timeline/EdiscoveryTimelinePanel.jsx";
-import EvidenceMapperPanel from "./mapper/EvidenceMapperPanel.jsx";
+import IssueTreeMapperPanel from "./mapper/IssueTreeMapperPanel.jsx";
 
 /**
  * EDiscoveryViewer — e-Discovery GraphRAG 결과를 탭으로 전환하며 시각화.
@@ -72,7 +72,7 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, defaultTab =
         {activeTab === "timeline" ? (
           <EdiscoveryTimelinePanel jobId={jobId} job={job} onNodeClick={onNodeClick} />
         ) : (
-          <EvidenceMapperPanel jobId={jobId} job={job} />
+          <IssueTreeMapperPanel jobId={jobId} job={job} />
         )}
       </div>
     </div>

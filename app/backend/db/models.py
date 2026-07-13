@@ -27,6 +27,8 @@ class User(Base):
     language: Mapped[str] = mapped_column(String(10), default="en")
     # AI 에이전트 도구 승인 모드 ('ask' = 승인 버튼 표시, 'always' = 항상 자동 승인)
     ai_tool_approval_mode: Mapped[str] = mapped_column(String(10), default="ask")
+    # AI 에이전트 최대 step 수 (기본 100, 사용자 설정 가능)
+    agent_max_steps: Mapped[int] = mapped_column(Integer, default=100)
     # 자동 충전 설정
     auto_recharge_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_recharge_threshold: Mapped[int] = mapped_column(Integer, default=2000)  # milli-USD ($2.00)
@@ -42,6 +44,8 @@ class User(Base):
     subscription_period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     subscription_price_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     paddle_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 마지막 월간 구독 크레딧 지급 시점 (중복 지급 방지 및 연간 요금제 월 단위 지급용)
+    subscription_credits_granted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     jobs: Mapped[list["Job"]] = relationship("Job", back_populates="user", lazy="selectin")
     payments: Mapped[list["Payment"]] = relationship("Payment", back_populates="user", lazy="selectin")
@@ -94,6 +98,7 @@ class Job(Base):
     # Excel 고급 변환 구독 사용량 예약 기록 (환불용)
     xlsx_advanced_reserved_pages: Mapped[int] = mapped_column(Integer, default=0)
     xlsx_advanced_reserved_period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    xlsx_advanced_cost_points: Mapped[int] = mapped_column(Integer, default=0)  # 실제 차감 포인트
 
     # PDF 하이라이트/여백 주석 (원본 스캔 PDF에 형광펜 + 여백 코멘트 생성)
     annotate_instruction: Mapped[str] = mapped_column(Text, default="")
@@ -106,6 +111,7 @@ class Job(Base):
     annotate_refundable: Mapped[bool] = mapped_column(Boolean, default=False)
     annotate_reserved_pages: Mapped[int] = mapped_column(Integer, default=0)
     annotate_reserved_period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    annotate_cost_points: Mapped[int] = mapped_column(Integer, default=0)  # 실제 차감 포인트
     result_ocr_layout_storage_path: Mapped[str] = mapped_column(String(1024), default="")
     result_annotated_pdf_storage_path: Mapped[str] = mapped_column(String(1024), default="")
     searchable_pdf_storage_path: Mapped[str] = mapped_column(String(1024), default="")
@@ -128,10 +134,15 @@ class Job(Base):
     ediscovery_refundable: Mapped[bool] = mapped_column(Boolean, default=False)
     ediscovery_reserved_pages: Mapped[int] = mapped_column(Integer, default=0)
     ediscovery_reserved_period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ediscovery_cost_points: Mapped[int] = mapped_column(Integer, default=0)  # 실제 차감 포인트
 
     # Evidence-to-Element Mapper — 청구 원인별 법적 요건사실 슬롯에 증거를 매핑한 퍼즐 상태.
     # element_mappings: {claim_type, overall_progress_percent, elements: [{id, name, description, mapped_evidence: []}]}
     element_mappings: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    # Issue-Claim-Evidence Tree — 쟁점 → 주장 → 근거 3단계 트리 매퍼 상태.
+    # issue_tree: {claim_type, overall_progress_percent, cross_validated, issues: [{id, name, description, claims: [{id, party, name, description, mapped_evidence: []}]}]}
+    issue_tree: Mapped[dict] = mapped_column(JSON, default=dict)
 
     # Supabase Storage 경로 (로컬 경로 대체)
     pdf_storage_path: Mapped[str] = mapped_column(String(1024), default="")

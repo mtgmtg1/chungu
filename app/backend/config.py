@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     # Vite dev server의 proxy와 동일한 역할을 프로덕션/단일 오리진 환경에서 수행한다.
     ai_backend_url: str = "http://localhost:3001"
 
+    # AI 백엔드가 agent step 과금 API를 호출할 때 사용하는 공유 비밀
+    ai_backend_secret: str = ""
+
     # Kata Containers 샌드박스 (에이전트 격리 실행 환경)
     sandbox_enabled: bool = False  # Kata 호스트 서버에 설치된 후 활성화
     sandbox_data_dir: str = "/data/jobs"  # workspace 루트 (virtio-fs 마운트 대상)

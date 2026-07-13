@@ -86,7 +86,7 @@
     "logoutSuccess": "로그아웃되었습니다"
   },
   "points": {
-    "point": "$"
+    "point": "pt"
   },
   "date": {
     "justNow": "방금",

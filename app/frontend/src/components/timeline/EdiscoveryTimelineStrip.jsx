@@ -7,10 +7,10 @@
 import { Chrono } from "react-chrono";
 
 /** HORIZONTAL 모드에서 카드 하나의 너비/높이 (px). */
-const CARD_WIDTH = 200;
-const CARD_HEIGHT = 120;
-const ITEM_WIDTH = 220;
-const MEDIA_HEIGHT = 60;
+const CARD_WIDTH = 160;
+const CARD_HEIGHT = 90;
+const ITEM_WIDTH = 180;
+const MEDIA_HEIGHT = 0;
 
 /**
  * EdiscoveryTimelineStrip — e-Discovery 하단 타임라인 스트립.
@@ -68,6 +68,7 @@ export default function EdiscoveryTimelineStrip({
               mediaSettings={{ align: "center", imageFit: "cover" }}
               timelinePointDimension={12}
               timelinePointShape="circle"
+              borderLessCards
               activeItemIndex={activeItemIndex}
               focusActiveItemOnLoad
               onItemSelected={onItemSelected}
@@ -89,10 +90,10 @@ export default function EdiscoveryTimelineStrip({
                 title: "0.6rem",
               }}
               classNames={{
-                card: "ediscovery-chrono-card max-h-[150px] overflow-hidden",
-                cardTitle: "ediscovery-chrono-card-title",
-                cardSubTitle: "ediscovery-chrono-card-subtitle",
-                cardDetailedText: "ediscovery-chrono-card-text line-clamp-3",
+                card: "ediscovery-chrono-card max-h-[90px] overflow-hidden !p-2 !my-0 shadow-sm",
+                cardTitle: "ediscovery-chrono-card-title !mb-0.5 leading-tight",
+                cardSubTitle: "ediscovery-chrono-card-subtitle !mb-0.5 leading-tight",
+                cardDetailedText: "ediscovery-chrono-card-text line-clamp-2 !leading-tight",
                 controls: "ediscovery-chrono-controls",
                 activeProgressBar: "ediscovery-chrono-progress",
               }}

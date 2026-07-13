@@ -78,7 +78,7 @@ def test_analyze_legal_profile_success():
 
     with patch("backend.api.ediscovery.pipeline_ediscovery.extract_page_texts") as mock_extract, \
          patch("backend.api.ediscovery.legal_case_profile.extract_legal_profile") as mock_profile:
-        mock_extract.return_value = {1: "페이지 1", 2: "페이지 2", 3: "페이지 3"}
+        mock_extract.return_value = ({1: "페이지 1", 2: "페이지 2", 3: "페이지 3"}, {})
         mock_profile.return_value = expected_profile
 
         result = analyze_legal_profile(
@@ -104,7 +104,7 @@ def test_analyze_legal_profile_no_text():
     user = _make_user()
 
     with patch("backend.api.ediscovery.pipeline_ediscovery.extract_page_texts") as mock_extract:
-        mock_extract.return_value = {}
+        mock_extract.return_value = ({}, {})
         try:
             analyze_legal_profile("job-123", {}, user, db)
         except Exception as exc:
@@ -137,7 +137,7 @@ def test_analyze_legal_profile_with_agent_collected_context():
 
     with patch("backend.api.ediscovery.pipeline_ediscovery.extract_page_texts") as mock_extract, \
          patch("backend.api.ediscovery.legal_case_profile.extract_legal_profile") as mock_profile:
-        mock_extract.return_value = {1: "대여계약서", 2: "변제 독촉 내용", 3: "소장"}
+        mock_extract.return_value = ({1: "대여계약서", 2: "변제 독촉 내용", 3: "소장"}, {})
         mock_profile.return_value = expected_profile
 
         result = analyze_legal_profile(
@@ -164,7 +164,7 @@ def test_analyze_legal_profile_rejects_generic_result():
 
     with patch("backend.api.ediscovery.pipeline_ediscovery.extract_page_texts") as mock_extract, \
          patch("backend.api.ediscovery.legal_case_profile.extract_legal_profile") as mock_profile:
-        mock_extract.return_value = {1: "페이지 1"}
+        mock_extract.return_value = ({1: "페이지 1"}, {})
         mock_profile.return_value = {}
 
         try:

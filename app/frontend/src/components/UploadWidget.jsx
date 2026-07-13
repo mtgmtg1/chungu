@@ -266,8 +266,8 @@ export default function UploadWidget({ onComplete, submitLabel, jobId, onProgres
           <ul className="text-sm text-on-surface-variant space-y-1" data-oid="upload-widget-list">
             {files.map((f, i) => (
               <AnimatedRow key={i} index={i}>
-                <li className="flex items-center gap-2" data-oid={`upload-widget-file-${i}`}>
-                  <span className="bg-surface-container px-2 py-0.5" data-oid={`upload-widget-name-${i}`}>
+                <li className="flex items-center gap-2 min-w-0" data-oid={`upload-widget-file-${i}`}>
+                  <span className="bg-surface-container px-2 py-0.5 truncate min-w-0" data-oid={`upload-widget-name-${i}`}>
                     {f.name}
                   </span>
                   {f.webkitRelativePath && (

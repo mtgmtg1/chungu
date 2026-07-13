@@ -38,6 +38,7 @@ export default function SettingsPage() {
   const [pwLoading, setPwLoading] = useState(false);
   const [dataRightsLoading, setDataRightsLoading] = useState(false);
   const [aiApprovalMode, setAiApprovalMode] = useState("ask");
+  const [agentMaxSteps, setAgentMaxSteps] = useState(100);
   const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
 
   useEffect(() => {
@@ -59,6 +60,9 @@ export default function SettingsPage() {
       setPayments(p);
       if (acc?.ai_tool_approval_mode) {
         setAiApprovalMode(acc.ai_tool_approval_mode);
+      }
+      if (acc?.agent_max_steps !== undefined) {
+        setAgentMaxSteps(acc.agent_max_steps);
       }
     } catch (e) {
       setError(e.message || t("page:errors.loadFailed"));
@@ -202,13 +206,17 @@ export default function SettingsPage() {
     }
   };
 
-  // [Flow: AI 에이전트 승인 모드 저장]
-  const handleSaveAiSettings = async (mode) => {
-    setAiApprovalMode(mode);
+  // [Flow: AI 에이전트 설정 저장 (승인 모드 + 최대 step 수)]
+  const handleSaveAiSettings = async (updates) => {
+    if (updates.approval_mode) {
+      setAiApprovalMode(updates.approval_mode);
+    }
     setAiSettingsLoading(true);
     setError("");
     try {
-      await api.updateAISettings({ approval_mode: mode });
+      const res = await api.updateAISettings(updates);
+      if (res.approval_mode) setAiApprovalMode(res.approval_mode);
+      if (res.agent_max_steps !== undefined) setAgentMaxSteps(res.agent_max_steps);
       setMsg(t("page:settings.aiSettingsSaved"));
       setTimeout(() => setMsg(""), 3000);
     } catch (e) {
@@ -369,21 +377,31 @@ export default function SettingsPage() {
   const renderBilling = () =>
   <div className="space-y-gutter" data-oid="4-uks8s">
       <div className="glass-panel p-5 rounded-2xl" data-oid="q-z26g6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-4" data-oid="g986wss">
-          <div data-oid="399lxub">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6" data-oid="billing-balance-row">
+          <div data-oid="points-balance">
             <p className="text-on-surface-variant text-body-md mb-1" data-oid="kyfb3l8">
-              {t("page:settings.subscriptionPlan")}
+              {t("page:settings.pointsBalance")}
             </p>
             <p className="font-headline-lg text-headline-lg text-on-surface" data-oid="454aqs4">
-              {(account?.subscription_plan || "free").toUpperCase()}
+              {(account?.points_balance ?? 0).toLocaleString()}{t("common:points.point")}
             </p>
           </div>
-          <button
-          onClick={() => navigate("/price")}
-          className="bg-primary text-on-primary px-6 py-3 rounded-xl font-body-md hover:bg-primary/90 transition-all" data-oid="q8zcvdg">
+          <div className="flex flex-col gap-4 md:items-end md:justify-center" data-oid="plan-action">
+            <div>
+              <p className="text-on-surface-variant text-body-md mb-1" data-oid="subscription-plan-label">
+                {t("page:settings.subscriptionPlan")}
+              </p>
+              <p className="font-headline-lg text-headline-lg text-on-surface" data-oid="plan-name">
+                {(account?.subscription_plan || "free").toUpperCase()}
+              </p>
+            </div>
+            <button
+            onClick={() => navigate("/price")}
+            className="bg-primary text-on-primary px-6 py-3 rounded-xl font-body-md hover:bg-primary/90 transition-all" data-oid="q8zcvdg">
 
-            {t("page:settings.changePlan")}
-          </button>
+              {t("page:settings.changePlan")}
+            </button>
+          </div>
         </div>
         <div className="h-px bg-outline-variant/40 mb-6" data-oid="etbfmrz"></div>
         <h3 className="font-headline-md text-headline-md text-on-surface mb-4" data-oid="1-ize60">
@@ -641,7 +659,7 @@ export default function SettingsPage() {
               name="approvalMode"
               value="ask"
               checked={aiApprovalMode === "ask"}
-              onChange={() => handleSaveAiSettings("ask")}
+              onChange={() => handleSaveAiSettings({ approval_mode: "ask" })}
               disabled={aiSettingsLoading}
               className="mt-1"
             />
@@ -668,7 +686,7 @@ export default function SettingsPage() {
               name="approvalMode"
               value="always"
               checked={aiApprovalMode === "always"}
-              onChange={() => handleSaveAiSettings("always")}
+              onChange={() => handleSaveAiSettings({ approval_mode: "always" })}
               disabled={aiSettingsLoading}
               className="mt-1"
             />
@@ -681,6 +699,34 @@ export default function SettingsPage() {
               </p>
             </div>
           </label>
+        </div>
+      </div>
+      <div className="glass-panel p-5 rounded-2xl" data-oid="ai-max-steps-panel">
+        <h3 className="font-headline-md text-headline-md text-on-surface mb-3" data-oid="ai-max-steps-title">
+          {t("page:settings.agentMaxSteps")}
+        </h3>
+        <p className="text-on-surface-variant text-body-md mb-4" data-oid="ai-max-steps-desc">
+          {t("page:settings.agentMaxStepsDesc")}
+        </p>
+        <div className="flex items-center gap-3" data-oid="ai-max-steps-input-row">
+          <input
+            type="number"
+            min={1}
+            max={1000}
+            value={agentMaxSteps}
+            onChange={(e) => setAgentMaxSteps(parseInt(e.target.value, 10) || 100)}
+            disabled={aiSettingsLoading}
+            className="w-24 px-3 py-2 rounded-lg border border-outline-variant bg-surface text-on-surface focus:outline-none focus:ring-1 focus:ring-primary text-sm"
+            data-oid="ai-max-steps-input"
+          />
+          <button
+            onClick={() => handleSaveAiSettings({ agent_max_steps: agentMaxSteps })}
+            disabled={aiSettingsLoading}
+            className="bg-primary text-on-primary px-4 py-2 rounded-lg font-body-md hover:bg-primary/90 disabled:opacity-50 text-sm"
+            data-oid="ai-max-steps-save"
+          >
+            {t("page:settings.save")}
+          </button>
         </div>
       </div>
     </div>;

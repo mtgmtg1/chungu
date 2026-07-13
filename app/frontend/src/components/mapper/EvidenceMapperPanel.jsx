@@ -1,7 +1,8 @@
-// [Flow: Step 1 (e-Discovery 그래프에서 evidence 노드 추출) -> Step 2 (claim_type 입력 + 요건사실 추출 API 호출)
-//       -> Step 3 (DndContext + closestCenter로 드래그 앤 드롭 인프라 설정) -> Step 4 (드롭 시 요건 슬롯에 증거 append)
+// [Flow: Step 1 (e-Discovery 그래프에서 evidence 노드 추출) -> Step 2 (claim_type 입력 + 주장 추출 API 호출)
+//       -> Step 3 (DndContext + closestCenter로 드래그 앤 드롭 인프라 설정) -> Step 4 (드롭 시 주장 슬롯에 증거 append + reason 필드 포함)
 //       -> Step 5 (overall_progress_percent 계산 + ProgressBadge 시각화) -> Step 6 (PUT /mappings로 영속화)]
-// 요건 사실 기반 증거 퍼즐 매퍼 메인 패널. 청구 원인별 법적 요건사실 슬롯에 증거를 드래그 앤 드롭으로 매핑.
+// 주장(Claim) 기반 증거 퍼즐 매퍼 메인 패널. 청구 원인별 법적 주장 아래에 증거를 드래그 앤 드롭으로 매핑.
+// LLM이 주장-증거 관계를 파악해 reason 필드에 기록하며, UI는 부모(주장)/자식(증거) 계층 구조로 구분된다.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -18,7 +19,7 @@ import ElementDroppableSlots from "./ElementDroppableSlots.jsx";
 import ProgressBadge from "./ProgressBadge.jsx";
 
 /**
- * EvidenceMapperPanel — 요건사실 퍼즐 매퍼. DndContext 최상단 래퍼.
+ * EvidenceMapperPanel — 주장 기반 증거 퍼즐 매퍼. DndContext 최상단 래퍼.
  *
  * @param {Object} props
  * @param {string} props.jobId - Job ID
@@ -54,7 +55,7 @@ export default function EvidenceMapperPanel({ jobId, job }) {
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
 
-  // [Flow: Step 1 (저장된 element_mappings 로드) -> Step 2 (claim_type 복원)]
+  // [Flow: Step 1 (저장된 element_mappings 로드) -> Step 2 (claim_type 및 주장-증거 관계 복원)]
   const loadSavedMappings = useCallback(async () => {
     try {
       const data = await api.getElementMappings(jobId);
@@ -71,7 +72,7 @@ export default function EvidenceMapperPanel({ jobId, job }) {
     loadSavedMappings();
   }, [loadSavedMappings]);
 
-  // [Flow: Step 1 (claim_type 입력 검증) -> Step 2 (GET /legal-elements API 호출) -> Step 3 (응답으로 mappings 갱신)]
+  // [Flow: Step 1 (claim_type 입력 검증) -> Step 2 (GET /legal-elements API 호출) -> Step 3 (LLM이 주장-증거 관계를 포함한 응답으로 mappings 갱신)]
   const handleExtractElements = async () => {
     const trimmed = claimType.trim();
     if (!trimmed) return;
@@ -103,14 +104,14 @@ export default function EvidenceMapperPanel({ jobId, job }) {
     }
   }, [jobId]);
 
-  // [Flow: Step 1 (전체 요건 중 1개 이상 증거 매핑된 요건 비율 계산) -> Step 2 (mappings 갱신 + 영속화)]
+  // [Flow: Step 1 (전체 주장 중 1개 이상 증거 매핑된 주장 비율 계산) -> Step 2 (mappings 갱신 + 영속화)]
   const recomputeProgress = (elements) => {
     if (!elements || elements.length === 0) return 0;
     const filled = elements.filter((el) => (el.mapped_evidence || []).length > 0).length;
     return Math.round((filled / elements.length) * 100);
   };
 
-  // [Flow: Step 1 (드래그 소스/드롭 대상 식별) -> Step 2 (해당 요건 슬롯에 증거 append) -> Step 3 (progress 재계산 + 영속화)]
+  // [Flow: Step 1 (드래그 소스/드롭 대상 식별) -> Step 2 (해당 주장 슬롯에 증거 append + reason 필드 포함) -> Step 3 (progress 재계산 + 영속화)]
   const handleDragEnd = (event) => {
     const { active, over } = event;
     if (!over) return;
@@ -132,6 +133,7 @@ export default function EvidenceMapperPanel({ jobId, job }) {
               evidence_id: evidence.id,
               text_snippet: evidence.data?.label || evidence.label || "",
               source_doc: evidence.data?.page ? `P.${evidence.data.page}` : "",
+              reason: "",
             },
           ],
         };
@@ -147,7 +149,7 @@ export default function EvidenceMapperPanel({ jobId, job }) {
     });
   };
 
-  // [Flow: Step 1 (요건/증거 ID로 해당 매핑 제거) -> Step 2 (progress 재계산 + 영속화)]
+  // [Flow: Step 1 (주장/증거 ID로 해당 매핑 제거) -> Step 2 (progress 재계산 + 영속화)]
   const handleRemoveEvidence = (elementId, evidenceId) => {
     setMappings((prev) => {
       const elements = prev.elements.map((el) => {

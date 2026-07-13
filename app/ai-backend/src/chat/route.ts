@@ -12,6 +12,7 @@ import {
 } from 'ai';
 import type { Request, Response } from 'express';
 import { getAuthHeaders } from '../lib/auth.js';
+import * as proofApi from '../lib/proof-api.js';
 import { compressToolResults, shouldCompress } from '../lib/llmlingua.js';
 import { buildModel } from '../lib/model.js';
 import { buildAnnotationTools } from '../tools/annotations.js';
@@ -25,6 +26,9 @@ import { buildSpreadsheetTools } from '../tools/spreadsheet.js';
 
 // [Flow: maxOutputTokens — vLLM 기본값(128~256)은 툴콜 결과 분석에 부족하므로 8192로 설정]
 const MAX_OUTPUT_TOKENS = 8192;
+
+// [Flow: AI 에이전트 기본 최대 step 수 — 사용자 설정이 없을 때 100을 사용]
+const DEFAULT_AGENT_MAX_STEPS = 100;
 
 // [Flow: LLMLingua-2 압축 임계값 — 이전 스텝의 tool 결과 JSON이 이 값(문자 수)을 초과하면 압축]
 // 동적 rate: 4000~8000자→0.5(2x), 8000~20000자→0.3(3x), 20000자+→0.2(5x) — Python 서비스가 자동 선택
@@ -85,12 +89,13 @@ Available tool categories:
    - IMPORTANT: After extraction, persist or summarize the results by calling save_flow_drawings (e.g., add note nodes for key issues/evidence) or another state-update tool.
    - The graph data contract is: nodes have id, type (issue|plaintiff|defendant|evidence), and data.label/data.page; edges have id, source, target, and type.
 
-9. Evidence-to-Element Mapper (when user asks to build a case theory, map evidence to legal elements, or calculate proof progress for a claim):
-   - analyze_legal_profile: agent-driven inference of claim_type and legal elements. Use this first if the claim type is unknown.
-   - get_legal_elements: extract 3~5 legal elements (요건사실) for a given claim type (e.g. 사기죄, 대여금반환) via vLLM. Returns empty slots (mapped_evidence:[]).
-   - save_element_mappings: persist the completed puzzle state (claim_type + elements with mapped evidence) to Supabase. overall_progress_percent is recomputed server-side.
-   - get_element_mappings: retrieve the saved mapping state (for restore or progress check).
-   - Workflow: first call extract_ediscovery_graph to get evidence nodes, then analyze_legal_profile (or get_legal_elements if claim_type is already known) to generate element slots, then save_element_mappings with evidence mapped to each element. The data contract is: {claim_type, overall_progress_percent, elements: [{id, name, description, mapped_evidence: [{evidence_id, text_snippet, source_doc}]}]}.
+9. Issue-Claim-Evidence Tree Mapper (when user asks to build a case theory, map evidence to claims/issues, or calculate proof progress for a claim):
+   - analyze_legal_profile: agent-driven inference of claim_type, key issues, and opposing claims. Use this first if the claim type is unknown.
+   - get_legal_issue_tree: extract 3~5 issues, each with 2+ opposing claims (e.g. plaintiff vs defendant, prosecutor vs accused), and supporting evidence via vLLM. The LLM cross-validates the issue-claim-evidence chain against the document. Returns mapped_evidence with a reason field. If e-Discovery evidence nodes exist, they are used as evidence sources.
+   - save_issue_tree_mappings: persist the completed 3-level tree (claim_type + issues with claims + mapped evidence and relationship reasons) to Supabase. overall_progress_percent is recomputed server-side.
+   - get_issue_tree_mappings: retrieve the saved 3-level tree state (for restore or progress check).
+   - Legacy 2-level tools also exist: get_legal_elements, save_element_mappings, get_element_mappings. Prefer the 3-level tree tools for new case theory work.
+   - Workflow: first call extract_ediscovery_graph to get evidence nodes, then analyze_legal_profile (or get_legal_issue_tree if claim_type is already known) to generate issue/claim slots, then save_issue_tree_mappings with evidence mapped to each claim. The data contract is: {claim_type, overall_progress_percent, cross_validated, issues: [{id, name, description, claims: [{id, party, name, description, mapped_evidence: [{evidence_id, text_snippet, source_doc, reason}]}]}]}. The reason field must describe the concrete factual/legal relationship between the evidence and the claim. Each issue should contain opposing claims (e.g. plaintiff and defendant positions).
 
 Rules:
 - Always use the provided tools to make changes; do not just describe them.
@@ -153,6 +158,17 @@ export async function chatHandler(req: Request, res: Response) {
     authHeaders,
   };
 
+  // [Flow: 사용자별 에이전트 최대 step 수 및 사용자 ID 조회 -> 실패 시 기본값 사용]
+  let agentMaxSteps = DEFAULT_AGENT_MAX_STEPS;
+  let userId: string | null = null;
+  try {
+    const me = await proofApi.getMe(authHeaders);
+    userId = me.user_id || null;
+    agentMaxSteps = Math.max(1, Math.min(1000, Number(me.agent_max_steps) || DEFAULT_AGENT_MAX_STEPS));
+  } catch (e) {
+    console.error('[chatHandler] failed to fetch user agent_max_steps, using default 100:', e);
+  }
+
   const result = streamText({
     model: buildModel() as any,
     system: buildSystemPrompt(context),
@@ -169,7 +185,7 @@ export async function chatHandler(req: Request, res: Response) {
     },
     // [Flow: maxOutputTokens 8192 — vLLM 기본값(128~256)은 툴콜 결과 분석에 부족]
     maxOutputTokens: MAX_OUTPUT_TOKENS,
-    stopWhen: stepCountIs(30),
+    stopWhen: stepCountIs(agentMaxSteps),
     // [Flow: prepareStep — 이전 스텝의 tool 결과가 임계값 초과 시 LLMLingua-2 로 압축하여 전달]
     prepareStep: async ({ steps, stepNumber, messages: stepMessages }) => {
       // [Flow: 첫 스텝이거나 이전 스텝이 없으면 압축 불필요]
@@ -224,7 +240,7 @@ export async function chatHandler(req: Request, res: Response) {
       return {};
     },
     // [Flow: onStepFinish — 각 스텝 종료 시 toolCalls/toolResults/usage 로깅]
-    onStepFinish: ({ finishReason, usage, toolCalls, toolResults }) => {
+    onStepFinish: async ({ finishReason, usage, toolCalls, toolResults }) => {
       const toolCallNames = toolCalls?.map((tc: any) => tc.toolName).join(', ') || 'none';
       const toolResultCount = toolResults?.length || 0;
       const inputTokens = usage?.inputTokens ?? '?';
@@ -234,6 +250,20 @@ export async function chatHandler(req: Request, res: Response) {
           `tools=[${toolCallNames}] toolResults=${toolResultCount} ` +
           `tokens(in=${inputTokens}, out=${outputTokens})`,
       );
+    },
+    // [Flow: onFinish — 에이전트 실행 종료 후 총 스텝 수를 집계해 비동기로 포인트 차감]
+    onFinish: async ({ steps }) => {
+      const totalSteps = steps.length;
+      console.log(`[chatHandler] agent finished — totalSteps=${totalSteps} userId=${userId}`);
+      if (!userId || totalSteps <= 0) {
+        return;
+      }
+      try {
+        await proofApi.spendAgentSteps(userId, totalSteps, 'AI 에이전트 스텝 사용');
+        console.log(`[chatHandler] agent step credits spent — steps=${totalSteps}`);
+      } catch (e) {
+        console.error('[chatHandler] agent step credit spend failed:', e);
+      }
     },
   });
 

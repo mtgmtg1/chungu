@@ -283,6 +283,19 @@ export const api = {
   getElementMappings: (jobId) =>
     request(`/api/jobs/${jobId}/legal-elements/mappings`),
 
+  // Issue-Claim-Evidence Tree — 쟁점 → 주장 → 근거 3단계 트리 매퍼
+  getLegalIssueTree: (jobId, claimType = '') => {
+    const query = claimType ? `?claim_type=${encodeURIComponent(claimType)}` : '';
+    return request(`/api/jobs/${jobId}/legal-issue-tree${query}`);
+  },
+  saveIssueTreeMappings: (jobId, data) =>
+    request(`/api/jobs/${jobId}/legal-issue-tree/mappings`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  getIssueTreeMappings: (jobId) =>
+    request(`/api/jobs/${jobId}/legal-issue-tree/mappings`),
+
   // 에이전트 채팅 대화 이력 (DB 영속화)
   listChatConversations: (jobId) =>
     request(`/api/jobs/${jobId}/chat-conversations`),

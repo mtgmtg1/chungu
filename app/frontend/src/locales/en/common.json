@@ -86,7 +86,7 @@
     "logoutSuccess": "Logged out successfully"
   },
   "points": {
-    "point": "$"
+    "point": "pt"
   },
   "date": {
     "justNow": "Just now",

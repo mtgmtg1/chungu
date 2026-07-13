@@ -18,7 +18,7 @@ from sqlalchemy import text as sql_text
 from ..celery_app import celery
 from celery.signals import worker_ready
 from ..config import settings
-from ..core import archive_handler, converter, excel_writer, media_loader, merge, pdf_annotate_converter, pdf_text_layer, pipeline_ediscovery, subscription_service, supabase_client, xlsx_advanced_converter
+from ..core import archive_handler, converter, excel_writer, media_loader, merge, pdf_annotate_converter, pdf_text_layer, pipeline_ediscovery, points_service, subscription_service, supabase_client, xlsx_advanced_converter
 from ..core.ocr_client import has_pdf_text_layer
 from ..core.pipeline_docling import run_docling, run_hwp
 from ..core.pipeline_hybrid import run_hybrid
@@ -121,7 +121,7 @@ def _set_status(db, job: Job, status: str) -> None:
 
 
 def _release_subscription_usage(db, job: Job) -> None:
-    """최종 실패한 작업이 차감한 구독 사용량을 되돌린다.
+    """최종 실패한 작업이 차감한 크레딧을 되돌린다.
     Job에 예약 기록이 있으면 해당 기록을 우선 사용하고, 없으면 extracted_files로부터 계산한다."""
     if not job.user_id:
         return
@@ -129,23 +129,7 @@ def _release_subscription_usage(db, job: Job) -> None:
     if db_user is None:
         return
 
-    # 예약 기록이 있으면 정확한 기간과 단위로 환불
-    if job.reserved_period_start:
-        try:
-            subscription_service.release_usage(
-                db,
-                db_user,
-                basic_pages=job.reserved_basic_pages,
-                premium_pages=job.reserved_premium_pages,
-                media_seconds=job.reserved_media_seconds,
-                period_start=job.reserved_period_start,
-            )
-            logger.info(f"[run_job:{job.id}] 구독 사용량 환불 완료 (기록 기준)")
-        except Exception as e:
-            logger.warning(f"[run_job:{job.id}] 구독 사용량 환불 중 오류 (무시): {e}")
-        return
-
-    # fallback: extracted_files로부터 계산 (구식 job 지원)
+    # extracted_files로부터 미디어/Docling 세부값을 재계산한다.
     pages = job.total_pages or 0
     image_count = 0
     audio_seconds = 0
@@ -162,19 +146,26 @@ def _release_subscription_usage(db, job: Job) -> None:
         image_count = 0
         audio_seconds = 0
         video_seconds = 0
+    docling_refinement_pages = pages if job.use_docling_refinement else 0
     ocr_model = job.ocr_model or "premium"
-    basic_pages = pages + image_count if ocr_model == "basic" else 0
-    premium_pages = pages + image_count if ocr_model != "basic" else 0
-    premium_pages += pages if job.use_docling_refinement else 0
-    media_seconds = audio_seconds + video_seconds
+    basic_pages = job.reserved_basic_pages if job.reserved_basic_pages else (pages + image_count if ocr_model == "basic" else 0)
+    premium_pages = job.reserved_premium_pages if job.reserved_premium_pages else (pages + image_count if ocr_model != "basic" else 0)
+    period_start = job.reserved_period_start
+
     try:
         subscription_service.release_usage(
             db,
             db_user,
             basic_pages=basic_pages,
             premium_pages=premium_pages,
-            media_seconds=media_seconds,
+            audio_seconds=audio_seconds,
+            video_seconds=video_seconds,
+            docling_refinement_pages=docling_refinement_pages,
+            period_start=period_start,
         )
+        logger.info(f"[run_job:{job.id}] 크레딧 환불 완료")
+    except Exception as e:
+        logger.warning(f"[run_job:{job.id}] 크레딧 환불 중 오류 (무시): {e}")
     except Exception as e:
         logger.warning(f"[run_job:{job.id}] 구독 사용량 환불 중 오류 (무시): {e}")
 
@@ -1285,16 +1276,23 @@ def run_ediscovery(
     max_docs는 api/ediscovery.py extract 엔드포인트와의 호환성을 위한 max_chunks 별칭이다.
     context는 사용자가 입력한 프로젝트 주요/중요 사항으로, LLM 프롬프트에 포함된다.
     """
-    return pipeline_ediscovery.run(
-        job_id,
-        chunk_size=chunk_size,
-        threshold=threshold,
-        page_range=page_range,
-        max_chunks=max_chunks,
-        max_docs=max_docs,
-        query=query,
-        context=context,
-    )
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        user_id = str(job.user_id) if job else None
+        return pipeline_ediscovery.run(
+            job_id,
+            chunk_size=chunk_size,
+            threshold=threshold,
+            page_range=page_range,
+            max_chunks=max_chunks,
+            max_docs=max_docs,
+            query=query,
+            context=context,
+            user_id=user_id,
+        )
+    finally:
+        db.close()
 
 
 @celery.task(name="backend.workers.tasks.auto_recharge_retry")
@@ -1466,6 +1464,40 @@ def cleanup_expired_sandboxes() -> dict:
         }
     except Exception as e:
         logger.exception(f"[cleanup_expired_sandboxes] 태스크 오류: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()
+
+
+# [Flow: Step 1 (Celery beat 스케줄) -> Step 2 (모든 대상 사용자 조회) -> Step 3 (월간 크레딧 지급 조건 확인) -> Step 4 (points_balance 충전)]
+@celery.task(name="backend.workers.tasks.grant_monthly_subscription_credits")
+def grant_monthly_subscription_credits() -> dict[str, Any]:
+    """Celery beat로 매일 실행되어 월간 구독 크레딧을 지급한다.
+
+    연간 요금제의 경우 Paddle 웹훅이 월별로 발생하지 않으므로, 이 태스크가
+    구독 기간 시작일 기준으로 매월 크레딧을 지급하는 폴백 역할을 한다.
+    """
+    db = SessionLocal()
+    try:
+        plans = list(subscription_service.PLAN_MONTHLY_CREDITS.keys())
+        query = db.query(User).where(User.subscription_plan.in_(plans))
+        users = query.all()
+        granted = 0
+        skipped = 0
+        for user in users:
+            try:
+                if subscription_service.grant_monthly_credits(db, user):
+                    granted += 1
+                else:
+                    skipped += 1
+            except Exception as e:
+                logger.warning(f"[grant_monthly] user={user.id} 크레딧 지급 실패: {e}")
+                skipped += 1
+        db.commit()
+        logger.info(f"[grant_monthly] 완료: granted={granted}, skipped={skipped}")
+        return {"granted": granted, "skipped": skipped}
+    except Exception as e:
+        logger.exception(f"[grant_monthly] 태스크 오류: {e}")
         return {"error": str(e)}
     finally:
         db.close()

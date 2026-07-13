@@ -4,7 +4,7 @@
 // 여기서는 헤더를 추출해 downstream API 호출에 전달한다.
 import type { Request, Response, NextFunction } from 'express';
 
-export interface AuthHeaders {
+export interface AuthHeaders extends Record<string, string | undefined> {
   Authorization?: string;
   'X-Api-Key'?: string;
 }

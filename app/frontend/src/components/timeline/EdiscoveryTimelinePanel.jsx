@@ -13,7 +13,6 @@ import { useTranslation } from "react-i18next";
 import { AlertTriangle, Loader2, RefreshCw, AlertCircle, Network } from "lucide-react";
 import { api } from "../../api.js";
 import IssueFilterBar from "../flow/IssueFilterBar.jsx";
-import TimelinePreviewCard from "./TimelinePreviewCard.jsx";
 import ResizableCourtroomCards from "./ResizableCourtroomCards.jsx";
 import EdiscoveryTimelineStrip from "./EdiscoveryTimelineStrip.jsx";
 import { classifyNodesBySide } from "../../utils/ediscoveryTimelineUtils.js";
@@ -86,34 +85,15 @@ function getNodePage(node) {
 }
 
 /**
- * node에 맞는 sourceFile을 찾는다. 없으면 PDF/문서를 우선으로 폴백한다.
- *
- * @param {Object} node - e-Discovery graph 노드
- * @param {Object} previewData - sourceFiles를 포함한 미리보기 메타데이터
- * @returns {Object|null} sourceFile 객체 또는 null
- */
-function getNodeSourceFile(node, previewData) {
-  if (!previewData?.sourceFiles?.length) return null;
-  const page = getNodePage(node);
-  const files = previewData.sourceFiles;
-  return (
-    files.find((f) => f.page_num === page) ||
-    files.find((f) => ["pdf", "docx", "hwp"].includes(f.type)) ||
-    files[0] ||
-    null
-  );
-}
-
-/**
  * buildChronoItem — 단일 e-Discovery 노드를 React Chrono TimelineItemModel로 변환한다.
- * PDF/이미지/비디오는 Chrono의 media 프로퍼티를, 그 외에는 timelineContent(미리보기 카드)를 사용한다.
+ * 타임라인 카드에는 요약 텍스트만 노출하고, 원문은 클릭 시 왼쪽 SourcePanel에서 확인한다.
  *
  * @param {Object} node - e-Discovery graph 노드
- * @param {Object} previewData - sourceFiles를 포함한 미리보기 메타데이터
+ * @param {Object} _previewData - 하위 호환용 (미사용)
  * @param {Function} t - i18n translate 함수
  * @returns {Object} React Chrono item 객체
  */
-export function buildChronoItem(node, previewData, t) {
+export function buildChronoItem(node, _previewData, t) {
   const data = node.data || {};
   const entity = data.entity || (node.type === "evidence" ? "third_party" : node.type);
   const label = data.label || node.id;
@@ -122,11 +102,10 @@ export function buildChronoItem(node, previewData, t) {
   const subtitleKey =
     SWIMLANE_LABEL_KEYS[entity] || `ediscoverySwimlane${entity.charAt(0).toUpperCase() + entity.slice(1)}`;
   const subtitle = t(`page:result.${subtitleKey}`);
+  // 카드에는 원문 대신 1~2문 요약만 표시; 원문은 클릭 시 왼쪽 SourcePanel에서 확인한다.
   const summary = data.summary || label;
 
-  const sourceFile = getNodeSourceFile(node, previewData);
-
-  const item = {
+  return {
     id: node.id,
     title,
     cardTitle: label,
@@ -134,25 +113,6 @@ export function buildChronoItem(node, previewData, t) {
     cardDetailedText: summary,
     node,
   };
-
-  // [Flow: 이미지/비디오는 React Chrono media 프로퍼티로 렌더링 -> PDF/오디오/텍스트는 timelineContent 사용]
-  if (sourceFile?.type === "image") {
-    item.media = {
-      type: "IMAGE",
-      name: sourceFile.name || label,
-      source: { url: sourceFile.url || sourceFile.preview_url },
-    };
-  } else if (sourceFile?.type === "video") {
-    item.media = {
-      type: "VIDEO",
-      name: sourceFile.name || label,
-      source: { url: sourceFile.preview_url },
-    };
-  } else {
-    item.timelineContent = <TimelinePreviewCard node={node} previewData={previewData} />;
-  }
-
-  return item;
 }
 
 /**
@@ -193,9 +153,6 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
 
   // 원본 노드 (디밍 적용 전)
   const [rawNodes, setRawNodes] = useState([]);
-
-  // 자료 미리보기 메타데이터 (sourceFiles 기반)
-  const [previewData, setPreviewData] = useState(null);
 
   // 중앙 상세 카드와 하단 타임라인 사이의 수직 리사이저 상태
   const [timelineHeight, setTimelineHeight] = useState(DEFAULT_TIMELINE_HEIGHT);
@@ -253,43 +210,6 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
-
-  /**
-   * [Flow: Step 1 (jobId, job.status 변경) -> Step 2 (완료된 job이면 GET /preview 1페이지 호출)
-   *       -> Step 3 (sourceFiles를 page_num 기준 맵으로 저장)]
-   */
-  useEffect(() => {
-    if (!jobId || job?.status !== "done") {
-      setPreviewData(null);
-      return;
-    }
-
-    let cancelled = false;
-    const loadPreview = async () => {
-      try {
-        // 1페이지만 요청해도 서버가 source_files 전체를 반환하므로 최소한의 markdown만 불러온다.
-        const data = await api.previewJob(jobId, 1, 1);
-        if (cancelled) return;
-        setPreviewData({
-          sourceFiles: data.source_files || [],
-          sourceUrl: data.source_url,
-          sourceType: data.source_type,
-          imageUrls: data.image_urls || [],
-          lastPage: data.last_page,
-        });
-      } catch (err) {
-        if (!cancelled) {
-          console.warn("[EdiscoveryTimelinePanel] preview load failed:", err);
-          setPreviewData({ sourceFiles: [] });
-        }
-      }
-    };
-
-    loadPreview();
-    return () => {
-      cancelled = true;
-    };
-  }, [jobId, job?.status]);
 
   /**
    * [Flow: Step 1 (GET /ediscovery 상태 조회) -> Step 2 (done이면 metrics 갱신 + 폴링 중지)
@@ -409,8 +329,8 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
     const dimmedNodes = applyIssueDimmingToNodes(rawNodes, selectedIssues);
     const visibleNodes = dimmedNodes.filter((n) => n.type !== "swimlane" && !n.data?.dimmed);
     const sorted = sortByDateOrPage(visibleNodes);
-    return sorted.map((node) => buildChronoItem(node, previewData, t));
-  }, [rawNodes, selectedIssues, previewData, t]);
+    return sorted.map((node) => buildChronoItem(node, null, t));
+  }, [rawNodes, selectedIssues, t]);
 
   /**
    * [Flow: Step 1 (selectedNode 기준으로 chronoItems 내 인덱스 계산)]

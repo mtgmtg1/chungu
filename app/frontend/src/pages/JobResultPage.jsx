@@ -682,11 +682,18 @@ export default function JobResultPage() {
           job={job}
           defaultTab={defaultTab}
           onNodeClick={(node) => {
-            // [Flow: e-Discovery 노드 클릭 -> SourcePanel PDF 해당 페이지로 스크롤]
-            const page = node.data?.page;
-            if (page && sourcePanelApiRef.current) {
-              sourcePanelApiRef.current.scrollToPage(page);
+            // [Flow: e-Discovery 노드 클릭 -> SourcePanel 원본 파일/페이지로 스크롤]
+            // 백엔드가 source_file/original_page를 제공하면 해당 파일로 전환, 아니면 기존 page만 사용.
+            const page = node.data?.original_page || node.data?.page;
+            const sourceFileName = node.data?.source_file;
+            if (!page || !sourcePanelApiRef.current) return;
+
+            let fileIndex = 0;
+            if (sourceFileName && sourceFiles?.length > 1) {
+              const idx = sourceFiles.findIndex((f) => f.name === sourceFileName);
+              if (idx >= 0) fileIndex = idx;
             }
+            sourcePanelApiRef.current.scrollToPage({ fileIndex, pageNum: page });
           }}
         />
       );

@@ -294,16 +294,28 @@ body {
   min-width: 100%;
 }
 
-/* e-Discovery Timeline 카드 — 높이 초과 시 콘텐츠를 줄이고 잘리지 않도록 스크롤 허용 */
+/* e-Discovery Timeline 카드 — 높이 제한 + 상하 여백 최소화 */
 .ediscovery-chrono-card {
-  max-height: 120px !important;
+  max-height: 90px !important;
   overflow: hidden !important;
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.25rem !important;
 }
 .ediscovery-chrono-card-text {
   display: -webkit-box !important;
   -webkit-line-clamp: 2 !important;
   -webkit-box-orient: vertical !important;
   overflow: hidden !important;
+}
+
+/* e-Discovery Timeline Chrono — React Chrono 기본 컨테이너 상하 여백 최소화 */
+.ediscovery-chrono-section .react-chrono {
+  padding: 0 !important;
+}
+.ediscovery-chrono-section .react-chrono-horizontal .timeline-horizontal-container,
+.ediscovery-chrono-section .react-chrono-horizontal .timeline-card-content {
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.25rem !important;
 }
 
 /* 마크다운 렌더링 (메시지 본문) */

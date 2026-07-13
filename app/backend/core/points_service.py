@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-# [Flow: Step 1 (milli-USD 단가 조회) -> Step 2 (모델별 비용 계산) -> Step 3 (무료 한도 적용) -> Step 4 (크레딧 충전/차감) -> Step 5 (자동 충전 트리거) -> Step 6 (트랜잭션 기록)]
+# [Flow: Step 1 (milli-USD 단가 조회) -> Step 2 (모델별 비용 계산) -> Step 3 (크레딧 충전/차감) -> Step 4 (자동 충전 트리거) -> Step 5 (트랜잭션 기록)]
 import logging
-from datetime import date
 
 from sqlalchemy.orm import Session
 
 from sqlalchemy import select
 
 from .. import settings_store
-from ..db.models import AdminUser, DailyUsage, PointTransaction, User
+from ..db.models import AdminUser, PointTransaction, User
 
 logger = logging.getLogger(__name__)
 
@@ -18,26 +17,15 @@ def _get_rate(db: Session) -> dict:
     basic_page = int(settings_store.get_setting(db, "cost_basic_page_krw") or "1")
     premium_page = int(settings_store.get_setting(db, "cost_premium_page_krw") or "5")
     premium_audio_sec = int(settings_store.get_setting(db, "cost_premium_audio_sec_krw") or "1")
-    premium_video_sec = int(settings_store.get_setting(db, "cost_premium_video_sec_krw") or "5")
-    free_daily = int(settings_store.get_setting(db, "free_daily_pages_basic") or "100")
+    premium_video_sec = int(settings_store.get_setting(db, "cost_premium_video_sec_krw") or "10")
+    agent_step = int(settings_store.get_setting(db, "cost_agent_step_krw") or "1")
     return {
         "basic_page": basic_page,
         "premium_page": premium_page,
         "premium_audio_sec": premium_audio_sec,
         "premium_video_sec": premium_video_sec,
-        "free_daily": free_daily,
+        "agent_step": agent_step,
     }
-
-
-def get_daily_free_remaining(db: Session, user_id) -> int:
-    """오늘 기본모델로 사용한 페이지 수를 조회하고 잔여 무료 한도를 반환한다."""
-    rate = _get_rate(db)
-    today = date.today()
-    row = db.execute(
-        select(DailyUsage).where(DailyUsage.user_id == user_id, DailyUsage.date == today)
-    ).scalar_one_or_none()
-    used = row.pages_used if row else 0
-    return max(0, rate["free_daily"] - used)
 
 
 def calculate_cost(
@@ -47,34 +35,28 @@ def calculate_cost(
     audio_seconds: int = 0,
     video_seconds: int = 0,
     docling_refinement_pages: int = 0,
+    agent_steps: int = 0,
     ocr_model: str = "premium",
     user_id=None,
 ) -> dict:
-    """모델별 차등 과금을 적용하여 milli-USD 비용을 계산합니다.
+    """모델별 차등 과금을 적용하여 milli-USD 포인트를 계산합니다.
 
-    - basic: 이미지/문서 1md/페이지, 하루 100페이지 무료 (user_id 필요)
-    - premium: 이미지/문서 5md/페이지, 오디오 1md/초, 비디오 5md/초
+    - basic: 이미지/문서 1pt/페이지
+    - premium: 이미지/문서 5pt/페이지, 오디오 1pt/초, 비디오 10pt/초
+    - docling refinement: 3pt/페이지
+    - agent step: 1pt/스텝
     """
     rate = _get_rate(db)
+    refinement_rate = int(settings_store.get_setting(db, "cost_per_docling_refinement_page_krw") or "3")
     total_pages = pages + image_count
-
-    if ocr_model == "basic":
-        free_remaining = 0
-        if user_id is not None:
-            free_remaining = get_daily_free_remaining(db, user_id)
-        free_pages = min(total_pages, free_remaining)
-        chargeable_pages = total_pages - free_pages
-        milli_usd_cost = chargeable_pages * rate["basic_page"]
-        free_pages_used = free_pages
-    else:
-        refinement_rate = int(settings_store.get_setting(db, "cost_per_docling_refinement_page_krw") or "3")
-        milli_usd_cost = (
-            total_pages * rate["premium_page"]
-            + audio_seconds * rate["premium_audio_sec"]
-            + video_seconds * rate["premium_video_sec"]
-            + docling_refinement_pages * refinement_rate
-        )
-        free_pages_used = 0
+    page_rate = rate["basic_page"] if ocr_model == "basic" else rate["premium_page"]
+    milli_usd_cost = (
+        total_pages * page_rate
+        + audio_seconds * rate["premium_audio_sec"]
+        + video_seconds * rate["premium_video_sec"]
+        + docling_refinement_pages * refinement_rate
+        + agent_steps * rate["agent_step"]
+    )
 
     usd_str = f"${milli_usd_cost / 1000:.2f}"
     return {
@@ -83,26 +65,12 @@ def calculate_cost(
         "audio_seconds": audio_seconds,
         "video_seconds": video_seconds,
         "docling_refinement_pages": docling_refinement_pages,
+        "agent_steps": agent_steps,
         "ocr_model": ocr_model,
-        "free_pages_used": free_pages_used,
+        "free_pages_used": 0,
         "points": milli_usd_cost,
         "usd": usd_str,
     }
-
-
-def record_daily_usage(db: Session, user_id, pages: int) -> None:
-    """기본모델 사용 페이지 수를 DailyUsage 테이블에 누적한다."""
-    if pages <= 0:
-        return
-    today = date.today()
-    row = db.execute(
-        select(DailyUsage).where(DailyUsage.user_id == user_id, DailyUsage.date == today)
-    ).scalar_one_or_none()
-    if row:
-        row.pages_used += pages
-    else:
-        db.add(DailyUsage(user_id=user_id, date=today, pages_used=pages))
-    db.commit()
 
 
 def get_charge_limits() -> dict:
@@ -124,6 +92,11 @@ def charge_points(db: Session, user: User, points: int, description: str) -> Poi
     db.commit()
     db.refresh(tx)
     return tx
+
+
+def spend_agent_step(db: Session, user: User, description: str) -> PointTransaction:
+    """AI 에이전트 1 step당 1pt를 차감한다."""
+    return spend_points(db, user, 1, description)
 
 
 def spend_points(db: Session, user: User, points: int, description: str) -> PointTransaction:

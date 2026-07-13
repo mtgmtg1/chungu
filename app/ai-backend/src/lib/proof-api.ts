@@ -5,22 +5,24 @@
 import type { AuthHeaders } from './auth.js';
 
 const PROOF_API_URL = process.env.PROOF_API_URL || 'http://localhost:8000';
+const AI_BACKEND_SECRET = process.env.AI_BACKEND_SECRET || '';
 
 // ========================================
 // Evidence-to-Element Mapper 타입 정의
 // ========================================
 
 /**
- * 매핑된 증거 — 요건사실 슬롯에 드롭된 증거 카드.
+ * 매핑된 증거 — 주장 슬롯에 드롭된 증거 카드. LLM이 파악한 주장-증거 관계(reason)를 포함.
  */
 export interface MappedEvidence {
   evidence_id: string;
   text_snippet: string;
   source_doc: string;
+  reason: string;
 }
 
 /**
- * 법적 요건사실 슬롯 — 청구 원인별 입증 요건.
+ * 법적 주장(요건사실) 슬롯 — 청구 원인별 입증 주장. 부모 역할을 하며 자식 증거를 포함.
  */
 export interface LegalElement {
   id: string;
@@ -30,8 +32,8 @@ export interface LegalElement {
 }
 
 /**
- * 요건사실 퍼즐 매퍼 상태 (Data Contract).
- * overall_progress_percent = 1개 이상 증거가 매핑된 요건의 비율 (%).
+ * 주장-증거 퍼즐 매퍼 상태 (Data Contract).
+ * overall_progress_percent = 1개 이상 증거가 매핑된 주장의 비율 (%).
  */
 export interface ElementMappings {
   claim_type: string;
@@ -98,18 +100,23 @@ export async function request<T>(
   path: string,
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' = 'GET',
   body?: unknown,
-  authHeaders?: AuthHeaders,
+  headers?: AuthHeaders,
 ): Promise<T> {
   const url = `${PROOF_API_URL}${path}`;
-  const headers: Record<string, string> = {
-    ...(authHeaders || {}),
-  };
+  const requestHeaders: Record<string, string> = {};
+  if (headers) {
+    for (const [key, value] of Object.entries(headers)) {
+      if (value !== undefined) {
+        requestHeaders[key] = value;
+      }
+    }
+  }
   const options: RequestInit = {
     method,
-    headers,
+    headers: requestHeaders,
   };
   if (body !== undefined && !(body instanceof FormData)) {
-    headers['Content-Type'] = 'application/json';
+    requestHeaders['Content-Type'] = 'application/json';
     options.body = JSON.stringify(body);
   } else if (body instanceof FormData) {
     options.body = body;
@@ -139,7 +146,7 @@ export async function request<T>(
 
       console.error(
         `[request] ${method} ${url} attempt=${attempt + 1}/${MAX_RETRIES + 1} failed: ${msg}`,
-        { baseUrl: PROOF_API_URL, causeCode, causeMessage, headers: Object.keys(headers) },
+        { baseUrl: PROOF_API_URL, causeCode, causeMessage, headers: Object.keys(requestHeaders) },
       );
 
       const canRetry = isRetryableMethod && attempt < MAX_RETRIES && isRetryableError(err);
@@ -162,6 +169,57 @@ export async function request<T>(
  */
 export async function getJob(jobId: string, authHeaders?: AuthHeaders): Promise<Record<string, unknown>> {
   return request<Record<string, unknown>>(`/api/jobs/${jobId}`, 'GET', undefined, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (인증 헤더 수신) -> Step 2 (GET /api/auth/me) -> Step 3 (사용자 설정 반환)]
+ *
+ * 현재 사용자의 설정과 잔액을 조회한다. AI 에이전트의 max step 등 설정을 가져올 때 사용.
+ *
+ * @param authHeaders 인증 헤더
+ * @returns 사용자 설정 (user_id, points_balance, agent_max_steps, ai_tool_approval_mode 등)
+ */
+export async function getMe(authHeaders?: AuthHeaders): Promise<{
+  user_id: string;
+  email: string;
+  points_balance: number;
+  agent_max_steps: number;
+  ai_tool_approval_mode: string;
+}> {
+  return request('/api/auth/me', 'GET', undefined, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (AI 백엔드 시크릿 조회) -> Step 2 (POST /api/v1/agent/steps) -> Step 3 (차감 결과 반환)]
+ *
+ * AI 에이전트가 사용한 총 스텝 수만큼 사용자의 포인트를 차감한다.
+ * AI 백엔드는 대화/에이전트 실행 종료 시 onFinish에서 총 스텝 수를 집계해 한 번 호출한다.
+ *
+ * @param userId 포인트를 차감할 사용자 UUID
+ * @param steps 사용한 에이전트 스텝 수
+ * @param description 트랜잭션 설명 (optional)
+ * @returns 차감 포인트와 잔여 포인트
+ */
+export async function spendAgentSteps(
+  userId: string,
+  steps: number,
+  description?: string,
+): Promise<{
+  user_id: string;
+  steps: number;
+  cost_points: number;
+  points_balance: number;
+}> {
+  if (!AI_BACKEND_SECRET) {
+    throw new Error('AI_BACKEND_SECRET is not configured');
+  }
+  return request('/api/v1/agent/steps', 'POST', {
+    user_id: userId,
+    steps,
+    description,
+  }, {
+    'X-AI-Backend-Secret': AI_BACKEND_SECRET,
+  });
 }
 
 /**
@@ -861,6 +919,108 @@ export async function getElementMappings(
   authHeaders?: AuthHeaders,
 ): Promise<{ job_id: string; element_mappings: ElementMappings }> {
   return request(`/api/jobs/${jobId}/legal-elements/mappings`, 'GET', undefined, authHeaders);
+}
+
+// ========================================
+// Issue-Claim-Evidence Tree 타입 정의
+// ========================================
+
+/**
+ * 3단계 트리의 매핑된 근거 — 주장 슬롯에 드롭된 증거 카드.
+ */
+export interface IssueTreeEvidence {
+  evidence_id: string;
+  text_snippet: string;
+  source_doc: string;
+  reason: string;
+}
+
+/**
+ * 3단계 트리의 주장 — 대립 주체(party)와 근거 목록을 포함.
+ */
+export interface IssueTreeClaim {
+  id: string;
+  party: string;
+  name: string;
+  description: string;
+  mapped_evidence: IssueTreeEvidence[];
+}
+
+/**
+ * 3단계 트리의 쟁점 — 양측 주장을 자식으로 포함.
+ */
+export interface IssueTreeIssue {
+  id: string;
+  name: string;
+  description: string;
+  claims: IssueTreeClaim[];
+}
+
+/**
+ * 쟁점-주장-근거 3단계 트리 매퍼 상태 (Data Contract).
+ */
+export interface IssueTree {
+  claim_type: string;
+  overall_progress_percent: number;
+  cross_validated: boolean;
+  issues: IssueTreeIssue[];
+}
+
+/**
+ * [Flow: Step 1 (job_id + claim_type 수신) -> Step 2 (GET /api/jobs/{id}/legal-issue-tree?claim_type=...)
+ *       -> Step 3 (쟁점-주장-근거 3단계 트리 반환)]
+ *
+ * 청구 원인에 따른 쟁점 → 주장 → 근거 3단계 트리를 추출.
+ * e-Discovery evidence 노드와 문서 텍스트를 교차검증에 활용.
+ *
+ * @param jobId Job ID
+ * @param claimType 청구 원인 (예: "사기죄", "대여금반환")
+ * @param authHeaders 인증 헤더
+ * @returns 3단계 트리 매퍼 상태 (job_id, issue_tree)
+ */
+export async function getLegalIssueTree(
+  jobId: string,
+  claimType: string,
+  authHeaders?: AuthHeaders,
+): Promise<{ job_id: string; issue_tree: IssueTree }> {
+  const qs = `?claim_type=${encodeURIComponent(claimType)}`;
+  return request(`/api/jobs/${jobId}/legal-issue-tree${qs}`, 'GET', undefined, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (job_id + 3단계 트리 상태 수신) -> Step 2 (PUT /api/jobs/{id}/legal-issue-tree/mappings)
+ *       -> Step 3 (영속화된 3단계 트리 반환)]
+ *
+ * 프론트엔드에서 완성된 3단계 트리 상태를 Supabase jobs 테이블의 issue_tree JSONB에 저장.
+ * overall_progress_percent는 서버에서 재계산.
+ *
+ * @param jobId Job ID
+ * @param tree 3단계 트리 매퍼 상태 (Data Contract)
+ * @param authHeaders 인증 헤더
+ * @returns 저장된 3단계 트리 매퍼 상태
+ */
+export async function saveIssueTreeMappings(
+  jobId: string,
+  tree: IssueTree,
+  authHeaders?: AuthHeaders,
+): Promise<{ job_id: string; issue_tree: IssueTree }> {
+  return request(`/api/jobs/${jobId}/legal-issue-tree/mappings`, 'PUT', tree, authHeaders);
+}
+
+/**
+ * [Flow: Step 1 (job_id 수신) -> Step 2 (GET /api/jobs/{id}/legal-issue-tree/mappings) -> Step 3 (저장된 트리 반환)]
+ *
+ * 저장된 쟁점-주장-근거 3단계 트리 매핑 상태를 조회 (페이지 새로고침 후 복원용).
+ *
+ * @param jobId Job ID
+ * @param authHeaders 인증 헤더
+ * @returns 저장된 3단계 트리 매퍼 상태 (없으면 빈 스키마)
+ */
+export async function getIssueTreeMappings(
+  jobId: string,
+  authHeaders?: AuthHeaders,
+): Promise<{ job_id: string; issue_tree: IssueTree }> {
+  return request(`/api/jobs/${jobId}/legal-issue-tree/mappings`, 'GET', undefined, authHeaders);
 }
 
 // ========================================

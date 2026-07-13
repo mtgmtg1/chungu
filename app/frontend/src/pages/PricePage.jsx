@@ -16,21 +16,21 @@ const STATIC_PLANS = [
     name: "Free",
     monthly_usd: 0,
     yearly_usd: 0,
-    limits: { basic_pages: 1000, premium_pages: 500, media_seconds: 9000 },
+    monthly_credits: 1000,
   },
   {
     key: "pro",
     name: "Pro",
     monthly_usd: 20,
     yearly_usd: 200,
-    limits: { basic_pages: 10000, premium_pages: 5000, media_seconds: 90000 },
+    monthly_credits: 20000,
   },
   {
     key: "max",
     name: "Max",
     monthly_usd: 100,
     yearly_usd: 1000,
-    limits: { basic_pages: 60000, premium_pages: 30000, media_seconds: 540000 },
+    monthly_credits: 100000,
   },
 ];
 

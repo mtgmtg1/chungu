@@ -113,7 +113,7 @@ def _subscription_units_from_job(job: Job) -> dict:
     """Job 정보를 기반으로 구독 사용량 예약 단위를 계산한다.
 
     반환값:
-        {"basic_pages": int, "premium_pages": int, "media_seconds": int}
+        {"basic_pages": int, "premium_pages": int, "audio_seconds": int, "video_seconds": int, "docling_refinement_pages": int}
     """
     info = _calculate_media_info(job)
     pages = info["pages"]
@@ -125,12 +125,12 @@ def _subscription_units_from_job(job: Job) -> dict:
 
     basic_pages = pages + image_count if ocr_model == "basic" else 0
     premium_pages = pages + image_count if ocr_model != "basic" else 0
-    premium_pages += docling_refinement_pages
-    media_seconds = audio_seconds + video_seconds
     return {
         "basic_pages": basic_pages,
         "premium_pages": premium_pages,
-        "media_seconds": media_seconds,
+        "audio_seconds": audio_seconds,
+        "video_seconds": video_seconds,
+        "docling_refinement_pages": docling_refinement_pages,
     }
 
 
@@ -148,17 +148,17 @@ def _subscription_would_exceed_for_model(db: Session, job: Job, db_user: User, o
 
     basic_pages = pages + image_count if ocr_model == "basic" else 0
     premium_pages = pages + image_count if ocr_model != "basic" else 0
-    premium_pages += docling_refinement_pages
-    media_seconds = audio_seconds + video_seconds
 
     check = subscription_service.check_enough(
         db,
         db_user,
         basic_pages=basic_pages,
         premium_pages=premium_pages,
-        media_seconds=media_seconds,
+        audio_seconds=audio_seconds,
+        video_seconds=video_seconds,
+        docling_refinement_pages=docling_refinement_pages,
     )
-    return {"ok": check["ok"], "reason": check["reason"]}
+    return {"ok": check["ok"], "reason": check["reason"], "cost_points": check.get("cost_points", 0)}
 
 
 def _job_expires_at(job: Job) -> datetime:
@@ -434,10 +434,9 @@ async def upload_job(
 
     docling_refinement_pages = pages if docling_refinement else 0
     user_id = uuid.UUID(user.user_id)
-    cost_basic = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=0, ocr_model="basic", user_id=user_id)
-    cost_premium = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages, ocr_model="premium", user_id=user_id)
+    cost_basic = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=0, ocr_model="basic")
+    cost_premium = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages, ocr_model="premium")
     cost = cost_premium if ocr_model == "premium" else cost_basic
-    free_remaining = points_service.get_daily_free_remaining(db, user_id)
     return {
         "job_id": job.id,
         "status": job.status,
@@ -453,7 +452,6 @@ async def upload_job(
         "cost": cost,
         "cost_basic": cost_basic,
         "cost_premium": cost_premium,
-        "free_pages_remaining": free_remaining,
         "balance": user.points_balance,
     }
 
@@ -742,8 +740,8 @@ async def create_job(
         "subscription": {
             "plan": status["plan"],
             "active": status["active"],
-            "limits": status["limits"],
-            "used": status["used"],
+            "points_balance": status["points_balance"],
+            "monthly_credits": status["monthly_credits"],
             "remaining": status["remaining"],
             "would_exceed": not check_current["ok"],
             "would_exceed_basic": not check_basic["ok"],
@@ -755,7 +753,6 @@ async def create_job(
         "cost": {"points": 0, "usd": "$0.00"},
         "cost_basic": {"points": 0, "usd": "$0.00"},
         "cost_premium": {"points": 0, "usd": "$0.00"},
-        "free_pages_remaining": 0,
         "balance": 0,
     }
 
@@ -944,16 +941,19 @@ async def confirm_add_files(
         ocr_model = job.ocr_model or "premium"
         basic_pages = new_pages + new_image_count if ocr_model == "basic" else 0
         premium_pages = new_pages + new_image_count if ocr_model != "basic" else 0
-        premium_pages += new_pages if job.use_docling_refinement else 0
-        media_seconds = new_audio_seconds + new_video_seconds
+        docling_refinement_pages = new_pages if job.use_docling_refinement else 0
         try:
-            subscription_service.reserve_usage(
+            result = subscription_service.reserve_usage(
                 db,
                 db_user,
                 basic_pages=basic_pages,
                 premium_pages=premium_pages,
-                media_seconds=media_seconds,
+                audio_seconds=new_audio_seconds,
+                video_seconds=new_video_seconds,
+                docling_refinement_pages=docling_refinement_pages,
             )
+            job.cost_points += result["cost_points"]
+            db.commit()
         except ValueError as e:
             raise HTTPException(status_code=402, detail=str(e))
 
@@ -1021,7 +1021,7 @@ def confirm_job(
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # 구독형 요금제: 사용량 예약 (멱등성 위해 Job에 예약 기록 저장)
+    # 크레딧 시스템: 사용량을 포인트로 환산해 차감 (멱등성 위해 Job에 예약 기록 저장)
     units = _subscription_units_from_job(job)
     try:
         result = subscription_service.reserve_usage(
@@ -1029,21 +1029,23 @@ def confirm_job(
             db_user,
             basic_pages=units["basic_pages"],
             premium_pages=units["premium_pages"],
-            media_seconds=units["media_seconds"],
+            audio_seconds=units["audio_seconds"],
+            video_seconds=units["video_seconds"],
+            docling_refinement_pages=units["docling_refinement_pages"],
         )
     except ValueError as e:
         raise HTTPException(status_code=402, detail=str(e))
 
     job.reserved_basic_pages = units["basic_pages"]
     job.reserved_premium_pages = units["premium_pages"]
-    job.reserved_media_seconds = units["media_seconds"]
+    job.reserved_media_seconds = units["audio_seconds"] + units["video_seconds"]
     job.reserved_period_start = datetime.fromisoformat(result["period_start"])
-    job.cost_points = 0
+    job.cost_points = result["cost_points"]
     job.status = "queued"
     db.commit()
 
     run_job.delay(job.id)
-    return {"job_id": job.id, "status": job.status, "subscription": result}
+    return {"job_id": job.id, "status": job.status, "cost_points": result["cost_points"], "subscription": result}
 
 
 @router.get("/jobs")
@@ -1086,6 +1088,13 @@ def get_job(job_id: str, user: CurrentUser = Depends(get_current_user_or_api_key
             video_seconds = 0
         docling_refinement_pages = pages if job.use_docling_refinement else 0
         summary["has_media"] = audio_seconds > 0 or video_seconds > 0
+        summary["cost_basic"] = points_service.calculate_cost(
+            db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, ocr_model="basic"
+        )
+        summary["cost_premium"] = points_service.calculate_cost(
+            db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages, ocr_model="premium"
+        )
+        summary["cost"] = summary["cost_premium"] if (job.ocr_model or "premium") != "basic" else summary["cost_basic"]
 
         # 구독형 요금제: 잔여 한도 및 초과 여부를 함께 반환
         db_user = db.get(User, user_id)
@@ -1098,8 +1107,8 @@ def get_job(job_id: str, user: CurrentUser = Depends(get_current_user_or_api_key
         summary["subscription"] = {
             "plan": status["plan"],
             "active": status["active"],
-            "limits": status["limits"],
-            "used": status["used"],
+            "points_balance": status["points_balance"],
+            "monthly_credits": status["monthly_credits"],
             "remaining": status["remaining"],
             "would_exceed": not check_current["ok"],
             "would_exceed_basic": not check_basic["ok"],
@@ -1108,11 +1117,6 @@ def get_job(job_id: str, user: CurrentUser = Depends(get_current_user_or_api_key
             "reason_basic": check_basic["reason"],
             "reason_premium": check_premium["reason"],
         }
-        summary["cost_basic"] = {"points": 0, "usd": "$0.00"}
-        summary["cost_premium"] = {"points": 0, "usd": "$0.00"}
-        summary["free_pages_remaining"] = 0
-        summary["cost"] = summary["cost_basic"] if (job.ocr_model or "premium") == "basic" else summary["cost_premium"]
-    return summary
 
 
 @router.delete("/jobs/{job_id}")
@@ -1957,7 +1961,7 @@ def _split_markdown_by_pages(markdown: str) -> list[tuple[int, str]]:
 
 def _ensure_xlsx_basic_bundle(job: Job, db: Session) -> None:
     """CSV/XLSX 기본 변환 번들을 한 번 수행한다. 이미 변환된 경우 아무것도 하지 않는다.
-    구독형 요금제: basic_pages 단위로 사용량을 차감한다."""
+    크레딧 시스템: basic_pages 단위로 사용량을 차감한다."""
     if job.result_xlsx_basic_storage_path and job.result_csv_storage_path:
         return
     from ..db.models import User
@@ -1971,7 +1975,6 @@ def _ensure_xlsx_basic_bundle(job: Job, db: Session) -> None:
             db_user,
             basic_pages=units,
             premium_pages=0,
-            media_seconds=0,
         )
     except ValueError as e:
         raise HTTPException(status_code=402, detail=str(e))
@@ -2272,7 +2275,6 @@ def convert_job(
                 db_user,
                 basic_pages=0,
                 premium_pages=units,
-                media_seconds=0,
             )
         except ValueError as e:
             raise HTTPException(status_code=402, detail=str(e))
@@ -2280,6 +2282,7 @@ def convert_job(
         job.xlsx_advanced_refundable = True
         job.xlsx_advanced_reserved_pages = units
         job.xlsx_advanced_reserved_period_start = datetime.fromisoformat(result["period_start"])
+        job.xlsx_advanced_cost_points = result["cost_points"]
         db.commit()
         from ..workers import tasks
         task = tasks.convert_xlsx_advanced.delay(job_id)
@@ -2400,21 +2403,22 @@ def xlsx_advanced_action(
     units = job.total_pages if job.total_pages else (job.total_files or 1)
 
     if action == "refund":
-        # 구독 사용량 환불: 예약 시 기록한 기간을 사용
+        # 크레딧 환불: 예약 시 기록한 기간을 사용
         period_start = job.xlsx_advanced_reserved_period_start
         subscription_service.release_usage(
             db,
             db_user,
             basic_pages=0,
             premium_pages=job.xlsx_advanced_reserved_pages or units,
-            media_seconds=0,
             period_start=period_start,
         )
+        refunded_points = job.xlsx_advanced_cost_points
         job.xlsx_advanced_refundable = False
         job.xlsx_advanced_reserved_pages = 0
         job.xlsx_advanced_reserved_period_start = None
+        job.xlsx_advanced_cost_points = 0
         db.commit()
-        return {"refunded": True, "premium_pages": job.xlsx_advanced_reserved_pages or units}
+        return {"refunded": True, "premium_pages": units, "refunded_points": refunded_points}
 
     # retry: 상태 초기화 후 비용 없이 task 재실행
     job.xlsx_advanced_status = "processing"
@@ -2528,7 +2532,6 @@ def annotate_job(
                 db_user,
                 basic_pages=0,
                 premium_pages=units,
-                media_seconds=0,
             )
         except ValueError as e:
             raise HTTPException(status_code=402, detail=str(e))
@@ -2541,6 +2544,7 @@ def annotate_job(
         job.annotate_refundable = True
         job.annotate_reserved_pages = units
         job.annotate_reserved_period_start = datetime.fromisoformat(sub_result["period_start"])
+        job.annotate_cost_points = sub_result["cost_points"]
 
     # 구독 체크 통과 후 원자적으로 다음 인덱스를 할당한다.
     # 인덱스는 병렬 run 추적 및 재시도 식별용이며, 실제 파일은 job당 하나의 공유 파일을 사용한다.
@@ -2878,7 +2882,6 @@ def annotate_edit_job_endpoint(
                 db_user,
                 basic_pages=0,
                 premium_pages=units,
-                media_seconds=0,
             )
         except ValueError as e:
             raise HTTPException(status_code=402, detail=str(e))
@@ -2886,6 +2889,7 @@ def annotate_edit_job_endpoint(
         job.annotate_refundable = True
         job.annotate_reserved_pages = units
         job.annotate_reserved_period_start = datetime.fromisoformat(sub_result["period_start"])
+        job.annotate_cost_points += sub_result["cost_points"]
 
     # 원자적으로 다음 인덱스를 할당한다 (entry 추적용).
     idx_result = db.execute(
@@ -3358,25 +3362,29 @@ def job_action(
         raise HTTPException(status_code=404, detail="User not found")
 
     if action == "refund":
-        # 구독 사용량 환불: 예약 시 기록한 기간과 단위를 사용
+        # 크레딧 환불: 예약 시 기록한 단위를 기반으로 media/Docling 세부값을 재계산
         refunded_basic = job.reserved_basic_pages
         refunded_premium = job.reserved_premium_pages
-        refunded_media = job.reserved_media_seconds
+        media_info = _calculate_media_info(job)
         subscription_service.release_usage(
             db,
             db_user,
             basic_pages=refunded_basic,
             premium_pages=refunded_premium,
-            media_seconds=refunded_media,
+            audio_seconds=media_info["audio_seconds"],
+            video_seconds=media_info["video_seconds"],
+            docling_refinement_pages=media_info["docling_refinement_pages"],
             period_start=job.reserved_period_start,
         )
+        refunded_points = job.cost_points
         job.reserved_basic_pages = 0
         job.reserved_premium_pages = 0
         job.reserved_media_seconds = 0
         job.reserved_period_start = None
+        job.cost_points = 0
         job.refundable = False
         db.commit()
-        return {"refunded": True, "basic_pages": refunded_basic, "premium_pages": refunded_premium, "media_seconds": refunded_media}
+        return {"refunded": True, "basic_pages": refunded_basic, "premium_pages": refunded_premium, "refunded_points": refunded_points}
 
     # retry: 상태 초기화 후 비용 없이 task 재실행
     job.status = "queued"

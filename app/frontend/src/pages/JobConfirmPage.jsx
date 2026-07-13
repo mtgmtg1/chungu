@@ -77,20 +77,15 @@ export default function JobConfirmPage() {
   const hasMedia = job.has_media || false;
   const effectiveModel = hasMedia ? "premium" : ocrModel;
   const subscription = job.subscription || {};
-  const remaining = subscription.remaining || {};
-  const limits = subscription.limits || {};
-  const used = subscription.used || {};
-  const basicPages = effectiveModel === "basic" ? job.total_pages : 0;
-  const premiumPages = effectiveModel !== "basic" ? job.total_pages : 0;
-  const mediaSeconds = job.media_duration_seconds || 0;
+  const pointsBalance = subscription.points_balance ?? 0;
+  const monthlyCredits = subscription.monthly_credits ?? 0;
+  const remainingPoints = subscription.remaining ?? 0;
+  const isUnlimited = remainingPoints === -1;
+  const cost = job.cost || { points: 0, usd: "$0.00" };
+  const estimatedCost = effectiveModel === "basic" ? (job.cost_basic || cost) : (job.cost_premium || cost);
   const wouldExceed = effectiveModel === "basic" ? subscription.would_exceed_basic : subscription.would_exceed_premium;
   const reason = effectiveModel === "basic" ? subscription.reason_basic : subscription.reason_premium;
-  // -1 센티넬값은 관리자 무제한을 의미한다.
-  const isUnlimited = (v) => v === -1;
-  const insufficientBasic = !isUnlimited(remaining.basic_pages) && basicPages > (remaining.basic_pages ?? 0);
-  const insufficientPremium = !isUnlimited(remaining.premium_pages) && premiumPages > (remaining.premium_pages ?? 0);
-  const insufficientMedia = !isUnlimited(remaining.media_seconds) && mediaSeconds > (remaining.media_seconds ?? 0);
-  const insufficient = !subscription.active || wouldExceed || insufficientBasic || insufficientPremium || insufficientMedia;
+  const insufficient = !subscription.active || wouldExceed || (!isUnlimited && estimatedCost.points > remainingPoints);
 
   return (
     <div className="min-h-screen bg-background text-on-background flex flex-col" data-oid="nxnt213">
@@ -245,30 +240,24 @@ export default function JobConfirmPage() {
 
           <div className="bg-surface-container-low p-5 space-y-3 mb-6" data-oid="subscription-usage">
             <h3 className="text-sm font-medium text-on-surface mb-2">
-              {t("page:confirm.subscriptionUsage")}
+              {t("page:confirm.pointsBalance")}
             </h3>
             <div className="flex justify-between text-body-md">
-              <span className="text-on-surface-variant">{t("page:confirm.basicPagesRemaining")}</span>
+              <span className="text-on-surface-variant">{t("page:confirm.pointsBalance")}</span>
               <span className="font-medium text-on-surface">
-                {isUnlimited(remaining.basic_pages) || isUnlimited(limits.basic_pages)
-                  ? t("page:confirm.unlimited")
-                  : `${remaining.basic_pages ?? 0} / ${limits.basic_pages ?? 0}`}
+                {isUnlimited ? t("page:confirm.unlimited") : `${pointsBalance.toLocaleString()}pt`}
               </span>
             </div>
             <div className="flex justify-between text-body-md">
-              <span className="text-on-surface-variant">{t("page:confirm.premiumPagesRemaining")}</span>
+              <span className="text-on-surface-variant">{t("page:confirm.estimatedCost")}</span>
               <span className="font-medium text-on-surface">
-                {isUnlimited(remaining.premium_pages) || isUnlimited(limits.premium_pages)
-                  ? t("page:confirm.unlimited")
-                  : `${remaining.premium_pages ?? 0} / ${limits.premium_pages ?? 0}`}
+                {estimatedCost.points.toLocaleString()}pt
               </span>
             </div>
             <div className="flex justify-between text-body-md">
-              <span className="text-on-surface-variant">{t("page:confirm.mediaMinutesRemaining")}</span>
+              <span className="text-on-surface-variant">{t("page:confirm.pointsRemaining")}</span>
               <span className="font-medium text-on-surface">
-                {isUnlimited(remaining.media_seconds) || isUnlimited(limits.media_seconds)
-                  ? t("page:confirm.unlimited")
-                  : `${Math.floor((remaining.media_seconds ?? 0) / 60)} / ${Math.floor((limits.media_seconds ?? 0) / 60)}`}
+                {isUnlimited ? t("page:confirm.unlimited") : `${Math.max(0, pointsBalance - estimatedCost.points).toLocaleString()}pt`}
               </span>
             </div>
           </div>

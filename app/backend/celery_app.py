@@ -36,5 +36,10 @@ celery.conf.update(
             "task": "backend.workers.tasks.cleanup_expired_sandboxes",
             "schedule": 600.0,
         },
+        # 구독 요금제 월간 크레딧 지급 (1일 간격 — 연간 요금제 폴백)
+        "grant-monthly-subscription-credits": {
+            "task": "backend.workers.tasks.grant_monthly_subscription_credits",
+            "schedule": 86400.0,
+        },
     },
 )

@@ -265,8 +265,7 @@ async def upload_job(
         job.ocr_model = "premium"
         db.commit()
 
-    user_id = uuid.UUID(user.user_id)
-    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, ocr_model=ocr_model, user_id=user_id)
+    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, ocr_model=ocr_model)
     _log_api_usage(
         db, api_key, uuid.UUID(user.user_id), "/api/v1/jobs/upload", 200, points_spent=0, job_id=job.id,
         client_ip=request.client.host if request.client else "",
@@ -325,9 +324,7 @@ def confirm_job(
         video_seconds = 0
 
     ocr_model = job.ocr_model or "premium"
-    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, ocr_model=ocr_model, user_id=job.user_id)
-    if ocr_model == "basic":
-        points_service.record_daily_usage(db, job.user_id, pages + image_count)
+    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, ocr_model=ocr_model)
     try:
         points_service.spend_points(db, db_user, cost["points"], f"API 작업: {job.original_filename}")
     except ValueError as e:

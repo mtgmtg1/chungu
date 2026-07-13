@@ -8,6 +8,35 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 통합 크레딧(포인트) 시스템 마이그레이션 — 페이지/오디오/비디오/에이전트 스텝 통합 과금
+
+- **목표**: 기존 개별 사용량 제한(기본/프리미엄 페이지, 오디오/비디오 초)을 하나의 `points_balance` 크레딧 잔액으로 통합. 페이지/오디오/비디오/AI 에이전트 스텝 모두 포인트에서 차감되며, 월간 구독으로 크레딧을 지급한다.
+- **크레딧 비율**: 기본 모델 페이지 1pt, 프리미엄 모델 페이지 5pt, 오디오 1pt/초, 비디오 10pt/초, Docling 후처리 페이지 3pt, AI 에이전트 스텝 1pt/스텝.
+- **월간 구독 크레딧**: Free 1,000pt, Pro 20,000pt, Max 100,000pt.
+- **Phase 1: DB 마이그레이션 & 백엔드 코어** (`app/backend/db/migrations/036_credit_system_subscription.sql` 신규):
+  - `users` 테이블에 `subscription_credits_granted_at` 컬럼 추가 (중복 지급 방지).
+  - `jobs` 테이블에 `cost_points`, `xlsx_advanced_cost_points`, `annotate_cost_points`, `ediscovery_cost_points` 컬럼 추가.
+  - `app_settings`에 `cost_premium_video_sec_krw=10`, `cost_agent_step_krw=1` 반영.
+  - `app/backend/core/points_service.py`: 비디오 10pt, 에이전트 스텝 1pt, Docling 후처리 3pt 비용 계산. 일일 무료 기본 페이지 로직 제거.
+  - `app/backend/core/subscription_service.py`: `points_balance` 기반 `check_enough`, `reserve_usage`, `release_usage`, 월간 크레딧 지급, 구독 상태 조회.
+  - `app/backend/workers/tasks.py` + `celery_app.py`: `grant_monthly_subscription_credits` Celery beat 태스크 추가.
+- **Phase 2: API/Job 통합**:
+  - `app/backend/api/v1/agent.py` (신규): `POST /api/v1/agent/steps` — AI 백엔드가 총 스텝 수를 보고하면 `X-AI-Backend-Secret` 검증 후 포인트 차감.
+  - `app/backend/api/jobs.py`: `reserve_usage`/`release_usage`를 포인트 기반으로 변경, `GET /api/jobs/{job_id}` 응답에 `cost_basic`/`cost_premium`/`cost` 및 `subscription` 잔액/예상 비용 포함.
+  - `app/backend/api/v1/jobs.py`: API 업로드/확인/환불 시 포인트 기반으로 변경, `calculate_cost`에서 `user_id` 인자 제거.
+  - `app/backend/api/auth.py`: 사용하지 않는 `POST /api/auth/agent/spend-step` 제거.
+- **Phase 3: AI 백엔드** (`app/ai-backend/src/lib/proof-api.ts`, `app/ai-backend/src/chat/route.ts`):
+  - `spendAgentSteps(userId, steps, description)` 메서드 추가. `AI_BACKEND_SECRET` 환경변수로 `POST /api/v1/agent/steps` 호출.
+  - `chat/route.ts`에서 `onStepFinish`당 1pt씩 차감하던 로직을 제거하고, `streamText` `onFinish`에서 `steps.length`로 총 스텝을 집계해 비동기 차감.
+- **Phase 4: 프론트엔드 UI/UX**:
+  - `PricePage.jsx` + `PlanCard.jsx`: 요금제 카드를 월간 크레딧 기준으로 표시.
+  - `JobConfirmPage.jsx`: 잔여 포인트, 예상 비용, 차감 후 잔액 표시. 기존 페이지/미디어 잔여량 UI 제거.
+  - `DashboardPage.jsx` + `SettingsPage.jsx`: 포인트 잔액 표시.
+  - `ko/en/ja/page.json` 및 `common.json`: 포인트 단위 `$` → `pt` 변경, 크레딧 관련 문구 갱신.
+- **검증**: `pytest tests/` 134 passed, AI 백엔드 `npm run build` 성공, 프론트엔드 `npm run test` + `npm run build` 성공. `test_points_service.py`, `test_subscription_credits.py`, `test_agent_steps.py` 추가.
+- **배포 시 주의**: DB 마이그레이션 `036_credit_system_subscription.sql`을 `supabase-chungu-db` 컨테이너에 수동 적용. AI 백엔드(`.env`)에 `AI_BACKEND_SECRET` 추가, 백엔드 `config`에 동일값 설정. `deploy_a1.sh`로 a1 서버 배포.
+- **핵심 파일**: `app/backend/db/migrations/036_credit_system_subscription.sql`, `app/backend/core/points_service.py`, `app/backend/core/subscription_service.py`, `app/backend/api/v1/agent.py`, `app/backend/api/jobs.py`, `app/backend/api/v1/jobs.py`, `app/ai-backend/src/chat/route.ts`, `app/ai-backend/src/lib/proof-api.ts`, `app/frontend/src/pages/JobConfirmPage.jsx`, `app/frontend/src/pages/PricePage.jsx`, `app/frontend/src/components/PlanCard.jsx`.
+
 ### Evidence-to-Element Mapper — 요건 사실 기반 증거 퍼즐 매퍼 (DnD + 입증 달성도 시각화)
 
 - **목표**: 변호사가 사건 기획을 직관적으로 할 수 있도록 돕는 '요건 사실 기반 증거 퍼즐 매퍼' 추가. 청구 원인(예: 사기죄)에 따른 법적 요건 빈 슬롯을 제공하고, e-Discovery 그래프에서 추출된 증거(evidence) 노드를 @dnd-kit 드래그 앤 드롭으로 슬롯에 채우면 입증 달성도(%)를 시각화. 기존 EDiscoveryViewer 내 'Graph'/'Mapper' 탭 전환으로 통합.

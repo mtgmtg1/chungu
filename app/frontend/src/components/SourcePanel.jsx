@@ -590,19 +590,32 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
   const setSelectedIndex = isControlled ? onFileSelect : setInternalIndex;
   const pdfViewerRef = useRef(null);
   const autoSaveRef = useRef(null);
+  const pendingScrollRef = useRef(null);
   const [selectedAnnotationsJson, setSelectedAnnotationsJson] = useState(null);
   const [showAnnotationPanel, setShowAnnotationPanel] = useState(false);
 
   const selectedFile = files[selectedIndex] || files[0];
 
-  // [Flow: 외부 ref로 scrollToPage 노출 — FlowViewer 노드 클릭 시 원본 PDF 해당 페이지로 스크롤]
+  // [Flow: 외부 ref로 scrollToPage 노출 — FlowViewer/e-Discovery 노드 클릭 시 원본 PDF 해당 페이지로 스크롤]
+  // payload: number(기존 호환) 또는 { fileIndex, pageNum } — 다른 파일로의 전환도 지원한다.
   useImperativeHandle(ref, () => ({
-    scrollToPage: (pageNum) => {
+    scrollToPage: (payload) => {
+      const isObject = typeof payload === "object" && payload !== null && !Array.isArray(payload);
+      const targetIndex = isObject ? payload.fileIndex : null;
+      const pageNum = isObject ? payload.pageNum : payload;
+
+      if (typeof targetIndex === "number" && targetIndex !== selectedIndex) {
+        const clamped = Math.max(0, Math.min(files.length - 1, targetIndex));
+        pendingScrollRef.current = pageNum;
+        setSelectedIndex(clamped);
+        return;
+      }
+
       if (pdfViewerRef.current && typeof pdfViewerRef.current.scrollToPage === "function") {
         pdfViewerRef.current.scrollToPage(pageNum);
       }
     },
-  }), [pdfViewerRef]);
+  }), [pdfViewerRef, selectedIndex, setSelectedIndex, files.length]);
 
   /**
    * [Flow: Step 1 (PdfViewer ref로 exportAnnotations 호출) -> Step 2 (JSON 파싱)
@@ -651,9 +664,24 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
   }, [handleSaveAnnotations]);
 
   /**
-   * [Flow: Step 1 (선택된 파일의 annotations_json_url 확인) -> Step 2 (fetch로 JSON 로드)
-   *       -> Step 3 (성공 시 selectedAnnotationsJson 설정, 실패 시 null)]
+   * [Flow: Step 1 (선택된 파일이 변경되면 pending scroll 요청 처리)
+   *       -> Step 2 (선택된 파일의 annotations_json_url 확인) -> Step 3 (fetch로 JSON 로드)
+   *       -> Step 4 (성공 시 selectedAnnotationsJson 설정, 실패 시 null)]
    */
+  useEffect(() => {
+    // 다른 파일로 전환 후 예약된 페이지 스크롤이 있으면 PdfViewer 준비 후 실행한다.
+    if (pendingScrollRef.current && pdfViewerRef.current && typeof pdfViewerRef.current.scrollToPage === "function") {
+      const pageNum = pendingScrollRef.current;
+      pendingScrollRef.current = null;
+      const timer = setTimeout(() => {
+        if (pdfViewerRef.current && typeof pdfViewerRef.current.scrollToPage === "function") {
+          pdfViewerRef.current.scrollToPage(pageNum);
+        }
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [selectedFile]);
+
   useEffect(() => {
     const url = selectedFile?.annotations_json_url;
     if (!url) {
@@ -712,7 +740,7 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
                 <SourceIcon type={f.type} />
               )}
               <span className="flex flex-col items-start min-w-0">
-                <span className="truncate">{f.name}</span>
+                <span className="truncate min-w-0">{f.name}</span>
                 {f.status === "error" && (
                   <span className="text-error text-[10px] leading-none mt-0.5">
                     {t("page:result.annotateFailed")}

@@ -21,7 +21,8 @@ class LanguageUpdate(BaseModel):
 
 
 class AISettingsUpdate(BaseModel):
-    approval_mode: str = Field(..., pattern="^(ask|always)$")
+    approval_mode: str | None = Field(default=None, pattern="^(ask|always)$")
+    agent_max_steps: int | None = Field(default=None, ge=1, le=1000)
 
 
 @router.get("/me")
@@ -52,6 +53,7 @@ def me(
         "is_admin": user.is_admin,
         "language": user.language or "en",
         "ai_tool_approval_mode": db_user.ai_tool_approval_mode if db_user else "ask",
+        "agent_max_steps": db_user.agent_max_steps if db_user else 100,
         **rate_limit,
     }
 
@@ -78,10 +80,25 @@ def update_ai_settings(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """AI 에이전트 도구 승인 모드 설정을 업데이트한다."""
+    """AI 에이전트 설정(도구 승인 모드, 최대 step 수)을 업데이트한다.
+
+    payload에 포함된 필드만 업데이트한다. 둘 다 생략하면 400 오류를 반환한다.
+    """
     db_user = db.get(User, uuid.UUID(user.user_id))
     if db_user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    db_user.ai_tool_approval_mode = payload.approval_mode
+
+    if payload.approval_mode is None and payload.agent_max_steps is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="approval_mode or agent_max_steps is required")
+
+    if payload.approval_mode is not None:
+        db_user.ai_tool_approval_mode = payload.approval_mode
+    if payload.agent_max_steps is not None:
+        db_user.agent_max_steps = payload.agent_max_steps
+
     db.commit()
-    return {"ai_tool_approval_mode": db_user.ai_tool_approval_mode}
+    return {
+        "ai_tool_approval_mode": db_user.ai_tool_approval_mode,
+        "agent_max_steps": db_user.agent_max_steps,
+    }
+

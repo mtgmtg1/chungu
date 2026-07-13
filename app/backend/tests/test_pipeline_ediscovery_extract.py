@@ -55,13 +55,16 @@ def test_extract_all_source_files_combines_multiple_pdfs():
         "backend.core.pipeline_ediscovery._extract_page_texts_from_source_file",
         side_effect=fake_extract,
     ):
-        result = _extract_all_source_files(job)
+        result, page_meta = _extract_all_source_files(job)
 
     assert len(result) == 3
     assert result[1].startswith("[출처: 1.a.pdf 원본 1페이지]")
     assert "a 페이지1" in result[1]
     assert result[2].startswith("[출처: 1.a.pdf 원본 2페이지]")
     assert result[3].startswith("[출처: 1.b.pdf 원본 1페이지]")
+    assert page_meta[1] == {"source_file": "1.a.pdf", "original_page": 1}
+    assert page_meta[2] == {"source_file": "1.a.pdf", "original_page": 2}
+    assert page_meta[3] == {"source_file": "1.b.pdf", "original_page": 1}
 
 
 def test_extract_page_texts_prefers_extracted_files():
@@ -73,11 +76,12 @@ def test_extract_page_texts_prefers_extracted_files():
 
     with patch(
         "backend.core.pipeline_ediscovery._extract_all_source_files",
-        return_value={1: "combined"},
+        return_value=({1: "combined"}, {1: {"source_file": "evidence.pdf", "original_page": 1}}),
     ) as mock_all, patch("backend.core.pipeline_ediscovery._download_pdf_bytes") as mock_download:
-        result = extract_page_texts(job)
+        result, page_meta = extract_page_texts(job)
 
     assert result == {1: "combined"}
+    assert page_meta[1] == {"source_file": "evidence.pdf", "original_page": 1}
     mock_all.assert_called_once_with(job)
     mock_download.assert_not_called()
 
@@ -93,9 +97,11 @@ def test_extract_page_texts_fallback_to_main_pdf():
         "backend.core.pipeline_ediscovery._extract_page_texts_from_pdf",
         return_value={1: "page1", 2: "page2"},
     ):
-        result = extract_page_texts(job)
+        result, page_meta = extract_page_texts(job)
 
     assert result == {1: "page1", 2: "page2"}
+    assert page_meta[1] == {"source_file": "job.pdf", "original_page": 1}
+    assert page_meta[2] == {"source_file": "job.pdf", "original_page": 2}
 
 
 def test_extract_all_source_files_skips_empty_and_media():
@@ -115,10 +121,11 @@ def test_extract_all_source_files_skips_empty_and_media():
         "backend.core.pipeline_ediscovery._extract_page_texts_from_source_file",
         side_effect=fake_extract,
     ):
-        result = _extract_all_source_files(job)
+        result, page_meta = _extract_all_source_files(job)
 
     assert len(result) == 1
     assert "content.pdf" in result[1]
+    assert page_meta[1] == {"source_file": "content.pdf", "original_page": 1}
 
 
 def test_extract_all_source_files_uses_markdown_fallback():
@@ -136,10 +143,11 @@ def test_extract_all_source_files_uses_markdown_fallback():
         "backend.core.pipeline_ediscovery._extract_page_texts_from_source_file",
         return_value={1: "markdown page 1", 2: "markdown page 2"},
     ):
-        result = _extract_all_source_files(job)
+        result, page_meta = _extract_all_source_files(job)
 
     assert len(result) == 2
     assert "markdown page 1" in result[1]
+    assert page_meta[1] == {"source_file": "scan.md", "original_page": 1}
 
 
 def test_extract_page_texts_resolves_folder_upload_without_storage_path():
@@ -166,9 +174,10 @@ def test_extract_page_texts_resolves_folder_upload_without_storage_path():
         "backend.core.pipeline_ediscovery._extract_page_texts_from_pdf",
         return_value={1: "page from folder"},
     ):
-        result = extract_page_texts(job)
+        result, page_meta = extract_page_texts(job)
 
     assert result == {1: "[출처: evidence.pdf 원본 1페이지]\npage from folder"}
+    assert page_meta[1] == {"source_file": "evidence.pdf", "original_page": 1}
     assert ("pdfs", "pdfs/job-123/evidence.pdf") in downloaded_paths
 
 

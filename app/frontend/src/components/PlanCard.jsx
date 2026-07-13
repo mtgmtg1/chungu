@@ -2,16 +2,10 @@
 import { useTranslation } from "react-i18next";
 import { Check, Loader2, Sparkles, Zap, Crown } from "lucide-react";
 
-/** 초 단위 미디어 길이를 분 단위 문자열로 변환합니다. */
-function formatDuration(seconds) {
-  if (!seconds) return "0";
-  return Math.round(seconds / 60).toLocaleString();
-}
-
 /**
  * 구독 요금제 카드 하나를 렌더링합니다.
  * @param {Object} props - React props
- * @param {Object} props.plan - 플랜 객체 (key, name, limits, monthly_usd, yearly_usd)
+ * @param {Object} props.plan - 플랜 객체 (key, name, monthly_credits, monthly_usd, yearly_usd)
  * @param {string} props.cycle - "monthly" | "yearly"
  * @param {boolean} props.selected - 현재 사용자의 플랜인지 여부
  * @param {boolean} props.recommended - 추천 플랜 여부 (Pro)
@@ -22,7 +16,7 @@ function formatDuration(seconds) {
  */
 export default function PlanCard({ plan, cycle, selected, recommended, onSelect, disabled, dataOid }) {
   const { t } = useTranslation();
-  const limits = plan.limits;
+  const monthlyCredits = plan.monthly_credits;
   const isFree = plan.monthly_usd === 0;
   const price = cycle === "monthly" ? plan.monthly_usd : plan.yearly_usd;
 
@@ -67,15 +61,7 @@ export default function PlanCard({ plan, cycle, selected, recommended, onSelect,
       <ul className="space-y-3 mb-8 flex-grow">
         <li className="flex items-start gap-2 text-sm text-slate-600">
           <Check size={16} className="text-emerald-500 mt-0.5 flex-shrink-0" />
-          <span>{t("page:plans.basicPages", { count: limits.basic_pages.toLocaleString() })}</span>
-        </li>
-        <li className="flex items-start gap-2 text-sm text-slate-600">
-          <Check size={16} className="text-emerald-500 mt-0.5 flex-shrink-0" />
-          <span>{t("page:plans.premiumPages", { count: limits.premium_pages.toLocaleString() })}</span>
-        </li>
-        <li className="flex items-start gap-2 text-sm text-slate-600">
-          <Check size={16} className="text-emerald-500 mt-0.5 flex-shrink-0" />
-          <span>{t("page:plans.mediaMinutes", { count: formatDuration(limits.media_seconds) })}</span>
+          <span>{t("page:plans.monthlyCredits", { count: monthlyCredits.toLocaleString() })}</span>
         </li>
       </ul>
 

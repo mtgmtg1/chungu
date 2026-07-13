@@ -4,6 +4,7 @@
 # e-Discovery GraphRAG 파이프라인을 제어하는 REST API.
 # 수천 장 법률 문서에서 쟁점/원고/피고/증거 노드와 관계를 추출해 React Flow 시각화용 그래프 JSON으로 반환.
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -14,7 +15,7 @@ from ..auth.api_key_auth import require_api_key_or_session
 from ..auth.supabase_auth import CurrentUser
 from .. import settings_store
 from ..config import settings
-from ..core import legal_case_profile, legal_elements, pipeline_ediscovery
+from ..core import legal_case_profile, legal_elements, legal_issue_tree, pipeline_ediscovery
 from ..db.models import Job
 from ..db.session import get_db
 
@@ -313,6 +314,7 @@ def extract_ediscovery_graph(
         query=query,
         page_range=page_range,
         context=job.ediscovery_context,
+        user_id=str(user.user_id),
     )
 
     db.refresh(job)
@@ -418,9 +420,10 @@ def get_legal_elements(
     db: Session = Depends(get_db),
 ):
     """[Flow: Step 1 (Job 조회 + 권한 검증) -> Step 2 (claim_type 파싱) -> Step 3 (캐시 확인: 같은 claim_type이면 저장된 element_mappings 반환)
-          -> Step 4 (캐시 미스 시 vLLM으로 요건사실 추출) -> Step 5 (빈 슬롯 스키마 mapped_evidence:[] 포함 반환)]
+          -> Step 4 (캐시 미스 시 vLLM으로 주장 추출) -> Step 5 (evidence_nodes가 있으면 주장-증거 관계 분석) -> Step 6 (퍼즐 매퍼 스키마 반환)]
 
-    청구 원인(예: 사기죄)에 따른 법적 요건사실 3~5개를 도출한다.
+    청구 원인(예: 사기죄)에 따른 법적 주장(요건사실) 3~5개를 도출한다.
+    e-Discovery 그래프에 evidence 노드가 있으면 2차 LLM 호출로 주장-증거 관계를 분석하여 매핑한다.
     같은 claim_type으로 재요청 시 저장된 element_mappings를 캐시로 반환한다.
     """
     job = db.get(Job, job_id)
@@ -444,8 +447,12 @@ def get_legal_elements(
     endpoint, model, api_key = _resolve_llm_settings(job, db)
     logger.info(f"[legal-elements-api] extract job={job_id} claim_type={claim_type}")
 
-    mappings = legal_elements.extract_legal_elements(claim_type, endpoint, model, api_key)
-    # 추출 결과를 저장 (빈 슬롯 상태로 영속화 — 이후 PUT /mappings로 갱신)
+    # e-Discovery 그래프에서 evidence 노드 추출 (주장-증거 관계 분석용)
+    graph = job.ediscovery_graphs or {}
+    evidence_nodes = [n for n in graph.get("nodes", []) if n.get("type") == "evidence"]
+
+    mappings = legal_elements.extract_legal_elements(claim_type, endpoint, model, api_key, evidence_nodes=evidence_nodes)
+    # 추출 결과를 저장 (빈 슬롯/자동 매핑 상태로 영속화 — 이후 PUT /mappings로 갱신)
     job.element_mappings = mappings
     db.commit()
 
@@ -463,6 +470,7 @@ def save_element_mappings(
           -> Step 4 (element_mappings JSONB에 영속화) -> Step 5 (저장된 상태 반환)]
 
     프론트엔드에서 완성된 퍼즐 상태(Data Contract)를 Supabase jobs 테이블의 element_mappings JSONB에 저장한다.
+    주장-증거 관계(reason) 필드를 포함한 mapped_evidence를 그대로 유지하며,
     overall_progress_percent는 서버에서 재계산하여 신뢰성을 보장한다.
     """
     job = db.get(Job, job_id)
@@ -495,7 +503,7 @@ def get_element_mappings(
 ):
     """[Flow: Step 1 (Job 조회 + 권한 검증) -> Step 2 (저장된 element_mappings 반환)]
 
-    저장된 요건사실 퍼즐 매핑 상태를 조회한다 (페이지 새로고침 후 복원용).
+    저장된 주장-증거 퍼즐 매핑 상태를 조회한다 (페이지 새로고침 후 복원용).
     저장된 상태가 없으면 빈 스키마를 반환한다.
     """
     job = db.get(Job, job_id)
@@ -505,6 +513,125 @@ def get_element_mappings(
 
     mappings = job.element_mappings or {}
     return {"job_id": job.id, "element_mappings": mappings}
+
+
+# ============================================================
+# Issue-Claim-Evidence Tree — 쟁점 → 주장 → 근거 3단계 트리 매퍼
+# 양측(원고/피고, 검사/피고인 등) 주장이 대립하는 쟁점을 부모로,
+# 각 쟁점 아래에 양측 주장과 근거를 자식으로 배치한다.
+# ============================================================
+
+@router.get("/jobs/{job_id}/legal-issue-tree")
+def get_legal_issue_tree(
+    job_id: str,
+    claim_type: str = "",
+    user: CurrentUser = Depends(_get_current_user),
+    db: Session = Depends(get_db),
+):
+    """[Flow: Step 1 (Job 조회 + 권한 검증) -> Step 2 (claim_type 파싱) -> Step 3 (캐시 확인)
+          -> Step 4 (e-Discovery evidence 노드 추출) -> Step 5 (문서 페이지 텍스트 추출)
+          -> Step 6 (1차 LLM: 쟁점-주장-근거 트리 추출) -> Step 7 (2차 LLM: 문서 교차검증)
+          -> Step 8 (issue_tree JSONB에 영속화) -> Step 9 (3단계 트리 반환)]
+
+    청구 원인(예: 사기죄)에 따른 쟁점 → 주장 → 근거 3단계 트리를 도출한다.
+    e-Discovery 그래프의 evidence 노드와 문서 텍스트를 교차검증에 활용한다.
+    같은 claim_type으로 재요청 시 저장된 issue_tree를 캐시로 반환한다.
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+    _require_job_done(job)
+
+    claim_type = (claim_type or "").strip()
+    cached = job.issue_tree or {}
+
+    if not claim_type:
+        if cached.get("issues"):
+            return {"job_id": job.id, "issue_tree": cached}
+        raise HTTPException(status_code=400, detail="claim_type query parameter is required")
+
+    if cached.get("claim_type") == claim_type and cached.get("issues"):
+        return {"job_id": job.id, "issue_tree": cached}
+
+    endpoint, model, api_key = _resolve_llm_settings(job, db)
+    logger.info(f"[legal-issue-tree-api] extract job={job_id} claim_type={claim_type}")
+
+    graph = job.ediscovery_graphs or {}
+    evidence_nodes = [n for n in graph.get("nodes", []) if n.get("type") == "evidence"]
+
+    try:
+        page_texts, _page_meta = pipeline_ediscovery.extract_page_texts(job)
+    except Exception as e:
+        logger.warning(f"[legal-issue-tree-api] page_texts 추출 실패 job={job_id}: {e}")
+        page_texts = {}
+
+    db_user = db.get(User, uuid.UUID(user.user_id))
+    tree = legal_issue_tree.extract_issue_claim_tree(
+        claim_type, evidence_nodes, page_texts, endpoint, model, api_key, db=db, user=db_user
+    )
+    tree["overall_progress_percent"] = legal_issue_tree.compute_overall_progress(tree)
+    job.issue_tree = tree
+    db.commit()
+
+    return {"job_id": job.id, "issue_tree": tree}
+
+
+@router.put("/jobs/{job_id}/legal-issue-tree/mappings")
+def save_issue_tree_mappings(
+    job_id: str,
+    payload: dict = Body(...),
+    user: CurrentUser = Depends(_get_current_user),
+    db: Session = Depends(get_db),
+):
+    """[Flow: Step 1 (Job 조회 + 권한 검증) -> Step 2 (3단계 트리 payload 파싱)
+          -> Step 3 (overall_progress_percent 서버 재계산) -> Step 4 (issue_tree JSONB에 영속화)
+          -> Step 5 (저장된 상태 반환)]
+
+    프론트엔드에서 완성된 3단계 트리 상태를 Supabase jobs 테이블의 issue_tree JSONB에 저장한다.
+    주장-근거 관계(reason) 필드를 포함한 mapped_evidence를 그대로 유지하며,
+    overall_progress_percent는 서버에서 재계산한다.
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+    _require_job_done(job)
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid payload: expected JSON object")
+
+    tree = {
+        "claim_type": str(payload.get("claim_type", "")).strip(),
+        "overall_progress_percent": 0,
+        "cross_validated": bool(payload.get("cross_validated", False)),
+        "issues": payload.get("issues", []) if isinstance(payload.get("issues"), list) else [],
+    }
+    tree["overall_progress_percent"] = legal_issue_tree.compute_overall_progress(tree)
+
+    job.issue_tree = tree
+    db.commit()
+    logger.info(f"[legal-issue-tree-api] save job={job_id} progress={tree['overall_progress_percent']}%")
+
+    return {"job_id": job.id, "issue_tree": tree}
+
+
+@router.get("/jobs/{job_id}/legal-issue-tree/mappings")
+def get_issue_tree_mappings(
+    job_id: str,
+    user: CurrentUser = Depends(_get_current_user),
+    db: Session = Depends(get_db),
+):
+    """[Flow: Step 1 (Job 조회 + 권한 검증) -> Step 2 (저장된 issue_tree 반환)]
+
+    저장된 쟁점-주장-근거 3단계 트리 매핑 상태를 조회한다 (페이지 새로고침 후 복원용).
+    저장된 상태가 없으면 빈 스키마를 반환한다.
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+    _require_job_done(job)
+
+    tree = job.issue_tree or {}
+    return {"job_id": job.id, "issue_tree": tree}
 
 
 # ============================================================
@@ -531,7 +658,7 @@ def analyze_legal_profile(
     _require_job_not_expired(job)
     _require_job_done(job)
 
-    page_texts = pipeline_ediscovery.extract_page_texts(job)
+    page_texts, _page_meta = pipeline_ediscovery.extract_page_texts(job)
     if not page_texts:
         raise HTTPException(status_code=400, detail="문서에서 텍스트를 추출할 수 없습니다")
 

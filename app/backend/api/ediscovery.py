@@ -16,7 +16,7 @@ from ..auth.supabase_auth import CurrentUser
 from .. import settings_store
 from ..config import settings
 from ..core import legal_case_profile, legal_elements, legal_issue_tree, pipeline_ediscovery
-from ..db.models import Job
+from ..db.models import Job, User
 from ..db.session import get_db
 
 logger = logging.getLogger(__name__)

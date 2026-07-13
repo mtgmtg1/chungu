@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""[Flow: Step 1 (필요한 모듈 import) -> Step 2 (Job mock 생성)
+      -> Step 3 (extract_page_texts/_extract_all_source_files 시나리오 테스트)]
+
+e-Discovery 파이프라인이 job에 속한 모든 자료를 페이지 단위로 추출하는지 검증한다.
+"""
+import os
+import sys
+from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".."))
+
+from backend.core.pipeline_ediscovery import (
+    _extract_all_source_files,
+    extract_page_texts,
+)
+
+
+def _make_job(extracted_files=None, pdf_storage_path="", searchable_pdf_storage_path=""):
+    """테스트용 Job mock 객체를 생성한다.
+
+    매개변수:
+        extracted_files: extracted_files JSONB 리스트
+        pdf_storage_path: 단일 파일 폴백 경로
+        searchable_pdf_storage_path: 단일 파일 searchable PDF 경로
+    반환값: MagicMock Job 객체
+    """
+    job = MagicMock()
+    job.extracted_files = extracted_files or []
+    job.pdf_storage_path = pdf_storage_path
+    job.searchable_pdf_storage_path = searchable_pdf_storage_path
+    job.result_edited_md_storage_path = ""
+    job.result_md_storage_path = ""
+    return job
+
+
+def test_extract_all_source_files_combines_multiple_pdfs():
+    """extracted_files에 여러 PDF가 있으면 전역 페이지 번호로 통합한다."""
+    job = _make_job(extracted_files=[
+        {"type": "pdf", "path": "1.a.pdf", "storage_path": "pdfs/1.a.pdf"},
+        {"type": "pdf", "path": "1.b.pdf", "storage_path": "pdfs/1.b.pdf"},
+    ])
+
+    def fake_extract(info: dict) -> dict:
+        path = info.get("path", "")
+        if "1.a.pdf" in path:
+            return {1: "a 페이지1", 2: "a 페이지2"}
+        if "1.b.pdf" in path:
+            return {1: "b 페이지1"}
+        return {}
+
+    with patch(
+        "backend.core.pipeline_ediscovery._extract_page_texts_from_source_file",
+        side_effect=fake_extract,
+    ):
+        result = _extract_all_source_files(job)
+
+    assert len(result) == 3
+    assert result[1].startswith("[출처: 1.a.pdf 원본 1페이지]")
+    assert "a 페이지1" in result[1]
+    assert result[2].startswith("[출처: 1.a.pdf 원본 2페이지]")
+    assert result[3].startswith("[출처: 1.b.pdf 원본 1페이지]")
+
+
+def test_extract_page_texts_prefers_extracted_files():
+    """extracted_files가 있으면 단일 PDF 폴백을 무시하고 전체 소스 파일을 사용한다."""
+    job = _make_job(
+        extracted_files=[{"type": "pdf", "path": "evidence.pdf", "storage_path": "pdfs/evidence.pdf"}],
+        pdf_storage_path="pdfs/job.zip",
+    )
+
+    with patch(
+        "backend.core.pipeline_ediscovery._extract_all_source_files",
+        return_value={1: "combined"},
+    ) as mock_all, patch("backend.core.pipeline_ediscovery._download_pdf_bytes") as mock_download:
+        result = extract_page_texts(job)
+
+    assert result == {1: "combined"}
+    mock_all.assert_called_once_with(job)
+    mock_download.assert_not_called()
+
+
+def test_extract_page_texts_fallback_to_main_pdf():
+    """extracted_files가 비어 있으면 기존 단일 PDF 경로를 사용한다."""
+    job = _make_job(pdf_storage_path="pdfs/job.pdf")
+
+    with patch(
+        "backend.core.pipeline_ediscovery._download_pdf_bytes",
+        return_value=b"pdfbytes",
+    ), patch(
+        "backend.core.pipeline_ediscovery._extract_page_texts_from_pdf",
+        return_value={1: "page1", 2: "page2"},
+    ):
+        result = extract_page_texts(job)
+
+    assert result == {1: "page1", 2: "page2"}
+
+
+def test_extract_all_source_files_skips_empty_and_media():
+    """비어 있는 PDF와 오디오/비디오 파일은 제외하고 추출한다."""
+    job = _make_job(extracted_files=[
+        {"type": "pdf", "path": "empty.pdf", "storage_path": "pdfs/empty.pdf"},
+        {"type": "audio", "path": "recording.mp3", "storage_path": "pdfs/recording.mp3"},
+        {"type": "pdf", "path": "content.pdf", "storage_path": "pdfs/content.pdf"},
+    ])
+
+    def fake_extract(info: dict) -> dict:
+        if info.get("path") == "content.pdf":
+            return {1: "content"}
+        return {}
+
+    with patch(
+        "backend.core.pipeline_ediscovery._extract_page_texts_from_source_file",
+        side_effect=fake_extract,
+    ):
+        result = _extract_all_source_files(job)
+
+    assert len(result) == 1
+    assert "content.pdf" in result[1]
+
+
+def test_extract_all_source_files_uses_markdown_fallback():
+    """PDF 추출이 비어 있으면 result_markdown 폴백을 사용한다."""
+    job = _make_job(extracted_files=[
+        {
+            "type": "file",
+            "path": "scan.md",
+            "storage_path": "pdfs/scan.pdf",
+            "result_markdown": "results/scan.md",
+        },
+    ])
+
+    with patch(
+        "backend.core.pipeline_ediscovery._extract_page_texts_from_source_file",
+        return_value={1: "markdown page 1", 2: "markdown page 2"},
+    ):
+        result = _extract_all_source_files(job)
+
+    assert len(result) == 2
+    assert "markdown page 1" in result[1]

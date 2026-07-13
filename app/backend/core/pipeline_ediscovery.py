@@ -101,6 +101,21 @@ def _download_pdf_bytes(job: Job) -> bytes | None:
     return None
 
 
+def _download_storage_bytes(bucket: str, path: str) -> bytes | None:
+    """[Flow: Step 1 (Storage에서 객체 다운로드 시도) -> Step 2 (실패 시 download_pdf 폴백) -> Step 3 (bytes 또는 None 반환)]
+
+    지정한 버킷과 경로의 파일을 Supabase Storage에서 다운로드한다.
+    """
+    client = supabase_client.get_service_client()
+    try:
+        return client.storage.from_(bucket).download(path).read()
+    except Exception:
+        try:
+            return supabase_client.download_pdf(path).read()
+        except Exception:
+            return None
+
+
 def _extract_page_texts_from_pdf(pdf_bytes: bytes) -> dict[int, str]:
     """[Flow: Step 1 (PyMuPDF로 PDF 열기) -> Step 2 (페이지별 blocks 텍스트 결합) -> Step 3 (page_no → 텍스트 맵 반환)]
 
@@ -148,12 +163,102 @@ def _extract_page_texts_from_markdown(markdown: str) -> dict[int, str]:
     return page_texts
 
 
-def extract_page_texts(job: Job) -> dict[int, str]:
-    """[Flow: Step 1 (PDF 텍스트 레이어 추출 시도) -> Step 2 (빈 페이지가 많으면 마크다운 폴백) -> Step 3 (page_no → 텍스트 맵 반환)]
+def _extract_page_texts_from_source_file(info: dict) -> dict[int, str]:
+    """[Flow: Step 1 (파일 메타데이터 파싱) -> Step 2 (searchable PDF 우선 다운로드/추출)
+          -> Step 3 (빈 페이지면 원본 PDF/마크다운 폴백) -> Step 4 (page_no → 텍스트 맵 반환)]
 
-    searchable_pdf_storage_path → pdf_storage_path → result_md_storage_path 순서로 폴백.
-    법률 문서는 텍스트 레이어가 있는 경우가 많으므로 PDF 우선, 스캔 문서는 마크다운을 사용.
+    extracted_files의 단일 항목에서 페이지별 텍스트를 추출한다.
+    PDF뿐 아니라 docx/hwp/image의 searchable PDF 폴백, file 타입의 result_markdown도 처리한다.
     """
+    ftype = info.get("type", "")
+    storage_path = info.get("storage_path", "")
+    bucket = info.get("bucket", "pdfs")
+    result_markdown = info.get("result_markdown", "")
+    searchable_path = info.get("searchable_pdf_storage_path", "")
+
+    # Step 1: searchable PDF가 있으면 가장 먼저 시도 (텍스트 레이어 최적)
+    if searchable_path:
+        pdf_bytes = _download_storage_bytes("pdfs", searchable_path)
+        if pdf_bytes:
+            try:
+                page_texts = _extract_page_texts_from_pdf(pdf_bytes)
+                if any(t.strip() for t in page_texts.values()):
+                    return page_texts
+            except Exception as e:
+                logger.warning(f"[ediscovery] searchable PDF 추출 실패 {searchable_path}: {e}")
+
+    # Step 2: PDF/문서/이미지 원본을 PDF로 파싱 시도
+    if storage_path and ftype in ("pdf", "docx", "hwp", "image"):
+        pdf_bytes = _download_storage_bytes(bucket, storage_path)
+        if pdf_bytes:
+            try:
+                page_texts = _extract_page_texts_from_pdf(pdf_bytes)
+                if any(t.strip() for t in page_texts.values()):
+                    return page_texts
+            except Exception as e:
+                logger.warning(f"[ediscovery] 원본 PDF 추출 실패 {storage_path}: {e}")
+
+    # Step 3: 마크다운 폴백
+    if result_markdown:
+        md_bytes = _download_storage_bytes("results", result_markdown)
+        if md_bytes:
+            try:
+                return _extract_page_texts_from_markdown(md_bytes.decode("utf-8"))
+            except Exception as e:
+                logger.warning(f"[ediscovery] result_markdown 파싱 실패 {result_markdown}: {e}")
+
+    return {}
+
+
+def _extract_all_source_files(job: Job) -> dict[int, str]:
+    """[Flow: Step 1 (job.extracted_files 순회) -> Step 2 (각 파일별 텍스트 추출)
+          -> Step 3 (전역 페이지 번호 부여 + 출처 접두사 추가) -> Step 4 (통합 page_texts 반환)]
+
+    job에 속한 모든 자료(PDF/문서/이미지 searchable PDF/file 마크다운)를 페이지 단위로 결합한다.
+    단일 파일 분석이 아니라 job 전체를 하나의 문서 세트로 처리할 수 있게 한다.
+    """
+    files = job.extracted_files or []
+    combined: dict[int, str] = {}
+    global_page = 0
+
+    for info in files:
+        if not isinstance(info, dict):
+            continue
+        ftype = info.get("type", "")
+        if ftype in ("audio", "video"):
+            # 오디오/비디오는 현재 텍스트 추출이 별도로 지원되지 않음
+            continue
+
+        file_page_texts = _extract_page_texts_from_source_file(info)
+        if not file_page_texts:
+            continue
+
+        filename = Path(info.get("path", info.get("storage_path", "unknown"))).name
+        for page_no in sorted(file_page_texts.keys()):
+            text = file_page_texts[page_no].strip()
+            if not text:
+                continue
+            global_page += 1
+            combined[global_page] = f"[출처: {filename} 원본 {page_no}페이지]\n{text}"
+
+    if combined:
+        logger.info(f"[ediscovery] extracted_files에서 {len(combined)}페이지 추출 ({len(files)}개 파일 중)")
+    return combined
+
+
+def extract_page_texts(job: Job) -> dict[int, str]:
+    """[Flow: Step 1 (job.extracted_files가 있으면 전체 소스 파일 집계)
+          -> Step 2 (빈 경우 기존 단일 PDF 폴백) -> Step 3 (page_no → 텍스트 맵 반환)]
+
+    업로드된 모든 자료를 e-Discovery 분석 대상으로 포함한다.
+    job에 여러 파일이 있을 때 파일당 하나씩 분석하지 않고, job 전체를 통합해 분석한다.
+    """
+    if job.extracted_files:
+        combined = _extract_all_source_files(job)
+        if combined:
+            return combined
+
+    # 단일 파일 업로드 하위 호환: job.searchable_pdf_storage_path → job.pdf_storage_path → 마크다운 폴백
     pdf_bytes = _download_pdf_bytes(job)
     if pdf_bytes:
         page_texts = _extract_page_texts_from_pdf(pdf_bytes)

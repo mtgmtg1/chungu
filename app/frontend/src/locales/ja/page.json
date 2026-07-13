@@ -22,7 +22,10 @@
     "copyright": "© 2026 TeamCat",
     "api": "API",
     "admin": "管理者",
-    "plan": "プラン"
+    "plan": "プラン",
+    "ediscoveryContextLabel": "e-Discovery 分析コンテキスト",
+    "ediscoveryContextHint": "プロジェクトのテーマや重要事項を入力すると、e-Discovery分析の参考にします。",
+    "ediscoveryContextPlaceholder": "例：賃金返還請求事件、2023年4月5日に締結された契約、A社とB社の紛争"
   },
   "dashboard": {
     "title": "ダッシュボード",
@@ -420,6 +423,8 @@
     "ediscoveryResizePanels": "パネルサイズ調整",
     "ediscoveryOriginalText": "原文",
     "ediscoverySelectItem": "タイムライン項目を選択すると、詳細と原文が表示されます",
+    "ediscoveryContextLabel": "分析コンテキスト",
+    "ediscoveryContextPlaceholder": "プロジェクトのテーマや重要事項を入力してください",
     "mapperTabGraph": "グラフ",
     "mapperTabMapper": "パズルマッパー",
     "mapperTitle": "要件事実マッパー",

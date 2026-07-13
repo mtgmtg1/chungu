@@ -1274,6 +1274,7 @@ def run_ediscovery(
     max_chunks: int | None = None,
     max_docs: int | None = None,
     query: str | None = None,
+    context: str | None = None,
 ) -> dict:
     """[Flow: Step 1 (pipeline_ediscovery.run 호출) -> Step 2 (결과 반환)]
 
@@ -1282,6 +1283,7 @@ def run_ediscovery(
     page_range는 처리할 1-based 페이지 번호 리스트. None이면 전체 페이지를 처리한다.
     query는 자연어 쿼리로, 지정 시 관련 청크만 처리 대상으로 한다.
     max_docs는 api/ediscovery.py extract 엔드포인트와의 호환성을 위한 max_chunks 별칭이다.
+    context는 사용자가 입력한 프로젝트 주요/중요 사항으로, LLM 프롬프트에 포함된다.
     """
     return pipeline_ediscovery.run(
         job_id,
@@ -1291,6 +1293,7 @@ def run_ediscovery(
         max_chunks=max_chunks,
         max_docs=max_docs,
         query=query,
+        context=context,
     )
 
 

@@ -22,7 +22,10 @@
     "copyright": "© 2026 TeamCat",
     "api": "API",
     "admin": "Admin",
-    "plan": "Plans"
+    "plan": "Plans",
+    "ediscoveryContextLabel": "e-Discovery Analysis Context",
+    "ediscoveryContextHint": "Enter the project topic or important details to guide the e-Discovery analysis.",
+    "ediscoveryContextPlaceholder": "e.g. loan repayment claim, contract signed on 2023-04-05, dispute between A and B"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -420,6 +423,8 @@
     "ediscoveryResizePanels": "Resize panels",
     "ediscoveryOriginalText": "Original text",
     "ediscoverySelectItem": "Select a timeline item to view its details and original text",
+    "ediscoveryContextLabel": "Analysis Context",
+    "ediscoveryContextPlaceholder": "Enter the project topic or important details",
     "mapperTabGraph": "Graph",
     "mapperTabMapper": "Puzzle Mapper",
     "mapperTitle": "Element Mapper",

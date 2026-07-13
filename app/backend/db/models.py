@@ -118,11 +118,13 @@ class Job(Base):
     # ediscovery_graphs: {nodes: [{id, type, data:{label, page}}], edges: [{id, source, target, type}]}
     # ediscovery_metrics: {total_docs, processed_chunks, threshold}
     # ediscovery_params:   사용자 지정 파라미터 (chunk_size, threshold, page_range)
+    # ediscovery_context:  사용자가 입력한 프로젝트 주요/중요 사항 컨텍스트 (분석 시 LLM 프롬프트에 포함)
     ediscovery_status: Mapped[str] = mapped_column(String(20), default="")
     ediscovery_job_id: Mapped[str] = mapped_column(String(64), default="")
     ediscovery_graphs: Mapped[dict] = mapped_column(JSON, default=dict)
     ediscovery_metrics: Mapped[dict] = mapped_column(JSON, default=dict)
     ediscovery_params: Mapped[dict] = mapped_column(JSON, default=dict)
+    ediscovery_context: Mapped[str] = mapped_column(Text, default="")
     ediscovery_refundable: Mapped[bool] = mapped_column(Boolean, default=False)
     ediscovery_reserved_pages: Mapped[int] = mapped_column(Integer, default=0)
     ediscovery_reserved_period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

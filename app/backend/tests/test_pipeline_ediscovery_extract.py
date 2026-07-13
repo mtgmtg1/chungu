@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".."))
 
 from backend.core.pipeline_ediscovery import (
+    _build_extraction_prompt,
     _extract_all_source_files,
     extract_page_texts,
 )
@@ -169,3 +170,19 @@ def test_extract_page_texts_resolves_folder_upload_without_storage_path():
 
     assert result == {1: "[출처: evidence.pdf 원본 1페이지]\npage from folder"}
     assert ("pdfs", "pdfs/job-123/evidence.pdf") in downloaded_paths
+
+
+def test_build_extraction_prompt_includes_context():
+    """_build_extraction_prompt에 context가 주어지면 프롬프트에 추가 맥락 섹션을 포함한다."""
+    chunk_text = "2023년 4월 5일 A가 B에게 1천만 원을 대여했다."
+    context = "대여금 반환 청구 사건, A가 채권자, B가 채무자"
+    prompt = _build_extraction_prompt(chunk_text, page_no=1, context=context)
+    assert context in prompt
+    assert "추가 맥락" in prompt
+
+
+def test_build_extraction_prompt_without_context():
+    """_build_extraction_prompt에 context가 없으면 추가 맥락 섹션을 포함하지 않는다."""
+    chunk_text = "2023년 4월 5일 A가 B에게 1천만 원을 대여했다."
+    prompt = _build_extraction_prompt(chunk_text, page_no=1)
+    assert "추가 맥락" not in prompt

@@ -584,6 +584,11 @@ async def create_job(
     if not files_info:
         raise HTTPException(status_code=400, detail="No file information provided")
 
+    # 첫 업로드 시 사용자가 입력한 e-Discovery 컨텍스트(프로젝트 주요/중요 사항)를 저장한다.
+    ediscovery_context = str(payload.get("ediscovery_context", "") or "").strip()
+    if ediscovery_context:
+        job.ediscovery_context = ediscovery_context
+
     is_single_file = len(files_info) == 1
     total_size = sum(f.get("size", 0) for f in files_info)
     pages = 0
@@ -4219,6 +4224,7 @@ def _job_summary(job: Job) -> dict:
         "ediscovery_job_id": job.ediscovery_job_id,
         "ediscovery_graphs": job.ediscovery_graphs,
         "ediscovery_metrics": job.ediscovery_metrics,
+        "ediscovery_context": job.ediscovery_context,
         "ediscovery_refundable": job.ediscovery_refundable,
     }
 

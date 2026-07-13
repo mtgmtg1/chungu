@@ -22,7 +22,10 @@
     "copyright": "© 2026 TeamCat",
     "api": "API",
     "admin": "관리자",
-    "plan": "요금제"
+    "plan": "요금제",
+    "ediscoveryContextLabel": "e-Discovery 분석 맥락",
+    "ediscoveryContextHint": "프로젝트 주제나 중요한 사항을 입력하면 e-Discovery 분석 시 참고합니다.",
+    "ediscoveryContextPlaceholder": "예: 대여금 반환 청구 사건, 2023년 4월 5일 체결된 계약, A업체와 B업체 간 분쟁"
   },
   "dashboard": {
     "title": "대시보드",
@@ -420,6 +423,8 @@
     "ediscoveryResizePanels": "패널 크기 조절",
     "ediscoveryOriginalText": "원문",
     "ediscoverySelectItem": "타임라인 항목을 선택하면 정보와 원문이 여기에 표시됩니다",
+    "ediscoveryContextLabel": "분석 맥락",
+    "ediscoveryContextPlaceholder": "프로젝트 주제나 중요한 사항을 입력하세요",
     "mapperTabGraph": "그래프",
     "mapperTabMapper": "퍼즐 매퍼",
     "mapperTitle": "요건사실 매퍼",

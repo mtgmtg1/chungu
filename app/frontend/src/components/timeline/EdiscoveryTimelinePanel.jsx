@@ -183,6 +183,16 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // e-Discovery 분석 컨텍스트 — 첫 업로드 시 입력한 값을 기본값으로 사용
+  const [context, setContext] = useState(job?.ediscovery_context || "");
+
+  /**
+   * [Flow: Step 1 (job.ediscovery_context 변경 감지) -> Step 2 (분석 컨텍스트 기본값 동기화)]
+   */
+  useEffect(() => {
+    setContext(job?.ediscovery_context || "");
+  }, [job?.ediscovery_context]);
+
   // 원본 노드 (디밍 적용 전)
   const [rawNodes, setRawNodes] = useState([]);
 
@@ -336,7 +346,11 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
     setLoading(true);
     setError("");
     try {
-      const response = await api.extractEdiscoveryGraph(jobId, { auto: true }, { wait: false });
+      const response = await api.extractEdiscoveryGraph(
+        jobId,
+        { auto: true, context: context.trim() },
+        { wait: false },
+      );
       if (response.status === "processing") {
         startPolling();
       } else if (response.graph_data) {
@@ -347,7 +361,7 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
       setError(err instanceof Error ? err.message : String(err));
       setLoading(false);
     }
-  }, [jobId, loading, startPolling]);
+  }, [jobId, loading, startPolling, context]);
 
   /**
    * [Flow: Step 1 (쟁점 토글) -> Step 2 (선택 집합 갱신)]
@@ -502,7 +516,7 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
             <IssueFilterBar issues={issueList} selectedIssues={selectedIssues} onToggle={handleToggleIssue} />
           </div>
         )}
-        {/* 메트릭 + 재분석 버튼 */}
+        {/* 메트릭 + 컨텍스트 입력 + 재분석 버튼 */}
         <div className="flex items-center gap-3 flex-shrink-0">
           <div className="hidden md:flex items-center gap-3 text-xs text-on-surface-variant">
             <span>
@@ -517,6 +531,22 @@ export default function EdiscoveryTimelinePanel({ jobId, job, onNodeClick }) {
                 <strong className="text-on-surface">{metrics.anomalies_detected}</strong>
               </span>
             ) : null}
+          </div>
+          {/* e-Discovery 분석 컨텍스트 입력 — 프로젝트 주요/중요 사항을 분석에 반영 */}
+          <div className="hidden sm:flex flex-col items-start gap-1 w-48 md:w-64" data-oid="ediscovery-context-field">
+            <label htmlFor="ediscovery-context-input" className="text-[10px] font-medium text-on-surface-variant uppercase tracking-wide">
+              {t("page:result.ediscoveryContextLabel")}
+            </label>
+            <textarea
+              id="ediscovery-context-input"
+              value={context}
+              onChange={(e) => setContext(e.target.value)}
+              placeholder={t("page:result.ediscoveryContextPlaceholder")}
+              rows={2}
+              disabled={loading}
+              className="w-full text-xs text-on-surface bg-surface border border-outline-variant rounded-md p-1.5 focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none disabled:opacity-50"
+              data-oid="ediscovery-context-textarea"
+            />
           </div>
           <button
             onClick={handleAnalyze}

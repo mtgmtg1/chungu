@@ -759,6 +759,7 @@ export async function extractEdiscoveryGraph(
     max_docs?: number;
     chunk_size?: number;
     page_range?: string | number | number[];
+    context?: string;
   } = {},
   authHeaders?: AuthHeaders,
 ): Promise<{

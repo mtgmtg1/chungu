@@ -423,7 +423,7 @@ def _classify_entity(node_type: str, item_entity: str) -> str:
     return "third_party"
 
 
-def _build_extraction_prompt(chunk_text: str, page_no: int) -> str:
+def _build_extraction_prompt(chunk_text: str, page_no: int, context: str = "") -> str:
     """[Flow: Step 1 (노드 타입/필드 안내) -> Step 2 (JSON 스키마 명시)
           -> Step 3 (일지/명단/계약 등 비소송 자료 포함 주의사항) -> Step 4 (청크 텍스트 삽입)]
 
@@ -431,8 +431,14 @@ def _build_extraction_prompt(chunk_text: str, page_no: int) -> str:
     시간순 타임라인 + 주체별 스윔레인 배치를 위해 entity/date/summary 필드를 함께 추출한다.
     반환 JSON 스키마는 프론트엔드/AI 백엔드 데이터 계약을 따른다.
     """
+    context_section = ""
+    if context:
+        context_section = f"""
+아래는 사용자가 제공한 프로젝트 주요/중요 사항에 대한 추가 맥락이다. 이 맥락을 우선적으로 참고하여 핵심 쟁점, 원고/피고, 증거를 추출하고, 맥락과 자료가 모순되면 자료 내용을 우선한다.
+추가 맥락: {context}
+"""
     return f"""아래는 문서의 {page_no}페이지(글로벌 페이지 번호)에서 추출한 텍스트 일부이다.
-이 텍스트에서 다음 4가지 유형의 노드를 추출하라.
+{context_section}이 텍스트에서 다음 4가지 유형의 노드를 추출하라.
 소송 서류뿐 아니라 일지, 명단, 계약서, 보고서, 회의록, 거래 내역 등에 등장하는 인물, 회사, 날짜, 거래, 문서도 아래 기준에 맞춰 반드시 추출한다.
 
 - issue: 문서의 핵심 쟁점, 거래, 사건, 갈등, 또는 중요한 사실관계
@@ -471,14 +477,20 @@ def _build_extraction_prompt(chunk_text: str, page_no: int) -> str:
 """
 
 
-def _build_fallback_extraction_prompt(chunk_text: str, page_no: int) -> str:
+def _build_fallback_extraction_prompt(chunk_text: str, page_no: int, context: str = "") -> str:
     """[Flow: Step 1 (폴백 추출 지시) -> Step 2 (JSON 스키마 명시) -> Step 3 (청크 텍스트 삽입)]
 
     1차 법률 노드 추출이 빈 결과를 낸 경우, 텍스트에 등장하는 사람/기관/날짜/거래/문서/사실을
     보다 개방적으로 추출하기 위한 폴백 프롬프트를 구성한다.
     """
+    context_section = ""
+    if context:
+        context_section = f"""
+아래는 사용자가 제공한 프로젝트 주요/중요 사항에 대한 추가 맥락이다. 이 맥락을 우선적으로 참고하여 핵심 인물, 회사/기관, 날짜, 거래/사건, 문서/기록을 추출하고, 맥락과 자료가 모순되면 자료 내용을 우선한다.
+추가 맥락: {context}
+"""
     return f"""아래 문서의 {page_no}페이지 텍스트에서 등장하는 사람, 회사/기관, 날짜, 거래/사건, 문서/기록을 모두 추출하라.
-소송 서류가 아니더라도 일지, 명단, 계약서, 보고서, 거래내역, 회의록에 있는 핵심 정보도 추출한다.
+{context_section}소송 서류가 아니더라도 일지, 명단, 계약서, 보고서, 거래내역, 회의록에 있는 핵심 정보도 추출한다.
 
 추출 항목은 다음 4가지 유형으로 분류해 JSON 배열로만 반환한다 (다른 설명 금지):
 - issue: 특정 사건, 거래, 갈등, 날짜가 명시된 사실관계
@@ -512,6 +524,7 @@ def _extract_fallback_nodes(
     endpoint: str,
     model: str,
     api_key: str,
+    context: str = "",
     max_sample: int = 5,
 ) -> list[EdiscoveryNode]:
     """[Flow: Step 1 (청크 존재 여부 확인) -> Step 2 (대표 청크 샘플링)
@@ -529,7 +542,7 @@ def _extract_fallback_nodes(
 
     all_nodes: list[EdiscoveryNode] = []
     for chunk in sample_chunks:
-        prompt = _build_fallback_extraction_prompt(chunk.text, chunk.page_no)
+        prompt = _build_fallback_extraction_prompt(chunk.text, chunk.page_no, context=context)
         try:
             content, _ = call_text(prompt, endpoint, model, api_key, max_tokens=2000)
             all_nodes.extend(_parse_nodes(content, chunk.page_no))
@@ -617,12 +630,14 @@ def extract_nodes_from_chunk(
     endpoint: str,
     model: str,
     api_key: str,
+    context: str = "",
 ) -> list[EdiscoveryNode]:
     """[Flow: Step 1 (프롬프트 구성) -> Step 2 (vLLM 호출) -> Step 3 (응답 파싱) -> Step 4 (노드 목록 반환)]
 
     단일 자식 청크에서 vLLM Proxy를 호출해 노드를 추출한다.
+    context가 주어지면 LLM 프롬프트에 프로젝트 주요/중요 사항을 포함한다.
     """
-    prompt = _build_extraction_prompt(chunk.text, chunk.page_no)
+    prompt = _build_extraction_prompt(chunk.text, chunk.page_no, context=context)
     try:
         content, _ = call_text(prompt, endpoint, model, api_key, max_tokens=2000)
         return _parse_nodes(content, chunk.page_no)
@@ -636,6 +651,7 @@ def extract_nodes_concurrent(
     endpoint: str,
     model: str,
     api_key: str,
+    context: str = "",
 ) -> list[EdiscoveryNode]:
     """[Flow: Step 1 (ThreadPoolExecutor 생성) -> Step 2 (청크별 vLLM 호출 병렬화) -> Step 3 (결과 취합) -> Step 4 (노드 목록 반환)]
 
@@ -647,7 +663,7 @@ def extract_nodes_concurrent(
     all_nodes: list[EdiscoveryNode] = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(extract_nodes_from_chunk, chunk, endpoint, model, api_key): chunk
+            executor.submit(extract_nodes_from_chunk, chunk, endpoint, model, api_key, context): chunk
             for chunk in chunks
         }
         for future in as_completed(futures):
@@ -664,7 +680,7 @@ class AnomalyPair:
     conflict_reason: str
 
 
-def _build_anomaly_prompt(nodes_batch: list[EdiscoveryNode]) -> str:
+def _build_anomaly_prompt(nodes_batch: list[EdiscoveryNode], context: str = "") -> str:
     """[Flow: Step 1 (노드 목록을 ID+label+summary+type+date로 직렬화) -> Step 2 (모순 탐지 지시) -> Step 3 (JSON 배열 스키마 명시)]
 
     추출된 노드 목록에서 진술(plaintiff/defendant 주장)과 객관적 증거(evidence)가 충돌하는 쌍을
@@ -677,8 +693,14 @@ def _build_anomaly_prompt(nodes_batch: list[EdiscoveryNode]) -> str:
             f' | summary={n.summary or "(요약 없음)"}'
         )
     nodes_block = "\n".join(node_lines)
+    context_section = ""
+    if context:
+        context_section = f"""
+아래는 사용자가 제공한 프로젝트 주요/중요 사항에 대한 추가 맥락이다. 이 맥락을 우선적으로 참고하여 모순을 판단하고, 맥락과 자료가 모순되면 자료 내용을 우선한다.
+추가 맥락: {context}
+"""
     return f"""아래는 법률 문서에서 추출한 사건 노드 목록이다.
-이 노드들 중에서 "진술/주장(plaintiff, defendant)"과 "객관적 증거(evidence)"가 논리적으로 충돌(모순)하는 쌍을 찾아라.
+{context_section}이 노드들 중에서 "진술/주장(plaintiff, defendant)"과 "객관적 증거(evidence)"가 논리적으로 충돌(모순)하는 쌍을 찾아라.
 충돌의 예: 진술한 날짜와 증거의 날짜가 다름, 진술한 금액과 이체 내역이 다름, 알리바이와 감정 결과가 상충함.
 
 각 모순 쌍을 다음 JSON 형식으로 반환하라. 결과는 JSON 배열만 반환한다 (다른 설명 금지).
@@ -734,6 +756,7 @@ def detect_anomalies_concurrent(
     endpoint: str,
     model: str,
     api_key: str,
+    context: str = "",
 ) -> list[AnomalyPair]:
     """[Flow: Step 1 (노드 수 상한 적용) -> Step 2 (주체별 배치 분할) -> Step 3 (배치별 2차 LLM 호출 병렬화)
           -> Step 4 (결과 취합 + 중복 제거) -> Step 5 (AnomalyPair 목록 반환)]
@@ -763,7 +786,7 @@ def detect_anomalies_concurrent(
     def _detect_batch(batch: list[EdiscoveryNode]) -> list[AnomalyPair]:
         if len(batch) < 2:
             return []
-        prompt = _build_anomaly_prompt(batch)
+        prompt = _build_anomaly_prompt(batch, context=context)
         try:
             content, _ = call_text(prompt, endpoint, model, api_key, max_tokens=2000)
             return _parse_anomalies(content, valid_ids)
@@ -952,7 +975,7 @@ def assemble_graph(
 
 # --- 자동 파라미터 추천 ------------------------------------------------------
 
-def _build_param_suggestion_prompt(page_texts: dict[int, str]) -> str:
+def _build_param_suggestion_prompt(page_texts: dict[int, str], context: str = "") -> str:
     """[Flow: Step 1 (처음/중간/끝 페이지 샘플 선택) -> Step 2 (각 샘플을 2000자로 truncate)
           -> Step 3 (프롬프트 문자열 조합) -> Step 4 (LLM 입력 문자열 반환)]
 
@@ -975,7 +998,13 @@ def _build_param_suggestion_prompt(page_texts: dict[int, str]) -> str:
         sample_blocks.append(f"--- 페이지 {page_no} ---\n{text}")
     sample_text = "\n\n".join(sample_blocks)
 
-    return f"""아래는 법률 문서의 일부 페이지 샘플이다. 이 문서의 특성을 분석하여 e-Discovery GraphRAG 파이프라인에 사용할 최적의 파라미터 3개를 JSON으로 반환하라.
+    context_section = ""
+    if context:
+        context_section = f"""
+아래는 사용자가 제공한 프로젝트 주요/중요 사항에 대한 추가 맥락이다. 이 맥락을 우선적으로 참고하여 파라미터를 추천하고, 맥락과 자료가 모순되면 자료 내용을 우선한다.
+추가 맥락: {context}
+"""
+    return f"""아래는 법률 문서의 일부 페이지 샘플이다.{context_section} 이 문서의 특성을 분석하여 e-Discovery GraphRAG 파이프라인에 사용할 최적의 파라미터 3개를 JSON으로 반환하라.
 
 [파라미터 설명]
 - chunk_size: 한 번에 LLM에 전달할 텍스트의 단어 수. 문서가 짧고 단순하면 256~512, 사실관계가 복잡하고 많은 쟁점/주체가 등장하면 1024~2048, 매우 복잡하면 2048~4096.
@@ -1082,6 +1111,7 @@ def _suggest_params(
     endpoint: str,
     model: str,
     api_key: str,
+    context: str = "",
 ) -> dict:
     """[Flow: Step 1 (페이지 샘플 선택 및 프롬프트 구성) -> Step 2 (vLLM 호출)
           -> Step 3 (응답 파싱) -> Step 4 (권장 범위 내 clamp) -> Step 5 (파라미터 dict 반환)]
@@ -1093,7 +1123,7 @@ def _suggest_params(
     if not page_texts:
         return _clamp_suggested_params({}, total_pages)
 
-    prompt = _build_param_suggestion_prompt(page_texts)
+    prompt = _build_param_suggestion_prompt(page_texts, context=context)
     try:
         content, _ = call_text(prompt, endpoint, model, api_key, max_tokens=500)
     except Exception as e:
@@ -1113,6 +1143,7 @@ def run(
     max_chunks: int | None = None,
     query: str | None = None,
     max_docs: int | None = None,
+    context: str | None = None,
 ) -> dict:
     """[Flow: Step 1 (job 로드 + LLM 설정) -> Step 2 (텍스트 추출) -> Step 2b (파라미터 누락 시 LLM 자동 추천)
           -> Step 3 (max_chunks 적용) -> Step 4 (청킹) -> Step 5 (query 필터링) -> Step 6 (병렬 노드 추출)
@@ -1128,6 +1159,7 @@ def run(
         max_chunks: 처리할 최대 페이지(문서) 수. None이면 LLM이 자동 추천.
         query: 자연어 쿼리. 지정 시 쿼리 용어를 포함한 청크만 처리 대상으로 한다.
         max_docs: max_chunks의 별칭 (api/ediscovery.py 호환용). max_chunks가 None일 때만 적용.
+        context: 사용자가 입력한 프로젝트 주요/중요 사항. LLM 프롬프트에 포함되어 분석에 참고된다.
     """
     # max_docs → max_chunks 호환 매핑 (api/ediscovery.py의 extract/threshold 엔드포인트 호환)
     if max_chunks is None and max_docs is not None:
@@ -1142,6 +1174,12 @@ def run(
         model = job.model or settings_store.get_setting(db, "llm_model") or settings.default_llm_model
         api_key = settings_store.get_setting(db, "llm_api_key") or ""
 
+        # 파라미터로 전달된 context가 없으면 DB에 저장된 job.ediscovery_context를 사용한다.
+        # 첫 업로드 시 입력한 맥락과 분석 시 수정한 맥락을 모두 반영할 수 있다.
+        if context is None:
+            context = job.ediscovery_context or ""
+        context = (context or "").strip()
+
         # Step 2: 텍스트 추출
         page_texts = extract_page_texts(job)
         if not page_texts:
@@ -1150,7 +1188,7 @@ def run(
         # Step 2a: 파라미터가 명시되지 않으면 LLM이 전체 문서 샘플을 보고 자동 추천
         auto_params = None
         if chunk_size is None or threshold is None or max_chunks is None:
-            auto_params = _suggest_params(page_texts, endpoint, model, api_key)
+            auto_params = _suggest_params(page_texts, endpoint, model, api_key, context=context)
             if chunk_size is None:
                 chunk_size = auto_params["chunk_size"]
             if threshold is None:
@@ -1185,17 +1223,17 @@ def run(
                 logger.warning(f"[ediscovery] job={job_id} query 용어와 일치하는 청크 없음, 전체 청크 사용")
 
         # Step 6: 병렬 노드 추출
-        raw_nodes = extract_nodes_concurrent(chunks, endpoint, model, api_key)
+        raw_nodes = extract_nodes_concurrent(chunks, endpoint, model, api_key, context=context)
         logger.info(f"[ediscovery] job={job_id} 원시 노드 {len(raw_nodes)}개 추출")
 
         # Step 6b: 1차 추출이 0개면 폴백 추출 시도 (일지/명단 등 비소송 자료 대응)
         if not raw_nodes and chunks:
             logger.warning(f"[ediscovery] job={job_id} 1차 노드 추출 0개, 폴백 추출 시도")
-            raw_nodes = _extract_fallback_nodes(chunks, endpoint, model, api_key)
+            raw_nodes = _extract_fallback_nodes(chunks, endpoint, model, api_key, context=context)
 
         # Step 7: 임계값 필터 + 2차 LLM 패스 모순 탐지 + 그래프 조립
         filtered = filter_nodes_by_threshold(raw_nodes, threshold)
-        anomalies = detect_anomalies_concurrent(filtered, endpoint, model, api_key)
+        anomalies = detect_anomalies_concurrent(filtered, endpoint, model, api_key, context=context)
         logger.info(f"[ediscovery] job={job_id} 모순 쌍 {len(anomalies)}개 탐지")
         graph = assemble_graph(filtered, anomalies)
         metrics = {

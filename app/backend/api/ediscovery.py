@@ -143,6 +143,7 @@ def _build_response(job: Job) -> dict:
             "threshold": 0.0,
         },
         "graph_data": job.ediscovery_graphs or {"nodes": [], "edges": []},
+        "ediscovery_context": job.ediscovery_context or "",
         "ediscovery_error": (job.ediscovery_metrics or {}).get("error", ""),
     }
 
@@ -250,6 +251,11 @@ def extract_ediscovery_graph(
             max_docs = int(max_docs)
     query = str(payload.get("query", "")).strip() or None
 
+    # 분석 시 사용자가 입력/수정한 e-Discovery 컨텍스트를 저장하고 LLM 프롬프트에 반영한다.
+    ediscovery_context = str(payload.get("context", "") or "").strip()
+    if ediscovery_context:
+        job.ediscovery_context = ediscovery_context
+
     total_pages = job.total_pages if job.total_pages else (job.total_files or 1)
     page_range = _parse_page_range(payload.get("page_range"), total_pages)
 
@@ -289,6 +295,7 @@ def extract_ediscovery_graph(
             page_range=page_range,
             max_docs=max_docs,
             query=query,
+            context=job.ediscovery_context,
         )
         job.ediscovery_job_id = task.id
         db.commit()
@@ -305,6 +312,7 @@ def extract_ediscovery_graph(
         max_docs=max_docs,
         query=query,
         page_range=page_range,
+        context=job.ediscovery_context,
     )
 
     db.refresh(job)

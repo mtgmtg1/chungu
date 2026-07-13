@@ -132,15 +132,16 @@ export function buildEdiscoveryTools(context: EdiscoveryToolContext) {
         query: z.string().optional().describe('추출에 사용할 자연어 쿼리 (예: "계약 위반 쟁점과 관련 증거")'),
         threshold: z.number().min(0).max(1).optional().describe('노드/에지 포함 최소 관련도 임계값 (0.0~1.0, 기본값은 FastAPI에서 결정)'),
         maxDocs: z.number().int().min(1).optional().describe('처리할 최대 페이지(문서) 수 (제한이 필요할 때)'),
+        context: z.string().optional().describe('프로젝트 주요/중요 사항에 대한 추가 맥락 (예: "대여금 반환 청구, A가 채권자, B가 채무자")'),
       }),
-      execute: async ({ jobId: jid, query, threshold, maxDocs }) => {
+      execute: async ({ jobId: jid, query, threshold, maxDocs, context }) => {
         const id = jid || jobId;
         if (!id) return { error: 'jobId is required' };
 
         try {
           const response = await proofApi.extractEdiscoveryGraph(
             id,
-            { query, threshold, max_docs: maxDocs },
+            { query, threshold, max_docs: maxDocs, context },
             authHeaders,
           );
           // 동시 요청으로 인해 processing 상태가 반환되면 압축하지 않고 그대로 전달

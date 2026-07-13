@@ -163,16 +163,52 @@ def _extract_page_texts_from_markdown(markdown: str) -> dict[int, str]:
     return page_texts
 
 
-def _extract_page_texts_from_source_file(info: dict) -> dict[int, str]:
+def _download_source_file_bytes(info: dict, job: Job) -> bytes | None:
+    """[Flow: Step 1 (info에 storage_path가 있으면 우선 사용)
+          -> Step 2 (없으면 job.pdf_storage_path 폴더 또는 pdfs/{job.id}/{path} 후보 생성)
+          -> Step 3 (후보 중 다운로드 성공한 bytes 반환)]
+
+    extracted_files 항목의 원본 파일을 Storage에서 다운로드한다.
+    폴더 업로드 등으로 storage_path가 비어 있을 경우 후보 경로를 유추해 시도한다.
+    """
+    storage_path = info.get("storage_path", "")
+    if storage_path:
+        bucket = info.get("bucket", "pdfs")
+        return _download_storage_bytes(bucket, storage_path)
+
+    path = info.get("path", "")
+    if not path:
+        return None
+
+    candidates: list[tuple[str, str]] = []
+    pdf_storage = job.pdf_storage_path or ""
+    if pdf_storage.endswith("/"):
+        # pdf_storage_path 자체가 폴더 prefix인 경우
+        candidates.append((info.get("bucket", "pdfs"), f"{pdf_storage}{path}"))
+    else:
+        # 일반적인 배치: pdfs/{job.id}/{filename}
+        candidates.append(("pdfs", f"{job.id}/{path}"))
+        # pdf_storage_path의 디렉터리 부분을 prefix로 시도
+        if "/" in pdf_storage:
+            folder = pdf_storage.rsplit("/", 1)[0]
+            candidates.append(("pdfs", f"{folder}/{path}"))
+
+    for bucket, candidate in candidates:
+        data = _download_storage_bytes(bucket, candidate)
+        if data:
+            return data
+    return None
+
+
+def _extract_page_texts_from_source_file(info: dict, job: Job) -> dict[int, str]:
     """[Flow: Step 1 (파일 메타데이터 파싱) -> Step 2 (searchable PDF 우선 다운로드/추출)
           -> Step 3 (빈 페이지면 원본 PDF/마크다운 폴백) -> Step 4 (page_no → 텍스트 맵 반환)]
 
     extracted_files의 단일 항목에서 페이지별 텍스트를 추출한다.
     PDF뿐 아니라 docx/hwp/image의 searchable PDF 폴백, file 타입의 result_markdown도 처리한다.
+    폴더 업로드 등 storage_path가 없는 경우에도 job 정보를 이용해 파일을 찾는다.
     """
     ftype = info.get("type", "")
-    storage_path = info.get("storage_path", "")
-    bucket = info.get("bucket", "pdfs")
     result_markdown = info.get("result_markdown", "")
     searchable_path = info.get("searchable_pdf_storage_path", "")
 
@@ -188,15 +224,16 @@ def _extract_page_texts_from_source_file(info: dict) -> dict[int, str]:
                 logger.warning(f"[ediscovery] searchable PDF 추출 실패 {searchable_path}: {e}")
 
     # Step 2: PDF/문서/이미지 원본을 PDF로 파싱 시도
-    if storage_path and ftype in ("pdf", "docx", "hwp", "image"):
-        pdf_bytes = _download_storage_bytes(bucket, storage_path)
+    if ftype in ("pdf", "docx", "hwp", "image"):
+        pdf_bytes = _download_source_file_bytes(info, job)
         if pdf_bytes:
             try:
                 page_texts = _extract_page_texts_from_pdf(pdf_bytes)
                 if any(t.strip() for t in page_texts.values()):
                     return page_texts
             except Exception as e:
-                logger.warning(f"[ediscovery] 원본 PDF 추출 실패 {storage_path}: {e}")
+                path = info.get("storage_path") or info.get("path", "unknown")
+                logger.warning(f"[ediscovery] 원본 PDF 추출 실패 {path}: {e}")
 
     # Step 3: 마크다운 폴백
     if result_markdown:
@@ -229,7 +266,7 @@ def _extract_all_source_files(job: Job) -> dict[int, str]:
             # 오디오/비디오는 현재 텍스트 추출이 별도로 지원되지 않음
             continue
 
-        file_page_texts = _extract_page_texts_from_source_file(info)
+        file_page_texts = _extract_page_texts_from_source_file(info, job)
         if not file_page_texts:
             continue
 
@@ -259,7 +296,11 @@ def extract_page_texts(job: Job) -> dict[int, str]:
             return combined
 
     # 단일 파일 업로드 하위 호환: job.searchable_pdf_storage_path → job.pdf_storage_path → 마크다운 폴백
-    pdf_bytes = _download_pdf_bytes(job)
+    # pdf_storage_path가 폴더 prefix이면 단일 파일이 아니므로 건너뛴다.
+    if job.pdf_storage_path and not job.pdf_storage_path.endswith("/"):
+        pdf_bytes = _download_pdf_bytes(job)
+    else:
+        pdf_bytes = None
     if pdf_bytes:
         page_texts = _extract_page_texts_from_pdf(pdf_bytes)
         non_empty = sum(1 for t in page_texts.values() if t.strip())

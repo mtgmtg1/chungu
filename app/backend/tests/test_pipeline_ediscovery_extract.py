@@ -14,6 +14,7 @@ from backend.core.pipeline_ediscovery import (
     _extract_all_source_files,
     extract_page_texts,
 )
+from backend.db.models import Job
 
 
 def _make_job(extracted_files=None, pdf_storage_path="", searchable_pdf_storage_path=""):
@@ -41,7 +42,7 @@ def test_extract_all_source_files_combines_multiple_pdfs():
         {"type": "pdf", "path": "1.b.pdf", "storage_path": "pdfs/1.b.pdf"},
     ])
 
-    def fake_extract(info: dict) -> dict:
+    def fake_extract(info: dict, passed_job: Job) -> dict:
         path = info.get("path", "")
         if "1.a.pdf" in path:
             return {1: "a 페이지1", 2: "a 페이지2"}
@@ -104,7 +105,7 @@ def test_extract_all_source_files_skips_empty_and_media():
         {"type": "pdf", "path": "content.pdf", "storage_path": "pdfs/content.pdf"},
     ])
 
-    def fake_extract(info: dict) -> dict:
+    def fake_extract(info: dict, passed_job: Job) -> dict:
         if info.get("path") == "content.pdf":
             return {1: "content"}
         return {}
@@ -138,3 +139,33 @@ def test_extract_all_source_files_uses_markdown_fallback():
 
     assert len(result) == 2
     assert "markdown page 1" in result[1]
+
+
+def test_extract_page_texts_resolves_folder_upload_without_storage_path():
+    """extracted_files 항목에 storage_path가 없고 pdf_storage_path가 폴더일 때
+    pdfs/{job.id}/{path} 또는 pdf_storage_path 폴더에서 파일을 찾는다."""
+    job = _make_job(
+        extracted_files=[{"type": "pdf", "path": "evidence.pdf"}],
+        pdf_storage_path="pdfs/job-123/",
+    )
+    job.id = "job-123"
+
+    downloaded_paths: list[tuple[str, str]] = []
+
+    def fake_download_storage_bytes(bucket: str, path: str) -> bytes | None:
+        downloaded_paths.append((bucket, path))
+        if path == "pdfs/job-123/evidence.pdf":
+            return b"pdfbytes"
+        return None
+
+    with patch(
+        "backend.core.pipeline_ediscovery._download_storage_bytes",
+        side_effect=fake_download_storage_bytes,
+    ), patch(
+        "backend.core.pipeline_ediscovery._extract_page_texts_from_pdf",
+        return_value={1: "page from folder"},
+    ):
+        result = extract_page_texts(job)
+
+    assert result == {1: "[출처: evidence.pdf 원본 1페이지]\npage from folder"}
+    assert ("pdfs", "pdfs/job-123/evidence.pdf") in downloaded_paths

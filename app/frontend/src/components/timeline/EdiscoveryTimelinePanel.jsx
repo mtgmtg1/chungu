@@ -1,6 +1,6 @@
 // [Flow: Step 1 (job.ediscovery_graphs/status + preview source_files 수신)
 //       -> Step 2 (노드 → React Chrono items 변환, media prop 포함)
-//       -> Step 3 (React Chrono 3.x alternating 모드로 전체 영역 렌더링)
+//       -> Step 3 (React Chrono 3.x vertical 모드로 전체 영역 렌더링)
 //       -> Step 4 (카드/타이틀/포인트 클릭 시 상위로 노드 전달 → 미리보기 패널 + SourcePanel 연동)]
 // e-Discovery GraphRAG 결과를 중앙 수직 타임라인으로 시각화하는 패널.
 // 기존 양측 주장/증거 카드, 하단 수평 스트립, 상단 재분석 버튼은 모두 제거하고 Chrono 기본 UI를 사용한다.
@@ -336,15 +336,17 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
       onPointerDown={handlePointerDown}
       onKeyDownCapture={handleKeyDownCapture}
     >
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 ediscovery-chrono-container">
         {chronoItems.length > 0 ? (
           <Chrono
             items={chronoItems}
-            mode="alternating"
+            mode="vertical"
             layout={{
               cardWidth: 480,
               pointSize: 16,
               lineWidth: 2,
+              // [Flow: 부모 flex 컨테이너(h-full) 높이를 그대로 채워야 타임라인 아래 빈 공간이 생기지 않는다]
+              timelineHeight: "100%",
               responsive: { enabled: true, breakpoint: 768 },
             }}
             content={{
@@ -354,6 +356,8 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
             display={{
               borderless: false,
               pointShape: "circle",
+              // [Flow: 내부 스크롤 영역에 스크롤바를 표시해 콘텐츠가 더 있음을 사용자가 인지할 수 있게 한다]
+              scrollable: { scrollbar: true },
               toolbar: {
                 enabled: true,
                 position: "top",

@@ -400,3 +400,17 @@ body {
   text-align: left;
 }
 .ai-chat-markdown th { background: #f2f3ff; font-weight: 600; }
+
+/* [Flow: react-chrono 루트 div는 기본적으로 height:auto(콘텐츠 크기)로만 렌더링되어
+   부모 flex 컨테이너(.ediscovery-chrono-container, flex-1 min-h-0)의 실제 가용 높이를 무시하고
+   내부 min-height:500px에서 멈춘다.
+   -> react-chrono는 커스텀 id/className을 루트 엘리먼트에 전달하지 않으므로,
+      바로 위 래퍼(.ediscovery-chrono-container)의 첫 번째(유일한) 자식에 height:100%를 강제해
+      래퍼의 실제 픽셀 높이를 그대로 상속받게 한다.] */
+.ediscovery-chrono-container {
+  height: 100%;
+}
+.ediscovery-chrono-container > div,
+.ediscovery-chrono-container .timeline-font-provider {
+  height: 100% !important;
+}

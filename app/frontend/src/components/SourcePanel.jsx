@@ -730,7 +730,8 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
           >
             <button
               onClick={() => setSelectedIndex(idx)}
-              className="flex items-center gap-2 text-left flex-1 min-w-0"
+              className="flex items-center gap-2 text-left flex-1 min-w-0 overflow-hidden"
+              title={f.name}
             >
               {f.status === "processing" ? (
                 <Loader2 size={16} className="text-primary animate-spin flex-shrink-0" />
@@ -739,8 +740,8 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
               ) : (
                 <SourceIcon type={f.type} />
               )}
-              <span className="flex flex-col items-start min-w-0">
-                <span className="truncate min-w-0">{f.name}</span>
+              <span className="flex flex-col items-start min-w-0 flex-1 overflow-hidden">
+                <span className="truncate min-w-0 w-full">{f.name}</span>
                 {f.status === "error" && (
                   <span className="text-error text-[10px] leading-none mt-0.5">
                     {t("page:result.annotateFailed")}

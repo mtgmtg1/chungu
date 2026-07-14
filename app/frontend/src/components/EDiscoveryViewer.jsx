@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CalendarDays, Puzzle, Loader2, RefreshCw, X, FileText } from "lucide-react";
+import { CalendarDays, Loader2, RefreshCw, X, FileText } from "lucide-react";
 import EdiscoveryTimelinePanel from "./timeline/EdiscoveryTimelinePanel.jsx";
 import EdiscoveryDetailCard from "./timeline/EdiscoveryDetailCard.jsx";
 import IssueTreeMapperPanel from "./mapper/IssueTreeMapperPanel.jsx";
@@ -258,18 +258,6 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, onJobRefresh
           >
             <CalendarDays size={12} />
             {t("page:result.ediscoveryTabTimeline")}
-          </button>
-          <button
-            onClick={() => setActiveTab("mapper")}
-            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
-              activeTab === "mapper"
-                ? "bg-surface text-on-surface shadow-sm"
-                : "text-on-surface-variant hover:text-on-surface"
-            }`}
-            data-oid="ediscovery-tab-mapper"
-          >
-            <Puzzle size={12} />
-            {t("page:result.mapperTabMapper")}
           </button>
         </div>
       </div>

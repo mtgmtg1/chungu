@@ -382,7 +382,7 @@
     "flowUndo": "실행 취소",
     "flowClear": "전체 지우기",
     "ediscovery": "e-Discovery (GraphRAG)",
-    "ediscoveryTimeline": "e-Discovery 타임라인",
+    "ediscoveryTimeline": "타임라인",
     "ediscoveryMapper": "e-Discovery 퍼즐 매퍼",
     "ediscoveryView": "e-Discovery GraphRAG",
     "ediscoveryAnalyze": "분석",

@@ -1,13 +1,13 @@
 // [Flow: Step 1 (job.ediscovery_graphs/status + preview source_files 수신)
-//       -> Step 2 (노드 → React Chrono items 변환, media prop 포함)
-//       -> Step 3 (React Chrono 3.x vertical 모드로 전체 영역 렌더링)
-//       -> Step 4 (카드/타이틀/포인트 클릭 시 상위로 노드 전달 → 미리보기 패널 + SourcePanel 연동)]
-// e-Discovery GraphRAG 결과를 중앙 수직 타임라인으로 시각화하는 패널.
+//       -> Step 2 (노드를 date 유무로 분리: date가 있으면 Chrono, 없으면 우측 패널)
+//       -> Step 3 (React Chrono 3.x vertical 모드에 custom content(children) 주입)
+//       -> Step 4 (카드 하단 오른쪽 'read more' 버튼 클릭 시에만 미리보기/스크롤 연동)]
+// e-Discovery GraphRAG 결과를 중앙 수직 타임라인 + 우측 페이지 기반 노드 패널로 시각화.
 // 기존 양측 주장/증거 카드, 하단 수평 스트립, 상단 재분석 버튼은 모두 제거하고 Chrono 기본 UI를 사용한다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, AlertCircle, Network } from "lucide-react";
+import { Loader2, AlertCircle, Network, FileText } from "lucide-react";
 import { Chrono } from "react-chrono";
 import "react-chrono/dist/style.css";
 import { api } from "../../api.js";
@@ -118,7 +118,7 @@ export function buildChronoItem(node, sourceFiles, t) {
 }
 
 /**
- * EdiscoveryTimelinePanel — e-Discovery 결과를 중앙 수직 타임라인으로 렌더링.
+ * EdiscoveryTimelinePanel — e-Discovery 결과를 중앙 수직 타임라인 + 우측 페이지 패널로 렌더링.
  *
  * @param {Object} props
  * @param {string} props.jobId - 현재 Job ID
@@ -144,23 +144,11 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
 
   const pollRef = useRef(null);
   const pollStartRef = useRef(0);
-  // [Flow: Step 1 (Chrono의 onItemSelected는 초기 렌더링/데이터 변경 시에도 호출됨)
-  //       -> Step 2 (사용자 클릭/키보드 이벤트 발생 시에만 이 flag를 true로 설정)
-  //       -> Step 3 (handleItemSelected에서 true인 경우에만 preview를 열고 즉시 false로 초기화)]
-  // 사용자가 실제로 타임라인 카드를 클릭하거나 키보드로 선택한 경우에만 preview를 열도록 한다.
-  const isUserClickRef = useRef(false);
 
-  /**
-   * [Flow: Step 1 (job.ediscovery_context 변경 감지) -> Step 2 (분석 컨텍스트 기본값 동기화)]
-   */
   useEffect(() => {
     setContext(job?.ediscovery_context || "");
   }, [job?.ediscovery_context]);
 
-  /**
-   * [Flow: Step 1 (job.ediscovery_graphs 변경 감지) -> Step 2 (rawNodes 저장)
-   *       -> Step 3 (metrics 갱신)]
-   */
   useEffect(() => {
     const graph = job?.ediscovery_graphs;
     if (!graph?.nodes?.length) {
@@ -172,10 +160,6 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
     setMetrics(job?.ediscovery_metrics || { total_docs: 0, processed_chunks: 0, threshold: 0, anomalies_detected: 0 });
   }, [job?.ediscovery_graphs, job?.ediscovery_metrics]);
 
-  /**
-   * [Flow: Step 1 (externalSourceFiles 변경 감지) -> Step 2 (외부 데이터가 있으면 그대로 사용)
-   *       -> Step 3 (외부 데이터가 없으면 preview API로 source_files 로드)]
-   */
   useEffect(() => {
     if (externalSourceFiles) {
       setSourceFiles(externalSourceFiles);
@@ -199,33 +183,12 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
     };
   }, [externalSourceFiles, jobId]);
 
-  /**
-   * [Flow: Step 1 (job.ediscovery_status 변경) -> Step 2 (done이면 metrics 갱신)
-   *       -> Step 3 (processing이면 폴링 시작)]
-   */
-  useEffect(() => {
-    if (job?.ediscovery_status === "done" && job?.ediscovery_graphs?.nodes?.length > 0) {
-      setMetrics(job.ediscovery_metrics || { total_docs: 0, processed_chunks: 0, threshold: 0, anomalies_detected: 0 });
-      return;
-    }
-    if (job?.ediscovery_status === "processing") {
-      startPolling();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [job?.ediscovery_status, job?.ediscovery_graphs, job?.ediscovery_metrics, jobId]);
-
-  // 언마운트 시 폴링 정리
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
 
-  /**
-   * [Flow: Step 1 (GET /ediscovery 상태 조회) -> Step 2 (done이면 metrics 갱신 + 폴링 중지)
-   *       -> Step 3 (error이면 오류 표시 + 폴링 중지) -> Step 4 (빈 상태이면 폴링 중지)
-   *       -> Step 5 (processing이면 계속 폴링, 타임아웃 초과 시 중단)]
-   */
   const startPolling = useCallback(() => {
     if (pollRef.current) clearInterval(pollRef.current);
     setLoading(true);
@@ -266,14 +229,33 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
     }, 2000);
   }, [jobId, t]);
 
+  useEffect(() => {
+    if (job?.ediscovery_status === "done" && job?.ediscovery_graphs?.nodes?.length > 0) {
+      setMetrics(job.ediscovery_metrics || { total_docs: 0, processed_chunks: 0, threshold: 0, anomalies_detected: 0 });
+      return;
+    }
+    if (job?.ediscovery_status === "processing") {
+      startPolling();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job?.ediscovery_status, job?.ediscovery_graphs, job?.ediscovery_metrics, jobId]);
+
+  const handleNodePreview = useCallback((node) => {
+    onPreview?.(node);
+    onNodeClick?.(node);
+  }, [onPreview, onNodeClick]);
+
+  const nonSwimlaneNodes = useMemo(() => {
+    return rawNodes.filter((n) => n.type !== "swimlane");
+  }, [rawNodes]);
+
   /**
-   * [Flow: Step 1 (rawNodes에서 swimlane 제외) -> Step 2 (날짜/페이지 정렬)
+   * [Flow: Step 1 (date가 있는 노드 필터링) -> Step 2 (날짜/페이지 정렬)
    *       -> Step 3 (React Chrono items로 변환, media prop 포함)]
    */
   const chronoItems = useMemo(() => {
-    if (!rawNodes.length) return [];
-    const visibleNodes = rawNodes.filter((n) => n.type !== "swimlane");
-    const sorted = [...visibleNodes].sort((a, b) => {
+    const datedNodes = nonSwimlaneNodes.filter((n) => n.data?.date);
+    const sorted = [...datedNodes].sort((a, b) => {
       const aDate = a.data?.date ? new Date(a.data.date).getTime() : NaN;
       const bDate = b.data?.date ? new Date(b.data.date).getTime() : NaN;
       if (!Number.isNaN(aDate) && !Number.isNaN(bDate) && aDate !== bDate) return aDate - bDate;
@@ -283,58 +265,29 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
       return (a.id || "").localeCompare(b.id || "");
     });
     return sorted.map((node) => buildChronoItem(node, sourceFiles, t));
-  }, [rawNodes, sourceFiles, t]);
+  }, [nonSwimlaneNodes, sourceFiles, t]);
 
   /**
-   * [Flow: Step 1 (Chrono 아이템 선택) -> Step 2 (해당 노드로 상위 콜백 전달)]
+   * [Flow: Step 1 (date가 없는 노드 필터링) -> Step 2 (페이지순 정렬)
+   *       -> Step 3 (React Chrono item 형태로 변환)]
    */
-  const handleItemSelected = useCallback(
-    (selected) => {
-      // [Flow: Step 1 (사용자 클릭/키보드로 유발된 이벤트인지 확인) -> Step 2 (아니면 무시)
-      //       -> Step 3 (맞으면 preview + scroll 콜백 호출 후 flag 초기화)]
-      if (!isUserClickRef.current) return;
-      isUserClickRef.current = false;
-      const node = chronoItems[selected.index]?.node;
-      if (!node) return;
-      onPreview?.(node);
-      onNodeClick?.(node);
-    },
-    [chronoItems, onPreview, onNodeClick]
-  );
+  const pageItems = useMemo(() => {
+    const undatedNodes = nonSwimlaneNodes.filter((n) => !n.data?.date);
+    const sorted = [...undatedNodes].sort((a, b) => {
+      const aPage = typeof a.data?.page === "number" ? a.data.page : Infinity;
+      const bPage = typeof b.data?.page === "number" ? b.data.page : Infinity;
+      if (aPage !== bPage) return aPage - bPage;
+      return (a.id || "").localeCompare(b.id || "");
+    });
+    return sorted.map((node) => buildChronoItem(node, sourceFiles, t));
+  }, [nonSwimlaneNodes, sourceFiles, t]);
 
-  const isEmpty = !loading && chronoItems.length === 0 && !error && job?.ediscovery_status === "done";
-
-  // [Flow: Step 1 (PointerDown/KeyDown 이벤트 감지) -> Step 2 (카드/row/포인트 영역인지 확인)
-  //       -> Step 3 (맞으면 isUserClickRef를 true로 설정해 Chrono onItemSelected 핸들러가 preview를 열도록 한다)]
-  const handlePointerDown = useCallback((e) => {
-    const target = e.target.closest(
-      '[data-testid="timeline-card-content"], [data-testid="vertical-item-row"], [data-testid="timeline-circle"]'
-    );
-    if (target) isUserClickRef.current = true;
-  }, []);
-
-  // [Flow: Step 1 (Enter/Space 키 감지) -> Step 2 (타임라인 카드/row인지 확인)
-  //       -> Step 3 (카드 click()을 트리거하고 isUserClickRef를 true로 설정)]
-  const handleKeyDownCapture = useCallback((e) => {
-    if (e.key !== "Enter" && e.key !== " ") return;
-    const card = e.target.closest(
-      '[data-testid="timeline-card-content"], [data-testid="vertical-item-row"]'
-    );
-    if (!card) return;
-    const content = card.querySelector('[data-testid="timeline-card-content"]') || card;
-    if (content && typeof content.click === "function") {
-      e.preventDefault();
-      isUserClickRef.current = true;
-      content.click();
-    }
-  }, []);
+  const isEmpty = !loading && chronoItems.length === 0 && pageItems.length === 0 && !error && job?.ediscovery_status === "done";
 
   return (
     <div
-      className="h-full w-full flex flex-col relative"
+      className="h-full w-full flex relative"
       data-oid="ediscovery-timeline-panel"
-      onPointerDown={handlePointerDown}
-      onKeyDownCapture={handleKeyDownCapture}
     >
       <div className="flex-1 min-h-0 ediscovery-chrono-container">
         {chronoItems.length > 0 ? (
@@ -345,18 +298,16 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
               cardWidth: 480,
               pointSize: 16,
               lineWidth: 2,
-              // [Flow: 부모 flex 컨테이너(h-full) 높이를 그대로 채워야 타임라인 아래 빈 공간이 생기지 않는다]
               timelineHeight: "100%",
               responsive: { enabled: true, breakpoint: 768 },
             }}
             content={{
-              readMore: true,
+              readMore: false,
               alignment: { horizontal: "left", vertical: "top" },
             }}
             display={{
               borderless: false,
               pointShape: "circle",
-              // [Flow: 내부 스크롤 영역에 스크롤바를 표시해 콘텐츠가 더 있음을 사용자가 인지할 수 있게 한다]
               scrollable: { scrollbar: true },
               toolbar: {
                 enabled: true,
@@ -367,9 +318,10 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
             }}
             interaction={{
               keyboardNavigation: true,
-              pointClick: true,
+              pointClick: false,
               autoScroll: true,
               focusOnLoad: false,
+              disabled: true,
             }}
             media={{
               height: 200,
@@ -385,7 +337,6 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
               cardDetailsColor: "#374151",
               titleColor: "#6b7280",
             }}
-            onItemSelected={handleItemSelected}
             classNames={{
               card: "ediscovery-timeline-card",
               cardTitle: "ediscovery-timeline-card-title",
@@ -395,7 +346,27 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
               timelinePoint: "ediscovery-timeline-point",
               timelineTrack: "ediscovery-timeline-track",
             }}
-          />
+          >
+            {chronoItems.map((item) => (
+              <div key={item.id} className="flex flex-col gap-2">
+                <p className="text-sm text-on-surface-variant leading-relaxed">
+                  {item.cardDetailedText}
+                </p>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleNodePreview(item.node);
+                    }}
+                    className="text-xs font-medium text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary/50 rounded px-1 py-0.5"
+                  >
+                    {t("page:result.readMore")}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </Chrono>
         ) : (
           <div className="h-full w-full flex items-center justify-center text-on-surface-variant gap-2" data-oid="ediscovery-timeline-empty">
             {loading ? <Loader2 size={24} className="animate-spin text-primary" /> : <Network size={24} className="text-primary/40" />}
@@ -405,6 +376,38 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
           </div>
         )}
       </div>
+
+      {/* date가 없는 노드 우측 패널 */}
+      {pageItems.length > 0 && (
+        <div className="w-80 flex-shrink-0 border-l border-outline-variant bg-surface-container-lowest h-full overflow-y-auto p-3 flex flex-col gap-3" data-oid="ediscovery-page-panel">
+          <h3 className="text-sm font-medium text-on-surface flex items-center gap-2">
+            <FileText size={16} />
+            {t("page:result.pageBasedNodes")}
+          </h3>
+          <div className="flex flex-col gap-3">
+            {pageItems.map((item) => (
+              <div
+                key={item.id}
+                className="bg-surface border border-outline-variant rounded-lg p-3 shadow-sm flex flex-col gap-2"
+              >
+                <div className="text-xs text-primary font-medium">{item.title}</div>
+                <div className="text-sm font-medium text-on-surface">{item.cardTitle}</div>
+                <div className="text-xs text-on-surface-variant">{item.cardSubtitle}</div>
+                <p className="text-xs text-on-surface-variant line-clamp-3">{item.cardDetailedText}</p>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => handleNodePreview(item.node)}
+                    className="text-xs font-medium text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary/50 rounded px-1 py-0.5"
+                  >
+                    {t("page:result.readMore")}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 로딩 오버레이 */}
       {loading && (

@@ -425,6 +425,8 @@
     "ediscoveryResizePanels": "パネルサイズ調整",
     "ediscoveryOriginalText": "原文",
     "ediscoverySelectItem": "タイムライン項目を選択すると、詳細と原文が表示されます",
+    "readMore": "続きを読む",
+    "pageBasedNodes": "ページベースの項目",
     "ediscoveryConnectionReason": "原文との関連根拠",
     "ediscoveryConnectionReasonEmpty": "関連根拠が提供されていません。",
     "ediscoveryContextLabel": "分析コンテキスト",

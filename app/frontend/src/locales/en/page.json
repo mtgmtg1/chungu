@@ -425,6 +425,8 @@
     "ediscoveryResizePanels": "Resize panels",
     "ediscoveryOriginalText": "Original text",
     "ediscoverySelectItem": "Select a timeline item to view its details and original text",
+    "readMore": "Read more",
+    "pageBasedNodes": "Page-based items",
     "ediscoveryConnectionReason": "Connection to source",
     "ediscoveryConnectionReasonEmpty": "No connection reason provided.",
     "ediscoveryContextLabel": "Analysis Context",

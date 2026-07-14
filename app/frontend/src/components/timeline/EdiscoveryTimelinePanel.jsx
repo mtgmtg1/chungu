@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, AlertCircle, Network } from "lucide-react";
 import { Chrono } from "react-chrono";
+import "react-chrono/dist/style.css";
 import { api } from "../../api.js";
 
 /** 폴링 타임아웃 — 10분. */

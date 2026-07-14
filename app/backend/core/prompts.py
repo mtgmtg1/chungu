@@ -110,6 +110,7 @@ def build_row_highlight_prompt(
     rows: list[list[str]],
     instruction: str,
     want_llm_comment: bool,
+    user_language: str = "ko",
 ) -> str:
     """Prompt to select table rows for highlight/margin annotation based on row text only.
 
@@ -132,8 +133,7 @@ def build_row_highlight_prompt(
     rows_text = "\n".join(f"{i}: {' | '.join(cell for cell in row)}" for i, row in enumerate(rows))
     comment_instr = (
         "For each matched row, write a short comment (about 10 characters) summarizing why it was selected. "
-        "Write the comment in the SAME language as the user's condition text above — if the condition is in "
-        "Korean, write in Korean; if in English, write in English; if in French, write in French, and so on."
+        "Write the comment in the user's configured language (" + user_language + ") if known; otherwise, use the same language as the user's condition text above."
         if want_llm_comment
         else 'Repeat the "Condition" text verbatim as the comment for every matched row (do not summarize or rephrase). '
         "Keep the original language of the condition text."
@@ -217,7 +217,7 @@ def build_element_highlight_prompt(
         "\n"
         "When the user asks to highlight only a specific part of an element (for example, a particular column of a table row, "
         "a cell containing an amount, a person's name, or a specific keyword), specify the exact highlight scope. "
-        "Use one of the following scope values, or describe the exact column name/keyword in Korean/English: "
+        "Use one of the following scope values, or describe the exact column name/keyword in the user's language: "
         "'full' (entire element), 'first_column', 'last_column', 'amount_cell', 'name_cell', 'date_cell', or 'keyword: <word>'. "
         "If the user does not specify a part, default to 'full'. "
         "When the user asks for a specific highlight color (e.g., red, yellow, green, blue), use the corresponding color name. "
@@ -229,7 +229,7 @@ def build_element_highlight_prompt(
         "Determine the comment mode based on the user's request: "
         "'user_text' if the user explicitly says to use the input text verbatim as the comment, "
         "'llm_summary' if the user wants AI-generated summaries or does not specify.\n"
-        "When the user asks for a specific opacity/transparency (e.g., '투명하게', '옅게', '50%', '반투명'), "
+        "When the user asks for a specific opacity/transparency (e.g., 'transparently', 'lightly', '50%', 'semi-transparent'), "
         "include an 'opacity' field with a value between 0.0 (fully transparent) and 1.0 (fully opaque). "
         "If no opacity is requested, omit the 'opacity' field.\n"
         "\n"
@@ -368,8 +368,7 @@ def build_vision_bbox_highlight_prompt(
     """
     comment_instr = (
         "For each matched element, write a short comment (about 10-20 characters) summarizing its content. "
-        "Write the comment in the SAME language as the user's condition text above — if the condition is in "
-        "Korean, write in Korean; if in English, write in English; if in French, write in French, and so on."
+        "Write the comment in the user's configured language if known; otherwise, use the same language as the user's condition text."
         if want_llm_comment
         else 'Repeat the "Condition" text verbatim as the comment for every matched element (do not summarize or rephrase). '
         "Keep the original language of the condition text."
@@ -396,7 +395,7 @@ def build_vision_bbox_highlight_prompt(
         "Determine the comment mode based on the user's request: "
         "'user_text' if the user explicitly says to use the input text verbatim as the comment, "
         "'llm_summary' if the user wants AI-generated summaries or does not specify.\n"
-        "When the user asks for a specific opacity/transparency (e.g., '투명하게', '옅게', '50%', '반투명'), "
+        "When the user asks for a specific opacity/transparency (e.g., 'transparently', 'lightly', '50%', 'semi-transparent'), "
         "include an 'opacity' field with a value between 0.0 (fully transparent) and 1.0 (fully opaque). "
         "If no opacity is requested, omit the 'opacity' field.\n"
         f"{comment_instr}\n"
@@ -415,6 +414,7 @@ def build_vision_bbox_highlight_prompt(
 def build_annotation_edit_prompt(
     annotations: list[dict],
     instruction: str,
+    user_language: str = "ko",
 ) -> str:
     """[Flow: Step 1 (기존 주석 목록 직렬화) -> Step 2 (편집 instruction 주입) -> Step 3 (LLM이 id별 새 색상/코멘트 반환)]
 
@@ -426,6 +426,7 @@ def build_annotation_edit_prompt(
     Args:
         annotations: 편집 대상 주석 목록. 각 항목은 {id, type, color, comment, text} 형태.
         instruction: 사용자가 입력한 편집 조건 (예: "색상을 빨간색으로", "코멘트를 간결하게")
+        user_language: 사용자 설정 언어. 코멘트 작성 우선순위에 사용 (기본값 "ko").
 
     Returns:
         LLM에 전달할 프롬프트 문자열. LLM은 JSON {edits: [{id, color, comment}]} 반환.
@@ -452,7 +453,7 @@ def build_annotation_edit_prompt(
         "Available color names: red, yellow, green, blue, orange, purple, pink, gray. "
         "If the instruction does not imply a color change, keep the original color. "
         "If the instruction does not imply a comment change, keep the original comment. "
-        "Write/rewrite comments in the SAME language as the edit instruction. "
+        "Write/rewrite comments in the user's configured language (" + user_language + ") if known; otherwise, use the same language as the edit instruction. "
         "Keep comments short (about 10-30 characters). "
         "Only include annotations that actually need a change. If none need changing, return an empty edits array.\n\n"
         "Output strictly in the following JSON format. Do not include explanations or code block markers (```).\n"

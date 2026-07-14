@@ -929,6 +929,9 @@
       "activeCount": "Active Sandboxes",
       "totalCreated": "Total Created",
       "diskUsage": "Disk Usage"
-    }
+    },
+    "tocTitle": "Table of Contents",
+    "tocEmpty": "No headings",
+    "tocToggle": "Toggle TOC"
   }
 }

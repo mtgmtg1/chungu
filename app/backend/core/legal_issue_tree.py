@@ -36,45 +36,44 @@ def _strip_json_fence(content: str) -> str:
     return content
 
 
-def _build_issue_tree_prompt(claim_type: str) -> str:
+def _build_issue_tree_prompt(claim_type: str, user_language: str = "ko") -> str:
     """[Flow: Step 1 (청구 원인 삽입) -> Step 2 (3단계 트리 추출 지시) -> Step 3 (JSON 스키마 명시) -> Step 4 (주의사항)]
 
     입력된 청구 원인에서 쟁점-주장-근거 3단계 트리를 추출하는 LLM 프롬프트를 구성한다.
     양측(원고/피고, 검사/피고인 등)이 첨예하게 대립하는 쟁점을 중심으로 구성한다.
     """
-    return f"""아래 청구 원인(claim type)에 대해 한국 법률 체계상 양측(원고/피고, 검사/피고인 등)이 첨예하게 대립하는 쟁점을 {MIN_ISSUES}~{MAX_ISSUES}개 도출하고,
-각 쟁점에 대해 양측의 주장과 각 주장을 지지하는 근거를 3단계 트리로 구성하라.
+    return f"""For the claim type below, derive {MIN_ISSUES}~{MAX_ISSUES} sharply disputed issues where two opposing sides (plaintiff/defendant, prosecutor/accused, etc.) confront each other under the relevant legal system. For each issue, construct a 3-level tree of the opposing sides' claims and the evidence supporting each claim.
 
-청구 원인: {claim_type}
+Claim type: {claim_type}
 
-출력 JSON 형식:
+Output JSON format:
 {{
   "claim_type": "{claim_type}",
   "issues": [
     {{
       "id": "issue_1",
-      "name": "쟁점의 간결한 한국어 명칭",
-      "description": "해당 쟁점이 무엇을 묻는지 1~2문장 설명",
+      "name": "Concise name of the issue in the user's configured language ({user_language})",
+      "description": "1-2 sentence explanation of what the issue asks",
       "claims": [
         {{
           "id": "claim_1",
-          "party": "원고 또는 검사",
-          "name": "주장의 간결한 한국어 명칭",
-          "description": "해당 주장의 의미와 입증에 필요한 핵심 내용을 1~2문장 설명",
+          "party": "plaintiff or prosecutor",
+          "name": "Concise name of the claim in the user's configured language ({user_language})",
+          "description": "1-2 sentence explanation of the claim's meaning and the key facts needed to prove it",
           "mapped_evidence": [
             {{
               "evidence_id": "evidence_node_id",
-              "text_snippet": "근거 텍스트 요약",
+              "text_snippet": "Summary of evidence text",
               "source_doc": "P.5",
-              "reason": "이 근거가 해당 주장을 뒷받침하는 구체적인 사실/법률적 연결"
+              "reason": "Specific factual/legal connection explaining how this evidence supports the claim"
             }}
           ]
         }},
         {{
           "id": "claim_2",
-          "party": "피고 또는 피고인",
-          "name": "반대 주장의 간결한 한국어 명칭",
-          "description": "반대 주장의 의미와 입증에 필요한 핵심 내용을 1~2문장 설명",
+          "party": "defendant or accused",
+          "name": "Concise name of the opposing claim in the user's configured language ({user_language})",
+          "description": "1-2 sentence explanation of the opposing claim's meaning and the key facts needed to prove it",
           "mapped_evidence": []
         }}
       ]
@@ -82,15 +81,15 @@ def _build_issue_tree_prompt(claim_type: str) -> str:
   ]
 }}
 
-주의:
-- issues는 {MIN_ISSUES}개 이상 {MAX_ISSUES}개 이하로 작성.
-- 각 issue는 반드시 2개 이상의 상반된 주장(claims)을 포함 (예: 원고 주장 vs 피고 주장).
-- id는 "issue_1", "issue_2", "claim_1", "claim_2" ... 순차적으로 부여.
-- party는 "원고", "피고", "검사", "피고인", "의뢰인", "상대방" 등 실제 대립 주체를 명시.
-- mapped_evidence는 증거 노드가 제공되면 LLM이 자동으로 채운다. 각 항목은 {{"evidence_id", "text_snippet", "source_doc", "reason"}} 형식.
-- reason에는 해당 근거가 주장을 뒷받침하는 구체적인 사실적 연결과 법률적 의미를 모두 포함하여 기술.
-- 한국 법률 체계(대법원 판례/통설)를 기준으로 도출.
-- 다른 설명 금지, JSON 객체만 반환.
+Notes:
+- Write between {MIN_ISSUES} and {MAX_ISSUES} issues.
+- Each issue must include 2 or more opposing claims (e.g., plaintiff claim vs defendant claim).
+- Assign ids sequentially: "issue_1", "issue_2", "claim_1", "claim_2", etc.
+- party should specify the actual opposing party, e.g., "plaintiff", "defendant", "prosecutor", "accused", "client", "opponent".
+- mapped_evidence is filled automatically by the LLM when evidence nodes are provided. Each item must be in {{"evidence_id", "text_snippet", "source_doc", "reason"}} format.
+- reason must describe both the factual connection and the legal meaning of how the evidence supports the claim.
+- Derive based on the legal system (supreme court precedents/doctrines) of the relevant jurisdiction.
+- No other explanation; return only the JSON object.
 """
 
 
@@ -99,6 +98,7 @@ def _build_cross_validation_prompt(
     issues: list[dict],
     evidence_nodes: list[dict],
     page_texts: dict[int, str],
+    user_language: str = "ko",
 ) -> str:
     """[Flow: Step 1 (트리/증거/텍스트 직렬화) -> Step 2 (교차검증 지시) -> Step 3 (JSON 스키마 명시) -> Step 4 (주의사항)]
 
@@ -144,20 +144,20 @@ def _build_cross_validation_prompt(
         ensure_ascii=False,
         indent=2,
     )
-    return f"""아래 청구 원인과 쟁점-주장-근거 트리, 증거 노드, 문서 텍스트 샘플을 교차검증하라.
+    return f"""Cross-validate the claim type, issue-claim-evidence tree, evidence nodes, and document text sample below.
 
-청구 원인: {claim_type}
+Claim type: {claim_type}
 
-트리:
+Tree:
 {issues_summary}
 
-증거:
+Evidence:
 {evidence_summary}
 
-문서 텍스트 샘플:
+Document text sample:
 {text_sample}
 
-출력 JSON 형식:
+Output JSON format:
 {{
   "validation": "passed" | "needs_correction",
   "corrections": [
@@ -166,17 +166,17 @@ def _build_cross_validation_prompt(
       "target_claim_id": "claim_1",
       "action": "add_evidence" | "remove_evidence" | "update_reason" | "add_claim" | "remove_claim",
       "evidence_id": "evidence_node_id",
-      "reason": "교차검증 결과에 따른 구체적인 수정 사유"
+      "reason": "Specific reason for the correction based on the cross-validation result. Write in the user's configured language ({user_language})."
     }}
   ]
 }}
 
-주의:
-- validation은 전체 트리가 문서와 일치하고 주장-근거 연결이 타당하면 "passed".
-- 불일치, 모순, 근거 없는 주장, 약한 연결고리가 있으면 "needs_correction".
-- corrections는 반드시 구체적인 issue_id, claim_id, action, 사유를 포함.
-- 증거가 부족하여 주장을 지지할 수 없으면 remove_evidence 또는 remove_claim 권장.
-- 다른 설명 금지, JSON 객체만 반환.
+Notes:
+- validation is "passed" if the entire tree matches the document and the claim-evidence connections are factually valid.
+- If there are inconsistencies, contradictions, unsupported claims, or weak connections, use "needs_correction".
+- corrections must include specific issue_id, claim_id, action, and reason.
+- If evidence is insufficient to support a claim, recommend remove_evidence or remove_claim.
+- No other explanation; return only the JSON object.
 """
 
 
@@ -353,10 +353,11 @@ def extract_issue_claim_tree(
     if not claim_type:
         return _empty_schema("")
 
+    user_language = user.language if user and getattr(user, "language", None) else "ko"
     try:
         if db and user:
             spend_agent_step(db, user, "AI agent: issue tree extraction")
-        tree_prompt = _build_issue_tree_prompt(claim_type)
+        tree_prompt = _build_issue_tree_prompt(claim_type, user_language=user_language)
         tree_content, _ = call_text(tree_prompt, endpoint, model, api_key, max_tokens=MAX_TOKENS)
         mappings = _parse_issue_tree(tree_content, claim_type)
     except Exception as e:
@@ -374,6 +375,7 @@ def extract_issue_claim_tree(
             mappings["issues"],
             evidence_nodes,
             page_texts,
+            user_language=user_language,
         )
         validation_content, _ = call_text(
             validation_prompt, endpoint, model, api_key, max_tokens=MAX_CROSS_VALIDATION_TOKENS

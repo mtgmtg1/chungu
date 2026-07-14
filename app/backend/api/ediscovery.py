@@ -451,7 +451,8 @@ def get_legal_elements(
     graph = job.ediscovery_graphs or {}
     evidence_nodes = [n for n in graph.get("nodes", []) if n.get("type") == "evidence"]
 
-    mappings = legal_elements.extract_legal_elements(claim_type, endpoint, model, api_key, evidence_nodes=evidence_nodes)
+    db_user = db.get(User, uuid.UUID(user.user_id))
+    mappings = legal_elements.extract_legal_elements(claim_type, endpoint, model, api_key, evidence_nodes=evidence_nodes, user=db_user)
     # 추출 결과를 저장 (빈 슬롯/자동 매핑 상태로 영속화 — 이후 PUT /mappings로 갱신)
     job.element_mappings = mappings
     db.commit()
@@ -667,6 +668,7 @@ def analyze_legal_profile(
     claim_type_hint = str(payload.get("claim_type_hint", "")).strip() or None
     additional_context = str(payload.get("additional_context", "")).strip() or None
 
+    db_user = db.get(User, uuid.UUID(user.user_id))
     profile = legal_case_profile.extract_legal_profile(
         page_texts,
         endpoint,
@@ -676,6 +678,7 @@ def analyze_legal_profile(
         total_pages=len(page_texts),
         claim_type_hint=claim_type_hint,
         additional_context=additional_context,
+        user=db_user,
     )
 
     if not profile:

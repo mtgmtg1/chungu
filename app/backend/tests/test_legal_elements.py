@@ -15,9 +15,9 @@ from backend.core import legal_elements
 def test_build_legal_elements_prompt_uses_claim_terminology():
     """프롬프트가 '주장' 용어를 사용하고 관계 기록 가이드를 포함해야 한다."""
     prompt = legal_elements._build_legal_elements_prompt("사기죄")
-    assert "주장" in prompt
-    assert "증거" in prompt
-    assert "관계" in prompt or "reason" in prompt
+    assert "claim" in prompt.lower()
+    assert "evidence" in prompt.lower()
+    assert "relationship" in prompt.lower() or "reason" in prompt.lower()
 
 
 def test_parse_legal_elements_preserves_evidence_reason():

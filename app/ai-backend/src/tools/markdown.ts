@@ -39,9 +39,9 @@ export function buildMarkdownTools(context: MarkdownContext) {
 
   return {
     get_section: tool({
-      description: '마크다운에서 지정한 제목의 섹션을 추출한다.',
+      description: 'Extract the section with the specified heading from the markdown.',
       inputSchema: z.object({
-        heading: z.string().describe('찾을 섹션 제목'),
+        heading: z.string().describe('Heading of the section to find'),
       }),
       execute: async ({ heading }) => {
         const markdown = await proofApi.getMarkdown(jobId, authHeaders);
@@ -51,9 +51,9 @@ export function buildMarkdownTools(context: MarkdownContext) {
     }),
 
     get_table: tool({
-      description: '마크다운에서 N번째 표를 추출한다.',
+      description: 'Extract the Nth table from the markdown.',
       inputSchema: z.object({
-        table_index: z.number().describe('0-based 표 인덱스'),
+        table_index: z.number().describe('0-based table index'),
       }),
       execute: async ({ table_index }) => {
         const markdown = await proofApi.getMarkdown(jobId, authHeaders);
@@ -63,10 +63,10 @@ export function buildMarkdownTools(context: MarkdownContext) {
     }),
 
     replace_selection: tool({
-      description: '사용자가 선택한 텍스트를 새로운 마크다운으로 교체한다.',
+      description: 'Replace the selected text with new markdown.',
       inputSchema: z.object({
-        old_text: z.string().describe('교체할 기존 텍스트'),
-        new_text: z.string().describe('새 마크다운'),
+        old_text: z.string().describe('Existing text to replace'),
+        new_text: z.string().describe('New markdown'),
       }),
       execute: async ({ old_text, new_text }) => {
         edits.push({ type: 'replace', old_text, new_text });
@@ -75,10 +75,10 @@ export function buildMarkdownTools(context: MarkdownContext) {
     }),
 
     insert_at: tool({
-      description: '지정한 위치에 마크다운을 삽입한다.',
+      description: 'Insert markdown at the specified position.',
       inputSchema: z.object({
-        position: z.string().describe('"cursor" | "end" | "beginning" | heading 제목'),
-        new_text: z.string().describe('삽입할 마크다운'),
+        position: z.string().describe('"cursor" | "end" | "beginning" | heading text'),
+        new_text: z.string().describe('Markdown to insert'),
       }),
       execute: async ({ position, new_text }) => {
         edits.push({ type: 'insert', position, new_text });
@@ -87,7 +87,7 @@ export function buildMarkdownTools(context: MarkdownContext) {
     }),
 
     apply_edits: tool({
-      description: '현재까지의 마크다운 편집을 FastAPI에 저장한다.',
+      description: 'Save the markdown edits made so far to FastAPI.',
       inputSchema: z.object({}),
       execute: async () => {
         if (edits.length === 0) {

@@ -106,10 +106,10 @@ export function buildAnnotationTools(context: AnnotationContext) {
 
   return {
     search_text: tool({
-      description: 'PDF 텍스트 레이어에서 키워드나 정규식으로 텍스트를 검색한다.',
+      description: 'Search the PDF text layer for keywords or regular expressions.',
       inputSchema: z.object({
-        query: z.string().describe('검색어 또는 정규식'),
-        page_no: z.number().optional().describe('1-based 페이지 번호. 생략 시 모든 페이지 검색'),
+        query: z.string().describe('Search keyword or regular expression'),
+        page_no: z.number().optional().describe('1-based page number. Searches all pages if omitted'),
       }),
       execute: async ({ query, page_no }) => {
         const { matches } = await proofApi.searchText(jobId, query, page_no, authHeaders);
@@ -118,9 +118,9 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     get_elements: tool({
-      description: 'OCR 또는 텍스트 레이어에서 추출한 페이지 요소 목록을 반환한다. 큰 PDF나 이미지 기반 PDF에서는 page_no를 지정하지 않으면 전체 페이지를 OCR 해야 하므로 매우 느릴 수 있다. 특정 페이지의 요소만 필요할 때는 반드시 page_no를 명시한다.',
+      description: 'Return the list of page elements extracted from OCR or the text layer. In large PDFs or image-based PDFs, omitting page_no may require OCR of the entire document, so it can be very slow. Always specify page_no when you only need elements from a specific page.',
       inputSchema: z.object({
-        page_no: z.number().optional().describe('1-based 페이지 번호. 생략 시 모든 페이지를 OCR(느림)'),
+        page_no: z.number().optional().describe('1-based page number. Omitting it will OCR all pages (slow)'),
       }),
       execute: async ({ page_no }) => {
         // [Flow: Step 1 (loadElements로 FastAPI 조회) -> Step 2 (성공 시 20개로 제한 반환)
@@ -138,17 +138,17 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     read_job_json: tool({
-      description: 'job의 다양한 결과 JSON을 읽는 범용 리더. kind로 읽을 데이터를 지정:\n' +
-        '- "annotations": AI/사용자 주석 JSON (EmbedPDF AnnotationTransferItem[] 전체 구조 — id, type, pageIndex, rect, color, contents, calloutLine, strokeColor 등)\n' +
-        '- "ocr_layout": OCR 레이아웃 JSON (텍스트 블록/표/이미지 위치 정보)\n' +
-        '- "extracted_files": 추출된 파일 목록 (마크다운/이미지/PDF 경로 등)\n' +
-        '- "annotated_pdf_files": 주석 PDF 파일 메타데이터 목록\n' +
-        '- "job_meta": job 상태 요약 (status, total_pages, file_type, has_pdf 등)\n' +
-        '기존 주석의 정확한 위치/구조를 확인하거나 OCR 결과를 분석할 때 사용한다.',
+      description: 'A general-purpose reader for various result JSONs of a job. Use kind to specify the data to read:\n' +
+        '- "annotations": AI/user annotation JSON (full structure of EmbedPDF AnnotationTransferItem[] — id, type, pageIndex, rect, color, contents, calloutLine, strokeColor, etc.)\n' +
+        '- "ocr_layout": OCR layout JSON (text block/table/image position info)\n' +
+        '- "extracted_files": list of extracted files (markdown/image/PDF paths, etc.)\n' +
+        '- "annotated_pdf_files": annotated PDF file metadata list\n' +
+        '- "job_meta": job status summary (status, total_pages, file_type, has_pdf, etc.)\n' +
+        'Use this to verify exact positions/structures of existing annotations or analyze OCR results.',
       inputSchema: z.object({
         kind: z.enum(['annotations', 'ocr_layout', 'extracted_files', 'annotated_pdf_files', 'job_meta'])
-          .describe('읽을 결과 JSON 종류'),
-        page_no: z.number().optional().describe('1-based 페이지 번호. kind=annotations일 때만 필터링에 사용'),
+          .describe('Type of result JSON to read'),
+        page_no: z.number().optional().describe('1-based page number. Only used for filtering when kind=annotations'),
       }),
       execute: async ({ kind, page_no }) => {
         try {
@@ -168,10 +168,10 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     get_annotations: tool({
-      description: '기존 AI 주석 또는 사용자 주석의 목록을 원본 JSON 구조 전체와 함께 반환한다. 주석의 ID, 종류, 색상, 코멘트, 페이지, 위치(bbox), calloutLine, strokeColor 등 모든 필드를 포함한다. 주석을 편집/삭제하거나 기존 주석과 충돌을 피할 때 사용한다.',
+      description: 'Return the list of existing AI or user annotations together with the full original JSON structure. Includes all fields such as annotation ID, type, color, comment, page, position (bbox), calloutLine, strokeColor, etc. Use when editing/deleting annotations or avoiding conflicts with existing annotations.',
       inputSchema: z.object({
-        page_no: z.number().optional().describe('1-based 페이지 번호. 생략 시 모든 페이지'),
-        summary_only: z.boolean().optional().describe('true면 요약 필드만 반환 (id/type/page_no/color/comment). 생략 시 원본 JSON 전체 반환'),
+        page_no: z.number().optional().describe('1-based page number. Returns all pages if omitted'),
+        summary_only: z.boolean().optional().describe('If true, return only summary fields (id/type/page_no/color/comment). If omitted, return the full original JSON'),
       }),
       execute: async ({ page_no, summary_only }) => {
         // [Flow: Step 1 (FastAPI에서 주석 목록 조회) -> Step 2 (404 시 빈 배열로 폴백)
@@ -214,10 +214,10 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     view_page: tool({
-      description: 'PDF의 특정 페이지를 이미지로 렌더링해 VLLM vision 모델이 직접 분석한다. 페이지의 텍스트, 레이아웃, 표, 주요 요소를 요약한 분석 결과를 반환한다. DPI는 페이지 내 raster 이미지의 실제 해상도를 추정해 자동 결정되며, 필요시 150~300 사이로 명시할 수 있다.',
+      description: 'Render a specific page of the PDF as an image and analyze it directly with the VLLM vision model. Returns an analysis summarizing the page\'s text, layout, tables, and key elements. DPI is automatically estimated from the actual resolution of raster images on the page; if needed, specify between 150 and 300.',
       inputSchema: z.object({
-        page_no: z.number().describe('1-based 페이지 번호'),
-        dpi: z.number().min(150).max(300).optional().describe('렌더링 DPI (150~300, 생략 시 페이지 내 이미지 해상도에서 자동 추정)'),
+        page_no: z.number().describe('1-based page number'),
+        dpi: z.number().min(150).max(300).optional().describe('Rendering DPI (150-300; if omitted, auto-estimated from the page\'s image resolution)'),
       }),
       execute: async ({ page_no, dpi }) => {
         // [Flow: Step 1 (FastAPI에서 페이지 이미지 URL 획득) -> Step 2 (이미지 다운로드)
@@ -267,14 +267,14 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     update_annotation: tool({
-      description: '기존 주석의 색상, 코멘트, 투명도를 변경한다. get_annotations로 얻은 id를 사용한다.',
+      description: 'Change the color, comment, and opacity of an existing annotation. Use the id obtained from get_annotations.',
       inputSchema: z.object({
-        annotation_id: z.string().describe('get_annotations 결과의 id'),
+        annotation_id: z.string().describe('ID from get_annotations result'),
         color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])
           .optional()
-          .describe('변경할 색상 이름'),
-        comment: z.string().optional().describe('변경할 코멘트'),
-        opacity: z.number().min(0).max(1).optional().describe('변경할 투명도 (0.0~1.0)'),
+          .describe('Color name to change to'),
+        comment: z.string().optional().describe('Comment to change to'),
+        opacity: z.number().min(0).max(1).optional().describe('Opacity to change to (0.0~1.0)'),
       }),
       execute: async ({ annotation_id, color, comment, opacity }) => {
         const payload: { color?: string; comment?: string; opacity?: number } = {};
@@ -286,14 +286,14 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     add_highlight: tool({
-      description: '선택한 요소에 하이라이트 주석을 추가한다. get_elements(page_no)를 먼저 호출했다면 동일한 page_no를 전달하면 해당 페이지만 빠르게 조회한다. page_no를 생략하면 전체 페이지를 조회하므로 큰 PDF에서는 느릴 수 있다.',
+      description: 'Add a highlight annotation to the selected element. If get_elements(page_no) was called first, pass the same page_no to quickly look up that page. Omitting page_no scans the entire document, which can be slow for large PDFs.',
       inputSchema: z.object({
-        element_index: z.number().describe('get_elements 결과의 인덱스'),
-        page_no: z.number().optional().describe('get_elements를 호출할 때 지정한 1-based 페이지 번호. 생략 시 전체 페이지에서 조회'),
-        comment: z.string().describe('주석 코멘트'),
+        element_index: z.number().describe('Index from get_elements result'),
+        page_no: z.number().optional().describe('1-based page number specified when calling get_elements. Omitting it searches the entire document'),
+        comment: z.string().describe('Annotation comment'),
         color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])
           .default('yellow')
-          .describe('색상 이름'),
+          .describe('Color name'),
       }),
       execute: async ({ element_index, page_no, comment, color }) => {
         const { elements } = await loadElements(page_no);
@@ -317,14 +317,14 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     add_callout: tool({
-      description: '선택한 요소에 callout(텍스트 박스 + 화살표) 주석을 추가한다. get_elements(page_no)를 먼저 호출했다면 동일한 page_no를 전달하면 해당 페이지만 빠르게 조회한다.',
+      description: 'Add a callout (text box + arrow) annotation to the selected element. If get_elements(page_no) was called first, pass the same page_no to quickly look up that page.',
       inputSchema: z.object({
-        element_index: z.number().describe('get_elements 결과의 인덱스'),
-        page_no: z.number().optional().describe('get_elements를 호출할 때 지정한 1-based 페이지 번호. 생략 시 전체 페이지에서 조회'),
-        comment: z.string().describe('주석 코멘트'),
+        element_index: z.number().describe('Index from get_elements result'),
+        page_no: z.number().optional().describe('1-based page number specified when calling get_elements. Omitting it searches the entire document'),
+        comment: z.string().describe('Annotation comment'),
         color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])
           .default('purple')
-          .describe('색상 이름'),
+          .describe('Color name'),
       }),
       execute: async ({ element_index, page_no, comment, color }) => {
         const { elements } = await loadElements(page_no);
@@ -348,9 +348,9 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     remove_annotation: tool({
-      description: '기존 AI 주석을 제거한다. 삭제 전 사용자 승인이 필요하다.',
+      description: 'Remove an existing AI annotation. User approval is required before deletion.',
       inputSchema: z.object({
-        annotation_id: z.string().describe('제거할 주석 ID'),
+        annotation_id: z.string().describe('ID of the annotation to remove'),
       }),
       execute: async ({ annotation_id }) => {
         removals.push(annotation_id);
@@ -359,10 +359,10 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     compare_elements: tool({
-      description: '여러 페이지의 요소를 비교 분석한다.',
+      description: 'Compare and analyze elements across multiple pages.',
       inputSchema: z.object({
-        description: z.string().describe('비교 기준이나 조건'),
-        page_nos: z.array(z.number()).describe('비교할 1-based 페이지 번호 목록'),
+        description: z.string().describe('Comparison criteria or condition'),
+        page_nos: z.array(z.number()).describe('List of 1-based page numbers to compare'),
       }),
       execute: async ({ description, page_nos }) => {
         const results = [];
@@ -380,14 +380,14 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     apply_annotations: tool({
-      description: '현재까지 추가한 하이라이트/콜아웃을 Storage에 저장하고 뷰어에 반영한다. 저장 실패 시에도 실제 원인을 결과에 반환한다.',
+      description: 'Save the highlights/callouts added so far to Storage and reflect them in the viewer. Even if saving fails, the actual cause is returned in the result.',
       inputSchema: z.object({}),
       execute: async () => {
         // [Flow: Step 1 (대기 중인 변경 확인) -> Step 2 (주석 JSON 생성)
         //       -> Step 3 (원래 주석 파일 저장 시도) -> Step 4 (원본 JSON fallback)
         //       -> Step 5 (구조화된 저장 결과 반환)]
         if (pending.length === 0 && removals.length === 0) {
-          return { saved: false, reason: '저장할 주석 변경이 없습니다.' };
+          return { saved: false, reason: 'No annotation changes to save.' };
         }
 
         if (pending.length === 0) {
@@ -396,7 +396,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
           return {
             saved: false,
             removals: removals.length,
-            reason: '삭제 요청은 승인 대기 중이며, 추가할 주석이 없어 저장하지 않았습니다.',
+            reason: 'Deletion requests are pending approval and no new annotations were added, so nothing was saved.',
           };
         }
 
@@ -433,7 +433,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
           console.error(`[apply_annotations] job=${jobId} source_index=${sourceIndex}: ${message}`);
           return {
             saved: false,
-            error: 'apply_annotations 저장 실패',
+            error: 'apply_annotations save failed',
             detail: message,
             source_index: sourceIndex,
           };
@@ -442,18 +442,18 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     save_annotations: tool({
-      description: 'EmbedPDF AnnotationTransferItem[] 형식의 주석 JSON을 직접 전달하여 Storage에 저장하고 뷰어에 반영한다. add_highlight/add_callout + apply_annotations 대신 사용할 수 있으며, view_page나 read_job_json으로 얻은 정보를 바탕으로 정밀한 위치(rect)를 지정해 주석을 만들 때 유용하다.\n' +
-        '각 주석 항목의 구조: { annotation: { id, type (9=highlight, 3=freetext/callout), pageIndex (0-based), rect, color, strokeColor, opacity, contents, intent? ("FreeTextCallout"), lineEnding? (4=OpenArrow), segmentRects? } }\n' +
-        'rect 좌표계: PDF user-space(y↑, 원점 좌하단)를 사용한다. 다음 형식을 지원한다:\n' +
-        '  1. bbox_pdf 배열 직접 전달: rect = [x0, y0, x1, y1] (get_elements의 bbox_pdf 그대로 사용)\n' +
-        '  2. {origin, size} 구조: rect = {origin: {x: x0, y: y0}, size: {width: x1-x0, height: y1-y0}} (y0는 PDF user-space 하단)\n' +
-        '  3. annotation.bbox_pdf 필드: bbox_pdf = [x0, y0, x1, y1] (rect 대신 사용 가능)\n' +
-        '좌표 변환은 FastAPI pdf_user_annotator.apply_user_annotations에서 실제 PDF page_height를 기준으로 수행한다.',
+      description: 'Directly pass an annotation JSON in EmbedPDF AnnotationTransferItem[] format to Storage and reflect it in the viewer. Can be used instead of add_highlight/add_callout + apply_annotations, and is useful when creating annotations with precise positions (rect) based on information from view_page or read_job_json.\n' +
+        'Each annotation item structure: { annotation: { id, type (9=highlight, 3=freetext/callout), pageIndex (0-based), rect, color, strokeColor, opacity, contents, intent? ("FreeTextCallout"), lineEnding? (4=OpenArrow), segmentRects? } }\n' +
+        'rect coordinate system: uses PDF user-space (y↑, origin bottom-left). The following formats are supported:\n' +
+        '  1. Pass bbox_pdf array directly: rect = [x0, y0, x1, y1] (use bbox_pdf from get_elements as-is)\n' +
+        '  2. {origin, size} structure: rect = {origin: {x: x0, y: y0}, size: {width: x1-x0, height: y1-y0}} (y0 is PDF user-space bottom)\n' +
+        '  3. annotation.bbox_pdf field: bbox_pdf = [x0, y0, x1, y1] (can be used instead of rect)\n' +
+        'Coordinate conversion is performed by FastAPI pdf_user_annotator.apply_user_annotations based on the actual PDF page_height.',
       inputSchema: z.object({
         annotations: z.array(z.record(z.unknown()))
-          .describe('EmbedPDF AnnotationTransferItem[] 배열. 각 항목은 { annotation: { id, type, pageIndex, rect, color, ... } } 구조.'),
+          .describe('EmbedPDF AnnotationTransferItem[] array. Each item has the structure { annotation: { id, type, pageIndex, rect, color, ... } }.'),
         merge: z.boolean().optional()
-          .describe('true면 기존 주석과 병합 (기본값). false면 기존 주석을 모두 대체.'),
+          .describe('If true, merge with existing annotations (default). If false, replace all existing annotations.')
       }),
       execute: async ({ annotations, merge }) => {
         if (!annotations || annotations.length === 0) {

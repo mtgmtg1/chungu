@@ -20,7 +20,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from .. import settings_store
 from ..config import settings
-from ..db.models import Job
+from ..db.models import Job, User
 from ..db.session import SessionLocal
 from . import cache, ocr_client, paddleocr_client, supabase_client
 from .image_deskew import deskew_image
@@ -1198,6 +1198,15 @@ def run_edit(
     model = job.model or settings_store.get_setting(db, "llm_model") or settings.default_llm_model
     api_key = settings_store.get_setting(db, "llm_api_key") or ""
 
+    user_language = "ko"
+    if job.user_id:
+        try:
+            user = db.get(User, job.user_id)
+            if user and user.language:
+                user_language = user.language
+        except Exception:
+            pass
+
     try:
         shared_annotations_json_path = f"{job.id}/annotated.annotations.json"
         client = supabase_client.get_service_client()
@@ -1260,6 +1269,7 @@ def run_edit(
         prompt = build_annotation_edit_prompt(
             [{"id": a["id"], "type": a["type"], "color": a["color"], "comment": a["comment"], "text": a["text"]} for a in editable],
             instruction,
+            user_language=user_language,
         )
         content, _ = ocr_client.call_text(prompt, endpoint, model, api_key, max_tokens=4000)
         content = _strip_json_fence(content)

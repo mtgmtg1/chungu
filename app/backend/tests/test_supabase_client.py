@@ -6,13 +6,23 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".."))
 
+import pytest
+
+from backend.core import supabase_client
 from backend.core.supabase_client import _publicize_url
+
+
+@pytest.fixture(autouse=True)
+def _patch_settings(monkeypatch):
+    """테스트에서 settings.supabase_url/supabase_public_url이 .env 값을 덮어쓰지 않도록 비운다."""
+    monkeypatch.setattr(supabase_client.settings, "supabase_url", "")
+    monkeypatch.setattr(supabase_client.settings, "supabase_public_url", "")
 
 
 def test_publicize_url_rewrites_internal_to_public():
     """내부 HTTP URL을 외부 HTTPS 공개 URL로 교환한다."""
     internal = "http://192.168.1.50:28000/storage/v1/object/sign/pdfs/job/file.pdf?token=abc"
-    expected = "https://proof.teamcat.app/supabase/storage/v1/object/sign/pdfs/job/file.pdf?token=abc"
+    expected = "https://proof.teamcat.app/storage/v1/object/sign/pdfs/job/file.pdf?token=abc"
     assert (
         _publicize_url(internal, "http://192.168.1.50:28000", "https://proof.teamcat.app/supabase")
         == expected

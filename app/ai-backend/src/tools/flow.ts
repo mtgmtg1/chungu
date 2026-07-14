@@ -263,9 +263,9 @@ export function buildFlowTools(context: FlowToolContext) {
 
     extract_flow_structure: tool({
       description:
-        '마크다운 문서에서 헤딩 기반 플로우 구조를 추출. 토큰 소모 없이 순수 파싱으로 노드와 계층 에지를 생성. 플로우 뷰 렌더링에 사용.',
+        'Extract heading-based flow structure from the markdown document. Generate nodes and hierarchical edges through pure parsing without token consumption. Used for flow view rendering.',
       inputSchema: z.object({
-        jobId: z.string().optional().describe('Job ID (context의 jobId 사용 시 생략 가능)'),
+        jobId: z.string().optional().describe('Job ID (optional if context jobId is used)'),
       }),
       execute: async ({ jobId: jid }) => {
         const id = jid || jobId;
@@ -280,19 +280,19 @@ export function buildFlowTools(context: FlowToolContext) {
 
     infer_flow_dependencies: tool({
       description:
-        '추출된 플로우 노드를 논리적 트리 구조로 재구성. 각 노드가 최대 한 개의 부모를 갖는 트리 형태의 부모-자식 에지를 AI로 추론. extract_flow_structure로 얻은 nodes 배열을 입력으로 사용.',
+        'Reorganize the extracted flow nodes into a logical tree structure. Infer parent-child edges in a tree form where each node has at most one parent using AI. Use the nodes array from extract_flow_structure as input.',
       inputSchema: z.object({
         nodes: z
           .array(
             z.object({
-              id: z.string().describe('노드 ID'),
-              heading: z.string().describe('헤딩 텍스트'),
-              level: z.number().describe('헤딩 레벨 (1-6)'),
-              summary: z.string().optional().describe('섹션 요약'),
-              keywords: z.array(z.string()).optional().describe('핵심 키워드'),
+              id: z.string().describe('Node ID'),
+              heading: z.string().describe('Heading text'),
+              level: z.number().describe('Heading level (1-6)'),
+              summary: z.string().optional().describe('Section summary'),
+              keywords: z.array(z.string()).optional().describe('Key keywords'),
             }),
           )
-          .describe('extract_flow_structure로 추출된 노드 배열'),
+          .describe('Array of nodes extracted by extract_flow_structure'),
       }),
       execute: async ({ nodes }) => {
         const compactNodes = nodes.map(n => ({
@@ -317,9 +317,9 @@ export function buildFlowTools(context: FlowToolContext) {
 
     get_flow_layout: tool({
       description:
-        '마크다운에서 헤딩 노드를 추출하고 elkjs로 레이아웃 좌표를 계산. 드로잉/주석/노트를 노드 근처에 배치할 때 좌표 참조용으로 사용. 각 노드의 id, heading, x, y, width, height를 반환.',
+        'Extract heading nodes from markdown and compute layout coordinates with elkjs. Use as a coordinate reference when placing drawings/annotations/notes near nodes. Returns each node\'s id, heading, x, y, width, and height.',
       inputSchema: z.object({
-        jobId: z.string().optional().describe('Job ID (context의 jobId 사용 시 생략 가능)'),
+        jobId: z.string().optional().describe('Job ID (optional if context jobId is used)'),
       }),
       execute: async ({ jobId: jid }) => {
         const id = jid || jobId;
@@ -352,9 +352,9 @@ export function buildFlowTools(context: FlowToolContext) {
 
     get_flow_drawings: tool({
       description:
-        '서버에서 현재 플로우뷰의 모든 드로잉(path), 텍스트 주석, 노트 노드, 커스텀 엣지를 조회. 조작 전에 현재 상태를 확인할 때 사용.',
+        'Retrieve all drawings (paths), text annotations, note nodes, and custom edges of the current flow view from the server. Use to check the current state before manipulation.',
       inputSchema: z.object({
-        jobId: z.string().optional().describe('Job ID (context의 jobId 사용 시 생략 가능)'),
+        jobId: z.string().optional().describe('Job ID (optional if context jobId is used)'),
       }),
       execute: async ({ jobId: jid }) => {
         const id = jid || jobId;
@@ -371,15 +371,15 @@ export function buildFlowTools(context: FlowToolContext) {
 
     add_flow_shape: tool({
       description:
-        '플로우뷰 캔버스에 도형(선/화살표/사각형/원)을 추가. 좌표는 flow 좌표계 기준. get_flow_layout으로 노드 위치를 확인한 후 배치. save_flow_drawings로 저장해야 영속화됨.',
+        'Add a shape (line/arrow/rectangle/circle) to the flow view canvas. Coordinates are in the flow coordinate system. Check node positions with get_flow_layout before placing. Must call save_flow_drawings to persist.',
       inputSchema: z.object({
-        shapeType: z.enum(['line', 'arrow', 'rectangle', 'circle']).describe('도형 타입'),
-        x1: z.number().describe('시작점 x (flow 좌표계)'),
-        y1: z.number().describe('시작점 y (flow 좌표계)'),
-        x2: z.number().describe('끝점 x (flow 좌표계)'),
-        y2: z.number().describe('끝점 y (flow 좌표계)'),
-        strokeColor: z.string().optional().describe('선 색상 (hex, 예: #6366f1)'),
-        strokeWidth: z.number().optional().describe('선 굵기 (1~20, 기본 4)'),
+        shapeType: z.enum(['line', 'arrow', 'rectangle', 'circle']).describe('Shape type'),
+        x1: z.number().describe('Start x (flow coordinate system)'),
+        y1: z.number().describe('Start y (flow coordinate system)'),
+        x2: z.number().describe('End x (flow coordinate system)'),
+        y2: z.number().describe('End y (flow coordinate system)'),
+        strokeColor: z.string().optional().describe('Stroke color (hex, e.g., #6366f1)'),
+        strokeWidth: z.number().optional().describe('Stroke width (1-20, default 4)'),
       }),
       execute: async ({ shapeType, x1, y1, x2, y2, strokeColor, strokeWidth }) => {
         await ensureLoaded();
@@ -399,13 +399,13 @@ export function buildFlowTools(context: FlowToolContext) {
 
     add_flow_text_annotation: tool({
       description:
-        '플로우뷰 캔버스에 텍스트 주석을 추가. 좌표는 flow 좌표계 기준. get_flow_layout으로 노드 위치를 확인한 후 배치. save_flow_drawings로 저장해야 영속화됨.',
+        'Add a text annotation to the flow view canvas. Coordinates are in the flow coordinate system. Check node positions with get_flow_layout before placing. Must call save_flow_drawings to persist.',
       inputSchema: z.object({
-        text: z.string().describe('주석 텍스트'),
-        x: z.number().describe('x 좌표 (flow 좌표계)'),
-        y: z.number().describe('y 좌표 (flow 좌표계)'),
-        color: z.string().optional().describe('텍스트 색상 (hex, 예: #6366f1)'),
-        fontSize: z.number().optional().describe('폰트 크기 (기본 14)'),
+        text: z.string().describe('Annotation text'),
+        x: z.number().describe('x coordinate (flow coordinate system)'),
+        y: z.number().describe('y coordinate (flow coordinate system)'),
+        color: z.string().optional().describe('Text color (hex, e.g., #6366f1)'),
+        fontSize: z.number().optional().describe('Font size (default 14)'),
       }),
       execute: async ({ text, x, y, color, fontSize }) => {
         await ensureLoaded();
@@ -424,10 +424,10 @@ export function buildFlowTools(context: FlowToolContext) {
 
     delete_flow_drawing: tool({
       description:
-        '특정 드로잉(path) 또는 텍스트 주석을 ID로 삭제. get_flow_drawings로 ID를 확인 후 사용. save_flow_drawings로 저장해야 영속화됨.',
+        'Delete a specific drawing (path) or text annotation by ID. Check the ID with get_flow_drawings before use. Must call save_flow_drawings to persist.',
       inputSchema: z.object({
-        id: z.string().describe('삭제할 path 또는 text annotation의 ID'),
-        kind: z.enum(['path', 'text']).describe('삭제 대상 종류 ("path" 또는 "text")'),
+        id: z.string().describe('ID of the path or text annotation to delete'),
+        kind: z.enum(['path', 'text']).describe('Target type to delete ("path" or "text")'),
       }),
       execute: async ({ id, kind }) => {
         await ensureLoaded();
@@ -445,7 +445,7 @@ export function buildFlowTools(context: FlowToolContext) {
 
     clear_flow_drawings: tool({
       description:
-        '플로우뷰의 모든 드로잉, 텍스트 주석, 노트 노드, 커스텀 엣지를 초기화. save_flow_drawings로 저장해야 영속화됨.',
+        'Clear all drawings, text annotations, note nodes, and custom edges in the flow view. Must call save_flow_drawings to persist.',
       inputSchema: z.object({}),
       execute: async () => {
         await ensureLoaded();
@@ -459,7 +459,7 @@ export function buildFlowTools(context: FlowToolContext) {
 
     save_flow_drawings: tool({
       description:
-        '보류 중인 모든 드로잉/주석/노트/엣지 변경사항을 서버에 저장(PUT). 변경된 전체 상태를 반환하며, 프론트엔드는 이 결과로 즉시 동기화됨. 모든 조작 도구 사용 후 반드시 호출해야 영속화됨.',
+        'Save all pending drawing/annotation/note/edge changes to the server (PUT). Returns the full changed state, and the frontend synchronizes with this result immediately. Must be called after every manipulation tool to persist.',
       inputSchema: z.object({}),
       execute: async () => {
         await ensureLoaded();
@@ -487,13 +487,13 @@ export function buildFlowTools(context: FlowToolContext) {
 
     add_flow_note: tool({
       description:
-        '플로우뷰에 스티키 노트(노트 노드)를 추가. 좌표는 flow 좌표계 기준. get_flow_layout으로 노드 위치를 확인한 후 배치. save_flow_drawings로 저장해야 영속화됨.',
+        'Add a sticky note (note node) to the flow view. Coordinates are in the flow coordinate system. Check node positions with get_flow_layout before placing. Must call save_flow_drawings to persist.',
       inputSchema: z.object({
-        text: z.string().describe('노트 텍스트'),
-        x: z.number().describe('x 좌표 (flow 좌표계)'),
-        y: z.number().describe('y 좌표 (flow 좌표계)'),
-        width: z.number().optional().describe('노트 너비 (기본 200)'),
-        height: z.number().optional().describe('노트 높이 (기본 80)'),
+        text: z.string().describe('Note text'),
+        x: z.number().describe('x coordinate (flow coordinate system)'),
+        y: z.number().describe('y coordinate (flow coordinate system)'),
+        width: z.number().optional().describe('Note width (default 200)'),
+        height: z.number().optional().describe('Note height (default 80)'),
       }),
       execute: async ({ text, x, y, width, height }) => {
         await ensureLoaded();
@@ -512,12 +512,12 @@ export function buildFlowTools(context: FlowToolContext) {
 
     update_flow_note: tool({
       description:
-        '기존 노트 노드의 텍스트 또는 크기를 수정. get_flow_drawings로 note ID를 확인 후 사용. save_flow_drawings로 저장해야 영속화됨.',
+        'Edit the text or size of an existing note node. Check the note ID with get_flow_drawings before use. Must call save_flow_drawings to persist.',
       inputSchema: z.object({
-        noteId: z.string().describe('수정할 노트 노드의 ID'),
-        text: z.string().optional().describe('새 노트 텍스트'),
-        width: z.number().optional().describe('새 너비'),
-        height: z.number().optional().describe('새 높이'),
+        noteId: z.string().describe('ID of the note node to modify'),
+        text: z.string().optional().describe('New note text'),
+        width: z.number().optional().describe('New width'),
+        height: z.number().optional().describe('New height'),
       }),
       execute: async ({ noteId, text, width, height }) => {
         await ensureLoaded();
@@ -532,9 +532,9 @@ export function buildFlowTools(context: FlowToolContext) {
 
     delete_flow_note: tool({
       description:
-        '노트 노드를 ID로 삭제. get_flow_drawings로 note ID를 확인 후 사용. save_flow_drawings로 저장해야 영속화됨.',
+        'Delete a note node by ID. Check the note ID with get_flow_drawings before use. Must call save_flow_drawings to persist.',
       inputSchema: z.object({
-        noteId: z.string().describe('삭제할 노트 노드의 ID'),
+        noteId: z.string().describe('ID of the note node to delete'),
       }),
       execute: async ({ noteId }) => {
         await ensureLoaded();
@@ -550,11 +550,11 @@ export function buildFlowTools(context: FlowToolContext) {
 
     add_flow_edge: tool({
       description:
-        '두 노드 간에 커스텀 엣지(연결선)를 추가. sourceNodeId와 targetNodeId는 extract_flow_structure 또는 get_flow_layout으로 확인. save_flow_drawings로 저장해야 영속화됨.',
+        'Add a custom edge (connector) between two nodes. sourceNodeId and targetNodeId are from extract_flow_structure or get_flow_layout. Must call save_flow_drawings to persist.',
       inputSchema: z.object({
-        sourceNodeId: z.string().describe('시작 노드 ID'),
-        targetNodeId: z.string().describe('끝 노드 ID'),
-        label: z.string().optional().describe('엣지 라벨 (선택)'),
+        sourceNodeId: z.string().describe('Source node ID'),
+        targetNodeId: z.string().describe('Target node ID'),
+        label: z.string().optional().describe('Edge label (optional)'),
       }),
       execute: async ({ sourceNodeId, targetNodeId, label }) => {
         await ensureLoaded();
@@ -571,9 +571,9 @@ export function buildFlowTools(context: FlowToolContext) {
 
     delete_flow_edge: tool({
       description:
-        '커스텀 엣지를 ID로 삭제. get_flow_drawings로 edge ID를 확인 후 사용. save_flow_drawings로 저장해야 영속화됨.',
+        'Delete a custom edge by ID. Check the edge ID with get_flow_drawings before use. Must call save_flow_drawings to persist.',
       inputSchema: z.object({
-        edgeId: z.string().describe('삭제할 엣지의 ID'),
+        edgeId: z.string().describe('ID of the edge to delete'),
       }),
       execute: async ({ edgeId }) => {
         await ensureLoaded();
@@ -589,12 +589,12 @@ export function buildFlowTools(context: FlowToolContext) {
 
     add_flow_heading: tool({
       description:
-        '마크다운에 새 헤딩을 추가하여 플로우뷰에 새 노드를 생성. parentHeading을 지정하면 해당 헤딩 아래에, 생략하면 문서 끝에 추가. 마크다운을 직접 수정하므로 apply_edits와 혼용하지 말 것.',
+        'Add a new heading to the markdown to create a new node in the flow view. If parentHeading is specified, it is added under that heading; otherwise at the end of the document. Do not mix with apply_edits because markdown is edited directly.',
       inputSchema: z.object({
-        headingText: z.string().describe('새 헤딩 텍스트'),
-        level: z.number().min(1).max(6).describe('헤딩 레벨 (1=H1, 2=H2, ... 6=H6)'),
-        parentHeading: z.string().optional().describe('부모 헤딩 텍스트 (이 헤딩의 섹션 끝에 삽입). 생략 시 문서 끝에 추가'),
-        content: z.string().optional().describe('헤딩 아래에 추가할 본문 내용 (마크다운)'),
+        headingText: z.string().describe('New heading text'),
+        level: z.number().min(1).max(6).describe('Heading level (1=H1, 2=H2, ... 6=H6)'),
+        parentHeading: z.string().optional().describe('Parent heading text (insert at the end of this heading\'s section). If omitted, added at the end of the document'),
+        content: z.string().optional().describe('Body content to add under the heading (markdown)'),
       }),
       execute: async ({ headingText, level, parentHeading, content }) => {
         if (!jobId) return { ok: false, error: 'jobId is required' };
@@ -620,9 +620,9 @@ export function buildFlowTools(context: FlowToolContext) {
 
     delete_flow_heading: tool({
       description:
-        '마크다운에서 지정한 헤딩과 해당 섹션 전체를 삭제하여 플로우뷰에서 노드를 제거. 마크다운을 직접 수정하므로 apply_edits와 혼용하지 말 것.',
+        'Delete the specified heading and its entire section from the markdown to remove the node from the flow view. Do not mix with apply_edits because markdown is edited directly.',
       inputSchema: z.object({
-        headingText: z.string().describe('삭제할 헤딩 텍스트'),
+        headingText: z.string().describe('Heading text to delete'),
       }),
       execute: async ({ headingText }) => {
         if (!jobId) return { ok: false, error: 'jobId is required' };
@@ -641,10 +641,10 @@ export function buildFlowTools(context: FlowToolContext) {
 
     rename_flow_heading: tool({
       description:
-        '마크다운에서 헤딩 텍스트를 변경하여 플로우뷰 노드의 제목을 수정. 마크다운을 직접 수정하므로 apply_edits와 혼용하지 말 것.',
+        'Change the heading text in the markdown to modify the title of the flow view node. Do not mix with apply_edits because markdown is edited directly.',
       inputSchema: z.object({
-        oldHeadingText: z.string().describe('현재 헤딩 텍스트'),
-        newHeadingText: z.string().describe('새 헤딩 텍스트'),
+        oldHeadingText: z.string().describe('Current heading text'),
+        newHeadingText: z.string().describe('New heading text'),
       }),
       execute: async ({ oldHeadingText, newHeadingText }) => {
         if (!jobId) return { ok: false, error: 'jobId is required' };
@@ -664,10 +664,10 @@ export function buildFlowTools(context: FlowToolContext) {
 
     move_flow_heading: tool({
       description:
-        '헤딩의 레벨을 변경하여 플로우뷰에서 노드의 계층 위치를 이동. 마크다운을 직접 수정하므로 apply_edits와 혼용하지 말 것.',
+        'Change the heading level to move the node\'s hierarchy position in the flow view. Do not mix with apply_edits because markdown is edited directly.',
       inputSchema: z.object({
-        headingText: z.string().describe('이동할 헤딩 텍스트'),
-        newLevel: z.number().min(1).max(6).describe('새 헤딩 레벨 (1=H1, 2=H2, ... 6=H6)'),
+        headingText: z.string().describe('Heading text to move'),
+        newLevel: z.number().min(1).max(6).describe('New heading level (1=H1, 2=H2, ... 6=H6)'),
       }),
       execute: async ({ headingText, newLevel }) => {
         if (!jobId) return { ok: false, error: 'jobId is required' };

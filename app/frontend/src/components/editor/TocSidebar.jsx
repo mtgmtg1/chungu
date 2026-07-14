@@ -111,11 +111,11 @@ export default function TocSidebar({ anchors, editor, open, onToggle }) {
                         : "text-on-surface-variant hover:bg-surface-container-high"
                   }`}
                   style={{
-                    paddingLeft: `${0.5 + (anchor.depth - 1) * 0.75}rem`,
+                    paddingLeft: `${0.5 + (anchor.originalLevel - 1) * 0.75}rem`,
                   }}
                   data-oid={`toc-link-${anchor.id}`}
                 >
-                  {anchor.content || `H${anchor.depth}`}
+                  {anchor.textContent || `H${anchor.originalLevel}`}
                 </button>
               </li>
             ))}

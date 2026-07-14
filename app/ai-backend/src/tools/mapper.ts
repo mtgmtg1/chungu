@@ -30,10 +30,10 @@ export function buildMapperTools(context: MapperToolContext) {
   return {
     get_legal_elements: tool({
       description:
-        '청구 원인(예: 사기죄, 대여금반환, 횡령)에 따른 법적 주장(요건사실) 3~5개를 vLLM으로 추출. e-Discovery evidence 노드가 있으면 주장-증거 관계(reason)를 분석하여 매핑. 같은 claim_type 재요청 시 캐시 반환.',
+        'Extract 3-5 legal claims (required facts) by claim type (e.g., fraud, loan repayment, embezzlement) using vLLM. If e-Discovery evidence nodes exist, analyze the claim-evidence relationship (reason) and map them. Returns cached result for repeated claim_type requests.',
       inputSchema: z.object({
-        jobId: z.string().optional().describe('Job ID (context의 jobId 사용 시 생략 가능)'),
-        claimType: z.string().describe('청구 원인 (예: "사기죄", "대여금반환", "횡령")'),
+        jobId: z.string().optional().describe('Job ID (optional if context jobId is used)'),
+        claimType: z.string().describe('Claim type (e.g., "fraud", "loan repayment", "embezzlement")'),
       }),
       execute: async ({ jobId: jid, claimType }) => {
         const id = jid || jobId;
@@ -53,21 +53,21 @@ export function buildMapperTools(context: MapperToolContext) {
 
     save_element_mappings: tool({
       description:
-        '주장-증거 퍼즐 매퍼의 완성된 상태(청구 원인, 주장 목록, 각 주장에 매핑된 증거 및 관계 reason)를 Supabase jobs 테이블에 영속화. overall_progress_percent는 서버에서 재계산. 프론트엔드 동기화용으로 저장된 전체 상태를 반환.',
+        'Persist the completed state of the claim-evidence puzzle mapper (claim type, claim list, evidence mapped to each claim and its relationship reason) to the Supabase jobs table. overall_progress_percent is recomputed on the server. Returns the full saved state for frontend synchronization.',
       inputSchema: z.object({
-        jobId: z.string().optional().describe('Job ID (context의 jobId 사용 시 생략 가능)'),
-        claimType: z.string().describe('청구 원인'),
+        jobId: z.string().optional().describe('Job ID (optional if context jobId is used)'),
+        claimType: z.string().describe('Claim type'),
         elements: z.array(z.object({
-          id: z.string().describe('주장 ID (예: "claim_1")'),
-          name: z.string().describe('주장 명칭'),
-          description: z.string().describe('주장 설명'),
+          id: z.string().describe('Claim ID (e.g., "claim_1")'),
+          name: z.string().describe('Claim name'),
+          description: z.string().describe('Claim description'),
           mapped_evidence: z.array(z.object({
-            evidence_id: z.string().describe('e-Discovery 그래프의 evidence 노드 ID'),
-            text_snippet: z.string().describe('증거 텍스트 요약'),
-            source_doc: z.string().describe('출처 문서/페이지 (예: "갑 제3호증", "P.5")'),
-            reason: z.string().describe('해당 증거가 이 주장을 뒷받침하는 구체적인 관계 (LLM이 파악)'),
-          })).describe('해당 주장에 매핑된 증거 목록'),
-        })).describe('주장 슬롯 목록'),
+            evidence_id: z.string().describe('Evidence node ID from the e-Discovery graph'),
+            text_snippet: z.string().describe('Evidence text summary'),
+            source_doc: z.string().describe('Source document/page (e.g., "Plaintiff Exhibit 3", "P.5")'),
+            reason: z.string().describe('The concrete relationship by which this evidence supports the claim (identified by the LLM)'),
+          })).describe('List of evidence mapped to this claim'),
+        })).describe('List of claim slots'),
       }),
       execute: async ({ jobId: jid, claimType, elements }) => {
         const id = jid || jobId;
@@ -87,9 +87,9 @@ export function buildMapperTools(context: MapperToolContext) {
 
     get_element_mappings: tool({
       description:
-        '저장된 주장-증거 퍼즐 매핑 상태를 조회. 페이지 새로고침 후 복원이나 현재 매핑 진행도 확인에 사용. 저장된 상태가 없으면 빈 스키마 반환.',
+        'Retrieve the saved claim-evidence puzzle mapping state. Use for restore after page refresh or to check current mapping progress. Returns an empty schema if no saved state exists.',
       inputSchema: z.object({
-        jobId: z.string().optional().describe('Job ID (context의 jobId 사용 시 생략 가능)'),
+        jobId: z.string().optional().describe('Job ID (optional if context jobId is used)'),
       }),
       execute: async ({ jobId: jid }) => {
         const id = jid || jobId;
@@ -108,10 +108,10 @@ export function buildMapperTools(context: MapperToolContext) {
 
     get_legal_issue_tree: tool({
       description:
-        '청구 원인(예: 사기죄, 대여금반환, 횡령)에 따른 쟁점 → 주장 → 근거 3단계 트리를 vLLM으로 추출. e-Discovery evidence 노드와 문서 텍스트를 교차검증에 활용. 같은 claim_type 재요청 시 캐시 반환.',
+        'Extract a 3-level issue → claim → evidence tree by claim type (e.g., fraud, loan repayment, embezzlement) using vLLM. Cross-validate with e-Discovery evidence nodes and document text. Returns cached result for repeated claim_type requests.',
       inputSchema: z.object({
-        jobId: z.string().optional().describe('Job ID (context의 jobId 사용 시 생략 가능)'),
-        claimType: z.string().describe('청구 원인 (예: "사기죄", "대여금반환", "횡령")'),
+        jobId: z.string().optional().describe('Job ID (optional if context jobId is used)'),
+        claimType: z.string().describe('Claim type (e.g., "fraud", "loan repayment", "embezzlement")'),
       }),
       execute: async ({ jobId: jid, claimType }) => {
         const id = jid || jobId;
@@ -131,27 +131,27 @@ export function buildMapperTools(context: MapperToolContext) {
 
     save_issue_tree_mappings: tool({
       description:
-        '쟁점-주장-근거 3단계 트리 매퍼의 완성된 상태(청구 원인, 쟁점 목록, 각 쟁점의 양측 주장, 각 주장에 매핑된 근거 및 관계 reason)를 Supabase jobs 테이블에 영속화. overall_progress_percent는 서버에서 재계산.',
+        'Persist the completed state of the issue-claim-evidence 3-level tree mapper (claim type, issue list, opposing claims for each issue, evidence mapped to each claim and its relationship reason) to the Supabase jobs table. overall_progress_percent is recomputed on the server.',
       inputSchema: z.object({
-        jobId: z.string().optional().describe('Job ID (context의 jobId 사용 시 생략 가능)'),
-        claimType: z.string().describe('청구 원인'),
+        jobId: z.string().optional().describe('Job ID (optional if context jobId is used)'),
+        claimType: z.string().describe('Claim type'),
         issues: z.array(z.object({
-          id: z.string().describe('쟁점 ID (예: "issue_1")'),
-          name: z.string().describe('쟁점 명칭'),
-          description: z.string().describe('쟁점 설명'),
+          id: z.string().describe('Issue ID (e.g., "issue_1")'),
+          name: z.string().describe('Issue name'),
+          description: z.string().describe('Issue description'),
           claims: z.array(z.object({
-            id: z.string().describe('주장 ID (예: "claim_1")'),
-            party: z.string().describe('대립 주체 (예: "원고", "피고", "검사", "피고인")'),
-            name: z.string().describe('주장 명칭'),
-            description: z.string().describe('주장 설명'),
+            id: z.string().describe('Claim ID (e.g., "claim_1")'),
+            party: z.string().describe('Opposing party (e.g., "plaintiff", "defendant", "prosecutor", "accused")'),
+            name: z.string().describe('Claim name'),
+            description: z.string().describe('Claim description'),
             mapped_evidence: z.array(z.object({
-              evidence_id: z.string().describe('e-Discovery 그래프의 evidence 노드 ID'),
-              text_snippet: z.string().describe('근거 텍스트 요약'),
-              source_doc: z.string().describe('출처 문서/페이지 (예: "갑 제3호증", "P.5")'),
-              reason: z.string().describe('해당 근거가 이 주장을 뒷받침하는 구체적인 관계 (LLM이 교차검증)'),
-            })).describe('해당 주장에 매핑된 근거 목록'),
-          })).describe('쟁점에 속한 양측 주장 목록'),
-        })).describe('쟁점 목록'),
+              evidence_id: z.string().describe('Evidence node ID from the e-Discovery graph'),
+              text_snippet: z.string().describe('Evidence text summary'),
+              source_doc: z.string().describe('Source document/page (e.g., "Plaintiff Exhibit 3", "P.5")'),
+              reason: z.string().describe('The concrete relationship by which this evidence supports the claim (cross-validated by the LLM)'),
+            })).describe('List of evidence mapped to this claim'),
+          })).describe('List of opposing claims belonging to this issue'),
+        })).describe('List of issues'),
       }),
       execute: async ({ jobId: jid, claimType, issues }) => {
         const id = jid || jobId;
@@ -171,9 +171,9 @@ export function buildMapperTools(context: MapperToolContext) {
 
     get_issue_tree_mappings: tool({
       description:
-        '저장된 쟁점-주장-근거 3단계 트리 매핑 상태를 조회. 페이지 새로고침 후 복원이나 현재 매핑 진행도 확인에 사용. 저장된 상태가 없으면 빈 스키마 반환.',
+        'Retrieve the saved issue-claim-evidence 3-level tree mapping state. Use for restore after page refresh or to check current mapping progress. Returns an empty schema if no saved state exists.',
       inputSchema: z.object({
-        jobId: z.string().optional().describe('Job ID (context의 jobId 사용 시 생략 가능)'),
+        jobId: z.string().optional().describe('Job ID (optional if context jobId is used)'),
       }),
       execute: async ({ jobId: jid }) => {
         const id = jid || jobId;

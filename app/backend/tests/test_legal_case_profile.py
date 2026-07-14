@@ -108,9 +108,9 @@ class TestExtractLegalProfile(unittest.TestCase):
         self.assertEqual(len(result["legal_elements"]), 1)
         mock_call.assert_called_once()
         prompt = mock_call.call_args[0][0]
-        self.assertIn("민사", prompt)
-        self.assertIn("형사", prompt)
-        self.assertIn("대여금반환", prompt)
+        self.assertIn("civil", prompt)
+        self.assertIn("criminal", prompt)
+        self.assertIn("loan repayment", prompt)
         self.assertIn("원고 A는", prompt)
 
     def test_extract_legal_profile_empty_pages(self):

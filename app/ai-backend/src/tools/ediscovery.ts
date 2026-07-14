@@ -126,13 +126,13 @@ export function buildEdiscoveryTools(context: EdiscoveryToolContext) {
   return {
     extract_ediscovery_graph: tool({
       description:
-        '수천 장 규모의 법률 문서에서 쟁점(issue), 원고(plaintiff), 피고(defendant), 증거(evidence) 노드와 이들 간의 논리적/인과적 관계를 GraphRAG 파이프라인으로 추출. 결과가 클 경우 자동으로 LLMLingua-2 압축. 추출 후 시각화/요약을 위해 save_flow_drawings 등 상태 업데이트 도구를 호출할 것.',
+        'Extract issue, plaintiff, defendant, and evidence nodes and their logical/causal relationships from legal documents at a scale of thousands of pages using the GraphRAG pipeline. If the result is large, it is automatically compressed with LLMLingua-2. After extraction, call state-update tools such as save_flow_drawings for visualization/summarization.',
       inputSchema: z.object({
-        jobId: z.string().optional().describe('Job ID (context의 jobId 사용 시 생략 가능)'),
-        query: z.string().optional().describe('추출에 사용할 자연어 쿼리 (예: "계약 위반 쟁점과 관련 증거")'),
-        threshold: z.number().min(0).max(1).optional().describe('노드/에지 포함 최소 관련도 임계값 (0.0~1.0, 기본값은 FastAPI에서 결정)'),
-        maxDocs: z.number().int().min(1).optional().describe('처리할 최대 페이지(문서) 수 (제한이 필요할 때)'),
-        context: z.string().optional().describe('프로젝트 주요/중요 사항에 대한 추가 맥락 (예: "대여금 반환 청구, A가 채권자, B가 채무자")'),
+        jobId: z.string().optional().describe('Job ID (optional if context jobId is used)'),
+        query: z.string().optional().describe('Natural language query to use for extraction (e.g., "evidence related to contract breach issue")'),
+        threshold: z.number().min(0).max(1).optional().describe('Minimum relevance threshold for including nodes/edges (0.0-1.0, default is determined by FastAPI)'),
+        maxDocs: z.number().int().min(1).optional().describe('Maximum number of pages/documents to process (when a limit is needed)'),
+        context: z.string().optional().describe('Additional context about important project matters (e.g., "loan repayment claim, A is creditor, B is debtor")'),
       }),
       execute: async ({ jobId: jid, query, threshold, maxDocs, context }) => {
         const id = jid || jobId;
@@ -159,10 +159,10 @@ export function buildEdiscoveryTools(context: EdiscoveryToolContext) {
 
     adjust_graph_threshold: tool({
       description:
-        '이미 추출된 e-Discovery 그래프의 관련도/신뢰도 임계값을 변경하여 노드와 에지를 재필터링. extract_ediscovery_graph 이후 그래프가 너무 많거나 적을 때 사용.',
+        'Change the relevance/confidence threshold of the already extracted e-Discovery graph to re-filter nodes and edges. Use after extract_ediscovery_graph when the graph has too many or too few nodes.',
       inputSchema: z.object({
-        jobId: z.string().optional().describe('Job ID (context의 jobId 사용 시 생략 가능)'),
-        threshold: z.number().min(0).max(1).describe('새 임계값 (0.0~1.0, 값이 클수록 엄격한 필터링)'),
+        jobId: z.string().optional().describe('Job ID (optional if context jobId is used)'),
+        threshold: z.number().min(0).max(1).describe('New threshold (0.0-1.0, larger values mean stricter filtering)'),
       }),
       execute: async ({ jobId: jid, threshold }) => {
         const id = jid || jobId;
@@ -181,11 +181,11 @@ export function buildEdiscoveryTools(context: EdiscoveryToolContext) {
 
     analyze_legal_profile: tool({
       description:
-        '법률 문서에서 법률 분야(legal_domain), 청구 원인(claim_type), 핵심 쟁점(issues), 입증 요건(legal_elements)을 추출. 에이전트가 사건 맥락을 판단하여 호출하며, 추가 힌트(claim_type_hint, additional_context)를 전달할 수 있다. 분석이 모호하면 search_text, extract_ediscovery_graph 등 다른 도구로 수집한 맥락을 additional_context에 담아 재호출할 것.',
+        'Extract legal domain, claim type, key issues, and required legal elements from legal documents. The agent calls this to judge the case context and can pass additional hints (claim_type_hint, additional_context). If the analysis is ambiguous, collect context with other tools such as search_text or extract_ediscovery_graph and re-call with additional_context.',
       inputSchema: z.object({
-        jobId: z.string().optional().describe('Job ID (context의 jobId 사용 시 생략 가능)'),
-        claimTypeHint: z.string().optional().describe('에이전트가 판단한 청구 원인 힌트 (예: "손해배상", "대여금반환")'),
-        additionalContext: z.string().optional().describe('에이전트가 수집한 추가 맥락 (예: e-Discovery 그래프 요약, 검색 결과)'),
+        jobId: z.string().optional().describe('Job ID (optional if context jobId is used)'),
+        claimTypeHint: z.string().optional().describe('Hint for claim type determined by the agent (e.g., "damages", "loan repayment")'),
+        additionalContext: z.string().optional().describe('Additional context collected by the agent (e.g., e-Discovery graph summary, search results)'),
       }),
       execute: async ({ jobId: jid, claimTypeHint, additionalContext }) => {
         const id = jid || jobId;

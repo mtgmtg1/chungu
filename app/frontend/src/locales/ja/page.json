@@ -930,6 +930,9 @@
       "activeCount": "アクティブサンドボックス",
       "totalCreated": "累計作成数",
       "diskUsage": "ディスク使用量"
-    }
+    },
+    "tocTitle": "目次",
+    "tocEmpty": "見出しがありません",
+    "tocToggle": "目次を切り替え"
   }
 }

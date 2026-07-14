@@ -14,7 +14,7 @@ from ..core import office_converter, supabase_client
 from ..core.ocr_client import call_text, call_vision, render_pdf
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
-from ..db.models import Job
+from ..db.models import Job, User
 from ..db.session import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -124,23 +124,23 @@ def _get_page_image_paths(
     return image_paths
 
 
-def _extract_column_structure(page_markdown: str, endpoint: str, model: str, api_key: str) -> dict:
+def _extract_column_structure(page_markdown: str, endpoint: str, model: str, api_key: str, user_language: str = "ko") -> dict:
     """첫 페이지에서 공통 컬럼 구조를 JSON으로 추출한다."""
     tables = office_converter._parse_markdown_tables(page_markdown)
-    prompt = f"""아래 마크다운 표에서 전체 문서의 공통 컬럼 구조를 추출하세요. 결과는 JSON만 반환하세요.
+    prompt = f"""Extract the common column structure for the entire document from the markdown table below. Return only JSON.
 
-형식:
+Format:
 {{
-  "columns": ["컬럼1", "컬럼2", ...],
-  "description": "각 컬럼의 의미와 데이터 타입을 간단히 설명"
+  "columns": ["column1", "column2", ...],
+  "description": "Briefly explain the meaning and data type of each column. Write in the user's configured language ({user_language})."
 }}
 
-주의:
-- 표가 여러 개 연속될 경우, 동일한 헤더를 가진 표는 하나의 논리적 표로 보고 전체 문서에 적용할 공통 컬럼만 추출하세요.
-- 헤더가 없거나 비어있는 셀은 무시하세요.
-- 컬럼 이름은 간결하고 명확하게 한국어로 작성하세요.
+Notes:
+- If multiple tables appear consecutively, treat tables with the same header as one logical table and extract only the common columns applicable to the entire document.
+- Ignore headers with empty or missing cells.
+- Write column names concisely and clearly in the user's configured language ({user_language}).
 
-마크다운:
+Markdown:
 {page_markdown}
 """
     try:
@@ -168,30 +168,30 @@ def _parse_tables_safe(page_markdown: str) -> list[dict]:
         return []
 
 
-def _normalize_page_with_llm(page_markdown: str, column_structure: dict, endpoint: str, model: str, api_key: str) -> dict:
+def _normalize_page_with_llm(page_markdown: str, column_structure: dict, endpoint: str, model: str, api_key: str, user_language: str = "ko") -> dict:
     """LLM 텍스트로 페이지의 표를 공통 컬럼 구조에 맞춰 정리한다."""
     columns = column_structure.get("columns", [])
-    prompt = f"""아래 마크다운 표를 분석하여 공통 컬럼 구조에 맞게 정리하세요. 결과는 JSON만 반환하세요.
+    prompt = f"""Analyze the markdown table below and organize it according to the common column structure. Return only JSON.
 
-공통 컬럼: {json.dumps(columns, ensure_ascii=False)}
+Common columns: {json.dumps(columns, ensure_ascii=False)}
 
-형식:
+Format:
 {{
   "rows": [
-    ["값1", "값2", ...],
-    ["값3", "값4", ...]
+    ["value1", "value2", ...],
+    ["value3", "value4", ...]
   ],
   "valid": true,
-  "reason": "정리가 잘 되었는지 간단한 이유"
+  "reason": "Brief reason for whether the organization was successful. Write in the user's configured language ({user_language})."
 }}
 
-규칙:
-- 각 행은 반드시 공통 컬럼 수와 동일한 길이를 가져야 합니다. 부족하면 빈 문자열 ""로 채우세요.
-- 원본의 오타나 누락된 셀을 복구하되, 내용을 임의로 만들어 내지 마세요. 확실하지 않은 값은 ""로 두세요.
-- 각 열은 데이터 형식이 일관적입니다(문자열/숫자/빈칸/계좌번호/이메일/전화번호/주민번호/사업자번호/금액/날짜 등). 셀을 배치할 때 같은 형식끼리 같은 열에 오도록 정렬하고, 파싱 오류로 열 수나 순서가 어긋난 경우 형식 단서로 올바른 열을 판단하세요.
-- 표가 비어있거나 컬럼 구조를 알 수 없으면 valid=false, reason에 설명을 적으세요.
+Rules:
+- Each row must have the same length as the number of common columns. Fill missing cells with empty string "".
+- Recover typos or missing cells from the original, but do not invent content. Use "" for uncertain values.
+- Each column has a consistent data type (string/number/empty/account number/email/phone number/resident registration number/business registration number/amount/date, etc.). Align cells so the same formats go into the same column, and use format clues to determine the correct column when parsing errors cause column count or order mismatch.
+- If the table is empty or the column structure is unknown, set valid=false and write the reason.
 
-마크다운:
+Markdown:
 {page_markdown}
 """
     try:
@@ -207,28 +207,28 @@ def _normalize_page_with_llm(page_markdown: str, column_structure: dict, endpoin
     return {"rows": [], "valid": False, "reason": "LLM 정리 실패"}
 
 
-def _reconstruct_page_with_vision(image_path: Path, column_structure: dict, endpoint: str, model: str, api_key: str, page_markdown: str = "") -> dict:
+def _reconstruct_page_with_vision(image_path: Path, column_structure: dict, endpoint: str, model: str, api_key: str, page_markdown: str = "", user_language: str = "ko") -> dict:
     """vision LLM에 페이지 이미지를 전달하여 표를 재구성한다."""
     columns = column_structure.get("columns", [])
-    prompt = f"""이 이미지는 문서 페이지입니다. 아래 공통 컬럼 구조에 맞춰 표를 JSON으로 추출하세요.
+    prompt = f"""This image is a document page. Extract the table as JSON matching the common column structure below.
 
-공통 컬럼: {json.dumps(columns, ensure_ascii=False)}
+Common columns: {json.dumps(columns, ensure_ascii=False)}
 
-형식:
+Format:
 {{
   "rows": [
-    ["값1", "값2", ...],
-    ["값3", "값4", ...]
+    ["value1", "value2", ...],
+    ["value3", "value4", ...]
   ],
   "valid": true,
-  "reason": ""
+  "reason": "Brief reason. Write in the user's configured language ({user_language})."
 }}
 
-규칙:
-- 각 행은 반드시 공통 컬럼 수와 동일한 길이를 가져야 합니다.
-- 이미지에서 보이는 내용만 추출하고, 추측으로 내용을 만들지 마세요.
-- 각 열은 데이터 형식이 일관적입니다(문자열/숫자/빈칸/계좌번호/이메일/전화번호/주민번호/사업자번호/금액/날짜 등). 같은 형식끼리 같은 열에 오도록 정렬하세요.
-- 표가 없거나 읽을 수 없으면 valid=false, reason에 이유를 적으세요.
+Rules:
+- Each row must have the same length as the number of common columns.
+- Extract only what is visible in the image; do not guess content.
+- Each column has a consistent data type (string/number/empty/account number/email/phone number/resident registration number/business registration number/amount/date, etc.). Align the same formats into the same column.
+- If there is no table or it is unreadable, set valid=false and write the reason.
 """
     try:
         content, _ = call_vision(image_path, prompt, endpoint, model, api_key, max_tokens=4000, page_text=page_markdown)
@@ -243,23 +243,23 @@ def _reconstruct_page_with_vision(image_path: Path, column_structure: dict, endp
     return {"rows": [], "valid": False, "reason": "vision 재구성 실패"}
 
 
-def _evaluate_reconstruction(image_path: Path, rows: list[list[str]], column_structure: dict, endpoint: str, model: str, api_key: str) -> tuple[bool, str]:
+def _evaluate_reconstruction(image_path: Path, rows: list[list[str]], column_structure: dict, endpoint: str, model: str, api_key: str, user_language: str = "ko") -> tuple[bool, str]:
     """vision LLM이 재구성한 결과를 다시 평가하여 재시도 여부를 결정한다."""
     columns = column_structure.get("columns", [])
     if not rows:
-        return False, "rows가 비어있음"
-    prompt = f"""이 이미지와 추출된 표를 비교하여 표가 정확하게 추출되었는지 평가하세요.
+        return False, "rows are empty"
+    prompt = f"""Compare this image with the extracted table below and evaluate whether the table was accurately extracted.
 
-공통 컬럼: {json.dumps(columns, ensure_ascii=False)}
-추출된 표 행 수: {len(rows)}
+Common columns: {json.dumps(columns, ensure_ascii=False)}
+Number of extracted rows: {len(rows)}
 
-형식:
+Format:
 {{
   "ok": true,
-  "reason": "정확하면 '정확', 문제가 있으면 구체적인 문제점"
+  "reason": "'Accurate' if correct, or specific issues if there are problems. Write in the user's configured language ({user_language})."
 }}
 
-ok가 false면 재시도가 필요합니다."""
+If ok is false, a retry is needed."""
     try:
         content, _ = call_vision(image_path, prompt, endpoint, model, api_key, max_tokens=2000)
         content = content.strip()
@@ -339,6 +339,15 @@ def run(parent_job_id: str) -> dict:
         db.close()
         return {"error": "job not found"}
 
+    user_language = "ko"
+    if job.user_id:
+        try:
+            user = db.get(User, job.user_id)
+            if user and user.language:
+                user_language = user.language
+        except Exception:
+            pass
+
     endpoint = job.endpoint or settings_store.get_setting(db, "llm_endpoint") or settings.default_llm_endpoint
     model = job.model or settings_store.get_setting(db, "llm_model") or settings.default_llm_model
     api_key = settings_store.get_setting(db, "llm_api_key") or ""
@@ -358,11 +367,11 @@ def run(parent_job_id: str) -> dict:
 
             # 첫 페이지에서 컬럼 구조 추출
             first_page_num, first_page_content = pages[0]
-            column_structure = _extract_column_structure(first_page_content, endpoint, model, api_key)
+            column_structure = _extract_column_structure(first_page_content, endpoint, model, api_key, user_language=user_language)
             if not column_structure.get("columns"):
                 # 첫 페이지에 표가 없으면 다른 페이지에서 찾기
                 for page_num, page_content in pages[1:]:
-                    column_structure = _extract_column_structure(page_content, endpoint, model, api_key)
+                    column_structure = _extract_column_structure(page_content, endpoint, model, api_key, user_language=user_language)
                     if column_structure.get("columns"):
                         break
             columns = column_structure.get("columns", [])
@@ -382,7 +391,7 @@ def run(parent_job_id: str) -> dict:
 
                 if page_tables:
                     # 텍스트 기반 정리
-                    result = _normalize_page_with_llm(page_content, column_structure, endpoint, model, api_key)
+                    result = _normalize_page_with_llm(page_content, column_structure, endpoint, model, api_key, user_language=user_language)
                     if result.get("valid") and result.get("rows"):
                         normalized_rows = [_pad_row(r, len(columns)) for r in result["rows"]]
                         valid = True
@@ -394,11 +403,11 @@ def run(parent_job_id: str) -> dict:
                     eval_reason = ""
                     for attempt in range(1, MAX_VISION_RETRIES + 1):
                         vision_result = _reconstruct_page_with_vision(
-                            image_paths[page_num], column_structure, endpoint, model, api_key, page_content
+                            image_paths[page_num], column_structure, endpoint, model, api_key, page_content, user_language=user_language
                         )
                         rows = [_pad_row(r, len(columns)) for r in vision_result.get("rows", [])]
                         ok, eval_reason = _evaluate_reconstruction(
-                            image_paths[page_num], rows, column_structure, endpoint, model, api_key
+                            image_paths[page_num], rows, column_structure, endpoint, model, api_key, user_language=user_language
                         )
                         if ok and rows:
                             normalized_rows = rows

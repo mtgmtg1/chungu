@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from backend.api.ediscovery import analyze_legal_profile
 
 
-def _make_user(user_id: str = "user-123"):
+def _make_user(user_id: str = "11111111-1111-1111-1111-111111111111"):
     """테스트용 CurrentUser mock 객체를 생성한다.
 
     매개변수:
@@ -28,7 +28,15 @@ def _make_user(user_id: str = "user-123"):
     return user
 
 
-def _make_job(job_id: str = "job-123", user_id: str = "user-123", status: str = "done"):
+def _make_user_model(user_id: str = "11111111-1111-1111-1111-111111111111"):
+    """테스트용 User 모델 mock 객체를 생성한다."""
+    user = MagicMock()
+    user.user_id = user_id
+    user.language = "ko"
+    return user
+
+
+def _make_job(job_id: str = "job-123", user_id: str = "11111111-1111-1111-1111-111111111111", status: str = "done"):
     """테스트용 Job mock 객체를 생성한다.
 
     매개변수:
@@ -49,15 +57,25 @@ def _make_job(job_id: str = "job-123", user_id: str = "user-123", status: str = 
     return job
 
 
-def _make_db(job):
+def _make_db(job, user=None):
     """테스트용 DB 세션 mock 객체를 생성한다.
 
     매개변수:
         job: db.get(Job, id) 호출 시 반환할 Job 객체
+        user: db.get(User, id) 호출 시 반환할 User 객체
     반환값: MagicMock Session 객체
     """
+    user = user or _make_user_model()
     db = MagicMock()
-    db.get.return_value = job
+
+    def _get_side_effect(model, key):
+        if model.__name__ == "Job":
+            return job
+        if model.__name__ == "User":
+            return user
+        return None
+
+    db.get.side_effect = _get_side_effect
     return db
 
 

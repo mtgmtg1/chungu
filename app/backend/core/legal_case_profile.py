@@ -106,6 +106,7 @@ def _build_legal_profile_prompt(
     total_pages: int | None = None,
     claim_type_hint: str | None = None,
     additional_context: str | None = None,
+    user_language: str = "ko",
 ) -> str:
     """[Flow: Step 1 (문서 메타데이터/에이전트 힌트 수집) -> Step 2 (법률 분류/쟁점/요건사실 추출 지시)
           -> Step 3 (JSON 스키마 명시) -> Step 4 (맥락 활용 및 fallback 금지 주의사항 추가)
@@ -117,55 +118,54 @@ def _build_legal_profile_prompt(
     """
     meta_parts: list[str] = []
     if original_filename:
-        meta_parts.append(f"원본 파일명: {original_filename}")
+        meta_parts.append(f"Original filename: {original_filename}")
     if total_pages:
-        meta_parts.append(f"총 페이지 수: {total_pages}")
-    metadata_line = " | ".join(meta_parts) if meta_parts else "메타데이터 없음"
+        meta_parts.append(f"Total pages: {total_pages}")
+    metadata_line = " | ".join(meta_parts) if meta_parts else "No metadata"
 
     hint_section = ""
     if claim_type_hint or additional_context:
         hint_lines: list[str] = []
         if claim_type_hint:
-            hint_lines.append(f"- 사용자/에이전트가 제안한 청구 원인 힌트: {claim_type_hint}")
+            hint_lines.append(f"- Claim type hint suggested by user/agent: {claim_type_hint}")
         if additional_context:
-            hint_lines.append(f"- 추가 맥락: {additional_context}")
-        hint_section = "\n아래 힌트를 참고할 수 있다. 힌트가 자료와 모순되면 자료 내용을 우선한다.\n" + "\n".join(hint_lines) + "\n"
+            hint_lines.append(f"- Additional context: {additional_context}")
+        hint_section = "\nYou may refer to the hints below. If a hint conflicts with the document, prioritize the document.\n" + "\n".join(hint_lines) + "\n"
 
-    return f"""아래는 법률 관련 자료에서 추출한 텍스트 샘플이다. 이 자료를 보고 다음 항목을 추출하라.
+    return f"""Below is a text sample extracted from a legal-related document. Extract the following items based on this sample.
 
-중요: 문서가 길 경우 샘플은 시작/중간/끝 부분을 골고루 포함하고 있다. 전체 맥락을 종합해서 판단해야 한다.
-분류가 애매하더라도 "기타"나 "정보부족"으로 대체하지 말고, 자료에 실제로 드러난 가장 구체적인 법률 분야와 청구 원인을 적어라.
+Important: If the document is long, the sample includes the beginning, middle, and end. You must judge based on the overall context. Even if the classification is ambiguous, do not replace it with "other" or "unknown"; write the most specific legal domain and claim type actually revealed in the document.
 
 {metadata_line}{hint_section}
-1. legal_domain: 자료가 다루는 법률 분야. 다음 예시 중 가장 적절한 것을 선택하되, 예시에 없더라도 구체적 용어를 사용한다.
-   예: 민사, 형사, 행정, 가사(이혼/양육/상속), 헌법, 노동, 지식재산권, 상사, 손해배상(위약금/하자보수), 부동산(임대차/매매), 채무, 국제, 보험, 세무, 형사고소
-   (단, "기타"는 자료의 내용이 법률 분류 전혀 불가능할 때만 사용)
-2. claim_type: 구체적인 청구 원인 또는 법적 쟁점. "정보부족"이나 "기타"로 쓰지 말고, 자료에 나타난 실제 청구/주장을 적어라.
-   예: 대여금반환, 사기죄, 행정처분취소, 재판상 이혼, 헌법소원, 채무부존재확인, 부당이득반환, 손해배상(교통사고/하자보수), 임대차보증금반환, 근로관계유지/해지, 산업재해
-3. claim_summary: 1~2문장으로 자료의 핵심 사실관계를 요약
-4. issues: 다투어지는 쟁점(주장)을 1~5개의 간결한 한국어 문자열로 나열
-5. legal_elements: claim_type을 입증하기 위해 필요한 법적 요건사실을 {MIN_ELEMENTS}~{MAX_ELEMENTS}개로 정리
-6. confidence: 위 분류/추출에 대한 모델의 확신 정도 (0.0~1.0)
+1. legal_domain: The legal domain the document covers. Choose the most appropriate one from the examples below, but use a specific term even if it is not in the examples.
+   Examples: civil, criminal, administrative, family (divorce/custody/inheritance), constitutional, labor, intellectual property, commercial, damages (penalty/defect repair), real estate (lease/sale), debt, international, insurance, tax, criminal complaint
+   (Use "other" only when the document content is completely impossible to classify legally)
+2. claim_type: The specific claim cause or legal issue. Do not write "unknown" or "other"; write the actual claim/issue shown in the document.
+   Examples: loan repayment, fraud, administrative disposition cancellation, contested divorce, constitutional petition, confirmation of non-debt, unjust enrichment return, damages (traffic accident/defect repair), lease deposit return, maintenance/termination of employment, industrial accident
+3. claim_summary: Summarize the core factual relationship in 1-2 sentences.
+4. issues: List 1-5 disputed issues (claims) as concise strings in the user's configured language ({user_language}).
+5. legal_elements: Organize {MIN_ELEMENTS}~{MAX_ELEMENTS} legal elements required to prove the claim_type.
+6. confidence: The model's confidence in the above classification/extraction (0.0~1.0).
 
-각 legal_element는 다음 키를 포함해야 한다:
-- id: "element_1", "element_2" ... 순차적 ID
-- name: 요건사실의 간결한 한국어 명칭 (예: "금전 대여", "기망행위", "변제기 도래")
-- description: 해당 요건사실의 의미와 입증에 필요한 핵심 내용을 1~2문장으로 설명
+Each legal_element must include the following keys:
+- id: Sequential ID: "element_1", "element_2", ...
+- name: Concise name of the legal element in the user's configured language ({user_language}) (e.g., "money loan", "fraudulent act", "due date")
+- description: 1-2 sentence explanation of what the element means and what facts must be proven
 
-결과는 JSON 객체로만 반환한다. 다른 설명, 마크다운, 코드 펜스는 사용하지 않는다.
+Return only the JSON object. No other explanation, markdown, or code fences.
 
 {json.dumps({
-    "legal_domain": "예: 민사",
-    "claim_type": "예: 대여금반환",
-    "claim_summary": "사실관계 요약",
-    "issues": ["쟁점1", "쟁점2"],
+    "legal_domain": "e.g., civil",
+    "claim_type": "e.g., loan repayment",
+    "claim_summary": "Summary of facts",
+    "issues": ["issue1", "issue2"],
     "legal_elements": [
-        {"id": "element_1", "name": "요건 이름", "description": "요건 설명"}
+        {"id": "element_1", "name": "element name", "description": "element description"}
     ],
     "confidence": 0.9
 }, ensure_ascii=False, indent=2)}
 
---- 텍스트 샘플 ---
+--- Text sample ---
 {sample_text}
 """
 
@@ -186,8 +186,8 @@ def _is_generic_fallback(legal_domain: str, claim_type: str) -> bool:
     """
     normalized_domain = legal_domain.lower().replace(" ", "")
     normalized_claim = claim_type.lower().replace(" ", "")
-    fallback_domains = {"기타", "etc", "정보없음", "unknown"}
-    fallback_claims = {"기타", "etc", "정보부족", "정보없음", "unknown", "미정", "불명"}
+    fallback_domains = {"기타", "etc", "정보없음", "unknown", "other", "n/a", "notapplicable", "unspecified"}
+    fallback_claims = {"기타", "etc", "정보부족", "정보없음", "unknown", "미정", "불명", "other", "n/a", "notapplicable", "unspecified", "insufficientinformation", "notenoughinformation"}
     return normalized_domain in fallback_domains or normalized_claim in fallback_claims
 
 
@@ -285,6 +285,7 @@ def extract_legal_profile(
     claim_type_hint: str | None = None,
     additional_context: str | None = None,
     max_tokens: int = MAX_TOKENS,
+    user=None,
 ) -> dict:
     """[Flow: Step 1 (페이지 텍스트 + 파일 메타데이터 + 에이전트 힌트 수집)
           -> Step 2 (프롬프트 구성) -> Step 3 (vLLM 호출) -> Step 4 (응답 파싱)
@@ -300,12 +301,14 @@ def extract_legal_profile(
     if not sample_text:
         return {}
 
+    user_language = user.language if user and getattr(user, "language", None) else "ko"
     prompt = _build_legal_profile_prompt(
         sample_text,
         original_filename=original_filename,
         total_pages=total_pages,
         claim_type_hint=claim_type_hint,
         additional_context=additional_context,
+        user_language=user_language,
     )
     try:
         content, _ = call_text(prompt, endpoint, model, api_key, max_tokens=max_tokens)

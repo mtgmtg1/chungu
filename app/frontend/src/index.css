@@ -165,41 +165,6 @@ body {
   text-decoration: underline;
 }
 
-/* 노션 스타일 토글 헤딩 — 제목 옆 토글 버튼으로 아래 본문 숨기기/보이기 */
-.collapsible-heading-wrapper {
-  position: relative;
-  padding-left: 1.5rem;
-}
-
-.collapsible-heading-toggle {
-  position: absolute;
-  left: 0;
-  top: 0.1rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.25rem;
-  height: 1.25rem;
-  padding: 0;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  transition: transform 0.15s ease;
-  color: #6b7280;
-}
-
-.collapsible-heading-toggle:hover {
-  color: #1f2937;
-}
-
-.collapsible-heading-wrapper[data-collapsed="true"] .collapsible-heading-toggle {
-  transform: rotate(0deg);
-}
-
-.collapsible-heading-wrapper[data-collapsed="false"] .collapsible-heading-toggle {
-  transform: rotate(90deg);
-}
-
 /* TOC 미니맵 사이드바 */
 .toc-sidebar,
 .toc-sidebar-collapsed {

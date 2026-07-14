@@ -129,7 +129,7 @@ def test_llm(admin: str = Depends(require_admin), db: Session = Depends(get_db))
     model = settings_store.get_setting(db, "llm_model")
     api_key = settings_store.get_setting(db, "llm_api_key")
     try:
-        content, _ = ocr_client.call_text("'OK'만 출력하세요.", endpoint, model, api_key, max_tokens=10)
+        content, _ = ocr_client.call_text("Print only 'OK'.", endpoint, model, api_key, max_tokens=10)
         return {"ok": True, "reply": content[:100]}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"LLM connection failed: {e}")

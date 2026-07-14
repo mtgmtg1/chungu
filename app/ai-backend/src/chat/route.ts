@@ -67,7 +67,7 @@ Available tool categories:
    - get_sheet, update_cell, add_row, delete_row, apply_changes
 4. Sandbox (when user asks to run code or process files in isolation):
    - create_sandbox, execute_in_sandbox, read_sandbox_file, write_sandbox_file, list_sandbox_files, commit_sandbox_changes, get_sandbox_diff, collect_sandbox_results, destroy_sandbox
-   - IMPORTANT: User-visible filenames are preserved in /workspace/original/. For example, if the user says "보고서.pdf", the file is at /workspace/original/보고서.pdf. Read /workspace/_file_mapping.json to see the full mapping of user filenames to sandbox paths. Do NOT use /workspace/input.pdf — use the original filename instead.
+   - IMPORTANT: User-visible filenames are preserved in /workspace/original/. For example, if the user says "report.pdf", the file is at /workspace/original/report.pdf. Read /workspace/_file_mapping.json to see the full mapping of user filenames to sandbox paths. Do NOT use /workspace/input.pdf — use the original filename instead.
 5. Web browsing (when user asks to capture or extract web content):
    - browse_web, convert_web_to_pdf, extract_web_text
 6. Flow analysis (when user asks to visualize document structure or build a logical tree):

@@ -125,15 +125,15 @@ export function createBrowserlessTools() {
   // ========================================
   const browseWeb = tool({
     description:
-      '웹페이지를 캡처하여 스크린샷을 반환한다. 원격 browserless 서버를 사용하므로 ' +
-      'sandbox VM 에 Chrome 이 설치되어 있지 않아도 된다. ' +
-      '반환값은 base64 인코딩된 PNG 이미지다.',
+      'Capture the webpage and return a screenshot. Because it uses the remote browserless server, ' +
+      'no Chrome installation is needed in the sandbox VM. ' +
+      'The returned value is a base64-encoded PNG image.',
     inputSchema: z.object({
-      url: z.string().url().describe('캡처할 웹페이지 URL'),
+      url: z.string().url().describe('URL of the webpage to capture'),
       fullPage: z
         .boolean()
         .default(true)
-        .describe('전체 페이지 캡처 여부 (기본: true)'),
+        .describe('Whether to capture the full page (default: true)'),
     }),
     execute: async ({ url, fullPage }) => {
       try {
@@ -156,10 +156,10 @@ export function createBrowserlessTools() {
   // ========================================
   const convertWebToPdf = tool({
     description:
-      '웹페이지를 PDF 로 변환한다. 원격 browserless 서버를 사용한다. ' +
-      '반환값은 base64 인코딩된 PDF 다.',
+      'Convert the webpage to PDF. Uses the remote browserless server. ' +
+      'The returned value is a base64-encoded PDF.',
     inputSchema: z.object({
-      url: z.string().url().describe('PDF 로 변환할 웹페이지 URL'),
+      url: z.string().url().describe('URL of the webpage to convert to PDF'),
     }),
     execute: async ({ url }) => {
       try {
@@ -182,10 +182,10 @@ export function createBrowserlessTools() {
   // ========================================
   const extractWebText = tool({
     description:
-      '웹페이지의 텍스트 콘텐츠를 추출한다. 원격 browserless 서버를 사용하여 ' +
-      'JavaScript 렌더링이 필요한 동적 페이지도 처리할 수 있다.',
+      'Extract the text content of the webpage. Uses the remote browserless server and can handle ' +
+      'dynamic pages that require JavaScript rendering.',
     inputSchema: z.object({
-      url: z.string().url().describe('텍스트를 추출할 웹페이지 URL'),
+      url: z.string().url().describe('URL of the webpage to extract text from'),
     }),
     execute: async ({ url }) => {
       try {

@@ -127,7 +127,9 @@ export default function TimelinePreviewCard({ node, previewData }) {
 
   // [Flow: 이미지 파일은 img 태그로 원본 이미지 미리보기]
   if (type === "image") {
-    const imageUrl = sourceFile?.url || url;
+    // [Flow: sourceFile.url을 직접 쓰면 HTTPS 변환 전 내부 주소(예: 192.168.x.x)가 그대로 노출되어
+    //       "잘못된 응답을 전송했습니다" 오류가 발생하므로, 다른 타입과 동일하게 위에서 정규화한 url을 사용한다]
+    const imageUrl = url;
     if (!imageUrl) {
       return (
         <PreviewPlaceholder

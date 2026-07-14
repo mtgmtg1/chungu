@@ -42,12 +42,9 @@ import {
   Heading1,
   Heading2,
   Heading3,
-  Heading4,
-  ChevronsDownUp,
-  ChevronsUpDown } from
+  Heading4 } from
 "lucide-react";
 import AiMenu from "./AiMenu.jsx";
-import CollapsibleHeading from "./editor/CollapsibleHeading.jsx";
 import TocSidebar from "./editor/TocSidebar.jsx";
 
 
@@ -175,8 +172,7 @@ ref)
 
   const editor = useEditor({
     extensions: [
-    StarterKit.configure({ heading: false }),
-    CollapsibleHeading.configure({ levels: [1, 2, 3, 4] }),
+    StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
     UniqueID.configure({ types: ["heading"] }),
     TableOfContents.configure({
       onUpdate: (content) => setAnchors(content),
@@ -317,36 +313,6 @@ ref)
     focus().
     insertTable({ rows: 3, cols: 3, withHeaderRow: true }).
     run();
-  };
-
-  /**
-   * [Flow: Step 1 (doc 내 모든 heading 노드 순회) -> Step 2 (collapsed=false로 일괄 트랜잭션) -> Step 3 (plugin이 DOM 표시 적용)]
-   */
-  const expandAllHeadings = () => {
-    if (!editor) return;
-    const tr = editor.state.tr;
-    editor.state.doc.descendants((node, pos) => {
-      if (node.type.name === "heading" && node.attrs.collapsed) {
-        tr.setNodeMarkup(pos, undefined, { ...node.attrs, collapsed: false });
-      }
-      return true;
-    });
-    if (tr.docChanged) editor.view.dispatch(tr);
-  };
-
-  /**
-   * [Flow: Step 1 (doc 내 모든 heading 노드 순회) -> Step 2 (collapsed=true로 일괄 트랜잭션) -> Step 3 (plugin이 DOM 숨김 적용)]
-   */
-  const collapseAllHeadings = () => {
-    if (!editor) return;
-    const tr = editor.state.tr;
-    editor.state.doc.descendants((node, pos) => {
-      if (node.type.name === "heading" && !node.attrs.collapsed) {
-        tr.setNodeMarkup(pos, undefined, { ...node.attrs, collapsed: true });
-      }
-      return true;
-    });
-    if (tr.docChanged) editor.view.dispatch(tr);
   };
 
   const headingIcon = editor.isActive("heading", { level: 1 }) ?
@@ -522,17 +488,6 @@ ref)
           active={editor.isActive("table")}
           data-oid="5ow0_b6">
           <TableIcon size={18} data-oid="k-unaiu" />
-        </ToolbarButton>
-        <ToolbarDivider data-oid="toggle-divider" />
-        <ToolbarButton
-          onClick={expandAllHeadings}
-          data-oid="expand-all">
-          <ChevronsDownUp size={18} data-oid="expand-all-icon" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={collapseAllHeadings}
-          data-oid="collapse-all">
-          <ChevronsUpDown size={18} data-oid="collapse-all-icon" />
         </ToolbarButton>
       </div>
       <div className="flex-1 flex overflow-hidden" data-oid="editor-toc-layout">

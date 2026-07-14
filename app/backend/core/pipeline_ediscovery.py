@@ -57,10 +57,13 @@ MAX_CHARS_PER_CHUNK = 8000        # 청크당 LLM 전달 텍스트 상한 (토�
 MAX_ANOMALY_NODES = 200           # 2차 anomaly 탐지에 전달할 노드 수 상한 (비용/지연 폭증 방지)
 PAGE_MARKER_RE = re.compile(r"<!--\s*(?:페이지|page)\s*(\d+)\s*-->", re.IGNORECASE)
 # 날짜 표현 정규화용 정규식 — 한국식(년/월/일)/일본식(年/月/日)/서양식(. - /) 모두 처리
+# LLM이 상대 표현을 절대 날짜로 환산해 "YYYY-MM-DD"뿐 아니라 "YYYY년 4월"/"YYYY-MM"(연/월만 아는 경우)로
+# 반환할 수도 있으므로 연-월만 있는 형태도 함께 매칭한다 (타임라인 시간순 정렬 정확도 향상).
 DATE_RE = re.compile(
     r"(\d{4})\s*(?:년|年|\.|\-|/)\s*(\d{1,2})\s*(?:월|月|\.|\-|/)\s*(\d{1,2})\s*(?:일|日)?"
     r"|(\d{4})\s*[-/]\s*(\d{1,2})\s*[-/]\s*(\d{1,2})"
-    r"|(\d{4})\s*(?:년|年)\s*(\d{1,2})\s*(?:월|月)",
+    r"|(\d{4})\s*(?:년|年)\s*(\d{1,2})\s*(?:월|月)"
+    r"|(\d{4})\s*[-/]\s*(\d{1,2})(?!\s*[-/]\s*\d)",
     re.IGNORECASE,
 )
 # 유효한 노드 타입 + 행위 주체 분류값
@@ -441,9 +444,9 @@ def _normalize_date(text: str) -> str:
     m = DATE_RE.search(text)
     if not m:
         return ""
-    # 그룹 우선순위: (Y, M, D) | (Y, M, D) | (Y, M)
-    year = m.group(1) or m.group(4) or m.group(7)
-    month = m.group(2) or m.group(5) or m.group(8) or "01"
+    # 그룹 우선순위: (Y, M, D) | (Y, M, D) | (Y, M) | (Y, M) — 마지막은 연/월만 있는 "YYYY-MM" 형태
+    year = m.group(1) or m.group(4) or m.group(7) or m.group(9)
+    month = m.group(2) or m.group(5) or m.group(8) or m.group(10) or "01"
     day = m.group(3) or m.group(6) or "01"
     try:
         y, mo, d = int(year), int(month), int(day)
@@ -473,7 +476,7 @@ def _classify_entity(node_type: str, item_entity: str) -> str:
     return "third_party"
 
 
-def _build_extraction_prompt(chunk_text: str, page_no: int, context: str = "") -> str:
+def _build_extraction_prompt(chunk_text: str, page_no: int, context: str = "", user_language: str = "ko") -> str:
     """[Flow: Step 1 (노드 타입/필드 안내) -> Step 2 (JSON 스키마 명시)
           -> Step 3 (일지/명단/계약 등 비소송 자료 포함 주의사항) -> Step 4 (청크 텍스트 삽입)]
 
@@ -484,52 +487,58 @@ def _build_extraction_prompt(chunk_text: str, page_no: int, context: str = "") -
     context_section = ""
     if context:
         context_section = f"""
-아래는 사용자가 제공한 프로젝트 주요/중요 사항에 대한 추가 맥락이다. 이 맥락을 우선적으로 참고하여 핵심 쟁점, 원고/피고, 증거를 추출하고, 맥락과 자료가 모순되면 자료 내용을 우선한다.
-추가 맥락: {context}
+Below is additional context about the key/important matters of the project provided by the user. Prioritize this context when extracting key issues, plaintiff/defendant parties, and evidence. If the context conflicts with the document, prioritize the document.
+Additional context: {context}
 """
-    return f"""아래는 문서의 {page_no}페이지(글로벌 페이지 번호)에서 추출한 텍스트 일부이다.
-{context_section}이 텍스트에서 다음 4가지 유형의 노드를 추출하라.
-소송 서류뿐 아니라 일지, 명단, 계약서, 보고서, 회의록, 거래 내역 등에 등장하는 인물, 회사, 날짜, 거래, 문서도 아래 기준에 맞춰 반드시 추출한다.
+    return f"""Below is a partial text extracted from page {page_no} (global page number) of the document.
+{context_section}Extract the following 4 types of nodes from this text.
+You must also extract people, companies, dates, transactions, and documents that appear in logs, lists, contracts, reports, meeting minutes, transaction records, etc., not just litigation documents, according to the criteria below.
 
-- issue: 문서의 핵심 쟁점, 거래, 사건, 갈등, 또는 중요한 사실관계
-  예: "2023-04-05 대여금 반환 청구", "A업체와의 계약 위반", "B인의 퇴사 및 비밀유지 위반 의혹"
-- plaintiff: 청구/주장/요구를 하는 측, 또는 손해를 입었다고 하는 측
-  예: 원고, 채권자, 고소인, 감사 요청자, 계약 해제를 요구한 측
-- defendant: 청구에 대응하거나 부인/방어하는 측
-  예: 피고, 채무자, 피고소인, 계약 해제에 이의를 제기한 측
-- evidence: 사실관계를 뒷받침하는 문서, 기록, 물증, 증언
-  예: 일지, 명단, 거래내역서, 이메일, 녹음, 사진, 계약서, 감정서
+- issue: The core issue, transaction, event, conflict, or important factual relationship in the document.
+  Examples: "2023-04-05 loan repayment claim", "Contract breach with Company A", "Allegation of B's resignation and NDA violation"
+- plaintiff: The party making the claim/assertion/demand, or the party claiming to have suffered damage.
+  Examples: plaintiff, creditor, complainant, audit requester, party requesting contract termination
+- defendant: The party responding to, denying, or defending against the claim.
+  Examples: defendant, debtor, accused, party objecting to contract termination
+- evidence: Documents, records, physical evidence, or testimony that support the factual relationship.
+  Examples: logs, lists, account statements, emails, recordings, photos, contracts, expert reports
 
-각 노드는 다음 JSON 형식으로 반환하라. 결과는 JSON 배열만 반환한다 (다른 설명, 마크다운, 코드 펜스 금지).
+Return each node in the following JSON format. Return only a JSON array (no other explanation, markdown, or code fences).
 [
   {{
     "type": "issue | plaintiff | defendant | evidence",
-    "label": "간결한 한국어 요약 (핵심 내용)",
+    "label": "Concise summary in the user's configured language ({user_language}) (core content)",
     "entity": "plaintiff | defendant | third_party | issue",
-    "date": "해당 사건/증거의 날짜 표현 (예: 2023년 4월 5일, 2023-04-05). 없으면 빈 문자열",
-    "summary": "1~2문장 상세 설명. label보다 구체적인 맥락을 포함",
-    "connection_reason": "해당 페이지 원문에서 이 노드를 추출한 근거. 어떤 문구/기록/사실이 이 노드의 출처인지 1~2문장으로 구체적으로 설명 (예: 'A의 진술조서 3페이지에서 A가 B에게 1천만 원을 대여했다고 진술한 내용을 근거로 함').",
+    "date": "Absolute date in YYYY-MM-DD format (must use this format if inferable). If only year/month is available, use YYYY-MM; otherwise empty string.",
+    "summary": "1-2 sentence detailed explanation. Include more specific context than the label.",
+    "connection_reason": "The reason this node was extracted from the original page text. Explain in 1-2 sentences which phrase/record/fact is the source (e.g., 'Based on A's statement in the investigation record page 3 that A lent B 10 million won').",
     "confidence": 0.0~1.0
   }}
 ]
 
-주의:
-- 텍스트에 등장하는 사람 이름, 회사/기관명, 날짜, 금액, 문서/기록 이름은 반드시 노드로 추출한다.
-- 일지/명단/거래내역이라도 특정 인물/회사/날짜/사실이 언급되면 plaintiff/defendant/issue/evidence로 분류한다.
-- entity는 이 노드의 행위 주체가 누구인지 분류한다. issue 노드는 "issue", 청구/원고 측은 "plaintiff", 대응/피고 측은 "defendant", 그 외 제3자/감정인/증인/중립 기록은 "third_party".
-- date는 텍스트에 명시된 날짜를 원문 그대로 추출. 날짜가 없으면 빈 문자열.
-- summary는 label보다 구체적인 1~2문장 설명 (점진적 탐색 패널에 표시됨).
-- connection_reason은 반드시 해당 페이지 원문에 근거를 두고 작성. label/summary가 아닌, 원문과의 연결 고리를 설명.
-- confidence는 해당 노드가 텍스트에 명확히 나타나는 정도 (0.0=불확실, 1.0=명확).
-- label은 간결하게 한국어로 작성 (20자 이내 권장).
-- 텍스트에 관련 정보가 전혀 없을 때만 빈 배열 [] 반환. 정보가 있다면 반드시 노드를 생성할 것.
+⚠️ The date field is the sorting key for the timeline that arranges all nodes chronologically, so treat it as the most important:
+- Fill the absolute date normalized as YYYY-MM-DD for any date verifiable in this page (and given context). Example: "April 5, 2023" → "2023-04-05".
+- Even if no absolute date is directly written, calculate relative expressions ("next day", "3 days later", "one week after that", "20th of the same month", "early next month") into absolute dates using another absolute date in the same page/paragraph as the reference. If the reference date has already been extracted as another node, use that date as the reference.
+- If only the year differs and month/day are missing, do not fill arbitrarily like "YYYY-01-01"; use only what is known, such as "YYYY" or "YYYY-MM" (the code later will normalize separately).
+- Only leave the date empty if there is no evidence anywhere in the text to infer it. If any date information exists, never leave it empty.
+- If multiple dates are mentioned for the same event (e.g., contract date and violation date), use the date of the actual event as date and describe other dates in summary.
 
---- 텍스트 ---
+Notes:
+- Names of people, companies/organizations, dates, amounts, and document/record names appearing in the text must be extracted as nodes.
+- Even for logs, lists, or transaction records, if a specific person/company/date/fact is mentioned, classify them as plaintiff/defendant/issue/evidence.
+- entity classifies the acting subject of the node. issue nodes are "issue", claim/plaintiff side is "plaintiff", response/defendant side is "defendant", and other third parties/experts/witnesses/neutral records are "third_party".
+- summary is a 1-2 sentence explanation more specific than the label (displayed in the progressive exploration panel).
+- connection_reason must be based on the original page text, not the label/summary, explaining the link to the source.
+- confidence is the degree to which the node clearly appears in the text (0.0=uncertain, 1.0=clear).
+- label should be concise, in the user's configured language ({user_language}), preferably within 20 characters.
+- Return an empty array [] only when the text contains no relevant information. If information exists, you must create nodes.
+
+--- Text ---
 {chunk_text}
 """
 
 
-def _build_fallback_extraction_prompt(chunk_text: str, page_no: int, context: str = "") -> str:
+def _build_fallback_extraction_prompt(chunk_text: str, page_no: int, context: str = "", user_language: str = "ko") -> str:
     """[Flow: Step 1 (폴백 추출 지시) -> Step 2 (JSON 스키마 명시) -> Step 3 (청크 텍스트 삽입)]
 
     1차 법률 노드 추출이 빈 결과를 낸 경우, 텍스트에 등장하는 사람/기관/날짜/거래/문서/사실을
@@ -538,37 +547,41 @@ def _build_fallback_extraction_prompt(chunk_text: str, page_no: int, context: st
     context_section = ""
     if context:
         context_section = f"""
-아래는 사용자가 제공한 프로젝트 주요/중요 사항에 대한 추가 맥락이다. 이 맥락을 우선적으로 참고하여 핵심 인물, 회사/기관, 날짜, 거래/사건, 문서/기록을 추출하고, 맥락과 자료가 모순되면 자료 내용을 우선한다.
-추가 맥락: {context}
+Below is additional context about the key/important matters of the project provided by the user. Prioritize this context when extracting key people, companies/organizations, dates, transactions/events, and documents/records. If the context conflicts with the document, prioritize the document.
+Additional context: {context}
 """
-    return f"""아래 문서의 {page_no}페이지 텍스트에서 등장하는 사람, 회사/기관, 날짜, 거래/사건, 문서/기록을 모두 추출하라.
-{context_section}소송 서류가 아니더라도 일지, 명단, 계약서, 보고서, 거래내역, 회의록에 있는 핵심 정보도 추출한다.
+    return f"""Extract all people, companies/organizations, dates, transactions/events, and documents/records that appear in the page {page_no} text below.
+{context_section}Extract key information even from non-litigation documents such as logs, lists, contracts, reports, transaction records, and meeting minutes.
 
-추출 항목은 다음 4가지 유형으로 분류해 JSON 배열로만 반환한다 (다른 설명 금지):
-- issue: 특정 사건, 거래, 갈등, 날짜가 명시된 사실관계
-- plaintiff: 청구/요구/주장을 하는 측 (원고, 채권자, 고소인, 요구자)
-- defendant: 그 청구에 대응하거나 부인/방어하는 측 (피고, 채무자, 피고소인)
-- evidence: 사실관계를 뒷받침하는 문서, 일지, 명단, 거래내역, 녹음, 사진, 감정서
+Classify the extracted items into the following 4 types and return only a JSON array (no other explanation):
+- issue: A factual relationship with a specific event, transaction, conflict, or date specified.
+- plaintiff: The party making the claim/demand/assertion (plaintiff, creditor, complainant, requester).
+- defendant: The party responding to, denying, or defending against the claim (defendant, debtor, accused).
+- evidence: Documents, logs, lists, transaction records, recordings, photos, expert reports that support the factual relationship.
 
 [
   {{
     "type": "issue | plaintiff | defendant | evidence",
-    "label": "간결한 한국어 요약",
+    "label": "Concise summary in the user's configured language ({user_language})",
     "entity": "plaintiff | defendant | third_party | issue",
-    "date": "YYYY-MM-DD 또는 원문 날짜, 없으면 빈 문자열",
-    "summary": "1~2문장 상세 설명",
-    "connection_reason": "해당 페이지 원문에서 이 노드를 추출한 근거. 어떤 문구/기록/사실이 이 노드의 출처인지 1~2문장으로 구체적으로 설명.",
+    "date": "Absolute date in YYYY-MM-DD format (must use this format if inferable). If only year/month is available, use YYYY-MM; otherwise empty string.",
+    "summary": "1-2 sentence detailed explanation",
+    "connection_reason": "The reason this node was extracted from the original page text. Explain in 1-2 sentences which phrase/record/fact is the source.",
     "confidence": 0.0~1.0
   }}
 ]
 
-주의:
-- 인물명, 회사명, 날짜, 금액, 문서명이 보이면 반드시 노드로 추출한다.
-- 관련 주체를 알 수 없으면 entity를 "third_party"로 한다.
-- 날짜가 없어도 다른 정보가 있으면 노드를 생성한다.
-- connection_reason은 반드시 해당 페이지 원문에 근거를 두고 작성.
+⚠️ The date field is the sorting key for the timeline that arranges all nodes chronologically, so treat it as the most important:
+- Even if no absolute date is directly written, calculate relative expressions ("next day", "3 days later", "20th of the same month") into absolute dates (YYYY-MM-DD) using another absolute date in the same page/paragraph as the reference.
+- Only leave the date empty if there is no evidence anywhere to infer it.
 
---- 텍스트 ---
+Notes:
+- Extract any person name, company name, date, amount, or document name visible in the text as nodes.
+- If the related subject is unknown, set entity to "third_party".
+- Create nodes even if no date is available but other information exists.
+- connection_reason must be based on the original page text.
+
+--- Text ---
 {chunk_text}
 """
 
@@ -581,6 +594,7 @@ def _extract_fallback_nodes(
     context: str = "",
     max_sample: int = 5,
     user_id: str | uuid.UUID | None = None,
+    user_language: str = "ko",
 ) -> list[EdiscoveryNode]:
     """[Flow: Step 1 (청크 존재 여부 확인) -> Step 2 (대표 청크 샘플링)
           -> Step 3 (폴백 프롬프트로 1 step 크레딧 차감 + LLM 호출) -> Step 4 (노드 파싱/취합)
@@ -599,7 +613,7 @@ def _extract_fallback_nodes(
     all_nodes: list[EdiscoveryNode] = []
     for chunk in sample_chunks:
         _spend_agent_step_for_call(user_id, "AI agent: e-Discovery fallback node extraction")
-        prompt = _build_fallback_extraction_prompt(chunk.text, chunk.page_no, context=context)
+        prompt = _build_fallback_extraction_prompt(chunk.text, chunk.page_no, context=context, user_language=user_language)
         try:
             content, _ = call_text(prompt, endpoint, model, api_key, max_tokens=2000)
             all_nodes.extend(_parse_nodes(
@@ -696,6 +710,7 @@ def extract_nodes_from_chunk(
     api_key: str,
     context: str = "",
     user_id: str | uuid.UUID | None = None,
+    user_language: str = "ko",
 ) -> list[EdiscoveryNode]:
     """[Flow: Step 1 (프롬프트 구성) -> Step 2 (1 step 크레딧 차감) -> Step 3 (vLLM 호출)
           -> Step 4 (응답 파싱) -> Step 5 (노드 목록 반환)]
@@ -706,7 +721,7 @@ def extract_nodes_from_chunk(
     LLM 호출 직전에 1 step 크레딧을 차감한다.
     """
     _spend_agent_step_for_call(user_id, "AI agent: e-Discovery node extraction")
-    prompt = _build_extraction_prompt(chunk.text, chunk.page_no, context=context)
+    prompt = _build_extraction_prompt(chunk.text, chunk.page_no, context=context, user_language=user_language)
     try:
         content, _ = call_text(prompt, endpoint, model, api_key, max_tokens=2000)
         return _parse_nodes(
@@ -725,6 +740,7 @@ def extract_nodes_concurrent(
     api_key: str,
     context: str = "",
     user_id: str | uuid.UUID | None = None,
+    user_language: str = "ko",
 ) -> list[EdiscoveryNode]:
     """[Flow: Step 1 (ThreadPoolExecutor 생성) -> Step 2 (청크별 1 step 크레딧 차감 + vLLM 호출 병렬화)
           -> Step 3 (결과 취합) -> Step 4 (노드 목록 반환)]
@@ -738,7 +754,7 @@ def extract_nodes_concurrent(
     all_nodes: list[EdiscoveryNode] = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(extract_nodes_from_chunk, chunk, endpoint, model, api_key, context, user_id): chunk
+            executor.submit(extract_nodes_from_chunk, chunk, endpoint, model, api_key, context, user_id, user_language): chunk
             for chunk in chunks
         }
         for future in as_completed(futures):
@@ -755,7 +771,7 @@ class AnomalyPair:
     conflict_reason: str
 
 
-def _build_anomaly_prompt(nodes_batch: list[EdiscoveryNode], context: str = "") -> str:
+def _build_anomaly_prompt(nodes_batch: list[EdiscoveryNode], context: str = "", user_language: str = "ko") -> str:
     """[Flow: Step 1 (노드 목록을 ID+label+summary+type+date로 직렬화) -> Step 2 (모순 탐지 지시) -> Step 3 (JSON 배열 스키마 명시)]
 
     추출된 노드 목록에서 진술(plaintiff/defendant 주장)과 객관적 증거(evidence)가 충돌하는 쌍을
@@ -764,36 +780,36 @@ def _build_anomaly_prompt(nodes_batch: list[EdiscoveryNode], context: str = "") 
     node_lines = []
     for n in nodes_batch:
         node_lines.append(
-            f'- id={n.id} | type={n.type} | entity={n.entity} | date={n.date_text or "없음"} | label={n.label}'
-            f' | summary={n.summary or "(요약 없음)"}'
+            f'- id={n.id} | type={n.type} | entity={n.entity} | date={n.date_text or "none"} | label={n.label}'
+            f' | summary={n.summary or "(no summary)"}'
         )
     nodes_block = "\n".join(node_lines)
     context_section = ""
     if context:
         context_section = f"""
-아래는 사용자가 제공한 프로젝트 주요/중요 사항에 대한 추가 맥락이다. 이 맥락을 우선적으로 참고하여 모순을 판단하고, 맥락과 자료가 모순되면 자료 내용을 우선한다.
-추가 맥락: {context}
+Below is additional context about the key/important matters of the project provided by the user. Prioritize this context when judging conflicts. If the context conflicts with the document, prioritize the document.
+Additional context: {context}
 """
-    return f"""아래는 법률 문서에서 추출한 사건 노드 목록이다.
-{context_section}이 노드들 중에서 "진술/주장(plaintiff, defendant)"과 "객관적 증거(evidence)"가 논리적으로 충돌(모순)하는 쌍을 찾아라.
-충돌의 예: 진술한 날짜와 증거의 날짜가 다름, 진술한 금액과 이체 내역이 다름, 알리바이와 감정 결과가 상충함.
+    return f"""Below is a list of case nodes extracted from a legal document.
+{context_section}Find pairs of nodes where "statements/claims (plaintiff, defendant)" and "objective evidence (evidence)" logically conflict (contradict).
+Examples of conflicts: the stated date differs from the evidence date, the stated amount differs from the transfer record, an alibi contradicts an expert result.
 
-각 모순 쌍을 다음 JSON 형식으로 반환하라. 결과는 JSON 배열만 반환한다 (다른 설명 금지).
+Return each conflicting pair in the following JSON format. Return only a JSON array (no other explanation).
 [
   {{
-    "source_id": "노드 id",
-    "target_id": "노드 id",
-    "conflict_reason": "왜 모순인지 1~2문장으로 구체적으로 설명 (한국어)"
+    "source_id": "node id",
+    "target_id": "node id",
+    "conflict_reason": "Explain specifically in 1-2 sentences why it is a conflict. Write in the user's configured language ({user_language})."
   }}
 ]
 
-주의:
-- source_id와 target_id는 위 목록에 존재하는 정확한 id여야 한다.
-- 진술과 증거가 아닌 노드 쌍(예: issue vs issue)은 모순에서 제외한다.
-- 명확한 충돌만 포함하고, 단순한 정보 누락은 모순으로 간주하지 않는다.
-- 모순이 없으면 빈 배열 [] 반환.
+Notes:
+- source_id and target_id must be exact ids that exist in the list above.
+- Exclude pairs that are not statement vs evidence (e.g., issue vs issue).
+- Include only clear conflicts; do not treat simple missing information as a conflict.
+- Return an empty array [] if there are no conflicts.
 
---- 노드 목록 ---
+--- Node list ---
 {nodes_block}
 """
 
@@ -833,6 +849,7 @@ def detect_anomalies_concurrent(
     api_key: str,
     context: str = "",
     user_id: str | uuid.UUID | None = None,
+    user_language: str = "ko",
 ) -> list[AnomalyPair]:
     """[Flow: Step 1 (노드 수 상한 적용) -> Step 2 (주체별 배치 분할) -> Step 3 (배치별 1 step 크레딧 차감 + 2차 LLM 호출 병렬화)
           -> Step 4 (결과 취합 + 중복 제거) -> Step 5 (AnomalyPair 목록 반환)]
@@ -864,7 +881,7 @@ def detect_anomalies_concurrent(
         if len(batch) < 2:
             return []
         _spend_agent_step_for_call(user_id, "AI agent: e-Discovery anomaly detection")
-        prompt = _build_anomaly_prompt(batch, context=context)
+        prompt = _build_anomaly_prompt(batch, context=context, user_language=user_language)
         try:
             content, _ = call_text(prompt, endpoint, model, api_key, max_tokens=2000)
             return _parse_anomalies(content, valid_ids)
@@ -1137,7 +1154,7 @@ def assemble_graph(
 
 # --- 자동 파라미터 추천 ------------------------------------------------------
 
-def _build_param_suggestion_prompt(page_texts: dict[int, str], context: str = "") -> str:
+def _build_param_suggestion_prompt(page_texts: dict[int, str], context: str = "", user_language: str = "ko") -> str:
     """[Flow: Step 1 (처음/중간/끝 페이지 샘플 선택) -> Step 2 (각 샘플을 2000자로 truncate)
           -> Step 3 (프롬프트 문자열 조합) -> Step 4 (LLM 입력 문자열 반환)]
 
@@ -1157,33 +1174,33 @@ def _build_param_suggestion_prompt(page_texts: dict[int, str], context: str = ""
         text = page_texts[page_no].strip()
         if len(text) > 2000:
             text = text[:2000] + "..."
-        sample_blocks.append(f"--- 페이지 {page_no} ---\n{text}")
+        sample_blocks.append(f"--- Page {page_no} ---\n{text}")
     sample_text = "\n\n".join(sample_blocks)
 
     context_section = ""
     if context:
         context_section = f"""
-아래는 사용자가 제공한 프로젝트 주요/중요 사항에 대한 추가 맥락이다. 이 맥락을 우선적으로 참고하여 파라미터를 추천하고, 맥락과 자료가 모순되면 자료 내용을 우선한다.
-추가 맥락: {context}
+Below is additional context about the key/important matters of the project provided by the user. Prioritize this context when recommending parameters. If the context conflicts with the document, prioritize the document.
+Additional context: {context}
 """
-    return f"""아래는 법률 문서의 일부 페이지 샘플이다.{context_section} 이 문서의 특성을 분석하여 e-Discovery GraphRAG 파이프라인에 사용할 최적의 파라미터 3개를 JSON으로 반환하라.
+    return f"""Below are sample pages from a legal document.{context_section} Analyze the characteristics of this document and return the 3 optimal parameters for the e-Discovery GraphRAG pipeline as JSON.
 
-[파라미터 설명]
-- chunk_size: 한 번에 LLM에 전달할 텍스트의 단어 수. 문서가 짧고 단순하면 256~512, 사실관계가 복잡하고 많은 쟁점/주체가 등장하면 1024~2048, 매우 복잡하면 2048~4096.
-- threshold: 노드 추출 신뢰도 임계값(0.0~1.0). 노이즈가 많거나 보수적으로 추출하려면 0.6~0.7, 균형 잡히게 추출하려면 0.45~0.55, 많은 후보를 남기려면 0.3~0.4.
-- max_docs: 처리할 최대 페이지 수. 짧은 문서(50페이지 이하)면 전체 페이지 수, 중간(50~500페이지)이면 50~200, 긴 문서(500페이지 이상)이면 100~500 정도로 샘플링하여 비용과 커버리지를 균형.
+[Parameter descriptions]
+- chunk_size: The number of words passed to the LLM at once. Use 256-512 for short and simple documents, 1024-2048 for complex documents with many issues/parties, and 2048-4096 for very complex documents.
+- threshold: The node extraction confidence threshold (0.0-1.0). Use 0.6-0.7 for noisy or conservative extraction, 0.45-0.55 for balanced extraction, and 0.3-0.4 to keep more candidates.
+- max_docs: The maximum number of pages to process. For short documents (<=50 pages), use the total page count; for medium documents (50-500 pages), use 50-200; for long documents (500+ pages), use 100-500 to balance cost and coverage.
 
-[JSON 응답 형식]
+[JSON response format]
 {{
   "chunk_size": 1024,
   "threshold": 0.5,
   "max_docs": 100,
-  "reasoning": "한국어로 1문장 설명"
+  "reasoning": "Explain in one sentence in the user's configured language ({user_language})."
 }}
 
-결과는 JSON만 반환한다. 다른 설명은 금지.
+Return only the JSON. No other explanation.
 
---- 문서 샘플 ---
+--- Document samples ---
 {sample_text}
 """
 
@@ -1275,6 +1292,7 @@ def _suggest_params(
     api_key: str,
     context: str = "",
     user_id: str | uuid.UUID | None = None,
+    user_language: str = "ko",
 ) -> dict:
     """[Flow: Step 1 (페이지 샘플 선택 및 프롬프트 구성) -> Step 2 (1 step 크레딧 차감)
           -> Step 3 (vLLM 호출) -> Step 4 (응답 파싱) -> Step 5 (권장 범위 내 clamp) -> Step 6 (파라미터 dict 반환)]
@@ -1287,7 +1305,7 @@ def _suggest_params(
         return _clamp_suggested_params({}, total_pages)
 
     _spend_agent_step_for_call(user_id, "AI agent: e-Discovery parameter suggestion")
-    prompt = _build_param_suggestion_prompt(page_texts, context=context)
+    prompt = _build_param_suggestion_prompt(page_texts, context=context, user_language=user_language)
     try:
         content, _ = call_text(prompt, endpoint, model, api_key, max_tokens=500)
     except Exception as e:
@@ -1345,6 +1363,16 @@ def run(
             context = job.ediscovery_context or ""
         context = (context or "").strip()
 
+        # 사용자 설정 언어 조회. LLM 프롬프트는 영어로 보내지만, 응답은 사용자 설정 언어를 우선한다.
+        user_language = "ko"
+        if user_id:
+            try:
+                user = db.get(User, uuid.UUID(str(user_id)))
+                if user and user.language:
+                    user_language = user.language
+            except Exception:
+                pass
+
         # Step 2: 텍스트 추출 (page_texts + 원본 파일/페이지 추적용 page_meta)
         page_texts, page_meta = extract_page_texts(job)
         if not page_texts:
@@ -1353,7 +1381,7 @@ def run(
         # Step 2a: 파라미터가 명시되지 않으면 LLM이 전체 문서 샘플을 보고 자동 추천
         auto_params = None
         if chunk_size is None or threshold is None or max_chunks is None:
-            auto_params = _suggest_params(page_texts, endpoint, model, api_key, context=context, user_id=user_id)
+            auto_params = _suggest_params(page_texts, endpoint, model, api_key, context=context, user_id=user_id, user_language=user_language)
             if chunk_size is None:
                 chunk_size = auto_params["chunk_size"]
             if threshold is None:
@@ -1391,17 +1419,17 @@ def run(
                 logger.warning(f"[ediscovery] job={job_id} query 용어와 일치하는 청크 없음, 전체 청크 사용")
 
         # Step 6: 병렬 노드 추출
-        raw_nodes = extract_nodes_concurrent(chunks, endpoint, model, api_key, context=context, user_id=user_id)
+        raw_nodes = extract_nodes_concurrent(chunks, endpoint, model, api_key, context=context, user_id=user_id, user_language=user_language)
         logger.info(f"[ediscovery] job={job_id} 원시 노드 {len(raw_nodes)}개 추출")
 
         # Step 6b: 1차 추출이 0개면 폴백 추출 시도 (일지/명단 등 비소송 자료 대응)
         if not raw_nodes and chunks:
             logger.warning(f"[ediscovery] job={job_id} 1차 노드 추출 0개, 폴백 추출 시도")
-            raw_nodes = _extract_fallback_nodes(chunks, endpoint, model, api_key, context=context, user_id=user_id)
+            raw_nodes = _extract_fallback_nodes(chunks, endpoint, model, api_key, context=context, user_id=user_id, user_language=user_language)
 
         # Step 7: 임계값 필터 + 2차 LLM 패스 모순 탐지 + 그래프 조립
         filtered = filter_nodes_by_threshold(raw_nodes, threshold)
-        anomalies = detect_anomalies_concurrent(filtered, endpoint, model, api_key, context=context, user_id=user_id)
+        anomalies = detect_anomalies_concurrent(filtered, endpoint, model, api_key, context=context, user_id=user_id, user_language=user_language)
         logger.info(f"[ediscovery] job={job_id} 모순 쌍 {len(anomalies)}개 탐지")
         graph = assemble_graph(filtered, anomalies)
         metrics = {

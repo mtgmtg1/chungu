@@ -43,9 +43,9 @@ export function buildSpreadsheetTools(context: SpreadsheetContext) {
 
   return {
     get_sheet: tool({
-      description: '지정한 시트의 데이터를 반환한다.',
+      description: 'Return data from the specified sheet.',
       inputSchema: z.object({
-        sheet_index: z.number().describe('0-based 시트 인덱스'),
+        sheet_index: z.number().describe('0-based sheet index'),
       }),
       execute: async ({ sheet_index }) => {
         const url = await _getXlsxUrl(jobId, authHeaders);
@@ -56,12 +56,12 @@ export function buildSpreadsheetTools(context: SpreadsheetContext) {
     }),
 
     update_cell: tool({
-      description: '지정한 셀의 값을 변경한다.',
+      description: 'Change the value of the specified cell.',
       inputSchema: z.object({
-        sheet_index: z.number().describe('0-based 시트 인덱스'),
-        row: z.number().describe('0-based 행 인덱스'),
-        col: z.number().describe('0-based 열 인덱스'),
-        value: z.union([z.string(), z.number()]).describe('새 값'),
+        sheet_index: z.number().describe('0-based sheet index'),
+        row: z.number().describe('0-based row index'),
+        col: z.number().describe('0-based column index'),
+        value: z.union([z.string(), z.number()]).describe('New value'),
       }),
       execute: async ({ sheet_index, row, col, value }) => {
         cellChanges.push({ sheet_index, row, col, value });
@@ -70,11 +70,11 @@ export function buildSpreadsheetTools(context: SpreadsheetContext) {
     }),
 
     add_row: tool({
-      description: '지정한 시트에 행을 추가한다.',
+      description: 'Add a row to the specified sheet.',
       inputSchema: z.object({
-        sheet_index: z.number().describe('0-based 시트 인덱스'),
-        row_index: z.number().describe('삽입할 0-based 위치. -1이면 마지막'),
-        data: z.array(z.union([z.string(), z.number()])).describe('행 데이터'),
+        sheet_index: z.number().describe('0-based sheet index'),
+        row_index: z.number().describe('0-based insertion position. -1 means last.'),
+        data: z.array(z.union([z.string(), z.number()])).describe('Row data'),
       }),
       execute: async ({ sheet_index, row_index, data }) => {
         rowChanges.push({ sheet_index, row: row_index, action: 'add', data });
@@ -83,10 +83,10 @@ export function buildSpreadsheetTools(context: SpreadsheetContext) {
     }),
 
     delete_row: tool({
-      description: '지정한 시트의 행을 삭제한다.',
+      description: 'Delete a row from the specified sheet.',
       inputSchema: z.object({
-        sheet_index: z.number().describe('0-based 시트 인덱스'),
-        row_index: z.number().describe('삭제할 0-based 행 인덱스'),
+        sheet_index: z.number().describe('0-based sheet index'),
+        row_index: z.number().describe('0-based row index to delete'),
       }),
       execute: async ({ sheet_index, row_index }) => {
         rowChanges.push({ sheet_index, row: row_index, action: 'delete' });
@@ -95,7 +95,7 @@ export function buildSpreadsheetTools(context: SpreadsheetContext) {
     }),
 
     apply_changes: tool({
-      description: '현재까지의 스프레드시트 변경을 FastAPI에 저장한다.',
+      description: 'Save the spreadsheet changes made so far to FastAPI.',
       inputSchema: z.object({}),
       execute: async () => {
         if (cellChanges.length === 0 && rowChanges.length === 0) {

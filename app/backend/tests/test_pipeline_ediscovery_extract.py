@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from backend.core.pipeline_ediscovery import (
     _build_extraction_prompt,
     _extract_all_source_files,
+    _normalize_date,
     extract_page_texts,
 )
 from backend.db.models import Job
@@ -187,11 +188,36 @@ def test_build_extraction_prompt_includes_context():
     context = "대여금 반환 청구 사건, A가 채권자, B가 채무자"
     prompt = _build_extraction_prompt(chunk_text, page_no=1, context=context)
     assert context in prompt
-    assert "추가 맥락" in prompt
+    assert "Additional context" in prompt
 
 
 def test_build_extraction_prompt_without_context():
     """_build_extraction_prompt에 context가 없으면 추가 맥락 섹션을 포함하지 않는다."""
     chunk_text = "2023년 4월 5일 A가 B에게 1천만 원을 대여했다."
     prompt = _build_extraction_prompt(chunk_text, page_no=1)
-    assert "추가 맥락" not in prompt
+    assert "Additional context" not in prompt
+
+
+def test_build_extraction_prompt_emphasizes_chronological_date_guidance():
+    """_build_extraction_prompt가 시간순 타임라인 정렬을 위한 date 필드 강조 지침을 포함한다."""
+    prompt = _build_extraction_prompt("텍스트", page_no=1)
+    assert "timeline" in prompt.lower()
+    assert "YYYY-MM-DD" in prompt
+
+
+def test_normalize_date_full_date():
+    """연-월-일이 모두 있는 날짜는 ISO 형식으로 정규화된다."""
+    assert _normalize_date("2023년 4월 5일") == "2023-04-05"
+    assert _normalize_date("2023-04-05") == "2023-04-05"
+
+
+def test_normalize_date_year_month_only():
+    """LLM이 연/월만 아는 경우 반환하는 'YYYY-MM' 형태도 정규화된다(일은 01로 보정)."""
+    assert _normalize_date("2023-04") == "2023-04-01"
+    assert _normalize_date("2023년 4월") == "2023-04-01"
+
+
+def test_normalize_date_no_match_returns_empty():
+    """날짜 표현이 전혀 없으면 빈 문자열을 반환한다."""
+    assert _normalize_date("특별한 날짜 없음") == ""
+    assert _normalize_date("") == ""

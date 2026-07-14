@@ -105,9 +105,9 @@ def test_clamp_suggested_params_max_docs_defaults_to_total_pages():
 def test_build_fallback_prompt_extracts_entities_from_logs():
     """폴백 프롬프트가 일지/명단/거래내역에서도 인물·회사·날짜·문서 추출을 지시한다."""
     prompt = _build_fallback_extraction_prompt("일부 텍스트", page_no=3)
-    assert "일지" in prompt or "명단" in prompt
+    assert "logs" in prompt.lower() or "lists" in prompt.lower() or "transaction records" in prompt.lower()
     assert "issue | plaintiff | defendant | evidence" in prompt
-    assert "3페이지" in prompt
+    assert "page 3" in prompt.lower()
 
 
 def test_extract_fallback_nodes_parses_llm_response():

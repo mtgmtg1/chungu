@@ -22,36 +22,36 @@ MAX_RELATION_TOKENS = 4000  # 주장-증거 관계 분석용 토큰 상한
 MAX_RELATION_EVIDENCE = 50  # 관계 분석에 사용할 최대 증거 노드 수
 
 
-def _build_legal_elements_prompt(claim_type: str) -> str:
+def _build_legal_elements_prompt(claim_type: str, user_language: str = "ko") -> str:
     """[Flow: Step 1 (청구 원인 삽입) -> Step 2 (주장 추출 지시) -> Step 3 (JSON 스키마 명시) -> Step 4 (주의사항)]
 
     입력된 청구 원인에서 법적 주장(요건사실)을 추출하는 LLM 프롬프트를 구성한다.
     반환 JSON 스키마는 프론트엔드/AI 백엔드 데이터 계약(element_mappings)을 따른다.
     """
-    return f"""아래 청구 원인(claim type)에 대해 한국 법률 체계상 입증에 필수적인 주장(법적 요건사실)을 {MIN_ELEMENTS}~{MAX_ELEMENTS}개 도출하라.
+    return f"""For the claim type below, derive {MIN_ELEMENTS}~{MAX_ELEMENTS} legal claims (essential factual elements) that must be proven under the relevant legal system.
 
-청구 원인: {claim_type}
+Claim type: {claim_type}
 
-각 주장은 다음 JSON 형식으로 반환하라. 결과는 JSON 객체만 반환한다 (다른 설명 금지).
+Return each claim in the following JSON format. Return only the JSON object (no other explanation).
 {{
   "claim_type": "{claim_type}",
   "elements": [
     {{
       "id": "claim_1",
-      "name": "주장의 간결한 한국어 명칭",
-      "description": "해당 주장의 의미와 입증에 필요한 핵심 내용을 1~2문장으로 설명"
+      "name": "Concise legal name of the claim in the user's configured language ({user_language})",
+      "description": "1-2 sentence explanation of what the claim means and what facts must be proven"
     }}
   ]
 }}
 
-주의:
-- elements는 {MIN_ELEMENTS}개 이상 {MAX_ELEMENTS}개 이하로 작성.
-- id는 "claim_1", "claim_2" ... 순차적으로 부여.
-- name은 법률 용어 기반의 간결한 한국어 명칭 (예: "기망행위", "재산적 처분행위", "피해자의 착오").
-- description은 해당 주장이 무엇을 의미하고 어떤 사실을 입증해야 하는지 1~2문장 설명.
-- mapped_evidence는 증거 목록이 제공되면 LLM이 자동으로 채울 수 있다. 각 항목은 {{"evidence_id", "text_snippet", "source_doc", "reason"}} 형식이며, reason에는 해당 증거가 이 주장을 뒷받침하는 구체적인 관계(사실적 연결 + 법률적 의미)를 기록.
-- 주장과 증거의 관계(reason)는 반드시 사실적 연결과 법률적 의미를 포함하여 구체적으로 기술.
-- 한국 법률 체계(대법원 판례/통설)를 기준으로 도출.
+Notes:
+- Write between {MIN_ELEMENTS} and {MAX_ELEMENTS} elements.
+- Assign ids sequentially: "claim_1", "claim_2", etc.
+- name should be a concise legal term in the user's configured language ({user_language}) (e.g., "fraudulent act", "disposition of property", "victim's mistake").
+- description should explain what the claim means and what facts must be proven.
+- mapped_evidence can be filled automatically by the LLM when an evidence list is provided. Each item must be in {{"evidence_id", "text_snippet", "source_doc", "reason"}} format, and reason must record the specific relationship (factual connection + legal meaning) of how the evidence supports the claim.
+- The relationship (reason) between claim and evidence must be described specifically, including both factual connection and legal meaning.
+- Derive based on the legal system (supreme court precedents/doctrines) of the relevant jurisdiction.
 """
 
 
@@ -138,7 +138,7 @@ def _empty_schema(claim_type: str) -> dict:
     }
 
 
-def _build_claim_evidence_relations_prompt(claim_type: str, claims: list[dict], evidence_nodes: list[dict]) -> str:
+def _build_claim_evidence_relations_prompt(claim_type: str, claims: list[dict], evidence_nodes: list[dict], user_language: str = "ko") -> str:
     """[Flow: Step 1 (주장/증거 목록 직렬화) -> Step 2 (관계 분석 지시) -> Step 3 (JSON 스키마 명시) -> Step 4 (주의사항)]
 
     주장 목록과 e-Discovery 증거 노드 목록을 받아, 각 주장에 입증력이 있는 증거를 선택하고
@@ -162,32 +162,32 @@ def _build_claim_evidence_relations_prompt(claim_type: str, claims: list[dict], 
         ensure_ascii=False,
         indent=2,
     )
-    return f"""아래 주장(claims)과 증거(evidence) 목록을 보고, 각 주장에 입증력이 있는 증거를 선택하여 관계(reason)를 기록하라.
+    return f"""Given the claims and evidence list below, select evidence that is probative for each claim and record the relationship (reason).
 
-청구 원인: {claim_type}
+Claim type: {claim_type}
 
-주장:
+Claims:
 {claims_summary}
 
-증거:
+Evidence:
 {evidence_summary}
 
-출력 형식:
+Output format:
 {{
   "relations": [
     {{
       "claim_id": "claim_1",
       "evidence_id": "evidence_node_id",
-      "reason": "이 증거가 해당 주장을 뒷받침하는 구체적인 사실/법률적 연결"
+      "reason": "Specific factual/legal connection explaining how this evidence supports the claim. Write in the user's configured language ({user_language})."
     }}
   ]
 }}
 
-주의:
-- 주장마다 0개 이상의 증거를 연결 가능.
-- reason은 반드시 구체적이며, 증거의 어떤 내용이 주장의 성립에 기여하는지 사실적 연결과 법률적 의미를 모두 포함하여 설명.
-- 연결할 증거가 없는 주장은 relations에서 생략 가능.
-- 다른 설명 금지, JSON 객체만 반환.
+Notes:
+- Each claim can be linked to 0 or more pieces of evidence.
+- reason must be specific and explain both the factual connection and legal meaning of how the evidence contributes to establishing the claim.
+- Claims with no linkable evidence can be omitted from relations.
+- No other explanation; return only the JSON object.
 """
 
 
@@ -251,7 +251,7 @@ def _parse_claim_evidence_relations(content: str, claims: list[dict], evidence_n
     return claims
 
 
-def extract_legal_elements(claim_type: str, endpoint: str, model: str, api_key: str, evidence_nodes: list[dict] | None = None) -> dict:
+def extract_legal_elements(claim_type: str, endpoint: str, model: str, api_key: str, evidence_nodes: list[dict] | None = None, user=None) -> dict:
     """[Flow: Step 1 (프롬프트 구성) -> Step 2 (vLLM 호출) -> Step 3 (응답 파싱)
           -> Step 4 (evidence_nodes 제공 시 주장-증거 관계 분석) -> Step 5 (데이터 계약 형식 반환)]
 
@@ -263,7 +263,8 @@ def extract_legal_elements(claim_type: str, endpoint: str, model: str, api_key: 
     if not claim_type:
         return _empty_schema("")
 
-    prompt = _build_legal_elements_prompt(claim_type)
+    user_language = user.language if user and getattr(user, "language", None) else "ko"
+    prompt = _build_legal_elements_prompt(claim_type, user_language=user_language)
     try:
         content, _ = call_text(prompt, endpoint, model, api_key, max_tokens=MAX_TOKENS)
         mappings = _parse_legal_elements(content, claim_type)
@@ -272,7 +273,7 @@ def extract_legal_elements(claim_type: str, endpoint: str, model: str, api_key: 
         return _empty_schema(claim_type)
 
     if evidence_nodes and mappings.get("elements"):
-        relations_prompt = _build_claim_evidence_relations_prompt(claim_type, mappings["elements"], evidence_nodes)
+        relations_prompt = _build_claim_evidence_relations_prompt(claim_type, mappings["elements"], evidence_nodes, user_language=user_language)
         try:
             rel_content, _ = call_text(relations_prompt, endpoint, model, api_key, max_tokens=MAX_RELATION_TOKENS)
             mappings["elements"] = _parse_claim_evidence_relations(rel_content, mappings["elements"], evidence_nodes)

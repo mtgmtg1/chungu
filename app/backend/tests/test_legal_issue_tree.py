@@ -15,10 +15,10 @@ from backend.core import legal_issue_tree
 def test_build_issue_tree_prompt_uses_three_level_tree():
     """프롬프트가 쟁점-주장-근거 3단계 트리와 양측 대립을 포함해야 한다."""
     prompt = legal_issue_tree._build_issue_tree_prompt("사기죄")
-    assert "쟁점" in prompt
-    assert "주장" in prompt
-    assert "근거" in prompt or "증거" in prompt
-    assert "원고" in prompt or "피고" in prompt or "검사" in prompt or "피고인" in prompt
+    assert "issue" in prompt.lower()
+    assert "claim" in prompt.lower()
+    assert "evidence" in prompt.lower()
+    assert "plaintiff" in prompt.lower() or "defendant" in prompt.lower() or "prosecutor" in prompt.lower() or "accused" in prompt.lower()
 
 
 def test_parse_issue_tree_builds_three_level_tree():

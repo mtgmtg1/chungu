@@ -2043,6 +2043,9 @@
       "activeCount": "활성 샌드박스",
       "totalCreated": "누적 생성",
       "diskUsage": "디스크 사용량"
-    }
+    },
+    "tocTitle": "목차",
+    "tocEmpty": "목차가 없습니다",
+    "tocToggle": "목차 토글"
   }
 }

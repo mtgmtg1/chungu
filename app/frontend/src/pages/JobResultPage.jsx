@@ -660,17 +660,26 @@ export default function JobResultPage() {
       );
     }
     if (previewMode === "flow") {
+      // [Flow: 다중 파일 마크다운이 있으면 files prop으로 전달, 없으면 단일 markdown]
+      const flowFiles = hasFileMarkdowns
+        ? sourceFiles.map((f, i) => ({ filename: f.filename || `파일 ${i + 1}`, markdown: fileMarkdowns[i] || "" }))
+        : null;
       return (
         <FlowViewer
           ref={flowViewerApiRef}
           markdown={displayMarkdown}
+          files={flowFiles}
           jobId={jobId}
-          filename={job?.filename}
           onNodeClick={(node) => {
-            // [Flow: 노드 클릭 -> SourcePanel PDF 해당 페이지로 스크롤]
+            // [Flow: 노드 클릭 -> SourcePanel PDF 해당 파일/페이지로 스크롤]
             const page = node.data?.page;
-            if (page && sourcePanelApiRef.current) {
-              sourcePanelApiRef.current.scrollToPage(page);
+            const fileIndex = node.data?.fileIndex;
+            if (sourcePanelApiRef.current) {
+              if (fileIndex != null && fileIndex >= 0) {
+                sourcePanelApiRef.current.scrollToPage({ fileIndex, pageNum: page || 1 });
+              } else if (page) {
+                sourcePanelApiRef.current.scrollToPage(page);
+              }
             }
           }}
         />

@@ -10,7 +10,12 @@ export function enableDevMock(enabled) {
 }
 
 export async function getToken() {
-  const { data } = await supabase.auth.getSession()
+  // 로컬 개발 환경에서 supabase.auth.getSession()이 Supabase 엔드포인트가 없어
+  // 토큰 갱신을 시도하며 hang되는 것을 방지하기 위해 타임아웃을 건다.
+  const { data } = await Promise.race([
+    supabase.auth.getSession(),
+    new Promise(resolve => setTimeout(() => resolve({ data: { session: null } }), 2000)),
+  ])
   return data.session?.access_token
 }
 

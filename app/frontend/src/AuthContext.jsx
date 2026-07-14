@@ -52,18 +52,16 @@ export function AuthProvider({ children }) {
           });
           if (resp.ok) {
             const devData = await resp.json();
-            const { data: sessionData, error } = await supabase.auth.setSession({
+            // 로컬 개발 환경에서는 Supabase auth 엔드포인트가 없으므로,
+            // dev bypass 토큰을 직접 세션처럼 사용하고 API key로 백엔드에 연결한다.
+            session = {
+              user: devData.user,
               access_token: devData.access_token,
               refresh_token: devData.refresh_token,
-            });
-            if (error) {
-              console.warn("[DEV auto-login] 세션 설정 실패:", error.message);
-            } else {
-              session = sessionData.session;
-              mode = "backend";
-              enableDevMock(false);
-              console.log("[DEV auto-login] 성공:", session?.user?.email);
-            }
+            };
+            mode = "apikey";
+            enableDevMock(false);
+            console.log("[DEV auto-login] 성공:", devData.user?.email);
           } else {
             const errText = await resp.text();
             console.warn("[DEV auto-login] 실패:", errText);

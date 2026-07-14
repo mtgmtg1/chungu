@@ -2013,7 +2013,12 @@ def preview_job(
     job = db.get(Job, job_id)
     _require_job_access(job, user)
     _require_job_not_expired(job)
-    if not job.result_md_storage_path and not job.result_edited_md_storage_path:
+    if not (
+        job.result_md_storage_path
+        or job.result_edited_md_storage_path
+        or job.result_md_path
+        or job.result_edited_md_path
+    ):
         detail = f"Result file not ready (status={job.status}, md_path={job.result_md_storage_path or '-'}, edited_path={job.result_edited_md_storage_path or '-'}, error_log={job.error_log or '-'}"
         raise HTTPException(status_code=400, detail=detail)
 
@@ -2066,6 +2071,29 @@ def preview_job(
                     pass
 
     source_files = _source_files(job)
+
+    # [Flow: extracted_files의 result_markdown을 source_files에 병합]
+    # _source_files는 storage_path가 있는 파일만 반환하므로,
+    # 마크다운만 있고 storage_path가 없는 파일의 result_markdown을 별도로 보존한다.
+    extracted = job.extracted_files or []
+    if extracted and len(extracted) > len(source_files):
+        existing_filenames = {f.get("filename") for f in source_files}
+        for idx, info in enumerate(extracted):
+            if not isinstance(info, dict):
+                continue
+            md = info.get("result_markdown", "")
+            if not md:
+                continue
+            fname = info.get("filename") or info.get("path") or f"파일 {idx + 1}"
+            if fname not in existing_filenames:
+                source_files.append({
+                    "filename": fname,
+                    "result_markdown": md,
+                    "source_kind": "original",
+                    "source_index": idx,
+                    "status": info.get("status", "done"),
+                })
+
     result = {
         "job": _job_summary(job),
         "markdown": partial_markdown,
@@ -2091,7 +2119,12 @@ def preview_job_pages(
     job = db.get(Job, job_id)
     _require_job_access(job, user)
     _require_job_not_expired(job)
-    if not job.result_md_storage_path and not job.result_edited_md_storage_path:
+    if not (
+        job.result_md_storage_path
+        or job.result_edited_md_storage_path
+        or job.result_md_path
+        or job.result_edited_md_path
+    ):
         detail = f"Result file not ready (status={job.status}, md_path={job.result_md_storage_path or '-'}, edited_path={job.result_edited_md_storage_path or '-'}, error_log={job.error_log or '-'}"
         raise HTTPException(status_code=400, detail=detail)
 

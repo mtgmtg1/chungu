@@ -2,7 +2,7 @@
 //       -> Step 3 (툴바: 주석 추가 / 연결 / 삭제 / 배경 전환 / 다크모드 / 레이아웃 재배치)
 //       -> Step 4 (노드 클릭 시 콜백)]
 // 마크다운 문서의 헤딩 구조를 React Flow 캔버스에 논리 흐름 그래프로 시각화.
-// 페이지 순서는 next 엣지, 계층 구조는 왼쪽 들여쓰기로 표현. AI 의존성은 dependency 엣지로 표현.
+// 계층 구조는 실선(hierarchy) 엣지, AI 의존성은 점선(dependency) 엣지로 표현.
 // 사용자는 주석 노트 추가, 수동 연결, 엣지 재연결, 선택 삭제, 배경 전환 가능.
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -23,6 +23,7 @@ import {
   Position,
   BaseEdge,
   getBezierPath,
+  getSmoothStepPath,
   EdgeLabelRenderer,
   NodeResizer,
 } from "@xyflow/react";
@@ -33,8 +34,16 @@ import {
   Trash2,
   LayoutGrid,
   Maximize,
+  Image as ImageIcon,
+  Video,
+  List,
+  Table,
+  Code2,
+  Quote,
+  FileText,
+  File,
 } from "lucide-react";
-import { parseMarkdownToFlow } from "../utils/markdownToFlow";
+import { parseMarkdownToFlow, parseMultiFileMarkdownToFlow } from "../utils/markdownToFlow";
 import { calculateFlowLayout } from "../utils/flowLayout";
 import { useFlowDrawing } from "../hooks/useFlowDrawing.js";
 import DrawingOverlay from "./flow/DrawingOverlay.jsx";
@@ -47,31 +56,191 @@ import DrawingToolbar from "./flow/DrawingToolbar.jsx";
 /**
  * 헤딩 노드 컴포넌트 — 제목 + H레벨 배지 + 내용 미리보기.
  * React Flow 커스텀 노드로 등록되어 nodeTypes에 매핑됨.
- * 사용자가 수동 연결을 할 수 있도록 Handle의 isConnectable=true.
+ * hasNext/hasPrev/hasParent/hasChildren 플래그에 따라 4방향 Handle을 동적으로 렌더링.
  */
 function HeadingNode({ data, selected }) {
   return (
     <div
-      className={`bg-white rounded-lg border-2 shadow-sm px-4 py-3 transition-all ${
+      className={`bg-white rounded-lg border-2 shadow-sm px-5 py-4 transition-all min-h-[96px] ${
         selected ? "border-primary shadow-md ring-2 ring-primary/20" : "border-outline-variant"
       }`}
-      style={{ width: "100%", height: "100%" }}
+      style={{ width: "100%" }}
     >
-      <Handle type="target" position={Position.Top} isConnectable={true} />
-      <div className="flex items-center gap-2 mb-1">
-        <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-primary/10 text-primary">
+      {/* 들어오는 next 엣지: 항상 왼쪽 */}
+      {data.hasPrev && <Handle type="target" position={Position.Left} id="left" isConnectable={true} />}
+      {/* 부모-자식 hierarchy 엣지: 위쪽 */}
+      {data.hasParent && <Handle type="target" position={Position.Top} id="top" isConnectable={true} />}
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-sm font-bold px-2 py-1 rounded bg-primary/10 text-primary">
           H{data.level}
         </span>
-        <span className="font-semibold text-sm text-on-surface line-clamp-2">
+        <span className="font-semibold text-base text-on-surface line-clamp-2">
           {data.label}
         </span>
       </div>
       {data.contentPreview && (
-        <p className="text-xs text-on-surface-variant line-clamp-3 mt-1">
+        <p className="text-sm text-on-surface-variant line-clamp-3 mt-2">
           {data.contentPreview}
         </p>
       )}
-      <Handle type="source" position={Position.Bottom} isConnectable={true} />
+      {/* 나가는 next 엣지: 항상 오른쪽 */}
+      {data.hasNext && <Handle type="source" position={Position.Right} id="right" isConnectable={true} />}
+      {/* 부모-자식 hierarchy 엣지: 아래쪽 */}
+      {data.hasChildren && <Handle type="source" position={Position.Bottom} id="bottom" isConnectable={true} />}
+    </div>
+  );
+}
+
+// 콘텐츠 타입별 아이콘/색상 매핑 — markdownToFlow.js의 CONTENT_TYPE_LABELS와 대응
+const CONTENT_TYPE_META = {
+  image: { Icon: ImageIcon, color: "text-emerald-600", bg: "bg-emerald-50", border: "border-emerald-200" },
+  video: { Icon: Video, color: "text-rose-600", bg: "bg-rose-50", border: "border-rose-200" },
+  list: { Icon: List, color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-200" },
+  table: { Icon: Table, color: "text-cyan-600", bg: "bg-cyan-50", border: "border-cyan-200" },
+  code: { Icon: Code2, color: "text-violet-600", bg: "bg-violet-50", border: "border-violet-200" },
+  quote: { Icon: Quote, color: "text-slate-600", bg: "bg-slate-50", border: "border-slate-200" },
+  text: { Icon: FileText, color: "text-blue-600", bg: "bg-blue-50", border: "border-blue-200" },
+};
+
+/**
+ * 콘텐츠 노드 컴포넌트 — heading 하위의 본문/이미지/리스트/표/코드/인용/동영상 블록.
+ * 타입별 아이콘 + 라벨 배지 + 미리보기 텍스트를 표시.
+ * 노드 본문에는 전체 내용이 아닌 일부만 표시하고, 클릭 시 onNodeClick으로 원문 페이지로 이동.
+ * 이미지는 <img> 썸네일, 동영상은 <video preload="metadata"> 첫 프레임을 썸네일로 표시 (iframe 불가 대응).
+ */
+function ContentNode({ data, selected }) {
+  const meta = CONTENT_TYPE_META[data.contentType] || CONTENT_TYPE_META.text;
+  const { Icon } = meta;
+
+  // 이미지/동영상 콘텐츠에서 URL 추출 — 썸네일 표시용
+  const mediaUrl = (() => {
+    if (data.contentType !== "image" && data.contentType !== "video") return null;
+    const firstToken = data.content?.[0];
+    if (!firstToken) return null;
+    if (data.contentType === "image") {
+      const imgToken = (firstToken.tokens || []).find(t => t.type === "image");
+      return imgToken?.href || null;
+    }
+    // video — html 토큰에서 src 속성 추출, 또는 paragraph 텍스트에서 URL 추출
+    const htmlText = firstToken.text || "";
+    const match = htmlText.match(/src="([^"]+)"/);
+    if (match) return match[1];
+    // paragraph에 비디오 URL이 있는 경우
+    const urlMatch = (firstToken.text || "").match(/(https?:\/\/[^\s)]+\.(mp4|webm|mov|avi|mkv|m4v)(\?[^\s)]*)?)/i);
+    return urlMatch?.[1] || null;
+  })();
+
+  // YouTube 링크인 경우 썸네일 URL 추출 — iframe 없이 썸네일 이미지만 표시
+  const youtubeThumbUrl = (() => {
+    if (!mediaUrl) return null;
+    const ytMatch = mediaUrl.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]{11})/);
+    if (ytMatch) return `https://img.youtube.com/vi/${ytMatch[1]}/hqdefault.jpg`;
+    return null;
+  })();
+
+  const isDirectVideo = data.contentType === "video" && mediaUrl && !youtubeThumbUrl;
+
+  return (
+    <div
+      className={`rounded-lg border-2 shadow-sm px-4 py-3 transition-all cursor-pointer min-h-[80px] ${meta.bg} ${
+        selected ? `${meta.border} shadow-md ring-2 ring-primary/20` : meta.border
+      }`}
+      style={{ width: "100%" }}
+    >
+      {data.hasParent && <Handle type="target" position={Position.Top} id="top" isConnectable={true} />}
+      {/* 들어오는 next 엣지: 항상 왼쪽 */}
+      {data.hasPrev && <Handle type="target" position={Position.Left} id="left" isConnectable={true} />}
+      <div className="flex items-center gap-2 mb-2">
+        <Icon size={18} className={meta.color} />
+        <span className={`text-xs font-bold uppercase tracking-wide ${meta.color}`}>
+          {data.contentTypeLabel}
+        </span>
+      </div>
+      {/* 미리보기 텍스트 — 전체가 아닌 일부만 표시 */}
+      <p className="text-sm text-on-surface line-clamp-3 break-words">
+        {data.label}
+      </p>
+      {/* 이미지 썸네일 — <img> 인라인 미리보기 */}
+      {data.contentType === "image" && mediaUrl && (
+        <a
+          href={mediaUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 block relative"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <img
+            src={mediaUrl}
+            alt={data.label}
+            className="w-full h-32 object-cover rounded border border-outline-variant"
+            loading="lazy"
+            onError={(e) => { e.target.style.display = "none"; }}
+          />
+        </a>
+      )}
+      {/* 동영상 썸네일 — YouTube 썸네일 이미지 (iframe 불가 대응) */}
+      {data.contentType === "video" && youtubeThumbUrl && (
+        <a
+          href={mediaUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 block relative"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <img
+            src={youtubeThumbUrl}
+            alt={data.label}
+            className="w-full h-32 object-cover rounded border border-outline-variant"
+            loading="lazy"
+            onError={(e) => { e.target.style.display = "none"; }}
+          />
+          {/* 재생 버튼 오버레이 */}
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="bg-black/60 rounded-full p-2">
+              <Video size={20} className="text-white" />
+            </div>
+          </div>
+        </a>
+      )}
+      {/* 동영상 썸네일 — 직접 비디오 파일은 <video preload="metadata">로 첫 프레임 표시 */}
+      {isDirectVideo && (
+        <a
+          href={mediaUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 block relative"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <video
+            src={mediaUrl}
+            preload="metadata"
+            muted
+            className="w-full h-32 object-cover rounded border border-outline-variant"
+            onError={(e) => { e.target.style.display = "none"; }}
+          />
+          {/* 재생 버튼 오버레이 */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="bg-black/60 rounded-full p-2">
+              <Video size={20} className="text-white" />
+            </div>
+          </div>
+        </a>
+      )}
+      {/* 동영상 URL만 있고 썸네일을 가져올 수 없는 경우 — 링크 버튼 */}
+      {data.contentType === "video" && mediaUrl && !youtubeThumbUrl && !isDirectVideo && (
+        <a
+          href={mediaUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-flex items-center gap-1 text-sm text-rose-600 hover:underline"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Video size={12} />
+          동영상 보기
+        </a>
+      )}
+      {data.hasNext && <Handle type="source" position={Position.Right} id="right" isConnectable={true} />}
+      {data.hasChildren && <Handle type="source" position={Position.Bottom} id="bottom" isConnectable={true} />}
     </div>
   );
 }
@@ -147,14 +316,61 @@ function NoteNode({ data, selected, id }) {
   );
 }
 
-const nodeTypes = { headingNode: HeadingNode, noteNode: NoteNode };
+/**
+ * 파일 구분 노드 컴포넌트 — 다중 파일 플로우에서 파일 경계를 표시.
+ * 파일 아이콘 + 파일명을 크게 표시하며, 클릭 시 해당 파일로 이동.
+ */
+function FileNode({ data, selected }) {
+  return (
+    <div
+      className={`rounded-lg border-2 shadow-sm px-5 py-4 transition-all min-h-[80px] bg-surface-container-high ${
+        selected ? "border-primary shadow-md ring-2 ring-primary/20" : "border-primary-variant"
+      }`}
+      style={{ width: "100%" }}
+    >
+      {data.hasPrev && <Handle type="target" position={Position.Left} id="left" isConnectable={true} />}
+      <div className="flex items-center gap-2 mb-1">
+        <File size={20} className="text-primary" />
+        <span className="text-xs font-bold uppercase tracking-wide text-primary">
+          FILE
+        </span>
+      </div>
+      <div className="font-semibold text-base text-on-surface line-clamp-2 break-words">
+        {data.label}
+      </div>
+      {data.hasNext && <Handle type="source" position={Position.Right} id="right" isConnectable={true} />}
+      {data.hasChildren && <Handle type="source" position={Position.Bottom} id="bottom" isConnectable={true} />}
+    </div>
+  );
+}
+
+const nodeTypes = { headingNode: HeadingNode, contentNode: ContentNode, fileNode: FileNode, noteNode: NoteNode };
 
 /* ============================================================
  * 커스텀 엣지 컴포넌트
  * ========================================================== */
 
 /**
- * dependency 엣지 — 실선 + 호버 시 reason 툴팁.
+ * 트리 엣지 — 실선 (부모-자식 heading 관계 + top-level 페이지 순서 next 엣지).
+ * BaseEdge + getSmoothStepPath로 직각 패스 렌더링.
+ */
+function TreeEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style, markerEnd, selected }) {
+  const [edgePath] = getSmoothStepPath({
+    sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition,
+    borderRadius: 8,
+  });
+  return (
+    <BaseEdge
+      id={id}
+      path={edgePath}
+      style={{ ...style, strokeWidth: selected ? 3 : 2, stroke: selected ? "#6366f1" : (style?.stroke || "#b0b0b0") }}
+      markerEnd={markerEnd}
+    />
+  );
+}
+
+/**
+ * 트리 엣지 — 실선 + 호버 시 reason 툴팁.
  * LLM이 생성한 논리적 트리 부모-자식 관계를 표현.
  * EdgeLabelRenderer 포털로 SVG 위에 HTML 툴팁을 별도 레이어에 렌더링.
  */
@@ -255,7 +471,7 @@ function CustomEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, ta
   );
 }
 
-const edgeTypes = { dependency: DependencyEdge, custom: CustomEdge };
+const edgeTypes = { hierarchy: TreeEdge, next: TreeEdge, dependency: DependencyEdge, custom: CustomEdge };
 
 /* ============================================================
  * 툴바 컴포넌트 (Panel 오버레이)
@@ -334,13 +550,93 @@ function FlowCanvas({ rawNodes, rawEdges, onNodeClick, dependencyEdges = [], job
   const [loading, setLoading] = useState(true);
   const bgVariant = "lines";
 
+  // [Flow: 노드 위치/크기 영속화 — localStorage에 저장하여 새로고침 후에도 드래그 위치 유지]
+  // 헤딩 노드 ID가 heading-{index}로 결정론적이므로 새로고침 후에도 동일 ID로 매칭 가능
+  const layoutStorageKey = jobId ? `flow-node-layout-${jobId}` : null;
+  const saveLayoutTimerRef = useRef(null);
+  const nodesRef = useRef(nodes);
+  useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+
   const reactFlow = useReactFlow();
   const { fitView, addNodes, deleteElements, screenToFlowPosition } = reactFlow;
   const noteIdCounter = useRef(0);
 
+  // [Flow: 헤딩 노드 위치를 localStorage에서 복원 — 레이아웃 후 저장된 위치로 override, 크기는 계산값 유지]
+  const restoreSavedLayout = useCallback((layoutedNodes) => {
+    if (!layoutStorageKey) return layoutedNodes;
+    try {
+      const raw = localStorage.getItem(layoutStorageKey);
+      if (!raw) return layoutedNodes;
+      const savedMap = JSON.parse(raw); // { [nodeId]: { x, y } }
+      return layoutedNodes.map(node => {
+        const saved = savedMap[node.id];
+        if (!saved) return node;
+        return {
+          ...node,
+          position: { x: saved.x ?? node.position.x, y: saved.y ?? node.position.y },
+        };
+      });
+    } catch { return layoutedNodes; }
+  }, [layoutStorageKey]);
+
+  // [Flow: 헤딩 노드 위치를 localStorage에 저장 — debounced (500ms), 크기는 저장하지 않음]
+  const saveNodeLayout = useCallback((nodesToSave) => {
+    if (!layoutStorageKey) return;
+    if (saveLayoutTimerRef.current) clearTimeout(saveLayoutTimerRef.current);
+    saveLayoutTimerRef.current = setTimeout(() => {
+      // headingNode 타입만 저장 (noteNode는 useFlowDrawing에서 별도 관리)
+      const layoutMap = {};
+      for (const n of nodesToSave) {
+        if (n.type === "headingNode") {
+          layoutMap[n.id] = { x: n.position.x, y: n.position.y };
+        }
+      }
+      try { localStorage.setItem(layoutStorageKey, JSON.stringify(layoutMap)); } catch { /* quota 무시 */ }
+    }, 500);
+  }, [layoutStorageKey]);
+
+  // [Flow: 노드 드래그 종료 시 위치 저장]
+  const onNodeDragStop = useCallback(() => {
+    saveNodeLayout(nodesRef.current);
+  }, [saveNodeLayout]);
+
   // [Flow: 드로잉/주석 상태 관리 — perfect-freehand 기반 곡선, 도형, 텍스트, 지우개]
   const drawing = useFlowDrawing(jobId, screenToFlowPosition);
   const isDrawingMode = drawing.tool !== "select";
+
+  // [Flow: 스페이스바 누르고 있는 동안 pan 모드 강제 활성화]
+  // 노드 인접/선택 상태에서도 스페이스바로 이동 커서(grab)가 되도록 한다.
+  // 단, input/textarea/contenteditable에 포커스가 있으면 무시한다.
+  const [isSpacePanning, setIsSpacePanning] = useState(false);
+
+  useEffect(() => {
+    const isEditableTarget = (target) => {
+      if (!target) return false;
+      const tag = target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      if (target.isContentEditable) return true;
+      return false;
+    };
+
+    const handleKeyDown = (e) => {
+      if (e.code !== "Space" && e.key !== " ") return;
+      if (isEditableTarget(e.target)) return;
+      e.preventDefault();
+      setIsSpacePanning(true);
+    };
+
+    const handleKeyUp = (e) => {
+      if (e.code !== "Space" && e.key !== " ") return;
+      setIsSpacePanning(false);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, []);
 
   // [Flow: drawingApiRef에 updateFromAgent 노출 — 에이전트 도구 결과로 로컬 상태 갱신]
   useEffect(() => {
@@ -408,7 +704,7 @@ function FlowCanvas({ rawNodes, rawEdges, onNodeClick, dependencyEdges = [], job
     });
   }, [drawing.customEdges, setEdges]);
 
-  // Step 1+2: rawNodes/rawEdges를 커스텀 레이아웃으로 배치
+  // Step 1+2: rawNodes/rawEdges에 커스텀 레이아웃 적용 + 저장된 위치 복원 + note/custom 엣지 유지
   useEffect(() => {
     if (!rawNodes.length) {
       setNodes([]);
@@ -417,19 +713,37 @@ function FlowCanvas({ rawNodes, rawEdges, onNodeClick, dependencyEdges = [], job
       return;
     }
     setLoading(true);
-    const layoutedNodes = calculateFlowLayout(rawNodes);
+    const layoutedNodes = calculateFlowLayout(rawNodes, rawEdges);
+    // localStorage에서 저장된 위치로 override (새로고침 후에도 드래그 위치 유지)
+    const restoredNodes = restoreSavedLayout(layoutedNodes);
     setNodes(prev => {
       const noteNodes = prev?.filter(n => n.type === "noteNode") || [];
-      return [...layoutedNodes, ...noteNodes];
+      return [...restoredNodes, ...noteNodes];
     });
+    // 파싱 계층/순서 엣지 + LLM 트리 에지(dependency) + 기존 custom 엣지 통합
     const dependencyFlowEdges = dependencyEdges.map(e => ({ ...e, type: "dependency", updatable: true }));
     setEdges(prev => {
       const customEdges = prev?.filter(e => e.type === "custom") || [];
-      return [...rawEdges, ...dependencyFlowEdges, ...customEdges];
+      const allEdges = [
+        ...rawEdges.map(e => ({ ...e, updatable: e.updatable ?? true })),
+        ...dependencyFlowEdges,
+        ...customEdges,
+      ];
+      return allEdges;
     });
     setLoading(false);
     setTimeout(() => fitView({ padding: 0.2, duration: 500 }), 100);
-  }, [rawNodes, rawEdges, dependencyEdges, fitView, setNodes, setEdges]);
+  }, [rawNodes, rawEdges, dependencyEdges, restoreSavedLayout, fitView, setNodes, setEdges]);
+
+  // [Flow: onNodesChange 래핑 — NodeResizer의 dimensions 변경 시 저장 트리거]
+  const handleNodesChange = useCallback((changes) => {
+    onNodesChange(changes);
+    // dimensions 변경(리사이즈)이 포함된 경우 저장
+    if (changes.some(c => c.type === "dimensions" && c.resizing === false)) {
+      // setNodes 후 최신 nodes를 가져오기 위해 ref 사용 + 약간 지연
+      setTimeout(() => saveNodeLayout(nodesRef.current), 0);
+    }
+  }, [onNodesChange, saveNodeLayout]);
 
   // 선택된 노드/엣지 삭제
   const handleDeleteSelected = useCallback(() => {
@@ -457,23 +771,19 @@ function FlowCanvas({ rawNodes, rawEdges, onNodeClick, dependencyEdges = [], job
     setEdges(els => reconnectEdge(oldEdge, newConnection, els));
   }, [setEdges]);
 
-  // 레이아웃 재배치 — 커스텀 레이아웃 재계산
+  // 레이아웃 재배치 — 커스텀 레이아웃 재계산 (사용자가 드래그한 위치 리셋 + 저장된 위치도 클리어)
   const handleRelayout = useCallback(() => {
     if (!rawNodes.length) return;
     setLoading(true);
-    const layoutedNodes = calculateFlowLayout(rawNodes);
-    setNodes(prev => {
-      const noteNodes = prev?.filter(n => n.type === "noteNode") || [];
-      return [...layoutedNodes, ...noteNodes];
-    });
-    const dependencyFlowEdges = dependencyEdges.map(e => ({ ...e, type: "dependency", updatable: true }));
-    setEdges(prev => {
-      const customEdges = prev?.filter(e => e.type === "custom") || [];
-      return [...rawEdges, ...dependencyFlowEdges, ...customEdges];
-    });
+    // 저장된 위치 삭제 — 재배치 후에는 레이아웃 결과를 새 기준으로 사용
+    if (layoutStorageKey) { try { localStorage.removeItem(layoutStorageKey); } catch { /* 무시 */ } }
+    // 현재 사용자 추가 노트 노드는 유지
+    const noteNodes = nodes.filter(n => n.type === "noteNode");
+    const layoutedNodes = calculateFlowLayout(rawNodes, rawEdges);
+    setNodes([...layoutedNodes, ...noteNodes]);
     setLoading(false);
     setTimeout(() => fitView({ padding: 0.2, duration: 500 }), 100);
-  }, [rawNodes, rawEdges, dependencyEdges, setNodes, setEdges, fitView]);
+  }, [rawNodes, rawEdges, nodes, setNodes, fitView, layoutStorageKey]);
 
   // 전체 보기
   const handleFitView = useCallback(() => {
@@ -516,6 +826,16 @@ function FlowCanvas({ rawNodes, rawEdges, onNodeClick, dependencyEdges = [], job
             markerUnits="strokeWidth">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="#b0b0b0" />
           </marker>
+          <marker
+            id="arrow-next"
+            markerWidth="10"
+            markerHeight="10"
+            refX="9"
+            refY="5"
+            orient="auto-start-reverse"
+            markerUnits="strokeWidth">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#6366f1" />
+          </marker>
         </defs>
       </svg>
       <ReactFlow
@@ -523,16 +843,19 @@ function FlowCanvas({ rawNodes, rawEdges, onNodeClick, dependencyEdges = [], job
       edges={edges}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
-      onNodesChange={onNodesChange}
+      onNodesChange={handleNodesChange}
       onEdgesChange={onEdgesChange}
       onConnect={onConnect}
       onReconnect={onReconnect}
       onNodeClick={(_, node) => onNodeClick?.(node)}
+      onNodeDragStop={onNodeDragStop}
+      fitView
       proOptions={{ hideAttribution: true }}
       defaultEdgeOptions={{ type: "custom" }}
-      nodesDraggable={!isDrawingMode}
-      panOnDrag={!isDrawingMode}
-      selectionOnDrag={!isDrawingMode}
+      nodesDraggable={!isDrawingMode && !isSpacePanning}
+      panOnDrag={!isDrawingMode || isSpacePanning}
+      selectionOnDrag={!isDrawingMode && !isSpacePanning}
+      style={{ cursor: isSpacePanning ? "grab" : undefined }}
       data-oid="flow-canvas">
       <Background variant={bgVariantEnum} gap={16} size={1} />
       <Controls position="bottom-left" className="!flex" />
@@ -593,18 +916,25 @@ function FlowCanvas({ rawNodes, rawEdges, onNodeClick, dependencyEdges = [], job
  * ReactFlowProvider로 감싸서 내부 훅(useReactFlow 등) 사용 가능하게 함.
  *
  * @param {Object} props
- * @param {string} props.markdown - 시각화할 마크다운 문자열
+ * @param {string} [props.markdown] - 시각화할 마크다운 문자열 (단일 파일)
+ * @param {Array<{ filename: string, markdown: string }>} [props.files] - 다중 파일 마크다운 배열 (files가 있으면 markdown보다 우선)
  * @param {Function} [props.onNodeClick] - 노드 클릭 콜백 (node) => void
  * @param {Array} [props.dependencyEdges] - AI 의존성 에지 배열 [{ source, target, data: { reason } }]
  * @param {string} [props.filename] - 제목 fallback용 파일명
  * @returns {JSX.Element} 플로우 뷰 컴포넌트
  */
-const FlowViewer = forwardRef(function FlowViewer({ markdown, onNodeClick, dependencyEdges = [], jobId, filename }, ref) {
+const FlowViewer = forwardRef(function FlowViewer({ markdown, files, onNodeClick, dependencyEdges = [], jobId, filename }, ref) {
   const { t } = useTranslation();
   const drawingApiRef = useRef(null);
 
   // [Flow: 마크다운에서 제목/노드/에지 추출 후 FlowCanvas에 전달]
-  const rawFlowData = useMemo(() => parseMarkdownToFlow(markdown || ""), [markdown]);
+  // files prop이 있으면 다중 파일 파싱, 없으면 단일 markdown 파싱
+  const rawFlowData = useMemo(() => {
+    if (files && files.length > 0) {
+      return parseMultiFileMarkdownToFlow(files);
+    }
+    return parseMarkdownToFlow(markdown || "");
+  }, [markdown, files]);
   const displayTitle = rawFlowData.title || filename || t("page:result.flowView") || jobId;
 
   // [Flow: useImperativeHandle로 updateFromAgent 메서드를 외부에 노출]

@@ -143,6 +143,11 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
 
   const pollRef = useRef(null);
   const pollStartRef = useRef(0);
+  // [Flow: Step 1 (Chrono의 onItemSelected는 초기 렌더링/데이터 변경 시에도 호출됨)
+  //       -> Step 2 (사용자 클릭/키보드 이벤트 발생 시에만 이 flag를 true로 설정)
+  //       -> Step 3 (handleItemSelected에서 true인 경우에만 preview를 열고 즉시 false로 초기화)]
+  // 사용자가 실제로 타임라인 카드를 클릭하거나 키보드로 선택한 경우에만 preview를 열도록 한다.
+  const isUserClickRef = useRef(false);
 
   /**
    * [Flow: Step 1 (job.ediscovery_context 변경 감지) -> Step 2 (분석 컨텍스트 기본값 동기화)]
@@ -284,6 +289,10 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
    */
   const handleItemSelected = useCallback(
     (selected) => {
+      // [Flow: Step 1 (사용자 클릭/키보드로 유발된 이벤트인지 확인) -> Step 2 (아니면 무시)
+      //       -> Step 3 (맞으면 preview + scroll 콜백 호출 후 flag 초기화)]
+      if (!isUserClickRef.current) return;
+      isUserClickRef.current = false;
       const node = chronoItems[selected.index]?.node;
       if (!node) return;
       onPreview?.(node);
@@ -294,8 +303,38 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
 
   const isEmpty = !loading && chronoItems.length === 0 && !error && job?.ediscovery_status === "done";
 
+  // [Flow: Step 1 (PointerDown/KeyDown 이벤트 감지) -> Step 2 (카드/row/포인트 영역인지 확인)
+  //       -> Step 3 (맞으면 isUserClickRef를 true로 설정해 Chrono onItemSelected 핸들러가 preview를 열도록 한다)]
+  const handlePointerDown = useCallback((e) => {
+    const target = e.target.closest(
+      '[data-testid="timeline-card-content"], [data-testid="vertical-item-row"], [data-testid="timeline-circle"]'
+    );
+    if (target) isUserClickRef.current = true;
+  }, []);
+
+  // [Flow: Step 1 (Enter/Space 키 감지) -> Step 2 (타임라인 카드/row인지 확인)
+  //       -> Step 3 (카드 click()을 트리거하고 isUserClickRef를 true로 설정)]
+  const handleKeyDownCapture = useCallback((e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const card = e.target.closest(
+      '[data-testid="timeline-card-content"], [data-testid="vertical-item-row"]'
+    );
+    if (!card) return;
+    const content = card.querySelector('[data-testid="timeline-card-content"]') || card;
+    if (content && typeof content.click === "function") {
+      e.preventDefault();
+      isUserClickRef.current = true;
+      content.click();
+    }
+  }, []);
+
   return (
-    <div className="h-full w-full flex flex-col relative" data-oid="ediscovery-timeline-panel">
+    <div
+      className="h-full w-full flex flex-col relative"
+      data-oid="ediscovery-timeline-panel"
+      onPointerDown={handlePointerDown}
+      onKeyDownCapture={handleKeyDownCapture}
+    >
       <div className="flex-1 min-h-0">
         {chronoItems.length > 0 ? (
           <Chrono
@@ -303,7 +342,6 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
             mode="alternating"
             layout={{
               cardWidth: 480,
-              cardHeight: "auto",
               pointSize: 16,
               lineWidth: 2,
               responsive: { enabled: true, breakpoint: 768 },
@@ -326,7 +364,7 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
               keyboardNavigation: true,
               pointClick: true,
               autoScroll: true,
-              focusOnLoad: true,
+              focusOnLoad: false,
             }}
             media={{
               height: 200,

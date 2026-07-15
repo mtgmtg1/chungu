@@ -9,6 +9,7 @@ from typing import Callable
 
 from . import ocr_client, paddleocr_client
 from .paddleocr_fallback import fallback_controller
+from .pdf_optimizer import optimize_pdf
 from .prompts import build_vision_prompt
 from ..config import settings
 
@@ -50,6 +51,9 @@ def run_vision(
     """
     work = Path(work_dir)
     img_dir = work / "img"
+
+    # Step 0: PDF 무손실 압축 (이미지 품질 유지, 내부 스트림만 재압축)
+    pdf_path = optimize_pdf(pdf_path, output_dir=work)
 
     # Step 1: 총 페이지 수 미리 계산
     import fitz

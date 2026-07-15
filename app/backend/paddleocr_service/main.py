@@ -1115,10 +1115,23 @@ async def api_convert_pdf(file: UploadFile = File(...)) -> AsyncConvertResponse:
     pdf_path.write_bytes(await file.read())
 
     # 페이지 수 검증 (AI Studio 기본 제한 10페이지)
+    # 클라이언트(paddleocr_client)에서 이미 PDF 최적화를 수행하므로 서비스 측에서는 생략한다.
+    # 외부 API 클라이언트가 직접 호출하는 경우에 대비해 파일명에 _optimized가 없고 1MB 초과 시만 수행.
     try:
         doc = fitz.open(str(pdf_path))
         page_count = len(doc)
-        doc.close()
+        needs_optimize = (
+            "_optimized" not in pdf_path.stem
+            and page_count > 0
+            and pdf_path.stat().st_size > 1024 * 1024
+        )
+        if needs_optimize:
+            doc.save(str(pdf_path) + ".opt", deflate=True, garbage=4)
+            doc.close()
+            import shutil
+            shutil.move(str(pdf_path) + ".opt", str(pdf_path))
+        else:
+            doc.close()
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to read PDF: {e}")
 

@@ -21,6 +21,7 @@ from .. import settings_store
 from ..config import settings
 from ..core import points_service, supabase_client
 from ..core.ocr_client import call_text
+from ..core.pdf_optimizer import optimize_pdf_bytes
 from ..db.models import Job, User
 from ..db.session import SessionLocal
 
@@ -122,10 +123,10 @@ def _download_pdf_bytes(job: Job) -> bytes | None:
         if not storage_path:
             continue
         try:
-            return client.storage.from_("pdfs").download(storage_path).read()
+            return optimize_pdf_bytes(client.storage.from_("pdfs").download(storage_path).read())
         except Exception:
             try:
-                return supabase_client.download_pdf(storage_path).read()
+                return optimize_pdf_bytes(supabase_client.download_pdf(storage_path).read())
             except Exception as e:
                 logger.warning(f"[ediscovery] PDF 다운로드 실패 path={storage_path}: {e}")
     return None

@@ -11,6 +11,7 @@ import requests
 
 from ..config import settings
 from .image_deskew import deskew_image
+from .pdf_optimizer import optimize_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -327,6 +328,9 @@ def convert_pdf_with_layout(
 
     base_url = _get_service_url()
     pdf_url = f"{base_url}/api/convert/pdf"
+
+    # PDF 무손실 압축 (업로드 크기 감소)
+    pdf_path = optimize_pdf(pdf_path)
     pdf_size = pdf_path.stat().st_size / 1024 / 1024
     logger.info(f"[paddleocr-pdf] {pdf_path.name} 직접 변환 시작 ({pdf_size:.1f}MB)")
 

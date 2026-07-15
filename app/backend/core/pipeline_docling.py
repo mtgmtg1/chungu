@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import docling_client, hwp_converter, ocr_client
+from .pdf_optimizer import optimize_pdf
 from .prompts import build_docling_refinement_prompt
 from ..config import settings
 
@@ -61,6 +62,10 @@ def run_docling(
 
     if on_progress:
         on_progress(0, 100)
+
+    # PDF 무손실 압축 (PDF 파일인 경우만, 이미지 품질 유지)
+    if Path(file_path).suffix.lower() == ".pdf":
+        file_path = optimize_pdf(file_path, output_dir=work)
 
     try:
         markdown, image_paths = docling_client.convert_file(

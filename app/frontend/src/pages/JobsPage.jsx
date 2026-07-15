@@ -18,6 +18,7 @@ import SidebarLayout from "../components/SidebarLayout.jsx";
 import { SkeletonTable } from "../components/Skeleton.jsx";
 import { AnimatedRow } from "../components/AnimatedList.jsx";
 import { getDisplayProgress } from "../utils/progress.js";
+import JobConfirmModal from "../components/JobConfirmModal.jsx";
 
 function DownloadMenu({ job, fileTypeLabel, download, convertAndDownload, converting, xlsxBasicPages, xlsxAdvancedPages, onMenuItemClick, children }) {
   // [Flow: Step 1 (버튼 위치 추적) -> Step 2 (호버 상태) -> Step 3 (document.body에 Portal로 메뉴 렌더링) -> Step 4 (위치 계산)]
@@ -168,6 +169,7 @@ export default function JobsPage() {
   const [deleting, setDeleting] = useState({});
   const [jobActionModal, setJobActionModal] = useState({ open: false, job: null });
   const [jobActionLoading, setJobActionLoading] = useState({});
+  const [confirmModalJobId, setConfirmModalJobId] = useState(null);
   const [now, setNow] = useState(Date.now());
   const pollRef = useRef(null);
 
@@ -342,6 +344,17 @@ export default function JobsPage() {
     } finally {
       setJobActionLoading((prev) => ({ ...prev, [job.job_id]: false }));
     }
+  }
+
+  // [Flow: pending 작업 클릭 -> 변환 비용 확인 모달 오픈 -> 승인 시 목록 새로고침]
+  function openConfirmModal(jobId) {
+    setConfirmModalJobId(jobId);
+  }
+  function closeConfirmModal() {
+    setConfirmModalJobId(null);
+  }
+  async function handleConfirmed() {
+    await load();
   }
 
   // 구독제: Excel 생성 시 실제로 차감되는 것은 달러가 아니라 구독 월간 페이지 한도(기본/프리미엄)이다.
@@ -730,8 +743,10 @@ export default function JobsPage() {
                       </td>
                       <td className="px-gutter py-4" data-oid="ge54lqm">
                         <div
-                        className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border border-inherit ${chip.bg} ${chip.text}`}
-                        data-oid="1uiycel">
+                        className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border border-inherit ${chip.bg} ${chip.text} ${j.status === "pending" ? "cursor-pointer hover:ring-2 hover:ring-primary/30 transition-all" : ""}`}
+                        data-oid="1uiycel"
+                        onClick={j.status === "pending" ? () => openConfirmModal(j.job_id) : undefined}
+                        title={j.status === "pending" ? t("page:jobs.clickToConfirm") : undefined}>
 
                           <span
                           className={`material-symbols-outlined text-[16px] ${j.status === "ocr" || j.status === "merging" || j.status === "queued" || j.status === "retrying" ? "animate-spin" : ""}`}
@@ -817,6 +832,22 @@ export default function JobsPage() {
                           <RefreshCw size={14} data-oid="job-list-action-icon" />
                           {t("page:jobs.retryOrRefund")}
                         </button> :
+
+                        j.status === "pending" ?
+                        <>
+                          <button
+                            onClick={() => openConfirmModal(j.job_id)}
+                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary text-on-primary border border-primary hover:bg-primary-container transition-colors text-sm font-medium"
+                            data-oid="job-list-confirm-btn">
+                            {t("page:jobs.startConversion")}
+                          </button>
+                          <button
+                            onClick={() => openDeleteModal(j)}
+                            className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
+                            data-oid="ida:p:-">
+                            <Trash2 size={18} data-oid="t.hqgua" />
+                          </button>
+                        </> :
 
                         <button
                           onClick={() => openDeleteModal(j)}
@@ -927,6 +958,23 @@ export default function JobsPage() {
                           <RefreshCw size={14} data-oid="m-job-action-icon" />
                           {t("page:jobs.retryOrRefund")}
                         </button>
+                      ) : j.status === "pending" ? (
+                        <>
+                          <button
+                            onClick={() => openConfirmModal(j.job_id)}
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-primary text-on-primary border border-primary hover:bg-primary-container transition-colors text-xs font-medium"
+                            data-oid="m-confirm-btn"
+                          >
+                            {t("page:jobs.startConversion")}
+                          </button>
+                          <button
+                            onClick={() => openDeleteModal(j)}
+                            className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
+                            data-oid="m-delete"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </>
                       ) : (
                         <button
                           onClick={() => openDeleteModal(j)}
@@ -939,7 +987,12 @@ export default function JobsPage() {
                     </div>
                   </div>
                   <div className="mt-3 flex flex-col gap-2">
-                    <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border border-inherit ${chip.bg} ${chip.text} w-fit`} data-oid="m-chip">
+                    <div
+                      className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border border-inherit ${chip.bg} ${chip.text} w-fit ${j.status === "pending" ? "cursor-pointer hover:ring-2 hover:ring-primary/30 transition-all" : ""}`}
+                      data-oid="m-chip"
+                      onClick={j.status === "pending" ? () => openConfirmModal(j.job_id) : undefined}
+                      title={j.status === "pending" ? t("page:jobs.clickToConfirm") : undefined}
+                    >
                       <span className={`material-symbols-outlined text-[16px] ${j.status === "ocr" || j.status === "merging" || j.status === "queued" || j.status === "retrying" ? "animate-spin" : ""}`}>{chip.icon}</span>
                       <span className="font-label-sm text-label-sm font-semibold">{statusLabel(j.status)}</span>
                     </div>
@@ -1145,6 +1198,15 @@ export default function JobsPage() {
         </div>
       </div>
       }
+
+      {/* 변환 비용 확인 모달 — pending 작업 클릭 시 오픈 */}
+      {confirmModalJobId && (
+        <JobConfirmModal
+          jobId={confirmModalJobId}
+          onClose={closeConfirmModal}
+          onConfirmed={handleConfirmed}
+        />
+      )}
     </SidebarLayout>);
 
 }

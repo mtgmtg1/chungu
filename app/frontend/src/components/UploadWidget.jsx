@@ -29,7 +29,6 @@ export default function UploadWidget({ onComplete, submitLabel, jobId, onProgres
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [doclingRefinement, setDoclingRefinement] = useState(false);
-  const [ediscoveryContext, setEdiscoveryContext] = useState("");
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, percent: 0, fileName: "" });
 
   // [Flow: Step 1 (새 진행률 상태 설정) -> Step 2 (상위 컴포넌트에 동일한 상태 전달)]
@@ -150,7 +149,6 @@ export default function UploadWidget({ onComplete, submitLabel, jobId, onProgres
           original_name: p.original,
           relative_path: p.relative_path,
         })),
-        ediscovery_context: ediscoveryContext.trim(),
       };
 
       if (isAddMode) {
@@ -239,24 +237,7 @@ export default function UploadWidget({ onComplete, submitLabel, jobId, onProgres
         </div>
       </div>
 
-      {/* [Flow: e-Discovery 컨텍스트 입력 — 사용자가 프로젝트 주요/중요 사항을 입력하면 분석 시 LLM 프롬프트에 포함] */}
-      <div className="mt-4 bg-surface-container-lowest border border-outline-variant p-3" data-oid="upload-widget-context">
-        <label htmlFor="ediscovery-context" className="block text-sm font-medium text-on-surface mb-1.5">
-          {t("page:upload.ediscoveryContextLabel")}
-        </label>
-        <p className="text-xs text-on-surface-variant mb-2" data-oid="upload-widget-context-hint">
-          {t("page:upload.ediscoveryContextHint")}
-        </p>
-        <textarea
-          id="ediscovery-context"
-          value={ediscoveryContext}
-          onChange={(e) => setEdiscoveryContext(e.target.value)}
-          placeholder={t("page:upload.ediscoveryContextPlaceholder")}
-          rows={3}
-          className="w-full text-sm text-on-surface bg-surface border border-outline-variant rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
-          data-oid="upload-widget-context-input"
-        />
-      </div>
+      {/* [Flow: e-Discovery 컨텍스트 입력은 업로드 완료 후 변환 비용 확인 팝업(JobConfirmPage)으로 이동] */}
 
       {files.length > 0 && (
         <div className="mt-4 bg-white border border-outline-variant p-3 text-left" data-oid="upload-widget-file-list">

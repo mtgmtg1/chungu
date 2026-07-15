@@ -114,7 +114,9 @@
     "unparsablePages": "{{count}} page(s) could not be parsed (page size exceeds 350mm)",
     "retrying": "Retrying",
     "parseFailed": "Parsing failed",
-    "retryOrRefund": "Retry / Refund"
+    "retryOrRefund": "Retry / Refund",
+    "startConversion": "Start Conversion",
+    "clickToConfirm": "Click to review conversion cost and start"
   },
   "confirm": {
     "title": "Confirm Conversion",
@@ -144,7 +146,9 @@
     "cancel": "Cancel",
     "processing": "Processing…",
     "notFound": "Job not found",
-    "loadError": "Failed to load job information"
+    "loadError": "Failed to load job information",
+    "start": "Start Conversion",
+    "subscriptionPlan": "Subscription Plan"
   },
   "result": {
     "newConversion": "New Conversion",
@@ -783,7 +787,8 @@
     "approvalModeAlwaysDesc": "Automatically approve all tool executions. No approval buttons will be shown.",
     "agentMaxSteps": "Max Agent Steps",
     "agentMaxStepsDesc": "Maximum number of steps the AI agent can run in a single session. Default is 100. Each step consumes 1 credit.",
-    "aiSettingsSaved": "AI agent settings saved"
+    "aiSettingsSaved": "AI agent settings saved",
+    "save": "Save"
   },
   "developer": {
     "title": "Developer Portal",

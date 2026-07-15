@@ -114,7 +114,9 @@
     "unparsablePages": "{{count}}ページを解析できません（用紙サイズ350mm超過）",
     "retrying": "再試行中",
     "parseFailed": "解析失敗",
-    "retryOrRefund": "再試行/返金"
+    "retryOrRefund": "再試行/返金",
+    "startConversion": "変換開始",
+    "clickToConfirm": "クリックして変換コストを確認・開始"
   },
   "confirm": {
     "title": "変換開始の確認",
@@ -144,7 +146,9 @@
     "cancel": "キャンセル",
     "processing": "処理中…",
     "notFound": "ジョブが見つかりません",
-    "loadError": "ジョブ情報を読み込めませんでした"
+    "loadError": "ジョブ情報を読み込めませんでした",
+    "start": "変換開始",
+    "subscriptionPlan": "サブスクリプションプラン"
   },
   "result": {
     "newConversion": "新しい変換",
@@ -784,7 +788,8 @@
     "approvalModeAlwaysDesc": "すべてのツール実行を自動的に承認します。承認ボタンは表示されません。",
     "agentMaxSteps": "エージェント最大ステップ数",
     "agentMaxStepsDesc": "AIエージェントが1回の実行で使用できる最大ステップ数です。デフォルトは100で、ステップごとに1クレジット消費されます。",
-    "aiSettingsSaved": "AIエージェント設定を保存しました"
+    "aiSettingsSaved": "AIエージェント設定を保存しました",
+    "save": "保存"
   },
   "developer": {
     "title": "開発者ポータル",

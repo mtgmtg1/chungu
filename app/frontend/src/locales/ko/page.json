@@ -114,7 +114,9 @@
     "unparsablePages": "{{count}}페이지를 파싱할 수 없습니다 (용지 크기 350mm 초과)",
     "retrying": "재시도 중",
     "parseFailed": "파싱 실패",
-    "retryOrRefund": "재시도/환불"
+    "retryOrRefund": "재시도/환불",
+    "startConversion": "변환 시작",
+    "clickToConfirm": "클릭하여 변환 비용을 확인하고 시작하세요"
   },
   "confirm": {
     "title": "변환 비용 확인",
@@ -144,7 +146,9 @@
     "cancel": "취소",
     "processing": "처리 중…",
     "notFound": "작업을 찾을 수 없습니다",
-    "loadError": "작업 정보를 불러오지 못했습니다"
+    "loadError": "작업 정보를 불러오지 못했습니다",
+    "start": "변환 시작",
+    "subscriptionPlan": "구독 플랜"
   },
   "result": {
     "newConversion": "새 변환",
@@ -1897,7 +1901,8 @@
     "approvalModeAlwaysDesc": "모든 도구 실행을 자동으로 승인합니다. 승인 버튼이 표시되지 않습니다.",
     "agentMaxSteps": "에이전트 최대 step 수",
     "agentMaxStepsDesc": "AI 에이전트가 한 번의 실행에서 사용할 수 있는 최대 step 수입니다. 기본값은 100이며, step당 1크레딧이 소모됩니다.",
-    "aiSettingsSaved": "AI 에이전트 설정을 저장했습니다"
+    "aiSettingsSaved": "AI 에이전트 설정을 저장했습니다",
+    "save": "저장"
   },
   "developer": {
     "title": "개발자 포털",

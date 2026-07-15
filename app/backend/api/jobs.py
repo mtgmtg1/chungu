@@ -994,6 +994,10 @@ def update_job(
         job.columns = _parse_columns(payload["columns"])
     if "prompt" in payload:
         job.prompt = str(payload["prompt"]).strip()
+    # [Flow: e-Discovery 분석 맥락 업데이트 — 비용 확인 팝업에서 입력된 맥락을 저장]
+    if "ediscovery_context" in payload:
+        ediscovery_context = str(payload.get("ediscovery_context", "") or "").strip()
+        job.ediscovery_context = ediscovery_context
 
     # 오디오/비디오가 포함된 작업은 고급 모델로 강제
     has_media = job.media_duration_seconds > 0

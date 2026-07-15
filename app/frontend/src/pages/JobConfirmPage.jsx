@@ -16,6 +16,7 @@ export default function JobConfirmPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [ocrModel, setOcrModel] = useState("premium");
+  const [ediscoveryContext, setEdiscoveryContext] = useState("");
 
   useEffect(() => {
     if (!jobId) return;
@@ -27,6 +28,8 @@ export default function JobConfirmPage() {
       const jobData = await api.getJob(jobId);
       setJob(jobData);
       setOcrModel(jobData.ocr_model || "premium");
+      // [Flow: 저장된 e-Discovery 분석 맥락 복원 — 업로드 시 입력한 값이 있으면 미리 채움]
+      setEdiscoveryContext(jobData.ediscovery_context || "");
     } catch (e) {
       setError(e.message || t("page:confirm.loadError"));
     } finally {
@@ -38,7 +41,7 @@ export default function JobConfirmPage() {
     setSubmitting(true);
     setError("");
     try {
-      await api.updateJob(jobId, { ocr_model: ocrModel });
+      await api.updateJob(jobId, { ocr_model: ocrModel, ediscovery_context: ediscoveryContext.trim() });
       await api.confirmJob(jobId);
       nav(`/jobs/${jobId}`);
     } catch (e) {
@@ -236,6 +239,25 @@ export default function JobConfirmPage() {
                 {t("page:confirm.mediaForcesPremium")}
               </p>
             )}
+          </div>
+
+          {/* [Flow: e-Discovery 분석 맥락 입력 — 업로드 완료 후 비용 확인 팝업에서 프로젝트 주요/중요 사항 입력] */}
+          <div className="mb-6 bg-surface-container-lowest border border-outline-variant p-4" data-oid="confirm-ediscovery-context">
+            <label htmlFor="ediscovery-context" className="block text-sm font-medium text-on-surface mb-1.5" data-oid="confirm-ctx-label">
+              {t("page:upload.ediscoveryContextLabel")}
+            </label>
+            <p className="text-xs text-on-surface-variant mb-2" data-oid="confirm-ctx-hint">
+              {t("page:upload.ediscoveryContextHint")}
+            </p>
+            <textarea
+              id="ediscovery-context"
+              value={ediscoveryContext}
+              onChange={(e) => setEdiscoveryContext(e.target.value)}
+              placeholder={t("page:upload.ediscoveryContextPlaceholder")}
+              rows={3}
+              className="w-full text-sm text-on-surface bg-surface border border-outline-variant rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none"
+              data-oid="confirm-ctx-input"
+            />
           </div>
 
           <div className="bg-surface-container-low p-5 space-y-3 mb-6" data-oid="subscription-usage">

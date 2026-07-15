@@ -23,6 +23,20 @@ function SourceIcon({ type }) {
 }
 
 /**
+ * [Flow: Step 1 (파일 객체에서 원시 이름 추출) -> Step 2 (URL 인코딩이 되어 있으면 디코딩)
+ *       -> Step 3 (한글 등 분해 정규형(NFD)을 조합 정규형(NFC)으로 변환) -> Step 4 (표시용 이름 반환)]
+ * 파일 탭이나 미리보기에서 깨져 보일 수 있는 한글 파일명을 안정적으로 렌더링한다.
+ */
+function getDisplayName(file) {
+  const raw = file?.name || file?.storage_path || "file";
+  try {
+    return decodeURIComponent(raw).normalize("NFC");
+  } catch {
+    return raw.normalize("NFC");
+  }
+}
+
+/**
  * [Flow: Step 1 (파일 확장자 확인) -> Step 2 (텍스트 기반 파일이면 fetch로 내용 로드)
  *       -> Step 3 (마크다운은 marked로 렌더링, CSV는 표로 변환, 기타 텍스트는 pre로 표시)
  *       -> Step 4 (바이너리 파일은 다운로드 링크만 표시)]
@@ -32,7 +46,7 @@ function SourceIcon({ type }) {
  */
 function FilePreview({ file }) {
   const { t } = useTranslation();
-  const filename = file.name || file.storage_path || "file";
+  const filename = getDisplayName(file);
   const sizeKb = file.size ? Math.round(file.size / 1024) : null;
   const ext = filename.split(".").pop()?.toLowerCase() || "";
   const [content, setContent] = useState(null);
@@ -188,6 +202,7 @@ function FilePreview({ file }) {
 
 function SingleFilePreview({ file, filename, annotationsJson, pdfViewerRef, onAnnotationChanged }) {
   // [Flow: Step 1 (파일 타입에 따라 콘텐츠 선택) -> Step 2 (항상 동일한 높이 컨테이너로 감싸서 반환)]
+  const displayName = getDisplayName({ name: filename || file?.name, storage_path: file?.storage_path });
   let content = null;
   if (file.type === "pdf") {
     content = <PdfViewer ref={pdfViewerRef} url={file.url} annotationsJson={annotationsJson} onAnnotationChanged={onAnnotationChanged} />;
@@ -198,13 +213,13 @@ function SingleFilePreview({ file, filename, annotationsJson, pdfViewerRef, onAn
       <div className="flex-1 overflow-auto custom-scrollbar p-4 flex items-center justify-center">
         <img
           src={file.url}
-          alt={filename || file.name}
+          alt={displayName}
           className="max-w-full max-h-full object-contain shadow-lg rounded border border-outline-variant bg-white"
         />
       </div>
     );
   } else if (file.type === "audio" || file.type === "video") {
-    content = <MediaPlayer sourceType={file.type} url={file.url} filename={filename || file.name} />;
+    content = <MediaPlayer sourceType={file.type} url={file.url} filename={displayName} />;
   }
   return <div className="flex flex-col h-full w-full min-h-0 overflow-hidden">{content}</div>;
 }
@@ -731,7 +746,7 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
             <button
               onClick={() => setSelectedIndex(idx)}
               className="flex items-center gap-2 text-left flex-1 min-w-0 overflow-hidden"
-              title={f.name}
+              title={getDisplayName(f)}
             >
               {f.status === "processing" ? (
                 <Loader2 size={16} className="text-primary animate-spin flex-shrink-0" />
@@ -741,7 +756,7 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
                 <SourceIcon type={f.type} />
               )}
               <span className="flex flex-col items-start min-w-0 flex-1 overflow-hidden">
-                <span className="truncate min-w-0 w-full">{f.name}</span>
+                <span className="truncate min-w-0 w-full">{getDisplayName(f)}</span>
                 {f.status === "error" && (
                   <span className="text-error text-[10px] leading-none mt-0.5">
                     {t("page:result.annotateFailed")}
@@ -886,7 +901,7 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
         return <ImageList urls={imageUrls} t={t} />;
       }
       if ((sourceType === "audio" || sourceType === "video") && sourceUrl) {
-        return <MediaPlayer sourceType={sourceType} url={sourceUrl} filename={filename} />;
+        return <MediaPlayer sourceType={sourceType} url={sourceUrl} filename={getDisplayName({ name: filename })} />;
       }
 
       return (
@@ -1012,7 +1027,7 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
       return <FilePreview file={selectedFile} />;
     }
 
-    return <SingleFilePreview file={selectedFile} filename={filename || selectedFile.name} annotationsJson={selectedAnnotationsJson} pdfViewerRef={pdfViewerRef} onAnnotationChanged={handleAnnotationChanged} />;
+    return <SingleFilePreview file={selectedFile} filename={getDisplayName({ name: filename || selectedFile.name, storage_path: selectedFile.storage_path })} annotationsJson={selectedAnnotationsJson} pdfViewerRef={pdfViewerRef} onAnnotationChanged={handleAnnotationChanged} />;
   }
 
   // [Flow: Step 1 (원본 파일 목록 패널을 항상 렌더링) -> Step 2 (선택된 파일 미리보기를 우측에 렌더링) — 모바일에서는 세로 방향으로 전환]

@@ -8,6 +8,7 @@ import logging
 import math
 import re as _re
 import tempfile
+import unicodedata
 import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -288,7 +289,7 @@ async def upload_job(
     if is_single_file:
         single_file_type = media_loader.detect_file_type(Path(files[0].filename))
 
-    original_filename = files[0].filename if is_single_file else f"{len(files)}_files.zip"
+    original_filename = _normalize_display_name(files[0].filename if is_single_file else f"{len(files)}_files.zip")
 
     job = Job(
         user_id=uuid.UUID(user.user_id),
@@ -392,7 +393,7 @@ async def upload_job(
                 job.total_files = total_files
                 job.media_duration_seconds = audio_seconds + video_seconds
                 job.extracted_files = [
-                    {"path": str(p.relative_to(tmp_path)), "type": media_loader.detect_file_type(p), "size": p.stat().st_size}
+                    {"path": _normalize_display_name(str(p.relative_to(tmp_path))), "type": media_loader.detect_file_type(p), "size": p.stat().st_size}
                     for p in extracted
                 ]
 
@@ -531,7 +532,7 @@ async def init_job(
         raise HTTPException(status_code=413, detail=f"Total file size exceeds limit (max {max_mb}MB)")
 
     is_single_file = len(files) == 1
-    original_filename = files[0]["name"] if is_single_file else f"{len(files)}_files.zip"
+    original_filename = _normalize_display_name(files[0]["name"] if is_single_file else f"{len(files)}_files.zip")
 
     job = Job(
         user_id=uuid.UUID(user.user_id),
@@ -646,7 +647,7 @@ async def create_job(
                     job.total_files = total_files
                     job.media_duration_seconds = audio_seconds + video_seconds
                     job.extracted_files = [
-                        {"path": str(p.relative_to(tmp_path)), "type": media_loader.detect_file_type(p), "size": p.stat().st_size}
+                        {"path": _normalize_display_name(str(p.relative_to(tmp_path))), "type": media_loader.detect_file_type(p), "size": p.stat().st_size}
                         for p in extracted
                     ]
                     job.pdf_storage_path = storage_path
@@ -675,7 +676,7 @@ async def create_job(
                 job.total_files = total_files
                 job.media_duration_seconds = audio_seconds + video_seconds
                 job.extracted_files = [
-                    {"path": str(p.relative_to(tmp_path)), "type": media_loader.detect_file_type(p), "size": p.stat().st_size}
+                    {"path": _normalize_display_name(str(p.relative_to(tmp_path))), "type": media_loader.detect_file_type(p), "size": p.stat().st_size}
                     for p in multi_extracted
                 ]
 
@@ -913,7 +914,7 @@ async def confirm_add_files(
     if not existing_files and job.pdf_storage_path and job.file_type in ("pdf", "docx", "hwp"):
         existing_markdown = _extract_single_file_markdown(job)
         existing_files = [{
-            "path": job.original_filename or Path(job.pdf_storage_path).name,
+            "path": _normalize_display_name(job.original_filename or Path(job.pdf_storage_path).name),
             "type": job.file_type,
             "size": job.file_size or 0,
             "duration": 0,
@@ -1366,6 +1367,23 @@ def _image_files(job: Job) -> list[tuple[int, dict]]:
     return images
 
 
+def _normalize_display_name(name: str | None) -> str:
+    """표시용 파일명을 Unicode 조합 정규형(NFC)으로 변환한다.
+
+    macOS에서 생성된 압축 파일 등에 포함된 한글 파일명이 분해 정규형(NFD)으로
+    저장되어 있으면 탭에서 자음/모음이 분리되어 보일 수 있다.
+
+    [Flow: Step 1 (None/빈 문자열 처리) -> Step 2 (unicodedata.normalize('NFC'))
+          -> Step 3 (예외 시 원본 반환)]
+    """
+    if not name:
+        return ""
+    try:
+        return unicodedata.normalize("NFC", name)
+    except Exception:
+        return name
+
+
 def _build_source_file_item(info: dict, idx: int, source_kind: str = "original") -> dict | None:
     """단일 파일에 대한 source_files 항목을 생성한다.
 
@@ -1386,7 +1404,7 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
             if not preview_url:
                 return None
             item = {
-                "name": info.get("path", info.get("storage_path", "")),
+                "name": _normalize_display_name(info.get("path", info.get("storage_path", ""))),
                 "type": ftype,
                 "url": preview_url,
                 "storage_path": storage_path,
@@ -1422,7 +1440,7 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
             if not download_url:
                 return None
             return {
-                "name": info.get("path", info.get("storage_path", "")),
+                "name": _normalize_display_name(info.get("path", info.get("storage_path", ""))),
                 "type": "file",
                 "url": download_url,
                 "storage_path": storage_path,
@@ -1437,7 +1455,7 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
         client = supabase_client.create_fresh_service_client()
         url = supabase_client.get_signed_download_url_with_client(client, storage_path, bucket=bucket, expires_in=3600)
         item = {
-            "name": info.get("path", info.get("storage_path", "")),
+            "name": _normalize_display_name(info.get("path", info.get("storage_path", ""))),
             "type": ftype,
             "url": url,
             "storage_path": storage_path,
@@ -1481,7 +1499,7 @@ def _source_files(job: Job) -> list[dict]:
         # 단일 파일 업로드: extracted_files가 없으므로 원본 파일을 직접 표시
         original_item = _build_source_file_item(
             {
-                "path": job.original_filename or Path(job.pdf_storage_path).name,
+                "path": _normalize_display_name(job.original_filename or Path(job.pdf_storage_path).name),
                 "storage_path": job.pdf_storage_path,
                 "type": job.file_type,
             },
@@ -1545,7 +1563,7 @@ def _source_files(job: Job) -> list[dict]:
     annotated_entries = list(job.annotated_pdf_files or [])
     if not annotated_entries and job.annotate_status == "done" and job.result_annotated_pdf_storage_path:
         # 하위 호환: 목록 컬럼 추가 전에 생성된 단일 주석 PDF
-        stem = Path(job.original_filename).stem if job.original_filename else "result"
+        stem = Path(_normalize_display_name(job.original_filename)).stem if job.original_filename else "result"
         annotated_entries = [
             {
                 "index": 1,
@@ -2525,7 +2543,7 @@ def annotate_job(
     )
     if not existing and job.result_annotated_pdf_storage_path and job.annotate_instruction == instruction and job.annotate_mode == mode and job.annotate_comment_mode == comment_mode:
         # 하위 호환: 목록 컬럼 추가 전에 생성된 단일 주석 PDF
-        stem = Path(job.original_filename).stem if job.original_filename else "result"
+        stem = Path(_normalize_display_name(job.original_filename)).stem if job.original_filename else "result"
         existing = {
             "storage_path": job.result_annotated_pdf_storage_path,
             "filename": f"{stem}_annotation1.pdf",
@@ -3271,7 +3289,7 @@ def _save_user_annotations_json(
 
 def _annotation_display_name(job: Job, n: int) -> str:
     """[Flow: Step 1 (원본 파일명 확인) -> Step 2 (확장자 제거) -> Step 3 (주석 순서 접미사 추가)]"""
-    stem = Path(job.original_filename).stem if job.original_filename else "result"
+    stem = Path(_normalize_display_name(job.original_filename)).stem if job.original_filename else "result"
     return f"{stem}_annotation{n}.pdf"
 
 
@@ -3765,7 +3783,7 @@ def _resolve_annotations_json_path(job: Job, source_index: int) -> str | None:
     if source_index == 0:
         source_index = 1
     if not entries and job.result_annotated_pdf_storage_path and source_index == 1:
-        stem = Path(job.original_filename).stem if job.original_filename else "result"
+        stem = Path(_normalize_display_name(job.original_filename)).stem if job.original_filename else "result"
         entries = [
             {
                 "index": 1,
@@ -4169,7 +4187,7 @@ def get_job_result_json(
                 "id": job.id,
                 "status": job.status,
                 "file_type": job.file_type,
-                "original_filename": job.original_filename,
+                "original_filename": _normalize_display_name(job.original_filename),
                 "total_pages": job.total_pages,
                 "total_files": job.total_files,
                 "pipeline": job.pipeline,
@@ -4222,7 +4240,7 @@ def _job_summary(job: Job) -> dict:
         "status": job.status,
         "pipeline": job.pipeline,
         "file_type": job.file_type,
-        "filename": job.original_filename,
+        "filename": _normalize_display_name(job.original_filename),
         "total_pages": job.total_pages,
         "done_pages": job.done_pages,
         "total_files": job.total_files,
@@ -4295,7 +4313,7 @@ def legacy_download(token: str, type: str = "csv", db: Session = Depends(get_db)
         local = job.result_csv_path if type == "csv" else job.result_md_path
         if not local or not Path(local).exists():
             raise HTTPException(status_code=404, detail="Result file not found")
-        base = Path(job.original_filename).stem or "result"
+        base = Path(_normalize_display_name(job.original_filename)).stem or "result"
         ext = "md" if type == "md" else "csv"
         return FileResponse(local, media_type="text/csv" if type == "csv" else "text/markdown", filename=f"{base}.{ext}")
 

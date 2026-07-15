@@ -181,8 +181,8 @@ export function calculateFlowLayout(nodes, edges = [], options = {}) {
     }
   }
 
-  // [Flow: 다중 파일 세로 배치 — fileIndex별 그룹화 후 세로 스택]
-  // fileIndex가 있으면 파일별로 그룹화하여 세로로 배치, fileNode는 각 파일 그룹의 최상단에 표시.
+  // [Flow: 다중 파일 2D 그리드 배치 — fileIndex별 그룹화 후 정사각형에 가깝게 행/열 분산]
+  // fileIndex가 있으면 파일별로 그룹화하여 √N개 열의 그리드에 배치. fileNode는 각 파일 그룹의 최상단에 표시.
   // fileIndex가 없으면(단일 파일) 기존대로 모든 top-level 노드를 가로로 배치.
   const hasMultiFiles = topLevelNodes.some(n => n.data.fileIndex !== undefined);
 
@@ -193,24 +193,29 @@ export function calculateFlowLayout(nodes, edges = [], options = {}) {
       const fi = node.data.fileIndex ?? 0;
       if (!fileGroups[fi]) fileGroups[fi] = { fileNodes: [], headingNodes: [] };
       if (node.data.kind === "file") {
-        fileGroups[fi].fileNodes.push(node);
+        fileGroups[fi].fileNodes.push(nodeMap[node.id]);
       } else {
-        fileGroups[fi].headingNodes.push(node);
+        fileGroups[fi].headingNodes.push(nodeMap[node.id]);
       }
     }
 
     const sortedFileIndices = Object.keys(fileGroups).map(Number).sort((a, b) => a - b);
-    let currentY = 0;
 
+    // Step 4-1: 각 파일 그룹을 (0,0) 기준으로 배치하고 그룹의 subtree 크기 측정
+    const groupLayouts = [];
     for (const fi of sortedFileIndices) {
       const group = fileGroups[fi];
-      let groupY = currentY;
+      let groupY = 0;
+      let groupWidth = 0;
+      let groupHeight = 0;
 
       // fileNode를 해당 파일 그룹의 최상단에 배치
       if (group.fileNodes.length > 0) {
         const fn = group.fileNodes[0];
-        placeNode(fn, 0, groupY);
+        placeNode(fn, 0, 0);
         groupY += fn.subtreeHeight + fileGapY;
+        groupWidth = Math.max(groupWidth, fn.subtreeWidth);
+        groupHeight = fn.subtreeHeight + fileGapY;
       }
 
       // heading 노드들을 가로로 배치 (파일 내 H2-H2 가로 흐름)
@@ -221,8 +226,62 @@ export function calculateFlowLayout(nodes, edges = [], options = {}) {
         x += node.subtreeWidth + gapX;
         headingRowHeight = Math.max(headingRowHeight, node.subtreeHeight);
       }
+      if (group.headingNodes.length > 0) {
+        groupWidth = Math.max(groupWidth, x - gapX);
+        groupHeight += headingRowHeight;
+      }
 
-      currentY = groupY + headingRowHeight + fileGapY;
+      groupLayouts.push({ group, width: groupWidth, height: groupHeight });
+    }
+
+    // Step 4-2: √N 기준으로 열 수를 정해 정사각형에 가까운 2D 그리드 구성
+    const numGroups = groupLayouts.length;
+    const cols = Math.max(1, Math.ceil(Math.sqrt(numGroups)));
+    const rows = Math.ceil(numGroups / cols);
+
+    const colWidths = [];
+    const rowHeights = [];
+    for (let i = 0; i < numGroups; i++) {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const gl = groupLayouts[i];
+      colWidths[col] = Math.max(colWidths[col] || 0, gl.width);
+      rowHeights[row] = Math.max(rowHeights[row] || 0, gl.height);
+    }
+
+    // 각 행/열의 시작 좌표 계산
+    const colStartX = [];
+    let accX = 0;
+    for (let c = 0; c < cols; c++) {
+      colStartX[c] = accX;
+      accX += colWidths[c] + (c < cols - 1 ? gapX : 0);
+    }
+
+    const rowStartY = [];
+    let accY = 0;
+    for (let r = 0; r < rows; r++) {
+      rowStartY[r] = accY;
+      accY += rowHeights[r] + (r < rows - 1 ? fileGapY : 0);
+    }
+
+    // Step 4-3: 그룹 내 모든 노드를 그리드 셀 offset만큼 이동
+    function shiftSubtree(node, dx, dy) {
+      node.position.x += dx;
+      node.position.y += dy;
+      for (const child of node.children) {
+        shiftSubtree(child, dx, dy);
+      }
+    }
+
+    for (let i = 0; i < numGroups; i++) {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const offsetX = colStartX[col];
+      const offsetY = rowStartY[row];
+      const gl = groupLayouts[i];
+      for (const node of [...gl.group.fileNodes, ...gl.group.headingNodes]) {
+        shiftSubtree(node, offsetX, offsetY);
+      }
     }
   } else {
     // 단일 파일: titleNode가 있으면 맨 위에 단독 배치, 나머지 top-level 노드는 그 아래 가로로 배치

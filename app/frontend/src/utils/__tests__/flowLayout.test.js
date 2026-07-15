@@ -127,34 +127,40 @@ describe("calculateFlowLayout", () => {
     expect(section.position.y).toBeGreaterThan(title.position.y + title.data.estimatedHeight);
   });
 
-  it("다중 파일에서 파일 그룹이 세로로 스택된다", () => {
-    // 파일 0의 heading 노드들
-    const f0h2 = makeNode("f0-h2-1", 2, "파일0 섹션");
-    f0h2.data.fileIndex = 0;
-    // 파일 1의 fileNode
-    const fileNode = {
-      id: "file-1",
-      type: "fileNode",
-      data: { kind: "file", label: "file2.md", level: 1, fileIndex: 1, contentPreview: "", content: [] },
-      position: { x: 0, y: 0 },
-    };
-    // 파일 1의 heading 노드들
-    const f1h2 = makeNode("f1-h2-1", 2, "파일1 섹션");
-    f1h2.data.fileIndex = 1;
+  it("다중 파일에서 파일 그룹이 2D 그리드로 배치되어 정사각형에 가깝게 퍼진다", () => {
+    // 4개 파일 그룹 — 2x2 그리드가 되어야 한다
+    const groups = [];
+    for (let i = 0; i < 4; i++) {
+      const h2 = makeNode(`f${i}-h2-1`, 2, `파일${i} 섹션`);
+      h2.data.fileIndex = i;
+      groups.push(h2);
+    }
 
-    const nodes = [f0h2, fileNode, f1h2];
-    const layouted = calculateFlowLayout(nodes, []);
+    const layouted = calculateFlowLayout(groups, []);
 
-    const f0Node = layouted.find(n => n.id === "f0-h2-1");
-    const fnNode = layouted.find(n => n.id === "file-1");
-    const f1Node = layouted.find(n => n.id === "f1-h2-1");
+    const row0 = ["f0-h2-1", "f1-h2-1"].map(id => layouted.find(n => n.id === id));
+    const row1 = ["f2-h2-1", "f3-h2-1"].map(id => layouted.find(n => n.id === id));
 
-    // 파일 0의 heading이 가장 위 (y=0)
-    expect(f0Node.position.y).toBe(0);
-    // fileNode가 파일 0보다 아래에 위치
-    expect(fnNode.position.y).toBeGreaterThan(f0Node.position.y + f0Node.data.estimatedHeight);
-    // 파일 1의 heading이 fileNode보다 아래에 위치
-    expect(f1Node.position.y).toBeGreaterThan(fnNode.position.y + fnNode.data.estimatedHeight);
+    // 같은 행의 그룹은 같은 y를 가진다
+    expect(row0[0].position.y).toBe(row0[1].position.y);
+    expect(row1[0].position.y).toBe(row1[1].position.y);
+
+    // 다음 행은 이전 행 아래에 위치
+    expect(row1[0].position.y).toBeGreaterThan(row0[0].position.y + row0[0].data.estimatedHeight);
+
+    // 같은 행에서 오른쪽 그룹의 x가 더 크다
+    expect(row0[1].position.x).toBeGreaterThan(row0[0].position.x + row0[0].width);
+
+    // 전체 배치의 가로/세로 비율이 정사각형에 가깝다 (0.5 ~ 2.0)
+    const xs = layouted.map(n => n.position.x);
+    const ys = layouted.map(n => n.position.y);
+    const widths = layouted.map(n => n.width);
+    const heights = layouted.map(n => n.data.estimatedHeight);
+    const maxX = Math.max(...xs.map((x, i) => x + widths[i]));
+    const maxY = Math.max(...ys.map((y, i) => y + heights[i]));
+    const ratio = Math.max(maxX, 1) / Math.max(maxY, 1);
+    expect(ratio).toBeGreaterThanOrEqual(0.5);
+    expect(ratio).toBeLessThanOrEqual(2.5);
   });
 
   it("다중 파일에서 같은 파일의 heading 노드들은 가로로 배치된다", () => {

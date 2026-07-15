@@ -331,7 +331,10 @@ def _extract_layout_from_result(res: Any) -> dict:
     동일한 좌표계를 가정할 수 있게 한다.
     """
     try:
-        if hasattr(res, "json"):
+        if isinstance(res, dict):
+            # AI Studio prunedResult: res 키가 없으므로 dict 자체를 layout으로 사용
+            layout = res.get("res", res) if "res" in res else res
+        elif hasattr(res, "json"):
             raw = res.json
             layout = raw.get("res", raw) if isinstance(raw, dict) else {}
         else:
@@ -934,45 +937,50 @@ class BatchTaskStatusResponse(BaseModel):
     finished_at: float | None = None
 
 
-def _images_to_tiff(image_paths: list[Path], output_path: Path) -> Path:
-    """여러 PNG 이미지를 단일 multi-page TIFF로 병합한다.
+def _images_to_pdf(image_paths: list[Path], output_path: Path) -> Path:
+    """여러 PNG 이미지를 단일 multi-page PDF로 병합한다 (JPEG 압축으로 크기 최소화).
 
-    [Flow: Step 1 (PIL로 첫 이미지 로드) -> Step 2 (나머지 이미지 append) -> Step 3 (LZW 압축 TIFF 저장)]
+    [Flow: Step 1 (PIL로 각 이미지를 JPEG 메모리 스트림으로 변환) -> Step 2 (fitz로 빈 PDF 생성) -> Step 3 (각 JPEG을 페이지로 삽입) -> Step 4 (PDF 저장)]
 
-    AI Studio API는 multi-page TIFF를 한 job에서 페이지별로 처리한다.
-    bbox 좌표계가 원본 PNG 픽셀 크기를 그대로 유지하므로 300 DPI 기준 좌표 변환이 호환된다.
+    AI Studio API는 multi-page PDF를 한 job에서 페이지별로 처리한다 (multi-page TIFF와 달리
+    모든 페이지가 처리됨 — 실제 테스트 검증 완료).
+    각 이미지의 픽셀 크기를 그대로 PDF 페이지 크기로 사용하므로 bbox 좌표계가 호환된다.
+    PNG를 JPEG으로 압축하여 삽입하면 PDF 크기를 1/3~1/5로 줄일 수 있다.
 
     Args:
         image_paths: 병합할 PNG 이미지 경로 리스트 (순서 = 페이지 순서)
-        output_path: 출력 TIFF 파일 경로
+        output_path: 출력 PDF 파일 경로
 
     Returns:
-        output_path (저장된 TIFF 경로)
+        output_path (저장된 PDF 경로)
     """
+    if not image_paths:
+        raise RuntimeError("No images to combine into PDF")
+
     from PIL import Image
+    import io
 
-    images: list[Image.Image] = []
+    pdf = fitz.open()  # 빈 PDF
     for img_path in image_paths:
-        img = Image.open(str(img_path))
-        # RGB 모드로 통일 (TIFF는 RGBA/팔레트 혼합 저장을 지원하지 않는 경우가 있음)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        images.append(img)
+        # PIL로 이미지를 JPEG 메모리 스트림으로 변환 (크기 최소화)
+        pil_img = Image.open(str(img_path))
+        if pil_img.mode != "RGB":
+            pil_img = pil_img.convert("RGB")
+        jpeg_buf = io.BytesIO()
+        pil_img.save(jpeg_buf, format="JPEG", quality=85)
+        pil_img.close()
+        jpeg_bytes = jpeg_buf.getvalue()
 
-    if not images:
-        raise RuntimeError("No images to combine into TIFF")
+        # 원본 이미지 픽셀 크기를 PDF 페이지 크기로 사용 (bbox 좌표계 호환)
+        img_doc = fitz.open(str(img_path))
+        page = pdf.new_page(width=img_doc[0].rect.width, height=img_doc[0].rect.height)
+        img_doc.close()
+        page.insert_image(page.rect, stream=jpeg_bytes)
 
-    images[0].save(
-        str(output_path),
-        format="TIFF",
-        save_all=True,
-        append_images=images[1:],
-        compression="tiff_lzw",
-        dpi=(300, 300),
-    )
-    for img in images:
-        img.close()
-    logger.info(f"[paddleocr-batch] {len(image_paths)}장 → TIFF 병합 완료: {output_path.name}")
+    pdf.save(str(output_path), deflate=True, garbage=4)
+    pdf.close()
+    pdf_size = output_path.stat().st_size / 1024 / 1024
+    logger.info(f"[paddleocr-batch] {len(image_paths)}장 → PDF 병합 완료: {output_path.name} ({pdf_size:.1f}MB)")
     return output_path
 
 
@@ -995,12 +1003,12 @@ def _do_aistudio_batch_convert(task_id: str, image_paths: list[Path], filenames:
             corrected, _angle = deskew_image(img_path, work_dir)
             deskewed_paths.append(corrected)
 
-        # Step 2: multi-page TIFF 병합
-        tiff_path = work_dir / "batch.tiff"
-        _images_to_tiff(deskewed_paths, tiff_path)
+        # Step 2: multi-page PDF 병합 (TIFF는 1페이지만 처리되므로 PDF 사용)
+        pdf_path = work_dir / "batch.pdf"
+        _images_to_pdf(deskewed_paths, pdf_path)
 
         # Step 3-5: AI Studio job 제출 → 폴링 → 다운로드/파싱
-        job_id = _aistudio_submit_job(tiff_path)
+        job_id = _aistudio_submit_job(pdf_path)
         jsonl_url = _aistudio_poll_job(job_id)
         ocr_result = _aistudio_download_and_parse(jsonl_url, request_id)
 

@@ -391,7 +391,7 @@ body {
 .ediscovery-chrono-container [data-testid="vertical-item-row"] > div:has(> .ediscovery-timeline-title),
 .ediscovery-chrono-container [data-testid="vertical-item-row"] > div:has(> .timeline-item-title) {
   width: auto !important;
-  min-width: 300px !important;
+  min-width: 200px !important;
   padding-right: 5rem !important;
   padding-left: 1rem !important;
   flex-shrink: 0 !important;

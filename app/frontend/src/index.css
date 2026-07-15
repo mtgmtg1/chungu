@@ -390,16 +390,16 @@ body {
 /* 날짜 wrapper: 콘텐츠 크기에 맞게 확보하고 선과의 간격을 넉넉하게 늘린다. */
 .ediscovery-chrono-container [data-testid="vertical-item-row"] > div:has(> .ediscovery-timeline-title) {
   width: auto !important;
-  min-width: 180px !important;
-  padding-right: 3rem !important;
-  padding-left: 0.5rem !important;
+  min-width: 300px !important;
+  padding-right: 5rem !important;
+  padding-left: 1rem !important;
   flex-shrink: 0 !important;
 }
 
 /* 날짜 텍스트: -webkit-box line-clamp를 해제하고 한 줄로 펼쳐 잘리지 않게 표시 */
 .ediscovery-chrono-container .ediscovery-timeline-title {
   display: inline-block !important;
-  width: auto !important;
+  width: max-content !important;
   max-width: none !important;
   min-width: 0 !important;
   text-align: left !important;

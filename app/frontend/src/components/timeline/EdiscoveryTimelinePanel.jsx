@@ -348,11 +348,11 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
             }}
           >
             {chronoItems.map((item) => (
-              <div key={item.id} className="flex flex-col gap-2">
+              <div key={item.id} className="relative flex flex-col gap-2 pb-8">
                 <p className="text-sm text-on-surface-variant leading-relaxed">
                   {item.cardDetailedText}
                 </p>
-                <div className="flex justify-end">
+                <div className="absolute bottom-2 right-0">
                   <button
                     type="button"
                     onClick={(e) => {

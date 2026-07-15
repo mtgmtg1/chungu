@@ -388,16 +388,19 @@ body {
    -> 날짜 텍스트 폰트 크기를 약간 줄인다.]
  */
 /* 날짜 wrapper: 콘텐츠 크기에 맞게 확보하고 선과의 간격을 넉넉하게 늘린다. */
-.ediscovery-chrono-container [data-testid="vertical-item-row"] > div:has(> .ediscovery-timeline-title) {
+.ediscovery-chrono-container [data-testid="vertical-item-row"] > div:has(> .ediscovery-timeline-title),
+.ediscovery-chrono-container [data-testid="vertical-item-row"] > div:has(> .timeline-item-title) {
   width: auto !important;
   min-width: 300px !important;
   padding-right: 5rem !important;
   padding-left: 1rem !important;
   flex-shrink: 0 !important;
+  flex-basis: auto !important;
 }
 
-/* 날짜 텍스트: -webkit-box line-clamp를 해제하고 한 줄로 펼쳐 잘리지 않게 표시 */
-.ediscovery-chrono-container .ediscovery-timeline-title {
+/* 날짜 텍스트: line-clamp/ellipsis를 강제 해제하고 한 줄로 펼쳐 잘리지 않게 표시 */
+.ediscovery-chrono-container .ediscovery-timeline-title,
+.ediscovery-chrono-container .timeline-item-title {
   display: inline-block !important;
   width: max-content !important;
   max-width: none !important;
@@ -410,6 +413,8 @@ body {
   line-clamp: unset !important;
   -webkit-box-orient: unset !important;
   max-height: none !important;
+  hyphens: none !important;
+  word-break: keep-all !important;
   font-size: 0.875rem !important;
 }
 

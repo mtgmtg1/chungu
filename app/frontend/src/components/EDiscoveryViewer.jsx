@@ -208,17 +208,6 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, onJobRefresh
     setOriginalLoading(false);
   }, []);
 
-  /**
-   * [Flow: Step 1 (원본 PDF 보기 클릭) -> Step 2 (외부 onNodeClick 호출 + 패널 닫기)]
-   */
-  const handleViewSource = useCallback(
-    (page) => {
-      onNodeClick?.({ data: { page } });
-      handleClosePreview();
-    },
-    [onNodeClick, handleClosePreview]
-  );
-
   return (
     <div className="h-full flex flex-col" data-oid="ediscovery-viewer">
       {/* 헤더 */}
@@ -304,10 +293,8 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, onJobRefresh
             <div className="flex-1 min-h-0 overflow-hidden">
               <EdiscoveryDetailCard
                 node={previewNode}
-                previewData={{ sourceFiles }}
                 originalText={originalText}
                 originalLoading={originalLoading}
-                onViewSource={handleViewSource}
               />
             </div>
           </div>

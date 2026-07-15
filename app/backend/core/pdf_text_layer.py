@@ -165,41 +165,103 @@ def add_text_layer_from_ocr(
     return doc.tobytes()
 
 
+# 텍스트가 포함될 수 있는 block_label 집합 (ocr_layout.py와 동일 기준).
+# image/figure 등 텍스트가 없는 블록은 searchable PDF 텍스트 레이어에서도 제외한다.
+_TEXT_BLOCK_LABELS_FOR_TEXT_LAYER = {
+    "text", "title", "figure_title", "seal", "header", "footer", "reference", "formula",
+}
+
+
+def _extract_items_from_overall_ocr_res(layout: dict) -> list[tuple[str, BBox]]:
+    """overall_ocr_res에서 (text, bbox) 목록을 추출한다 (구 스키마 호환).
+
+    [Flow: Step 1 (overall_ocr_res 확인) -> Step 2 (rec_texts/rec_boxes 병렬 순회) -> Step 3 (유효한 항목만 반환)]
+
+    Returns:
+        [(text, bbox_px), ...]. overall_ocr_res가 없거나 형식이 맞지 않으면 빈 리스트.
+    """
+    ocr_res = layout.get("overall_ocr_res") or {}
+    if not isinstance(ocr_res, dict):
+        return []
+    texts = ocr_res.get("rec_texts") or []
+    boxes = ocr_res.get("rec_boxes") or []
+    if not isinstance(texts, list) or not isinstance(boxes, list):
+        return []
+
+    items: list[tuple[str, BBox]] = []
+    for text, box in zip(texts, boxes):
+        if not isinstance(box, (list, tuple)) or len(box) < 4:
+            continue
+        try:
+            bbox_px: BBox = (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
+        except (ValueError, TypeError):
+            continue
+        normalized_text = _normalize_rec_text(text)
+        if normalized_text:
+            items.append((normalized_text, bbox_px))
+    return items
+
+
+def _extract_items_from_parsing_res_list(layout: dict) -> list[tuple[str, BBox]]:
+    """parsing_res_list에서 (text, bbox) 목록을 추출한다 (신 스키마 폴백).
+
+    [Flow: Step 1 (parsing_res_list 순회) -> Step 2 (텍스트 블록만 필터링) -> Step 3 (block_content/block_bbox 추출) -> Step 4 (유효한 항목만 반환)]
+
+    AI Studio API가 overall_ocr_res를 더 이상 반환하지 않는 경우, parsing_res_list의
+    텍스트 블록(block_content + block_bbox)을 사용해 텍스트 레이어를 생성한다.
+    표(table) 블록은 block_content가 HTML이므로 제외한다.
+    """
+    blocks = layout.get("parsing_res_list") or []
+    if not isinstance(blocks, list):
+        return []
+
+    items: list[tuple[str, BBox]] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        block_label = block.get("block_label", "text")
+        if block_label not in _TEXT_BLOCK_LABELS_FOR_TEXT_LAYER:
+            continue
+        bbox = block.get("block_bbox")
+        if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+            continue
+        content = block.get("block_content", "")
+        if not isinstance(content, str):
+            content = str(content) if content else ""
+        text = content.strip()
+        if not text:
+            continue
+        try:
+            bbox_px: BBox = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+        except (ValueError, TypeError):
+            continue
+        items.append((text, bbox_px))
+    return items
+
+
 def extract_page_ocr_results_from_layout(
     layout_by_page: dict[int, dict],
 ) -> dict[int, list[tuple[str, BBox]]]:
     """PaddleOCR 서비스가 반환한 layout dict에서 페이지별 (text, bbox_px) 목록을 추출한다.
 
-    [Flow: Step 1 (layout_by_page 순회) -> Step 2 (overall_ocr_res의 rec_texts/rec_boxes 추출)
+    [Flow: Step 1 (layout_by_page 순회) -> Step 2 (overall_ocr_res 우선 시도, 없으면 parsing_res_list 폴백)
           -> Step 3 (유효한 텍스트/bbox만 반환)]
 
     Args:
-        layout_by_page: page_no(1-based) -> PaddleOCR layout dict (overall_ocr_res 포함)
+        layout_by_page: page_no(1-based) -> PaddleOCR layout dict
 
     Returns:
         page_no -> [(text, bbox_px), ...]
     """
     results: dict[int, list[tuple[str, BBox]]] = {}
     for page_no, layout in layout_by_page.items():
-        ocr_res = layout.get("overall_ocr_res") or {}
-        if not isinstance(ocr_res, dict):
+        if not isinstance(layout, dict):
             continue
-        texts = ocr_res.get("rec_texts") or []
-        boxes = ocr_res.get("rec_boxes") or []
-        if not isinstance(texts, list) or not isinstance(boxes, list):
-            continue
-
-        page_items: list[tuple[str, BBox]] = []
-        for text, box in zip(texts, boxes):
-            if not isinstance(box, (list, tuple)) or len(box) < 4:
-                continue
-            try:
-                bbox_px: BBox = (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
-            except (ValueError, TypeError):
-                continue
-            normalized_text = _normalize_rec_text(text)
-            if normalized_text:
-                page_items.append((normalized_text, bbox_px))
+        # 구 스키마: overall_ocr_res에서 단어 단위 추출 (좀 더 정밀한 bbox)
+        page_items = _extract_items_from_overall_ocr_res(layout)
+        # 신 스키마 폴백: overall_ocr_res가 없으면 parsing_res_list에서 블록 단위 추출
+        if not page_items:
+            page_items = _extract_items_from_parsing_res_list(layout)
         if page_items:
             results[page_no] = page_items
     return results

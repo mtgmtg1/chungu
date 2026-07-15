@@ -103,13 +103,25 @@ function extractContentLabel(contentType, tokens) {
   }
 }
 
-export function parseMarkdownToFlow(markdownText) {
+/**
+ * 마크다운 문자열을 React Flow 노드/에지 배열로 변환하는 순방향 파서.
+ *
+ * 타이틀 노드 생성 우선순위:
+ * 1. 첫 번째 H1 heading
+ * 2. H1이 없으면 첫 번째 H2 heading
+ * 3. H1/H2 모두 없으면 filename 파라미터 (가상 titleNode로 생성, 본문 토큰 없음)
+ *
+ * @param {string} markdownText - 변환할 마크다운 문자열
+ * @param {string} [filename] - H1/H2가 없을 때 타이틀 노드 라벨로 사용할 파일명
+ * @returns {{ nodes: Array, edges: Array, title: string|null, titleLevel: number|null }} React Flow 노드/에지/제목
+ */
+export function parseMarkdownToFlow(markdownText, filename) {
   // Step 1: marked.lexer로 토큰 배열 추출 (토큰 소모 0, 순수 파싱)
   const tokens = marked.lexer(markdownText || "");
 
   const nodes = [];
   const edges = [];
-  const stack = []; // heading 레벨 스택 (부모 추적용, 제목은 가상 루트)
+  const stack = []; // heading 레벨 스택 (부모 추적용)
   let currentPage = 1; // 페이지 마커 추적 — `<!-- 페이지 N -->` 형식
   let headingIndex = 0; // 결정론적 ID용 heading 순번
   let contentIndex = 0; // 콘텐츠 노드용 순번
@@ -117,10 +129,13 @@ export function parseMarkdownToFlow(markdownText) {
   // 페이지 마커 정규식 — 마크다운 HTML 주석에서 페이지 번호 추출
   const PAGE_MARKER_RE = /<!--\s*페이지\s*(\d+)\s*-->/i;
 
-  // Step 1-1: 첫 H1 제목 추출 (H1이 없으면 title은 null)
+  // [Flow: Step 1-1 — 타이틀 추출 (H1 -> H2 -> filename 폴백)]
+  // 첫 H1을 찾고, 없으면 첫 H2를 찾는다. 둘 다 없으면 filename으로 가상 타이틀 노드 생성.
   let titleIndex = -1;
   let title = null;
   let titleLevel = null;
+  let titleFromFilename = false;
+
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
     if (token.type === "heading" && token.depth === 1) {
@@ -129,6 +144,26 @@ export function parseMarkdownToFlow(markdownText) {
       titleLevel = token.depth;
       break;
     }
+  }
+
+  // H1이 없으면 첫 H2를 타이틀로 승격
+  if (titleIndex === -1) {
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
+      if (token.type === "heading" && token.depth === 2) {
+        titleIndex = i;
+        title = token.text;
+        titleLevel = token.depth;
+        break;
+      }
+    }
+  }
+
+  // H1/H2 모두 없으면 filename으로 가상 타이틀 노드 생성
+  if (titleIndex === -1 && filename) {
+    title = filename;
+    titleLevel = 1;
+    titleFromFilename = true;
   }
 
   // 현재 heading에 쌓이는 콘텐츠 토큰 버퍼 — 같은 타입끼리 그룹화하여 contentNode로 생성
@@ -178,6 +213,26 @@ export function parseMarkdownToFlow(markdownText) {
 
     pendingContentTokens = [];
     pendingContentType = null;
+  }
+
+  // [Flow: filename 기반 가상 타이틀 노드 — H1/H2가 없을 때 파일명으로 titleNode 생성]
+  // 토큰에 대응하는 heading이 없으므로 루프 전에 미리 생성하여 스택에 push.
+  if (titleFromFilename) {
+    const titleNode = {
+      id: `title-${headingIndex++}`,
+      type: "titleNode",
+      data: {
+        kind: "title",
+        label: title,
+        level: titleLevel,
+        content: [],
+        contentPreview: "",
+        page: currentPage,
+      },
+      position: { x: 0, y: 0 },
+    };
+    nodes.push(titleNode);
+    stack.push(titleNode);
   }
 
   for (let i = 0; i < tokens.length; i++) {
@@ -372,9 +427,9 @@ export function parseMultiFileMarkdownToFlow(files) {
     return { nodes: [], edges: [], title: null, titleLevel: null };
   }
 
-  // 파일이 1개면 단일 파싱 결과 반환
+  // 파일이 1개면 단일 파싱 결과 반환 (filename 전달하여 타이틀 폴백)
   if (files.length === 1) {
-    return parseMarkdownToFlow(files[0].markdown || "");
+    return parseMarkdownToFlow(files[0].markdown || "", files[0].filename);
   }
 
   const allNodes = [];
@@ -385,7 +440,7 @@ export function parseMultiFileMarkdownToFlow(files) {
   // [Flow: Step 1 + Step 2 — 각 파일 파싱 + ID prefix 부여]
   for (let fileIdx = 0; fileIdx < files.length; fileIdx++) {
     const { filename, markdown } = files[fileIdx];
-    const parsed = parseMarkdownToFlow(markdown || "");
+    const parsed = parseMarkdownToFlow(markdown || "", filename);
 
     // 첫 번째 파일의 제목을 전체 제목으로 사용
     if (fileIdx === 0) {

@@ -138,13 +138,41 @@ describe("parseMarkdownToFlow", () => {
     }
   });
 
-  it("H1이 없으면 title은 null이고 모든 heading은 노드가 된다", () => {
+  it("H1이 없으면 첫 H2가 titleNode로 승격된다", () => {
     const markdown = `## 첫 번째\n\n### 하위\n\n## 두 번째\n`;
     const { nodes, title, titleLevel } = parseMarkdownToFlow(markdown);
-    expect(title).toBeNull();
-    expect(titleLevel).toBeNull();
+    // 첫 H2가 타이틀로 승격
+    expect(title).toBe("첫 번째");
+    expect(titleLevel).toBe(2);
+    // titleNode로 생성됨
+    const titleNode = nodes.find(n => n.data.kind === "title");
+    expect(titleNode).toBeDefined();
+    expect(titleNode.data.label).toBe("첫 번째");
+    // 승격된 H2는 heading 노드에서 제외됨
     const headingLabels = nodes.filter(n => n.data.kind === "heading").map(n => n.data.label);
-    expect(headingLabels).toEqual(["첫 번째", "하위", "두 번째"]);
+    expect(headingLabels).toEqual(["하위", "두 번째"]);
+  });
+
+  it("H1과 H2가 모두 없으면 filename으로 titleNode가 생성된다", () => {
+    const markdown = `### 세부 항목만 있음\n\n본문 내용\n`;
+    const { nodes, title, titleLevel } = parseMarkdownToFlow(markdown, "my-file.pdf");
+    // filename으로 가상 타이틀 노드 생성
+    expect(title).toBe("my-file.pdf");
+    expect(titleLevel).toBe(1);
+    const titleNode = nodes.find(n => n.data.kind === "title");
+    expect(titleNode).toBeDefined();
+    expect(titleNode.data.label).toBe("my-file.pdf");
+    // H3는 titleNode의 자식으로 연결됨
+    const h3 = nodes.find(n => n.data.kind === "heading");
+    expect(h3).toBeDefined();
+  });
+
+  it("H1과 H2가 없고 filename도 없으면 titleNode가 생성되지 않는다", () => {
+    const markdown = `### 세부 항목만 있음\n\n본문 내용\n`;
+    const { nodes, title } = parseMarkdownToFlow(markdown);
+    expect(title).toBeNull();
+    const titleNode = nodes.find(n => n.data.kind === "title");
+    expect(titleNode).toBeUndefined();
   });
 
   it("본문 토큰이 contentNode(text)로 생성된다", () => {

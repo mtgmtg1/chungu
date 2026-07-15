@@ -18,6 +18,18 @@ import {
   Circle,
 } from "lucide-react";
 
+/**
+ * 라벨에 단축키를 병합해 툴팁/aria-label 문자열을 생성한다.
+ *
+ * @param {string} label - 원래 라벨
+ * @param {string} [shortcut] - 단축키 문자열
+ * @returns {string} 단축키가 있으면 "라벨 (단축키)", 없으면 라벨 그대로
+ */
+function formatShortcutTitle(label, shortcut) {
+  if (!shortcut) return label;
+  return `${label} (${shortcut})`;
+}
+
 // 색상 팔레트 — 다크모드용 흰색 포함 8색
 const COLORS = [
   "#6366f1", // 인디고 (기본)
@@ -56,6 +68,7 @@ const SHAPE_ICONS = {
  * @param {Function} props.onUndo - 실행 취소 콜백
  * @param {Function} props.onClear - 전체 지우기 콜백
  * @param {boolean} props.canUndo - undo 가능 여부
+ * @param {Object<string, string>} [props.shortcuts] - 각 도구별 단축키 매핑 (선택)
  * @returns {JSX.Element} 드로잉 툴바 컴포넌트
  */
 export default function DrawingToolbar({
@@ -70,6 +83,7 @@ export default function DrawingToolbar({
   onUndo,
   onClear,
   canUndo,
+  shortcuts = {},
 }) {
   const { t } = useTranslation();
   const [showColors, setShowColors] = useState(false);
@@ -89,9 +103,9 @@ export default function DrawingToolbar({
         {/* 모드 전환: Select (기본 이동 모드) */}
         <button
           onClick={() => onToolChange("select")}
-          title={t("page:result.flowSelectMode")}
+          title={formatShortcutTitle(t("page:result.flowSelectMode"), shortcuts.select)}
           className={`${btnClass} ${tool === "select" ? btnActive : btnDefault}`}
-          aria-label={t("page:result.flowSelectMode")}
+          aria-label={formatShortcutTitle(t("page:result.flowSelectMode"), shortcuts.select)}
         >
           <MousePointer2 size={16} />
         </button>
@@ -101,9 +115,9 @@ export default function DrawingToolbar({
         {/* 펜 */}
         <button
           onClick={() => onToolChange("pen")}
-          title={t("page:result.flowDraw")}
+          title={formatShortcutTitle(t("page:result.flowDraw"), shortcuts.pen)}
           className={`${btnClass} ${tool === "pen" ? btnActive : btnDefault}`}
-          aria-label={t("page:result.flowDraw")}
+          aria-label={formatShortcutTitle(t("page:result.flowDraw"), shortcuts.pen)}
         >
           <Pencil size={16} />
         </button>
@@ -111,9 +125,9 @@ export default function DrawingToolbar({
         {/* 형광펜 */}
         <button
           onClick={() => onToolChange("highlighter")}
-          title={t("page:result.flowHighlight")}
+          title={formatShortcutTitle(t("page:result.flowHighlight"), shortcuts.highlighter)}
           className={`${btnClass} ${tool === "highlighter" ? btnActive : btnDefault}`}
-          aria-label={t("page:result.flowHighlight")}
+          aria-label={formatShortcutTitle(t("page:result.flowHighlight"), shortcuts.highlighter)}
         >
           <Highlighter size={16} />
         </button>
@@ -124,9 +138,9 @@ export default function DrawingToolbar({
             onToolChange("shape");
             setShowShapes((v) => !v);
           }}
-          title={t("page:result.flowShape")}
+          title={formatShortcutTitle(t("page:result.flowShape"), shortcuts.shape)}
           className={`${btnClass} ${tool === "shape" ? btnActive : btnDefault}`}
-          aria-label={t("page:result.flowShape")}
+          aria-label={formatShortcutTitle(t("page:result.flowShape"), shortcuts.shape)}
         >
           <Shapes size={16} />
         </button>
@@ -134,9 +148,9 @@ export default function DrawingToolbar({
         {/* 텍스트 */}
         <button
           onClick={() => onToolChange("text")}
-          title={t("page:result.flowText")}
+          title={formatShortcutTitle(t("page:result.flowText"), shortcuts.text)}
           className={`${btnClass} ${tool === "text" ? btnActive : btnDefault}`}
-          aria-label={t("page:result.flowText")}
+          aria-label={formatShortcutTitle(t("page:result.flowText"), shortcuts.text)}
         >
           <Type size={16} />
         </button>
@@ -144,9 +158,9 @@ export default function DrawingToolbar({
         {/* 지우개 */}
         <button
           onClick={() => onToolChange("eraser")}
-          title={t("page:result.flowEraser")}
+          title={formatShortcutTitle(t("page:result.flowEraser"), shortcuts.eraser)}
           className={`${btnClass} ${tool === "eraser" ? btnActive : btnDefault}`}
-          aria-label={t("page:result.flowEraser")}
+          aria-label={formatShortcutTitle(t("page:result.flowEraser"), shortcuts.eraser)}
         >
           <Eraser size={16} />
         </button>
@@ -240,18 +254,18 @@ export default function DrawingToolbar({
             <button
               onClick={onUndo}
               disabled={!canUndo}
-              title={t("page:result.flowUndo")}
+              title={formatShortcutTitle(t("page:result.flowUndo"), shortcuts.undo)}
               className={`${btnClass} ${btnDefault} ${!canUndo ? "opacity-40 cursor-not-allowed" : ""}`}
-              aria-label={t("page:result.flowUndo")}
+              aria-label={formatShortcutTitle(t("page:result.flowUndo"), shortcuts.undo)}
             >
               <Undo2 size={16} />
             </button>
             <button
               onClick={onClear}
               disabled={!canUndo}
-              title={t("page:result.flowClear")}
+              title={formatShortcutTitle(t("page:result.flowClear"), shortcuts.clear)}
               className={`${btnClass} ${btnDefault} ${!canUndo ? "opacity-40 cursor-not-allowed" : ""}`}
-              aria-label={t("page:result.flowClear")}
+              aria-label={formatShortcutTitle(t("page:result.flowClear"), shortcuts.clear)}
             >
               <Trash2 size={16} />
             </button>

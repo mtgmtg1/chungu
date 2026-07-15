@@ -2,6 +2,7 @@
 import { supabase } from './supabase.js'
 import i18n from './i18n.js'
 import { mockRequest } from './dev/mockApi.js'
+import { rewritePreviewUrls } from './utils/rewriteSupabaseUrl.js'
 
 let devMockEnabled = false
 
@@ -95,13 +96,16 @@ export const api = {
   confirmJob: (id) => request(`/api/jobs/${id}/confirm`, { method: 'POST' }),
   getJob: (id) => request(`/api/jobs/${id}`),
   listJobs: () => request('/api/jobs'),
-  previewJob: (id, startPage = 1, endPage = null) => {
+  previewJob: async (id, startPage = 1, endPage = null) => {
     const params = new URLSearchParams()
     params.set('start_page', String(startPage))
     if (endPage) params.set('end_page', String(endPage))
     // 개발 환경에서 브라우저/프록시 캐시로 인해 오래된 preview 응답이 재사용되는 것을 방지
     if (import.meta.env.DEV) params.set('_t', String(Date.now()))
-    return request(`/api/jobs/${id}/preview?${params.toString()}`)
+    const data = await request(`/api/jobs/${id}/preview?${params.toString()}`)
+    // Supabase 내부 IP나 외부 public URL을 /supabase 상대 경로로 재작성하여
+    // 브라우저가 현재 origin의 프록시를 탈 수 있게 한다.
+    return rewritePreviewUrls(data)
   },
   previewJobPages: (id) => request(`/api/jobs/${id}/preview/pages`),
   saveResultMarkdown: (id, markdown) =>

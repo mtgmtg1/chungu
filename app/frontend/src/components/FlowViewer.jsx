@@ -50,6 +50,58 @@ import DrawingOverlay from "./flow/DrawingOverlay.jsx";
 import DrawingToolbar from "./flow/DrawingToolbar.jsx";
 
 /* ============================================================
+ * 플로우뷰 도구 단축키 상수
+ * ========================================================== */
+
+/**
+ * 플로우뷰의 각 도구에 할당한 키보드 단축키.
+ * 툴바 툴팁과 글로벌 키보드 핸들러에서 함께 사용한다.
+ *
+ * @type {Object<string, string>}
+ */
+const FLOW_TOOL_SHORTCUTS = {
+  select: "V",
+  pen: "P",
+  highlighter: "H",
+  shape: "S",
+  text: "T",
+  eraser: "E",
+  addNote: "N",
+  deleteSelected: "Del",
+  resetLayout: "L",
+  fitView: "F",
+  undo: "Ctrl+Z",
+  clear: "Ctrl+Shift+X",
+};
+
+/**
+ * 라벨에 단축키를 병합해 툴팁/aria-label 문자열을 생성한다.
+ *
+ * @param {string} label - 원래 라벨
+ * @param {string} [shortcut] - 단축키 문자열
+ * @returns {string} 단축키가 있으면 "라벨 (단축키)", 없으면 라벨 그대로
+ */
+function formatShortcutTitle(label, shortcut) {
+  if (!shortcut) return label;
+  return `${label} (${shortcut})`;
+}
+
+/**
+ * 포커스가 input/textarea/select/contenteditable에 있는지 확인한다.
+ * 단축키는 텍스트 입력 중에 작동하지 않아야 한다.
+ *
+ * @param {EventTarget|null} target - 이벤트 타겟
+ * @returns {boolean} 편집 가능 요소이면 true
+ */
+function isEditableTarget(target) {
+  if (!target) return false;
+  const tag = target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (target.isContentEditable) return true;
+  return false;
+}
+
+/* ============================================================
  * 커스텀 노드 컴포넌트
  * ========================================================== */
 
@@ -513,13 +565,20 @@ const edgeTypes = { hierarchy: TreeEdge, next: TreeEdge, dependency: DependencyE
 
 /**
  * FlowToolbar — React Flow Panel 오버레이에 배치된 툴바.
- * 주석 추가, 선택 삭제, 레이아웃 재배치, 전체 보기 버튼 제공.
+ * 주석 추가, 선택 삭제, 레이아웃 재배치, 전체 보기 버튼에 단축키를 함께 표시한다.
+ *
+ * [Flow: Step 1 (i18n 라벨 + 단축키 조합) -> Step 2 (각 버튼 title/aria-label 설정) -> Step 3 (Panel 렌더링)]
  */
 function FlowToolbar({ onAddNote, onDeleteSelected, onRelayout, onFitView }) {
   const { t } = useTranslation();
   const btnClass = "flex items-center justify-center w-10 h-10 md:w-8 md:h-8 rounded-lg text-sm font-medium transition-colors border";
   const btnDefault = "border-outline-variant bg-surface-container-lowest text-on-surface hover:bg-surface-container-high";
   const btnActive = "border-primary bg-primary/10 text-primary";
+
+  const noteTitle = formatShortcutTitle(t("page:result.flowAddNote"), FLOW_TOOL_SHORTCUTS.addNote);
+  const deleteTitle = formatShortcutTitle(t("page:result.flowDeleteSelected"), FLOW_TOOL_SHORTCUTS.deleteSelected);
+  const relayoutTitle = formatShortcutTitle(t("page:result.flowResetLayout"), FLOW_TOOL_SHORTCUTS.resetLayout);
+  const fitViewTitle = formatShortcutTitle(t("page:result.flowFitView"), FLOW_TOOL_SHORTCUTS.fitView);
 
   return (
     <>
@@ -528,34 +587,34 @@ function FlowToolbar({ onAddNote, onDeleteSelected, onRelayout, onFitView }) {
         <div className="flex flex-wrap items-center gap-1 bg-surface-container-lowest rounded-lg shadow-md border border-outline-variant p-1 max-w-[calc(100vw-1rem)]">
           <button
             onClick={onAddNote}
-            title={t("page:result.flowAddNote")}
+            title={noteTitle}
             className={`${btnClass} ${btnDefault}`}
-            aria-label={t("page:result.flowAddNote")}
+            aria-label={noteTitle}
             data-oid="flow-btn-note">
             <StickyNote size={16} />
           </button>
           <button
             onClick={onDeleteSelected}
-            title={t("page:result.flowDeleteSelected")}
+            title={deleteTitle}
             className={`${btnClass} ${btnDefault}`}
-            aria-label={t("page:result.flowDeleteSelected")}
+            aria-label={deleteTitle}
             data-oid="flow-btn-delete">
             <Trash2 size={16} />
           </button>
           <div className="w-px h-6 bg-outline-variant mx-0.5" />
           <button
             onClick={onRelayout}
-            title={t("page:result.flowResetLayout")}
+            title={relayoutTitle}
             className={`${btnClass} ${btnDefault}`}
-            aria-label={t("page:result.flowResetLayout")}
+            aria-label={relayoutTitle}
             data-oid="flow-btn-relayout">
             <LayoutGrid size={16} />
           </button>
           <button
             onClick={onFitView}
-            title={t("page:result.flowFitView")}
+            title={fitViewTitle}
             className={`${btnClass} ${btnDefault}`}
-            aria-label={t("page:result.flowFitView")}
+            aria-label={fitViewTitle}
             data-oid="flow-btn-fitview">
             <Maximize size={16} />
           </button>
@@ -644,14 +703,6 @@ function FlowCanvas({ rawNodes, rawEdges, onNodeClick, dependencyEdges = [], job
   const [isSpacePanning, setIsSpacePanning] = useState(false);
 
   useEffect(() => {
-    const isEditableTarget = (target) => {
-      if (!target) return false;
-      const tag = target.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
-      if (target.isContentEditable) return true;
-      return false;
-    };
-
     const handleKeyDown = (e) => {
       if (e.code !== "Space" && e.key !== " ") return;
       if (isEditableTarget(e.target)) return;
@@ -824,6 +875,57 @@ function FlowCanvas({ rawNodes, rawEdges, onNodeClick, dependencyEdges = [], job
     fitView({ padding: 0.2, duration: 500 });
   }, [fitView]);
 
+  // [Flow: 플로우뷰 도구 단축키 — 툴바 버튼과 동일한 단축키를 키보드로도 동작하게 한다]
+  // 편집 중인 input/textarea/contenteditable에서는 무시하며, 드로잉 중에는 도구 전환만 막는다.
+  const { setTool: setDrawingTool, undo: undoDrawing, clear: clearDrawing, isDrawing } = drawing;
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (isEditableTarget(e.target)) return;
+
+      // 드로잉 실행 취소 / 전체 지우기
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        undoDrawing();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "x") {
+        e.preventDefault();
+        clearDrawing();
+        return;
+      }
+
+      // 선택된 노드/엣지 삭제 (Delete/Backspace)
+      if (e.key === "Delete" || e.key === "Backspace") {
+        const hasSelection = nodes.some(n => n.selected) || edges.some(edge => edge.selected);
+        if (!hasSelection) return;
+        e.preventDefault();
+        handleDeleteSelected();
+        return;
+      }
+
+      // 드로잉 중에는 도구 전환/레이아웃 단축키를 막아서 그리기가 끊기지 않도록 한다
+      if (isDrawing) return;
+
+      // 드로잉 도구 전환
+      const toolMap = { v: "select", p: "pen", h: "highlighter", s: "shape", t: "text", e: "eraser" };
+      const tool = toolMap[e.key.toLowerCase()];
+      if (tool) {
+        e.preventDefault();
+        setDrawingTool(tool);
+        return;
+      }
+
+      // 플로우뷰 액션 단축키
+      const key = e.key.toLowerCase();
+      if (key === "n") { e.preventDefault(); handleAddNote(); return; }
+      if (key === "l") { e.preventDefault(); handleRelayout(); return; }
+      if (key === "f") { e.preventDefault(); handleFitView(); return; }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [setDrawingTool, undoDrawing, clearDrawing, isDrawing, nodes, edges, handleDeleteSelected, handleAddNote, handleRelayout, handleFitView]);
+
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center" data-oid="flow-loading">
@@ -886,6 +988,7 @@ function FlowCanvas({ rawNodes, rawEdges, onNodeClick, dependencyEdges = [], job
       fitView
       proOptions={{ hideAttribution: true }}
       defaultEdgeOptions={{ type: "custom" }}
+      deleteKeyCode={null}
       nodesDraggable={!isDrawingMode && !isSpacePanning}
       panOnDrag={!isDrawingMode || isSpacePanning}
       selectionOnDrag={!isDrawingMode && !isSpacePanning}
@@ -935,6 +1038,7 @@ function FlowCanvas({ rawNodes, rawEdges, onNodeClick, dependencyEdges = [], job
         onUndo={drawing.undo}
         onClear={drawing.clear}
         canUndo={drawing.paths.length > 0 || drawing.textAnnotations.length > 0}
+        shortcuts={FLOW_TOOL_SHORTCUTS}
       />
     </ReactFlow>
     </>
@@ -962,13 +1066,13 @@ const FlowViewer = forwardRef(function FlowViewer({ markdown, files, onNodeClick
   const drawingApiRef = useRef(null);
 
   // [Flow: 마크다운에서 제목/노드/에지 추출 후 FlowCanvas에 전달]
-  // files prop이 있으면 다중 파일 파싱, 없으면 단일 markdown 파싱
+  // files prop이 있으면 다중 파일 파싱, 없으면 단일 markdown 파싱 (filename 폴백 전달)
   const rawFlowData = useMemo(() => {
     if (files && files.length > 0) {
       return parseMultiFileMarkdownToFlow(files);
     }
-    return parseMarkdownToFlow(markdown || "");
-  }, [markdown, files]);
+    return parseMarkdownToFlow(markdown || "", filename);
+  }, [markdown, files, filename]);
   const displayTitle = rawFlowData.title || filename || t("page:result.flowView") || jobId;
 
   // [Flow: useImperativeHandle로 updateFromAgent 메서드를 외부에 노출]

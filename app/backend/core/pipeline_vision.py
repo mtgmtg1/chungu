@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# [Flow: Step 1 (PDF->PNG 렌더, 완료 페이지 즉시 OCR 제출) -> Step 2 (페이지 병렬 vision OCR) -> Step 3 (2×N 단위 진행률 콜백) -> Step 4 (페이지별 MD 표 수집)]
+# [Flow: Step 1 (PDF->PNG 렌더) -> Step 2 (배치 PaddleOCR 또는 per-page LLM vision) -> Step 3 (진행률 콜백) -> Step 4 (페이지별 MD 표 수집)]
 # 기존 ocr_run.py 의 vision 파이프라인을 함수형으로 일반화.
 import logging
 import threading
@@ -13,6 +13,9 @@ from .prompts import build_vision_prompt
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+# AI Studio 기본 페이지 제한 — 한 job에 최대 10페이지까지 처리 가능
+BATCH_SIZE = 10
 
 
 def _detect_provider(endpoint: str, model: str = "") -> str:
@@ -41,9 +44,9 @@ def run_vision(
     on_progress: Callable[[int, int], None] | None = None,
     on_error: Callable[[int, str], None] | None = None,
 ) -> tuple[list[tuple[int, str]], dict[int, dict]]:
-    """PDF를 PNG로 렌더링하면서 렌더링이 완료된 페이지는 즉시 OCR에 제출한다.
+    """PDF를 PNG로 렌더링한 후, 배치 PaddleOCR 또는 per-page LLM vision으로 변환한다.
 
-    [Flow: Step 1 (총 페이지 수 계산) -> Step 2 (OCR executor 생성) -> Step 3 (render_pdf에 on_page_rendered 콜백 전달, 렌더링 완료 페이지 즉시 OCR 제출) -> Step 4 (모든 OCR future 수집/대기) -> Step 5 (페이지 번호 순서로 결과 반환) -> Step 6 (searchable PDF 생성용 layout_by_page 반환)]
+    [Flow: Step 1 (총 페이지 수 계산) -> Step 2 (모든 페이지 렌더링 완료 대기) -> Step 3a (fallback 선호 시: 10페이지 배치로 PaddleOCR 제출, 실패 시 per-page 폴백) / Step 3b (fallback 비선호 시: per-page LLM vision) -> Step 4 (페이지 번호 순서로 결과 정렬) -> Step 5 (searchable PDF 생성용 layout_by_page 반환)]
     """
     work = Path(work_dir)
     img_dir = work / "img"
@@ -56,23 +59,20 @@ def run_vision(
 
     prompt = build_vision_prompt(columns, extra_prompt)
     lock = threading.Lock()
-    rendered_count = 0
-    ocr_done_count = 0
-    ocr_futures: set = set()
-    future_to_page_num: dict = {}
+    progress_state = {"rendered": 0, "ocr_done": 0}
     results: list[tuple[int, str | None, dict]] = []
 
     def update_progress() -> None:
         if not on_progress or total_pages <= 0:
             return
-        progress = min(100, int((rendered_count + ocr_done_count) / (2 * total_pages) * 100))
+        progress = min(100, int((progress_state["rendered"] + progress_state["ocr_done"]) / (2 * total_pages) * 100))
         on_progress(progress, 100)
 
     def resolve_endpoint(idx: int) -> tuple[str, str, str]:
         return endpoint, model, api_key
 
     def _try_paddleocr_fallback(img: Path, page_num: int) -> tuple[str | None, dict]:
-        """PaddleOCR 폴백으로 페이지 이미지를 처리한다.
+        """PaddleOCR 폴백으로 단일 페이지 이미지를 처리한다.
 
         [Flow: Step 1 (폴백 가능 여부 확인) -> Step 2 (paddleocr_client.convert_image_with_layout 호출)
               -> Step 3 (성공 시 consume_fallback, markdown + layout 반환) -> Step 4 (실패 시 None, {})]
@@ -85,21 +85,19 @@ def run_vision(
             if not fb_result:
                 return None, {}
             fallback_controller.consume_fallback()
-            logger.info(f"[vision-fallback] page {page_num} PaddleOCR 폴백 성공")
+            logger.info(f"[vision-fallback] page {page_num} PaddleOCR 단일 폴백 성공")
             return fb_result, layout
         except Exception as e:
-            logger.warning(f"[vision-fallback] page {page_num} PaddleOCR 폴백 실패: {e}")
+            logger.warning(f"[vision-fallback] page {page_num} PaddleOCR 단일 폴백 실패: {e}")
             return None, {}
 
     def process(page_idx: int, page_num: int, img: Path) -> tuple[int, str | None, dict]:
-        """단일 페이지 이미지를 OCR 처리한다.
+        """단일 페이지 이미지를 OCR 처리한다 (LLM vision 경로 + 단일 PaddleOCR 폴백).
 
         [Flow: Step 1 (PaddleOCR 폴백 우선 시도) -> Step 2 (폴백 실패 시 LLM vision 호출) -> Step 3 (예외 발생 시 최종 폴백 시도) -> Step 4 (완료 시 진행률 갱신)]
         """
-        nonlocal ocr_done_count
         layout_raw: dict = {}
         try:
-            # run_vision으로 라우팅된 모든 페이지는 PaddleOCR을 우선 사용한다
             if fallback_controller.is_fallback_preferred():
                 fb_result, layout_raw = _try_paddleocr_fallback(img, page_num)
                 if fb_result:
@@ -120,44 +118,103 @@ def run_vision(
                 raise
         finally:
             with lock:
-                ocr_done_count += 1
+                progress_state["ocr_done"] += 1
                 update_progress()
 
-    ocr_workers = workers if workers is not None else min(total_pages, settings.llm_max_workers)
-    with ThreadPoolExecutor(max_workers=ocr_workers) as ocr_executor:
-        def on_page_rendered(page_idx: int, img_path: Path) -> None:
-            """페이지 렌더링이 완료되면 즉시 OCR 작업을 제출하고 진행률을 갱신한다.
+    def _process_batch(
+        batch: list[tuple[int, Path]],
+    ) -> list[tuple[int, str | None, dict]]:
+        """한 배치(최대 10페이지)를 AI Studio에 단일 job로 제출하고 per-page 결과를 반환한다.
 
-            [Flow: Step 1 (페이지 번호 추출) -> Step 2 (렌더링 카운트 증가 및 진행률 갱신) -> Step 3 (OCR executor에 작업 제출)]
-            """
-            nonlocal rendered_count
-            page_num = ocr_client.find_page_number(img_path)
-            if page_num is None:
-                return
-            with lock:
-                rendered_count += 1
-                update_progress()
-            future = ocr_executor.submit(process, page_idx, page_num, img_path)
-            with lock:
-                ocr_futures.add(future)
-                future_to_page_num[future] = page_num
+        [Flow: Step 1 (배치 이미지 추출) -> Step 2 (convert_images_batch_with_layout 호출) -> Step 3 (per-page 결과를 (page_num, markdown, layout) 튜플로 매핑)]
+        """
+        page_nums = [pn for pn, _ in batch]
+        image_paths = [img for _, img in batch]
+        batch_results: list[tuple[int, str | None, dict]] = []
 
-        # Step 3: 렌더링 시작, 완료된 페이지는 즉시 OCR로 제출
-        ocr_client.render_pdf(pdf_path, str(img_dir), dpi=dpi, on_page_rendered=on_page_rendered)
+        try:
+            pages = paddleocr_client.convert_images_batch_with_layout(image_paths)
+            for idx, (page_num, (md, layout, _angle)) in enumerate(zip(page_nums, pages)):
+                extracted = ocr_client.extract_markdown_content(md)
+                batch_results.append((page_num, extracted, layout))
+            logger.info(f"[vision-batch] 배치 성공: pages {page_nums[0]}-{page_nums[-1]} ({len(page_nums)}장)")
+        except Exception as e:
+            logger.warning(f"[vision-batch] 배치 실패 (pages {page_nums[0]}-{page_nums[-1]}), per-page 폴백: {e}")
+            raise
 
-        # Step 4: 모든 OCR 작업 대기
+        return batch_results
+
+    # Step 2: 모든 페이지 렌더링 (배치 처리를 위해 전체 완료 대기)
+    def on_render_progress(done: int, total: int) -> None:
         with lock:
-            pending_futures = list(ocr_futures)
-        for future in as_completed(pending_futures):
-            page_num = future_to_page_num.get(future)
-            try:
-                page_num, result, layout_raw = future.result()
-                results.append((page_num, result, layout_raw))
-            except Exception as e:  # noqa: BLE001
-                if on_error and page_num is not None:
-                    on_error(page_num, str(e))
+            progress_state["rendered"] = done
+            update_progress()
 
-    # Step 5: 페이지 번호 순서로 정렬하여 반환
+    img_paths = ocr_client.render_pdf(pdf_path, str(img_dir), dpi=dpi, on_progress=on_render_progress)
+
+    # 페이지 번호 추출 및 정렬
+    page_images: list[tuple[int, Path]] = []
+    for img_path in img_paths:
+        page_num = ocr_client.find_page_number(img_path)
+        if page_num is not None:
+            page_images.append((page_num, img_path))
+    page_images.sort(key=lambda x: x[0])
+
+    if not page_images:
+        return [], {}
+
+    # Step 3: OCR 처리 경로 선택
+    use_batch = fallback_controller.is_fallback_preferred() and len(page_images) > 1
+
+    if use_batch:
+        # Step 3a: 배치 PaddleOCR 경로 — 10페이지 단위로 묶어 병렬 제출
+        batches = [
+            page_images[i:i + BATCH_SIZE]
+            for i in range(0, len(page_images), BATCH_SIZE)
+        ]
+        batch_workers = min(len(batches), max(1, settings.llm_max_workers // BATCH_SIZE))
+        logger.info(f"[vision-batch] {len(page_images)}페이지 → {len(batches)}배치 (workers={batch_workers})")
+
+        with ThreadPoolExecutor(max_workers=batch_workers) as batch_executor:
+            future_to_batch = {
+                batch_executor.submit(_process_batch, batch): batch
+                for batch in batches
+            }
+            for future in as_completed(future_to_batch):
+                batch = future_to_batch[future]
+                try:
+                    batch_results = future.result()
+                    results.extend(batch_results)
+                    with lock:
+                        progress_state["ocr_done"] += len(batch_results)
+                        update_progress()
+                except Exception:
+                    # 배치 실패 → per-page 폴백 (기존 process 함수 사용)
+                    for page_idx, (page_num, img_path) in enumerate(batch):
+                        try:
+                            result = process(page_idx, page_num, img_path)
+                            results.append(result)
+                        except Exception as e:
+                            if on_error:
+                                on_error(page_num, str(e))
+    else:
+        # Step 3b: per-page LLM vision 경로 (기존 로직)
+        ocr_workers = workers if workers is not None else min(total_pages, settings.llm_max_workers)
+        with ThreadPoolExecutor(max_workers=ocr_workers) as ocr_executor:
+            futures = {
+                ocr_executor.submit(process, idx, page_num, img): page_num
+                for idx, (page_num, img) in enumerate(page_images)
+            }
+            for future in as_completed(futures):
+                page_num = futures[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    if on_error:
+                        on_error(page_num, str(e))
+
+    # Step 4: 페이지 번호 순서로 정렬하여 반환
     results.sort(key=lambda x: x[0])
     page_tables = [(page_num, result) for page_num, result, _ in results if result]
     layout_by_page: dict[int, dict] = {page_num: layout for page_num, _, layout in results if layout}

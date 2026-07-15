@@ -15,7 +15,7 @@ from .image_deskew import deskew_image
 logger = logging.getLogger(__name__)
 
 UPLOAD_TIMEOUT = 300
-POLL_INTERVAL = 5
+POLL_INTERVAL = 1
 POLL_TIMEOUT = 30
 MAX_POLL_DURATION = 1800
 
@@ -192,3 +192,110 @@ def convert_image(image_path: Path, timeout: int = 600) -> str:
     """
     markdown, _ = convert_file(image_path, timeout=timeout)
     return markdown
+
+
+def convert_images_batch_with_layout(
+    image_paths: list[Path],
+    timeout: int = 1800,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> list[tuple[str, dict, int]]:
+    """여러 페이지 이미지를 하나의 AI Studio job로 배치 변환하고 per-page 결과를 반환한다.
+
+    [Flow: Step 1 (이미지들을 /api/convert/batch에 업로드) -> Step 2 (task_id 폴링) -> Step 3 (per-page 결과 리스트 반환)]
+
+    AI Studio 기본 제한(10페이지)을 초과하지 않도록 호출자가 분할하여 호출해야 한다.
+    반환 리스트 순서는 image_paths 순서와 동일하다.
+
+    Args:
+        image_paths: 변환할 페이지 이미지 경로 리스트 (최대 10장)
+        timeout: 최대 대기 시간 (초)
+        on_progress: 진행률 콜백
+
+    Returns:
+        [(markdown, layout, angle_code), ...] — image_paths 순서대로 per-page 결과
+    """
+    if not _is_enabled():
+        raise RuntimeError("PaddleOCR fallback service is disabled")
+
+    if not image_paths:
+        return []
+
+    base_url = _get_service_url()
+    batch_url = f"{base_url}/api/convert/batch"
+    logger.info(f"[paddleocr-batch] {len(image_paths)}장 배치 변환 시작")
+
+    # Step 1: 다중 이미지 업로드
+    files_payload = []
+    opened_files = []
+    for img_path in image_paths:
+        f = open(img_path, "rb")
+        opened_files.append(f)
+        files_payload.append(("files", (img_path.name, f)))
+
+    try:
+        resp = requests.post(batch_url, files=files_payload, timeout=UPLOAD_TIMEOUT)
+    finally:
+        for f in opened_files:
+            f.close()
+
+    if resp.status_code >= 400:
+        logger.error(f"[paddleocr-batch] 배치 시작 실패: {resp.status_code} {resp.text[:200]}")
+        resp.raise_for_status()
+
+    task_id = resp.json().get("task_id")
+    if not task_id:
+        raise RuntimeError(f"Failed to start batch conversion: no task_id (resp={resp.text[:200]})")
+
+    logger.info(f"[paddleocr-batch] task_id={task_id} 폴링 시작")
+
+    # Step 2: 폴링 루프
+    start_time = time.monotonic()
+    status_url = f"{base_url}/api/convert/batch/status/{task_id}"
+
+    while True:
+        elapsed = time.monotonic() - start_time
+
+        if elapsed > timeout:
+            raise TimeoutError(f"PaddleOCR batch timeout: {elapsed:.0f}s > {timeout}s")
+
+        try:
+            status_resp = requests.get(status_url, timeout=POLL_TIMEOUT)
+        except Exception as e:
+            logger.warning(f"[paddleocr-batch] 폴링 실패, 재시도: {e}")
+            time.sleep(POLL_INTERVAL)
+            continue
+
+        if status_resp.status_code == 404:
+            raise RuntimeError(f"PaddleOCR batch task not found: {task_id}")
+
+        if status_resp.status_code >= 400:
+            logger.warning(f"[paddleocr-batch] 폴링 에러: {status_resp.status_code}")
+            time.sleep(POLL_INTERVAL)
+            continue
+
+        data = status_resp.json()
+        status = data.get("status", "")
+
+        if status == "done":
+            result = data.get("result")
+            if result is None:
+                raise RuntimeError("PaddleOCR batch completed but no result")
+            pages = result.get("pages", [])
+            logger.info(f"[paddleocr-batch] 배치 변환 완료 ({elapsed:.0f}s, {len(pages)}페이지)")
+            if on_progress:
+                on_progress(100, 100)
+            return [
+                (page.get("markdown", ""), page.get("layout", {}), page.get("page_angle", -1))
+                for page in pages
+            ]
+
+        if status == "error":
+            error_msg = data.get("error", "Unknown error")
+            raise RuntimeError(f"PaddleOCR batch failed: {error_msg}")
+
+        # status == "processing": 추정 진행률
+        if status == "processing" and on_progress:
+            est_pct = min(99, int(elapsed / timeout * 99))
+            on_progress(est_pct, 100)
+
+        time.sleep(POLL_INTERVAL)

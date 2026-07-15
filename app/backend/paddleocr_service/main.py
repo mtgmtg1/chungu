@@ -47,7 +47,7 @@ AISTUDIO_API_URL = os.environ.get("PADDLEOCR_API_URL", "https://paddleocr.aistud
 AISTUDIO_API_TOKEN = os.environ.get("PADDLEOCR_API_TOKEN", "")
 AISTUDIO_MODEL = os.environ.get("PADDLEOCR_API_MODEL", "PaddleOCR-VL-1.6")
 AISTUDIO_UPLOAD_TIMEOUT = int(os.environ.get("PADDLEOCR_UPLOAD_TIMEOUT", "300"))
-AISTUDIO_POLL_INTERVAL = int(os.environ.get("PADDLEOCR_POLL_INTERVAL", "5"))
+AISTUDIO_POLL_INTERVAL = int(os.environ.get("PADDLEOCR_POLL_INTERVAL", "1"))
 AISTUDIO_POLL_TIMEOUT = int(os.environ.get("PADDLEOCR_POLL_TIMEOUT", "30"))
 AISTUDIO_DOWNLOAD_TIMEOUT = int(os.environ.get("PADDLEOCR_DOWNLOAD_TIMEOUT", "120"))
 AISTUDIO_MAX_POLL_DURATION = int(os.environ.get("PADDLEOCR_MAX_POLL_DURATION", "1800"))
@@ -746,6 +746,7 @@ def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, A
     image_dir.mkdir(parents=True, exist_ok=True)
 
     all_page_markdowns: list[str] = []
+    page_markdowns: list[str] = []
     downloaded_images: list[str] = []
     layout_pages: list[dict] = []
     # 페이지별 90° 단위 회전 각도 (0/90/180/270). 주석 PDF 생성 시 클라이언트가 이미지를
@@ -793,6 +794,8 @@ def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, A
             # div 래퍼 제거 (ProseMirror 호환성)
             md_text = re.sub(r'<div[^>]*>(<img[^>]*>)</div>', r'\1', md_text)
 
+            # per-page markdown (배치 응답용 — 헤더 없이 순수 페이지 텍스트)
+            page_markdowns.append(md_text)
             page_header = f"<!-- Page {page_num} -->\n" if page_num > 1 else ""
             all_page_markdowns.append(f"{page_header}{md_text}")
 
@@ -801,6 +804,7 @@ def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, A
 
     return {
         "markdown": markdown,
+        "page_markdowns": page_markdowns,
         "images": downloaded_images,
         "page_count": page_num,
         "layout": layout_pages,
@@ -893,6 +897,215 @@ async def api_convert_status(task_id: str) -> TaskStatusResponse:
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return TaskStatusResponse(
+        task_id=task_id,
+        status=task["status"],
+        result=task.get("result"),
+        error=task.get("error"),
+        started_at=task.get("started_at"),
+        finished_at=task.get("finished_at"),
+    )
+
+
+# ─── AI Studio API 배치 엔드포인트 (여러 이미지 → 1 job) ───
+
+# AI Studio 기본 페이지 제한 (maxNumInputImgs 서버 사이드 설정값)
+BATCH_MAX_PAGES = int(os.environ.get("PADDLEOCR_BATCH_MAX_PAGES", "10"))
+
+
+class BatchPageResult(BaseModel):
+    """배치 결과 내 개별 페이지 데이터."""
+    markdown: str
+    layout: dict
+    page_angle: int
+
+
+class BatchConvertResponse(BaseModel):
+    """배치 변환 응답 — 업로드 순서대로 per-page 결과 리스트 반환."""
+    pages: list[BatchPageResult]
+    page_count: int
+
+
+class BatchTaskStatusResponse(BaseModel):
+    task_id: str
+    status: str
+    result: BatchConvertResponse | None = None
+    error: str | None = None
+    started_at: float | None = None
+    finished_at: float | None = None
+
+
+def _images_to_tiff(image_paths: list[Path], output_path: Path) -> Path:
+    """여러 PNG 이미지를 단일 multi-page TIFF로 병합한다.
+
+    [Flow: Step 1 (PIL로 첫 이미지 로드) -> Step 2 (나머지 이미지 append) -> Step 3 (LZW 압축 TIFF 저장)]
+
+    AI Studio API는 multi-page TIFF를 한 job에서 페이지별로 처리한다.
+    bbox 좌표계가 원본 PNG 픽셀 크기를 그대로 유지하므로 300 DPI 기준 좌표 변환이 호환된다.
+
+    Args:
+        image_paths: 병합할 PNG 이미지 경로 리스트 (순서 = 페이지 순서)
+        output_path: 출력 TIFF 파일 경로
+
+    Returns:
+        output_path (저장된 TIFF 경로)
+    """
+    from PIL import Image
+
+    images: list[Image.Image] = []
+    for img_path in image_paths:
+        img = Image.open(str(img_path))
+        # RGB 모드로 통일 (TIFF는 RGBA/팔레트 혼합 저장을 지원하지 않는 경우가 있음)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        images.append(img)
+
+    if not images:
+        raise RuntimeError("No images to combine into TIFF")
+
+    images[0].save(
+        str(output_path),
+        format="TIFF",
+        save_all=True,
+        append_images=images[1:],
+        compression="tiff_lzw",
+        dpi=(300, 300),
+    )
+    for img in images:
+        img.close()
+    logger.info(f"[paddleocr-batch] {len(image_paths)}장 → TIFF 병합 완료: {output_path.name}")
+    return output_path
+
+
+def _do_aistudio_batch_convert(task_id: str, image_paths: list[Path], filenames: list[str]) -> None:
+    """여러 페이지 이미지를 하나의 AI Studio job으로 배치 변환한다.
+
+    [Flow: Step 1 (각 이미지 deskew 보정) -> Step 2 (multi-page TIFF 병합) -> Step 3 (AI Studio job 제출) -> Step 4 (폴링) -> Step 5 (JSONL 다운로드/파싱) -> Step 6 (per-page 결과 저장)]
+    """
+    try:
+        request_id = uuid.uuid4().hex
+        work_dir = Path(tempfile.mkdtemp())
+
+        # Step 1: 각 이미지 deskew 보정
+        try:
+            from backend.core.image_deskew import deskew_image
+        except ImportError:
+            from core.image_deskew import deskew_image
+        deskewed_paths: list[Path] = []
+        for img_path in image_paths:
+            corrected, _angle = deskew_image(img_path, work_dir)
+            deskewed_paths.append(corrected)
+
+        # Step 2: multi-page TIFF 병합
+        tiff_path = work_dir / "batch.tiff"
+        _images_to_tiff(deskewed_paths, tiff_path)
+
+        # Step 3-5: AI Studio job 제출 → 폴링 → 다운로드/파싱
+        job_id = _aistudio_submit_job(tiff_path)
+        jsonl_url = _aistudio_poll_job(job_id)
+        ocr_result = _aistudio_download_and_parse(jsonl_url, request_id)
+
+        # Step 6: per-page 결과 구성
+        page_markdowns = ocr_result.get("page_markdowns", [])
+        layout_pages = ocr_result.get("layout", [])
+        page_angles = ocr_result.get("page_angles", [])
+        page_count = ocr_result.get("page_count", len(page_markdowns))
+
+        pages: list[BatchPageResult] = []
+        for idx in range(page_count):
+            pages.append(BatchPageResult(
+                markdown=page_markdowns[idx] if idx < len(page_markdowns) else "",
+                layout=layout_pages[idx] if idx < len(layout_pages) else {},
+                page_angle=page_angles[idx] if idx < len(page_angles) else -1,
+            ))
+
+        batch_result = BatchConvertResponse(pages=pages, page_count=page_count)
+
+        with _tasks_lock:
+            _tasks[task_id]["status"] = "done"
+            _tasks[task_id]["result"] = batch_result
+            _tasks[task_id]["finished_at"] = time.time()
+
+        logger.info(f"[aistudio-batch] {len(image_paths)}장 배치 변환 완료 ({page_count}페이지)")
+
+    except Exception as e:
+        logger.exception(f"[aistudio-batch] 배치 변환 실패: {e}")
+        with _tasks_lock:
+            _tasks[task_id]["status"] = "error"
+            _tasks[task_id]["error"] = str(e)
+            _tasks[task_id]["finished_at"] = time.time()
+
+
+@app.post("/api/convert/batch", response_model=AsyncConvertResponse)
+async def api_convert_batch(files: list[UploadFile] = File(...)) -> AsyncConvertResponse:
+    """여러 페이지 이미지를 하나의 AI Studio job로 배치 변환한다.
+
+    클라이언트가 렌더링한 페이지 PNG 이미지들을 업로드하면, 서비스가 이를
+    multi-page TIFF로 병합하여 AI Studio API에 단일 job으로 제출한다.
+    AI Studio 기본 제한(10페이지)을 초과하지 않도록 클라이언트가 분할하여 호출해야 한다.
+    """
+    if not AISTUDIO_API_TOKEN:
+        raise HTTPException(status_code=503, detail="PADDLEOCR_API_TOKEN is not configured")
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded")
+
+    if len(files) > BATCH_MAX_PAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Batch exceeds AI Studio page limit: {len(files)} > {BATCH_MAX_PAGES}. Split into smaller batches.",
+        )
+
+    tmpdir = tempfile.mkdtemp()
+    tmp_path = Path(tmpdir)
+    image_paths: list[Path] = []
+    filenames: list[str] = []
+
+    for f in files:
+        if not f.filename:
+            continue
+        ext = Path(f.filename).suffix.lower()
+        if ext not in {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp"}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Batch endpoint supports images only: {f.filename}",
+            )
+        saved_path = tmp_path / f.filename
+        saved_path.write_bytes(await f.read())
+        image_paths.append(saved_path)
+        filenames.append(f.filename)
+
+    if not image_paths:
+        raise HTTPException(status_code=400, detail="No valid image files uploaded")
+
+    task_id = uuid.uuid4().hex
+    with _tasks_lock:
+        _tasks[task_id] = {
+            "status": "processing",
+            "result": None,
+            "error": None,
+            "started_at": time.time(),
+            "finished_at": None,
+            "tmpdir": tmpdir,
+        }
+
+    thread = threading.Thread(
+        target=_do_aistudio_batch_convert,
+        args=(task_id, image_paths, filenames),
+        daemon=True,
+    )
+    thread.start()
+
+    return AsyncConvertResponse(task_id=task_id, status="processing")
+
+
+@app.get("/api/convert/batch/status/{task_id}", response_model=BatchTaskStatusResponse)
+async def api_convert_batch_status(task_id: str) -> BatchTaskStatusResponse:
+    """배치 변환 작업의 상태를 조회한다 (/api/convert/status/{task_id}와 동일 스펙, 결과 타입만 상이)."""
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return BatchTaskStatusResponse(
         task_id=task_id,
         status=task["status"],
         result=task.get("result"),

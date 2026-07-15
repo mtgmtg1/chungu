@@ -217,6 +217,7 @@
     "fileProgress": "{{done}} / {{total}} files ({{pct}}%)",
     "originalImage": "Original Image {{number}}",
     "page": "Page",
+    "file": "File",
     "leaveNotice": "You can leave this page. We'll send you an email when complete.",
     "annotate": "AI Annotation",
     "annotateProcessing": "Generating AI annotations…",

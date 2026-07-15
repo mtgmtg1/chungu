@@ -121,12 +121,12 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
           onClick={goToPrev}
           disabled={!canGoPrev}
           className="p-1.5 rounded-lg bg-white border border-outline-variant hover:bg-primary/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          title="이전 페이지"
+          title={t("common:previous")}
           data-oid="paged-prev">
           <ChevronLeft size={18} />
         </button>
         <div className="flex items-center gap-1.5 text-sm text-on-surface">
-          <span className="text-on-surface-variant">페이지</span>
+          <span className="text-on-surface-variant">{t("page:result.file")}</span>
           <input
             type="number"
             min={1}
@@ -142,7 +142,7 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
           onClick={goToNext}
           disabled={!canGoNext}
           className="p-1.5 rounded-lg bg-white border border-outline-variant hover:bg-primary/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          title="다음 페이지"
+          title={t("common:next")}
           data-oid="paged-next">
           <ChevronRight size={18} />
         </button>
@@ -156,8 +156,8 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
           data-oid="paged-select">
           {pages.map((p) => (
             <option key={p.page_num} value={p.page_num}>
-              {p.page_num}페이지 — {p.preview?.slice(0, 40) || ""}
-              {p.preview?.length > 40 ? "..." : ""}
+              {p.page_num}{t("page:result.file")} — {p.filename || p.preview?.slice(0, 40) || ""}
+              {p.filename ? "" : (p.preview?.length > 40 ? "..." : "")}
             </option>
           ))}
         </select>
@@ -218,7 +218,9 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
             sourceUrl={sourceUrl}
             sourceType={sourceType}
             imageUrls={imageUrls}
-            currentPage={currentPage}
+            currentPage={1}
+            selectedFileIndex={currentPage - 1}
+            onFileSelect={(idx) => goToPage(idx + 1)}
             onSaveAnnotations={onSaveAnnotations}
             onUpload={onUpload}
             data-oid="8kmamif" />

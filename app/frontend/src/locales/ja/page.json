@@ -217,6 +217,7 @@
     "fileProgress": "{{done}} / {{total}} ファイル ({{pct}}%)",
     "originalImage": "元の画像 {{number}}",
     "page": "ページ",
+    "file": "ファイル",
     "leaveNotice": "このページから離れても構いません。完了時に完了メールをお送りします。",
     "annotate": "AI注釈",
     "annotateProcessing": "AI注釈を生成中…",

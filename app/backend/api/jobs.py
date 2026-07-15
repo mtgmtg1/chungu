@@ -1338,15 +1338,20 @@ def _get_markdown_content(job: Job) -> str:
         return ""
 
     # 페이지 마커가 가장 많은 후보를 선택 (편집 손실 방지)
+    # 파일 마커가 있으면 편집본으로 간주하여 무조건 우선한다.
     def _marker_count(md: str) -> int:
-        return len(_PAGE_MARKER_RE.findall(md))
+        file_count = len(_FILE_MARKER_RE.findall(md))
+        page_count = len(_PAGE_MARKER_RE.findall(md))
+        if file_count:
+            return 1_000_000 * file_count + page_count
+        return page_count
 
     best = max(candidates, key=_marker_count, default=candidates[0])
     return best
 
 
 # [Flow: Step 1 (기존 마크다운 다운로드) -> Step 2 (파일 구분자 제거) -> Step 3 (순수 마크다운 반환)]
-_FILE_MARKER_RE = _re.compile(r"<!--\s*파일\s+\d+\s*-->\s*\n*", _re.IGNORECASE)
+_FILE_MARKER_RE = _re.compile(r"<!--\s*파일\s+(\d+)\s*-->\s*\n*", _re.IGNORECASE)
 
 
 def _extract_single_file_markdown(job: Job) -> str:
@@ -1393,6 +1398,34 @@ def _image_files(job: Job) -> list[tuple[int, dict]]:
         if isinstance(info, dict) and info.get("type") == "image" and info.get("storage_path"):
             images.append((idx + 1, info))
     return images
+
+
+def _get_file_names(job: Job) -> list[str]:
+    """Job에서 파일 순서대로 표시용 파일명을 추출한다.
+
+    [Flow: Step 1 (extracted_files가 있으면 각 항목의 path/filename/원본명 사용)
+          -> Step 2 (extracted_files가 없으면 job.original_filename 또는 pdf_storage_path 사용)
+          -> Step 3 (파일명이 없으면 '파일 N' 형식으로 폴백)]
+
+    매개변수:
+        job: Job 객체
+
+    반환값:
+        파일명 문자열 리스트
+    """
+    files = job.extracted_files or []
+    if not files and job.pdf_storage_path and job.file_type in ("pdf", "docx", "hwp"):
+        return [_normalize_display_name(job.original_filename or Path(job.pdf_storage_path).name)]
+    names: list[str] = []
+    for i, info in enumerate(files):
+        if isinstance(info, dict):
+            name = info.get("filename") or info.get("path") or info.get("original_name") or ""
+        else:
+            name = ""
+        if not name:
+            name = f"파일 {i + 1}"
+        names.append(_normalize_display_name(name))
+    return names
 
 
 def _normalize_display_name(name: str | None) -> str:
@@ -2044,6 +2077,38 @@ def _split_markdown_by_pages(markdown: str, expected_pages: int | None = None) -
     return chunks if chunks else [(1, content)]
 
 
+def _split_markdown_by_files(markdown: str) -> list[tuple[int, str]]:
+    """파일 구분자(`<!-- 파일 N -->`)를 기준으로 마크다운을 분할한다.
+
+    [Flow: Step 1 (파일 마커 매칭) -> Step 2 (마커 기준 분할) ->
+          Step 3 (마커가 없으면 전체를 1개 파일로 반환)]
+
+    매개변수:
+        markdown: 분할할 마크다운 문자열
+
+    반환값:
+        [(file_num, content), ...] 튜플 리스트
+    """
+    matches = list(_FILE_MARKER_RE.finditer(markdown))
+    if matches:
+        files: list[tuple[int, str]] = []
+        for idx, match in enumerate(matches):
+            file_num = int(match.group(1))
+            start = match.end()
+            end = matches[idx + 1].start() if idx + 1 < len(matches) else len(markdown)
+            content = markdown[start:end].strip()
+            # 파일 마커 사이에 삽입된 Horizontal Rule 구분자 제거
+            content = _re.sub(r"(?:^|\n+)(?:\s*[-_*]\s*[-_*]\s*[-_*][-\s*_]*\s*)\s*$", "", content).strip()
+            if content:
+                files.append((file_num, content))
+        return files
+
+    content = markdown.strip()
+    if not content:
+        return []
+    return [(1, content)]
+
+
 def _ensure_xlsx_basic_bundle(job: Job, db: Session) -> None:
     """CSV/XLSX 기본 변환 번들을 한 번 수행한다. 이미 변환된 경우 아무것도 하지 않는다.
     크레딧 시스템: basic_pages 단위로 사용량을 차감한다."""
@@ -2116,25 +2181,19 @@ def preview_job(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to generate preview: {e}")
 
-    # [Flow: PDF 총 페이지 수와 실제 처리된 페이지 수를 고려해 분할 힌트 산정
-    #       done_pages=1이고 total_pages>1이면 AI Studio가 전체를 1개로 묶었을 가능성이 높으므로 total_pages 사용
-    #       done_pages>1이면 이미 처리된 페이지 수(done_pages)를 우선 사용]
-    expected_pages = job.done_pages or 0
-    if expected_pages <= 1 and (job.total_pages or 0) > 1:
-        expected_pages = job.total_pages
-    expected_pages = max(expected_pages, 1)
-
-    pages = _split_markdown_by_pages(markdown, expected_pages=expected_pages)
-    page_nums = [num for num, _ in pages]
-    last_page = max(page_nums) if page_nums else 1
-    effective_end = end_page if end_page is not None else last_page
+    # [Flow: 파일 마커(`<!-- 파일 N -->`) 기준으로 분할 -> start_page/end_page를 파일 번호로 해석]
+    # _split_markdown_by_files는 파일 마커가 없으면 전체를 1개 파일로 반환한다.
+    files = _split_markdown_by_files(markdown)
+    file_nums = [num for num, _ in files]
+    last_file = max(file_nums) if file_nums else 1
+    effective_end = end_page if end_page is not None else last_file
     if effective_end < start_page:
         effective_end = start_page
 
-    # [Flow: 페이지 마커를 포함하여 partial_markdown 구성 — FlowViewer 노드 클릭 시 PDF 페이지 스크롤 연동에 필요]
-    # _split_markdown_by_pages는 마커를 제거한 content만 반환하므로, 여기서 마커를 다시 붙여 복원.
-    # SimpleEditor/MarkdownPreview는 페이지 마커를 숨김 처리하므로 사용자에게 보이지 않음.
-    selected = [(num, content) for num, content in pages if start_page <= num <= effective_end]
+    # [Flow: 파일 마커를 영어 페이지 마커 형식으로 변환하여 partial_markdown 구성]
+    # SimpleEditor/MarkdownPreview는 `<!-- Page N -->`를 숨김 처리하므로 사용자에게 보이지 않음.
+    # 현재 `start_page`/`end_page`는 파일 번호를 의미한다.
+    selected = [(num, content) for num, content in files if start_page <= num <= effective_end]
     partial_markdown = "\n\n---\n\n".join(
         f"<!-- Page {num} -->\n\n{content}" for num, content in selected
     )
@@ -2195,7 +2254,7 @@ def preview_job(
         "source_files": source_files,
         "start_page": start_page,
         "end_page": effective_end,
-        "last_page": last_page,
+        "last_page": last_file,
     }
     cache.set(cache_key, result, ttl_seconds=300)
     return result
@@ -2225,29 +2284,23 @@ def preview_job_pages(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to generate preview: {e}")
 
-    # [Flow: preview_job과 동일한 expected_pages 힌트 계산]
-    expected_pages = job.done_pages or 0
-    if expected_pages <= 1 and (job.total_pages or 0) > 1:
-        expected_pages = job.total_pages
-    expected_pages = max(expected_pages, 1)
-
-    pages = _split_markdown_by_pages(markdown, expected_pages=expected_pages)
-    images = _image_files(job)
-    image_map = {page_num: info for page_num, info in images}
+    # [Flow: 파일 마커 기준으로 분할 -> 각 파일의 메타데이터(파일명, 미리보기) 반환]
+    # `page_num`은 파일 번호(1-based)를 의미한다.
+    files = _split_markdown_by_files(markdown)
+    file_names = _get_file_names(job)
     out_pages = []
-    for num, content in pages:
-        entry: dict = {"page_num": num, "preview": content[:200].replace("\n", " ").strip()}
-        info = image_map.get(num)
-        if info:
-            try:
-                entry["image_url"] = supabase_client.get_signed_download_url(info["storage_path"], bucket="pdfs", expires_in=3600)
-            except Exception:
-                pass
+    for num, content in files:
+        filename = file_names[num - 1] if num - 1 < len(file_names) else f"파일 {num}"
+        entry: dict = {
+            "page_num": num,
+            "filename": filename,
+            "preview": content[:200].replace("\n", " ").strip(),
+        }
         out_pages.append(entry)
 
     return {
         "job": _job_summary(job),
-        "total_pages": len(pages),
+        "total_pages": len(files),
         "pages": out_pages,
     }
 
@@ -2315,21 +2368,19 @@ def save_result_page(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to load markdown: {e}")
 
-    # [Flow: preview_job/preview_job_pages와 동일한 expected_pages 힌트 계산]
-    expected_pages = job.done_pages or 0
-    if expected_pages <= 1 and (job.total_pages or 0) > 1:
-        expected_pages = job.total_pages
-    expected_pages = max(expected_pages, 1)
-
-    pages = _split_markdown_by_pages(markdown, expected_pages=expected_pages)
-    if not pages:
-        raise HTTPException(status_code=400, detail="No pages found")
-    target_idx = next((idx for idx, (num, _) in enumerate(pages) if num == page_num), None)
+    # [Flow: 파일 마커 기준으로 분할 -> page_num은 파일 번호로 해석 -> 해당 파일 내용만 갱신]
+    files = _split_markdown_by_files(markdown)
+    if not files:
+        raise HTTPException(status_code=400, detail="No files found")
+    target_idx = next((idx for idx, (num, _) in enumerate(files) if num == page_num), None)
     if target_idx is None:
-        raise HTTPException(status_code=404, detail="Page not found")
+        raise HTTPException(status_code=404, detail="File not found")
 
-    pages[target_idx] = (page_num, new_content)
-    updated = "\n\n---\n\n".join([f"<!-- Page {num} -->\n\n{content}" for num, content in pages])
+    # [Flow: 편집기에서 저장된 `<!-- Page N -->` 파일 마커 제거 -> 파일 구분자로 재조합]
+    cleaned_content = _PAGE_MARKER_RE.sub("", new_content).strip()
+    cleaned_content = _FILE_MARKER_RE.sub("", cleaned_content).strip()
+    files[target_idx] = (page_num, cleaned_content)
+    updated = "\n\n---\n\n".join([f"<!-- 파일 {num} -->\n\n{content}" for num, content in files])
 
     with tempfile.TemporaryDirectory() as tmpdir:
         edited_path = Path(tmpdir) / "result_edited.md"

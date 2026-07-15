@@ -156,7 +156,7 @@ describe("parseMarkdownToFlow", () => {
     expect(issue1Text).toBeDefined();
   });
 
-  it("이미지/리스트/표/코드/인용 콘텐츠가 통합 contentNode의 segments에 포함된다", () => {
+  it("이미지/리스트/표/코드/인용 콘텐츠가 타입별 contentNode로 생성된다", () => {
     const md = `# 제목
 
 ## 섹션
@@ -177,19 +177,13 @@ describe("parseMarkdownToFlow", () => {
     const { nodes } = parseMarkdownToFlow(md);
     const contentNodes = nodes.filter(n => n.data.kind === "content");
 
-    // heading별로 하나의 통합 contentNode가 생성됨
-    expect(contentNodes.length).toBe(1);
-    const cn = contentNodes[0];
-    // contentType은 여러 타입이 섞였으므로 "mixed"
-    expect(cn.data.contentType).toBe("mixed");
-    // segments 배열에 각 타입이 포함되어야 함
-    const segTypes = (cn.data.segments || []).map(s => s.type);
-    expect(segTypes).toContain("image");
-    expect(segTypes).toContain("list");
-    expect(segTypes).toContain("table");
-    expect(segTypes).toContain("code");
-    expect(segTypes).toContain("quote");
-    expect(segTypes).toContain("video");
+    const types = contentNodes.map(n => n.data.contentType);
+    expect(types).toContain("image");
+    expect(types).toContain("list");
+    expect(types).toContain("table");
+    expect(types).toContain("code");
+    expect(types).toContain("quote");
+    expect(types).toContain("video");
   });
 
   it("contentNode는 부모 heading에 hierarchy 엣지로 연결된다", () => {
@@ -205,7 +199,7 @@ describe("parseMarkdownToFlow", () => {
     expect(hierarchyEdge.targetHandle).toBe("top");
   });
 
-  it("같은 부모 아래 통합 contentNode가 하나만 생성된다", () => {
+  it("같은 부모 아래 contentNode 사이에 next 엣지가 생성된다", () => {
     const md = `# 제목
 
 ## 섹션
@@ -221,14 +215,21 @@ describe("parseMarkdownToFlow", () => {
 `;
     const { nodes, edges } = parseMarkdownToFlow(md);
     const contentNodes = nodes.filter(n => n.data.kind === "content");
-    // heading별로 하나의 통합 contentNode가 생성됨
-    expect(contentNodes.length).toBe(1);
-    // 통합 contentNode는 부모 heading에 hierarchy 엣지로 연결됨
-    const section = nodes.find(n => n.data.label === "섹션");
-    const hierarchyEdge = edges.find(
-      e => e.type === "hierarchy" && e.source === section.id && e.target === contentNodes[0].id,
-    );
-    expect(hierarchyEdge).toBeDefined();
+    // 4개 contentNode: text, image, list, quote
+    expect(contentNodes.length).toBe(4);
+
+    // 인접한 contentNode 쌍마다 next 엣지가 있어야 함
+    for (let i = 0; i < contentNodes.length - 1; i++) {
+      const src = contentNodes[i];
+      const tgt = contentNodes[i + 1];
+      const nextEdge = edges.find(
+        e => e.type === "next" && e.source === src.id && e.target === tgt.id,
+      );
+      expect(nextEdge).toBeDefined();
+      expect(nextEdge.sourceHandle).toBe("right");
+      expect(nextEdge.targetHandle).toBe("left");
+      expect(nextEdge.markerEnd).toBe("arrow-next");
+    }
   });
 
   it("통합 contentNode에 hasParent 플래그가 주입된다", () => {
@@ -245,10 +246,17 @@ describe("parseMarkdownToFlow", () => {
 `;
     const { nodes } = parseMarkdownToFlow(md);
     const contentNodes = nodes.filter(n => n.data.kind === "content");
-    // heading별로 하나의 통합 contentNode
-    expect(contentNodes.length).toBe(1);
-    // 통합 contentNode는 부모 heading에 연결되므로 hasParent=true
-    expect(contentNodes[0].data.hasParent).toBe(true);
+    // 3개 contentNode: text, image, list (같은 타입은 하나로 병합)
+    expect(contentNodes.length).toBe(3);
+    // 첫 번째: hasPrev=false, hasNext=true
+    expect(contentNodes[0].data.hasPrev).toBe(false);
+    expect(contentNodes[0].data.hasNext).toBe(true);
+    // 중간: hasPrev=true, hasNext=true
+    expect(contentNodes[1].data.hasPrev).toBe(true);
+    expect(contentNodes[1].data.hasNext).toBe(true);
+    // 마지막: hasPrev=true, hasNext=false
+    expect(contentNodes[2].data.hasPrev).toBe(true);
+    expect(contentNodes[2].data.hasNext).toBe(false);
   });
 });
 

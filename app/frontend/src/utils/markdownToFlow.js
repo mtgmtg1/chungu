@@ -62,86 +62,45 @@ function detectContentType(token) {
 }
 
 /**
- * 단일 토큰에서 라벨(미리보기용 짧은 텍스트)을 추출한다.
+ * 콘텐츠 토큰에서 라벨(미리보기용 짧은 텍스트)을 추출한다.
  * 타입별로 적절한 요약을 반환한다.
  *
  * @param {string} contentType - detectContentType 반환값
- * @param {Object} token - marked 토큰
+ * @param {Object[]} tokens - 같은 타입으로 그룹화된 토큰 배열
  * @returns {string} 라벨 텍스트 (최대 80자)
  */
-function extractTokenLabel(contentType, token) {
+function extractContentLabel(contentType, tokens) {
+  const first = tokens[0];
   switch (contentType) {
     case "image": {
-      const imgToken = (token.tokens || []).find(t => t.type === "image");
+      // image 토큰의 alt 텍스트 또는 paragraph 텍스트에서 추출
+      const imgToken = (first.tokens || []).find(t => t.type === "image");
       if (imgToken) return imgToken.text || imgToken.title || "이미지";
-      return token.text?.replace(/!\[([^\]]*)\]\([^)]+\)/, "$1") || "이미지";
+      return first.text?.replace(/!\[([^\]]*)\]\([^)]+\)/, "$1") || "이미지";
     }
     case "video":
-      return token.text?.match(/src="([^"]+)"/)?.[1]?.split("/").pop() || "동영상";
+      return first.text?.match(/src="([^"]+)"/)?.[1]?.split("/").pop() || "동영상";
     case "list": {
-      const count = token.items?.length || 0;
-      const firstItem = token.items?.[0]?.text || "";
+      const count = tokens.reduce((sum, t) => sum + (t.items?.length || 0), 0);
+      const firstItem = first.items?.[0]?.text || "";
       return `${count}개 항목 — ${firstItem.slice(0, 50)}`;
     }
     case "table": {
-      const cols = token.header?.length || 0;
-      const rows = token.rows?.length || 0;
-      const headerText = (token.header || []).map(h => h.text).join(", ");
+      const cols = first.header?.length || 0;
+      const rows = first.rows?.length || 0;
+      const headerText = (first.header || []).map(h => h.text).join(", ");
       return `${cols}열 × ${rows}행 — ${headerText.slice(0, 40)}`;
     }
     case "code":
-      return `${token.lang || "text"} — ${(token.text || "").split("\n")[0].slice(0, 50)}`;
+      return `${first.lang || "text"} — ${(first.text || "").split("\n")[0].slice(0, 50)}`;
     case "quote":
-      return (token.text || "").slice(0, 60);
+      return (first.text || "").slice(0, 60);
     case "text":
-    default:
-      return (token.text || "").slice(0, 80);
+    default: {
+      const combined = tokens.map(t => t.text || "").join(" ").trim();
+      return combined.slice(0, 80);
+    }
   }
-}
-
-/**
- * 여러 타입의 콘텐츠 토큰 배열에서 통합 라벨을 생성한다.
- * 각 토큰의 타입별 라벨을 순서대로 결합하여 하나의 긴 미리보기 텍스트로 만든다.
- *
- * [Flow: Step 1 (각 토큰의 타입 감지) -> Step 2 (토큰별 라벨 추출) -> Step 3 (순서대로 결합)]
- *
- * @param {Object[]} tokens - heading 하위의 모든 콘텐츠 토큰 배열 (순서 보존)
- * @returns {string} 통합 라벨 텍스트
- */
-function extractCombinedLabel(tokens) {
-  const parts = tokens.map(token => {
-    const type = detectContentType(token);
-    return extractTokenLabel(type, token);
-  });
-  return parts.join(" | ").slice(0, 200);
-}
-
-/**
- * 콘텐츠 토큰 배열에서 포함된 모든 타입을 수집한다.
- * 단일 타입이면 해당 타입을, 여러 타입이면 "mixed"를 반환한다.
- *
- * @param {Object[]} tokens - 콘텐츠 토큰 배열
- * @returns {string} contentType ("text" | "image" | "video" | "list" | "table" | "code" | "quote" | "mixed")
- */
-function detectCombinedContentType(tokens) {
-  const types = new Set(tokens.map(t => detectContentType(t)));
-  if (types.size === 1) return [...types][0];
-  return "mixed";
-}
-
-/**
- * 콘텐츠 토큰 배열에서 타입별 세그먼트 정보를 생성한다.
- * 순서를 유지하면서 각 토큰의 타입과 라벨을 배열로 반환 — FlowViewer에서 순차 렌더링용.
- *
- * @param {Object[]} tokens - 콘텐츠 토큰 배열
- * @returns {Array<{ type: string, label: string, token: Object }>} 타입별 세그먼트 배열
- */
-function buildContentSegments(tokens) {
-  return tokens.map(token => ({
-    type: detectContentType(token),
-    label: extractTokenLabel(detectContentType(token), token),
-    token,
-  }));
 }
 
 export function parseMarkdownToFlow(markdownText) {
@@ -172,22 +131,22 @@ export function parseMarkdownToFlow(markdownText) {
     }
   }
 
-  // 현재 heading에 쌓이는 모든 콘텐츠 토큰 버퍼 — 타입에 관계없이 하나의 contentNode로 통합
+  // 현재 heading에 쌓이는 콘텐츠 토큰 버퍼 — 같은 타입끼리 그룹화하여 contentNode로 생성
   let pendingContentTokens = [];
+  let pendingContentType = null;
 
-  // [Flow: Step 4-1 (버퍼에 쌓인 모든 토큰을 하나의 contentNode로 flush) -> Step 4-2 (heading 노드에 hierarchy 연결)]
+  // [Flow: Step 4-1 (버퍼에 쌓인 토큰을 contentNode로 flush) -> Step 4-2 (heading 노드에 hierarchy 연결)]
   function flushContentTokens() {
     if (pendingContentTokens.length === 0) return;
     const parent = stack.length > 0 ? stack[stack.length - 1] : null;
     if (!parent) {
       pendingContentTokens = [];
+      pendingContentType = null;
       return;
     }
 
-    // 모든 콘텐츠 토큰을 하나의 contentNode로 통합 — 타입별 세그먼트 정보 포함
-    const contentType = detectCombinedContentType(pendingContentTokens);
-    const segments = buildContentSegments(pendingContentTokens);
-    const label = extractCombinedLabel(pendingContentTokens);
+    const contentType = pendingContentType;
+    const label = extractContentLabel(contentType, pendingContentTokens);
     const contentNode = {
       id: `content-${contentIndex++}`,
       type: "contentNode",
@@ -196,8 +155,7 @@ export function parseMarkdownToFlow(markdownText) {
         contentType,
         contentTypeLabel: CONTENT_TYPE_LABELS[contentType] || "본문",
         label,
-        segments, // 타입별 세그먼트 배열 — FlowViewer에서 순차 렌더링용
-        level: parent.data.level + 1,
+        level: parent.data.level + 1, // 부모 heading 바로 아래 레벨
         content: pendingContentTokens,
         contentPreview: label,
         page: currentPage,
@@ -219,6 +177,7 @@ export function parseMarkdownToFlow(markdownText) {
     });
 
     pendingContentTokens = [];
+    pendingContentType = null;
   }
 
   for (let i = 0; i < tokens.length; i++) {
@@ -239,9 +198,19 @@ export function parseMarkdownToFlow(markdownText) {
     if (token.type !== "heading") {
       if (nodes.length === 0) continue;
 
-      // Step 4: 모든 콘텐츠 토큰을 타입에 관계없이 하나의 버퍼에 누적
-      // heading이 바뀔 때 한 번에 flush하여 하나의 통합 contentNode로 생성
-      pendingContentTokens.push(token);
+      // Step 4: 콘텐츠 토큰을 타입별로 버퍼에 그룹화
+      const detectedType = detectContentType(token);
+      if (pendingContentType === null) {
+        pendingContentType = detectedType;
+        pendingContentTokens = [token];
+      } else if (detectedType === pendingContentType) {
+        pendingContentTokens.push(token);
+      } else {
+        // 타입이 바뀌면 기존 버퍼를 contentNode로 flush 후 새 버퍼 시작
+        flushContentTokens();
+        pendingContentType = detectedType;
+        pendingContentTokens = [token];
+      }
       continue;
     }
 

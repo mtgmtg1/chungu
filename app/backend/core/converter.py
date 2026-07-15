@@ -33,7 +33,7 @@ def build_layout_markdown_string(page_contents: list[tuple[int, str]]) -> str:
     for page_num, content in sorted(page_contents, key=lambda x: x[0]):
         if not content.strip():
             continue
-        parts.append(f"<!-- 페이지 {page_num} -->\n\n{content.strip()}")
+        parts.append(f"<!-- Page {page_num} -->\n\n{content.strip()}")
     return "\n\n---\n\n".join(parts)
 
 

@@ -1310,17 +1310,39 @@ def download_job(
 
 
 def _get_markdown_content(job: Job) -> str:
-    """편집된 마크다운이 있으면 사용하고, 없으면 원본 마크다운을 다운로드한다."""
+    """편집된 마크다운이 있으면 사용하고, 없으면 원본 마크다운을 다운로드한다.
+
+    단, 편집본에 페이지 마커가 손실된 경우 원본 마크다운을 우선 사용하여
+    페이지별 보기가 깨지지 않도록 한다.
+    """
     client = supabase_client.get_service_client()
+    candidates: list[str] = []
     if job.result_edited_md_storage_path:
-        data = client.storage.from_("results").download(job.result_edited_md_storage_path)
-        return data.decode("utf-8")
+        try:
+            data = client.storage.from_("results").download(job.result_edited_md_storage_path)
+            candidates.append(data.decode("utf-8"))
+        except Exception as e:
+            logger.warning(f"[get-markdown-content:{job.id}] edited_md 다운로드 실패: {e}")
     if job.result_md_storage_path:
-        data = client.storage.from_("results").download(job.result_md_storage_path)
-        return data.decode("utf-8")
+        try:
+            data = client.storage.from_("results").download(job.result_md_storage_path)
+            candidates.append(data.decode("utf-8"))
+        except Exception as e:
+            logger.warning(f"[get-markdown-content:{job.id}] md 다운로드 실패: {e}")
+    if job.result_edited_md_path and Path(job.result_edited_md_path).exists():
+        candidates.append(Path(job.result_edited_md_path).read_text(encoding="utf-8"))
     if job.result_md_path and Path(job.result_md_path).exists():
-        return Path(job.result_md_path).read_text(encoding="utf-8")
-    return ""
+        candidates.append(Path(job.result_md_path).read_text(encoding="utf-8"))
+
+    if not candidates:
+        return ""
+
+    # 페이지 마커가 가장 많은 후보를 선택 (편집 손실 방지)
+    def _marker_count(md: str) -> int:
+        return len(_PAGE_MARKER_RE.findall(md))
+
+    best = max(candidates, key=_marker_count, default=candidates[0])
+    return best
 
 
 # [Flow: Step 1 (기존 마크다운 다운로드) -> Step 2 (파일 구분자 제거) -> Step 3 (순수 마크다운 반환)]
@@ -1354,7 +1376,13 @@ def _extract_single_file_markdown(job: Job) -> str:
     return cleaned
 
 
-_PAGE_MARKER_RE = _re.compile(r"<!--\s*페이지\s*(\d+)\s*-->", _re.IGNORECASE)
+# [Flow: 영어 페이지 마커 매칭 (기존 한국어 마커 하위 호환)]
+# 신규 마커는 "<!-- Page N -->" 형식으로 통일. converter.py write_layout_markdown,
+# save_result_page, preview_job 모두 "<!-- Page N -->"을 생성한다.
+# _PAGE_MARKER_RE는 기존 "<!-- 페이지 N -->" 마커도 계속 분할할 수 있도록 한다.
+_PAGE_MARKER_RE = _re.compile(r"<!--\s*(?:페이지|page)\s*(\d+)\s*-->", _re.IGNORECASE)
+# 마크다운 Horizontal Rule: ---, ***, ___, - - -, * * * 등 (공백 허용)
+_HR_SPLIT_RE = _re.compile(r"\n(?:\s*[-_*]\s*[-_*]\s*[-_*][-\s*_]*\s*)\n")
 
 
 def _image_files(job: Job) -> list[tuple[int, dict]]:
@@ -1963,23 +1991,57 @@ def _require_job_access(job: Job | None, user: CurrentUser) -> None:
         raise HTTPException(status_code=404, detail="Job not found")
 
 
-def _split_markdown_by_pages(markdown: str) -> list[tuple[int, str]]:
-    """페이지 마커를 기준으로 마크다운을 분할한다."""
+def _split_markdown_by_pages(markdown: str, expected_pages: int | None = None) -> list[tuple[int, str]]:
+    """페이지 마커를 기준으로 마크다운을 분할한다.
+
+    [Flow: Step 1 (한/영 페이지 마커 매칭) -> Step 2 (마커 기준 분할) ->
+          Step 3 (마커 부족 시 Horizontal Rule로 분할) -> Step 4 (그래도 부족 시 expected_pages 개로 길이 분할)]
+
+    매개변수:
+        markdown: 분할할 마크다운 문자열
+        expected_pages: PDF 총 페이지 수 힌트 (미지정 시 1)
+
+    반환값:
+        [(page_num, content), ...] 튜플 리스트
+    """
     matches = list(_PAGE_MARKER_RE.finditer(markdown))
-    if not matches:
-        content = markdown.strip()
-        if content:
-            return [(1, content)]
+    if matches:
+        pages: list[tuple[int, str]] = []
+        for idx, match in enumerate(matches):
+            page_num = int(match.group(1))
+            start = match.end()
+            end = matches[idx + 1].start() if idx + 1 < len(matches) else len(markdown)
+            content = markdown[start:end].strip()
+            # 페이지 마커 사이에 삽입된 Horizontal Rule 구분자 제거
+            content = _re.sub(r"(?:^|\n+)(?:\s*[-_*]\s*[-_*]\s*[-_*][-\s*_]*\s*)\s*$", "", content).strip()
+            if content:
+                pages.append((page_num, content))
+        return pages
+
+    content = markdown.strip()
+    if not content:
         return []
-    pages: list[tuple[int, str]] = []
-    for idx, match in enumerate(matches):
-        page_num = int(match.group(1))
-        start = match.end()
-        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(markdown)
-        content = markdown[start:end].strip()
-        if content:
-            pages.append((page_num, content))
-    return pages
+
+    # 마커가 없으면 Horizontal Rule로 분할 시도
+    parts = [p.strip() for p in _HR_SPLIT_RE.split(content) if p.strip()]
+    if len(parts) >= 2:
+        return [(i + 1, p) for i, p in enumerate(parts)]
+
+    # 마커/구분자 모두 없으면 expected_pages 힌트로 균등 분할
+    target = expected_pages if expected_pages and expected_pages > 1 else 1
+    if target == 1:
+        return [(1, content)]
+
+    total_len = len(content)
+    chunk_size = total_len // target
+    chunks: list[tuple[int, str]] = []
+    for i in range(target):
+        start = i * chunk_size
+        end = total_len if i == target - 1 else (i + 1) * chunk_size
+        chunk = content[start:end].strip()
+        if chunk:
+            chunks.append((i + 1, chunk))
+    return chunks if chunks else [(1, content)]
 
 
 def _ensure_xlsx_basic_bundle(job: Job, db: Session) -> None:
@@ -2054,7 +2116,15 @@ def preview_job(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to generate preview: {e}")
 
-    pages = _split_markdown_by_pages(markdown)
+    # [Flow: PDF 총 페이지 수와 실제 처리된 페이지 수를 고려해 분할 힌트 산정
+    #       done_pages=1이고 total_pages>1이면 AI Studio가 전체를 1개로 묶었을 가능성이 높으므로 total_pages 사용
+    #       done_pages>1이면 이미 처리된 페이지 수(done_pages)를 우선 사용]
+    expected_pages = job.done_pages or 0
+    if expected_pages <= 1 and (job.total_pages or 0) > 1:
+        expected_pages = job.total_pages
+    expected_pages = max(expected_pages, 1)
+
+    pages = _split_markdown_by_pages(markdown, expected_pages=expected_pages)
     page_nums = [num for num, _ in pages]
     last_page = max(page_nums) if page_nums else 1
     effective_end = end_page if end_page is not None else last_page
@@ -2066,7 +2136,7 @@ def preview_job(
     # SimpleEditor/MarkdownPreview는 페이지 마커를 숨김 처리하므로 사용자에게 보이지 않음.
     selected = [(num, content) for num, content in pages if start_page <= num <= effective_end]
     partial_markdown = "\n\n---\n\n".join(
-        f"<!-- 페이지 {num} -->\n\n{content}" for num, content in selected
+        f"<!-- Page {num} -->\n\n{content}" for num, content in selected
     )
 
     source_url = None
@@ -2155,7 +2225,13 @@ def preview_job_pages(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to generate preview: {e}")
 
-    pages = _split_markdown_by_pages(markdown)
+    # [Flow: preview_job과 동일한 expected_pages 힌트 계산]
+    expected_pages = job.done_pages or 0
+    if expected_pages <= 1 and (job.total_pages or 0) > 1:
+        expected_pages = job.total_pages
+    expected_pages = max(expected_pages, 1)
+
+    pages = _split_markdown_by_pages(markdown, expected_pages=expected_pages)
     images = _image_files(job)
     image_map = {page_num: info for page_num, info in images}
     out_pages = []
@@ -2239,7 +2315,13 @@ def save_result_page(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to load markdown: {e}")
 
-    pages = _split_markdown_by_pages(markdown)
+    # [Flow: preview_job/preview_job_pages와 동일한 expected_pages 힌트 계산]
+    expected_pages = job.done_pages or 0
+    if expected_pages <= 1 and (job.total_pages or 0) > 1:
+        expected_pages = job.total_pages
+    expected_pages = max(expected_pages, 1)
+
+    pages = _split_markdown_by_pages(markdown, expected_pages=expected_pages)
     if not pages:
         raise HTTPException(status_code=400, detail="No pages found")
     target_idx = next((idx for idx, (num, _) in enumerate(pages) if num == page_num), None)
@@ -2247,7 +2329,7 @@ def save_result_page(
         raise HTTPException(status_code=404, detail="Page not found")
 
     pages[target_idx] = (page_num, new_content)
-    updated = "\n\n---\n\n".join([f"<!-- 페이지 {num} -->\n\n{content}" for num, content in pages])
+    updated = "\n\n---\n\n".join([f"<!-- Page {num} -->\n\n{content}" for num, content in pages])
 
     with tempfile.TemporaryDirectory() as tmpdir:
         edited_path = Path(tmpdir) / "result_edited.md"

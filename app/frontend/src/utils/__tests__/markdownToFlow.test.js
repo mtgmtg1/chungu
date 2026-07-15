@@ -12,7 +12,7 @@ import { parseMarkdownToFlow, parseMultiFileMarkdownToFlow } from "../markdownTo
 function getTestMarkdown() {
   return `# 문서 제목
 
-<!-- 페이지 1 -->
+<!-- Page 1 -->
 
 ## 쟁점 1
 
@@ -26,7 +26,7 @@ function getTestMarkdown() {
 
 주장 1-2 내용입니다.
 
-<!-- 페이지 2 -->
+<!-- Page 2 -->
 
 ## 쟁점 2
 

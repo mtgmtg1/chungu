@@ -1181,7 +1181,7 @@ def run_job_added_files(job_id: str) -> dict:
             ftype = f.get("type", "")
             if ftype in media_loader.DOCLING_TYPES or ftype in media_loader.HWP_TYPES:
                 # 페이지 수는 result_markdown의 페이지 마커에서 추정
-                page_markers = combined_markdown.count("<!-- 페이지 ")
+                page_markers = combined_markdown.count("<!-- Page ")
                 total_pages = max(total_pages, page_markers)
             elif ftype == "image":
                 total_pages += 1

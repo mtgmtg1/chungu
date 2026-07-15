@@ -141,7 +141,7 @@ class TestHtmlToDocx:
         assert "<i>" not in text
 
     def test_page_marker_creates_page_break(self, tmp_path):
-        html = "<p>첫 페이지</p><!-- 페이지 2 --><p>두 번째 페이지</p>"
+        html = "<p>첫 페이지</p><!-- Page 2 --><p>두 번째 페이지</p>"
         out = tmp_path / "test_pagebreak.docx"
         markdown_to_docx(html, out)
 
@@ -151,7 +151,7 @@ class TestHtmlToDocx:
         text = _extract_docx_text(out)
         assert "첫 페이지" in text
         assert "두 번째 페이지" in text
-        assert "<!-- 페이지" not in text
+        assert "<!-- Page" not in text
 
     def test_mixed_html_and_text(self, tmp_path):
         html = "<p>소개 문단</p><table><tr><td>데이터</td></tr></table><p>결론</p>"
@@ -217,7 +217,7 @@ class TestHtmlToPptx:
     """HTML 콘텐츠가 포함된 마크다운을 PPTX로 변환하는 테스트."""
 
     def test_html_pptx_creates_slides_from_page_markers(self, tmp_path):
-        html = "<!-- 페이지 1 --><h1>제목 1</h1><p>내용 1</p><!-- 페이지 2 --><h2>제목 2</h2><p>내용 2</p>"
+        html = "<!-- Page 1 --><h1>제목 1</h1><p>내용 1</p><!-- Page 2 --><h2>제목 2</h2><p>내용 2</p>"
         out = tmp_path / "test.pptx"
         markdown_to_pptx(html, out)
 

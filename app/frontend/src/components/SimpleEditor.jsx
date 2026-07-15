@@ -55,7 +55,7 @@ const turndown = new TurndownService({
   strongDelimiter: "**"
 });
 
-const PAGE_MARKER_RE = /<!--\s*페이지\s*(\d+)\s*-->/gi;
+const PAGE_MARKER_RE = /<!--\s*(?:페이지|page)\s*(\d+)\s*-->/gi;
 
 /**
  * [Flow: Step 1 (마크다운 HTML에서 페이지 주석 검색) -> Step 2 (각 주석을 data-page 속성을 가진 div로 교체) -> Step 3 (Tiptap이 스크롤 타겟으로 사용할 수 있는 HTML 반환)]
@@ -101,7 +101,7 @@ turndown.addRule("pageMarker", {
   filter: (node) =>
     node.nodeName === "DIV" && node.getAttribute("data-page-marker"),
   replacement: (_content, node) =>
-    `<!-- 페이지 ${node.getAttribute("data-page-marker")} -->`,
+    `<!-- Page ${node.getAttribute("data-page-marker")} -->`,
 });
 
 turndown.addRule("table", {

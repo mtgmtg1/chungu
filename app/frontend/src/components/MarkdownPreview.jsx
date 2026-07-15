@@ -2,7 +2,7 @@
 import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { marked } from "marked";
 
-const PAGE_MARKER_RE = /<!--\s*페이지\s*(\d+)\s*-->/gi;
+const PAGE_MARKER_RE = /<!--\s*(?:페이지|page)\s*(\d+)\s*-->/gi;
 
 /**
  * [Flow: Step 1 (마크다운을 페이지 마커 기준으로 분할) -> Step 2 (각 페이지 번호와 콘텐츠 추출) -> Step 3 (빈 페이지 제거)]

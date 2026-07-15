@@ -948,7 +948,7 @@ def _table_similarity(prev: dict, table: dict) -> float:
 def _merge_tables(tables: list[dict], threshold: float | None = None) -> list[dict]:
     """동일 헤더를 가진 표와 헤더 없는 연속 표를 통합한다.
 
-    페이지 마커(<!-- 페이지 N -->) 등으로 분리된 표 중,
+    페이지 마커(<!-- Page N -->) 등으로 분리된 표 중,
     헤더가 같거나 후속 페이지가 헤더 없이 데이터 행만 있는 경우,
     또는 형식 유사도가 임계값 이상인 연속 표를 하나의 표로 통합한다.
     유사도 병합 시 이전 표 헤더를 유지하고 현재 표 헤더는 데이터로 흡수한다.

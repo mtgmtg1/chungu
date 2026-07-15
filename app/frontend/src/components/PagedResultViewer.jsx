@@ -1,8 +1,8 @@
-// [Flow: Step 1 (페이지 메타데이터 로드) -> Step 2 (현재 페이지 markdown/이미지/PDF 동기 로드) -> Step 3 (편집 모드: SimpleEditor) -> Step 4 (저장만 노출, 페이지네이션은 소스 뷰어에 위임)]
-import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle, memo } from "react";
+// [Flow: Step 1 (페이지 메타데이터 로드) -> Step 2 (현재 페이지 markdown/이미지/PDF 동기 로드) -> Step 3 (페이지 내비게이션: 이전/다음/페이지 목록) -> Step 4 (편집 모드: SimpleEditor) -> Step 5 (자동 저장)]
+import { useEffect, useRef, useState, useCallback, useMemo, forwardRef, useImperativeHandle, memo } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { api } from "../api.js";
 import SourcePanel from "./SourcePanel.jsx";
 import SimpleEditor from "./SimpleEditor.jsx";
@@ -28,6 +28,12 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
   const autoSaveTimerRef = useRef(null);
   const saveMessageTimerRef = useRef(null);
 
+  const pageNumbers = useMemo(() => pages.map((p) => p.page_num), [pages]);
+  const totalPages = pageNumbers.length;
+  const currentIndex = pageNumbers.indexOf(currentPage);
+  const canGoPrev = currentIndex > 0;
+  const canGoNext = currentIndex >= 0 && currentIndex < totalPages - 1;
+
   const loadPage = useCallback(
     async (pageNum) => {
       setLoadingPage(true);
@@ -37,19 +43,33 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
         const md = preview.markdown || "";
         setPageMarkdown(md);
         pendingMarkdownRef.current = md;
-        setCurrentPage(preview.start_page || pageNum);
       } catch (e) {
         setError(e.message || t("page:errors.loadFailed"));
       } finally {
         setLoadingPage(false);
       }
     },
-    [jobId]
+    [jobId, t]
   );
 
   useEffect(() => {
     loadPage(currentPage);
   }, [currentPage, loadPage]);
+
+  const goToPage = useCallback((pageNum) => {
+    const target = pageNumbers.includes(pageNum) ? pageNum : pageNumbers[0];
+    if (target && target !== currentPage) {
+      setCurrentPage(target);
+    }
+  }, [pageNumbers, currentPage]);
+
+  const goToPrev = useCallback(() => {
+    if (canGoPrev) goToPage(pageNumbers[currentIndex - 1]);
+  }, [canGoPrev, currentIndex, pageNumbers, goToPage]);
+
+  const goToNext = useCallback(() => {
+    if (canGoNext) goToPage(pageNumbers[currentIndex + 1]);
+  }, [canGoNext, currentIndex, pageNumbers, goToPage]);
 
   // [Flow: Step 1 (페이지 마크다운 변경 시 pendingRef 갱신) -> Step 2 (1초 debounce 타이머 설정) -> Step 3 (타이머 완료 시 서버에 페이지 저장)]
   const saveCurrentPage = useCallback(async (updated) => {
@@ -88,6 +108,62 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handlePageInputChange = (e) => {
+    const value = parseInt(e.target.value, 10);
+    if (!isNaN(value)) goToPage(value);
+  };
+
+  const renderPageNav = () => (
+    <div className="flex items-center justify-between px-4 py-2 bg-surface-container-low border-b border-outline-variant flex-shrink-0" data-oid="paged-nav">
+      <div className="flex items-center gap-2">
+        <button
+          onClick={goToPrev}
+          disabled={!canGoPrev}
+          className="p-1.5 rounded-lg bg-white border border-outline-variant hover:bg-primary/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          title="이전 페이지"
+          data-oid="paged-prev">
+          <ChevronLeft size={18} />
+        </button>
+        <div className="flex items-center gap-1.5 text-sm text-on-surface">
+          <span className="text-on-surface-variant">페이지</span>
+          <input
+            type="number"
+            min={1}
+            max={totalPages}
+            value={currentPage}
+            onChange={handlePageInputChange}
+            className="w-14 px-2 py-1 text-center border border-outline-variant rounded-md bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            data-oid="paged-input"
+          />
+          <span className="text-on-surface-variant">/ {totalPages}</span>
+        </div>
+        <button
+          onClick={goToNext}
+          disabled={!canGoNext}
+          className="p-1.5 rounded-lg bg-white border border-outline-variant hover:bg-primary/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          title="다음 페이지"
+          data-oid="paged-next">
+          <ChevronRight size={18} />
+        </button>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <select
+          value={currentPage}
+          onChange={(e) => goToPage(Number(e.target.value))}
+          className="px-2 py-1.5 text-sm border border-outline-variant rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-primary/40 max-w-[12rem]"
+          data-oid="paged-select">
+          {pages.map((p) => (
+            <option key={p.page_num} value={p.page_num}>
+              {p.page_num}페이지 — {p.preview?.slice(0, 40) || ""}
+              {p.preview?.length > 40 ? "..." : ""}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
 
   const renderMarkdownArea = () => {
     if (loadingPage) {
@@ -159,6 +235,7 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
           className="flex flex-col bg-white overflow-hidden"
           data-oid="ue-8gmm">
 
+          {renderPageNav()}
           {renderMarkdownArea()}
 
         </Panel>

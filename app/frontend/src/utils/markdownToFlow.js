@@ -122,12 +122,12 @@ export function parseMarkdownToFlow(markdownText, filename) {
   const nodes = [];
   const edges = [];
   const stack = []; // heading 레벨 스택 (부모 추적용)
-  let currentPage = 1; // 페이지 마커 추적 — `<!-- 페이지 N -->` 형식
+  let currentPage = 1; // 페이지 마커 추적 — `<!-- Page N -->` 형식
   let headingIndex = 0; // 결정론적 ID용 heading 순번
   let contentIndex = 0; // 콘텐츠 노드용 순번
 
   // 페이지 마커 정규식 — 마크다운 HTML 주석에서 페이지 번호 추출
-  const PAGE_MARKER_RE = /<!--\s*페이지\s*(\d+)\s*-->/i;
+  const PAGE_MARKER_RE = /<!--\s*(?:페이지|page)\s*(\d+)\s*-->/i;
 
   // [Flow: Step 1-1 — 타이틀 추출 (H1 -> H2 -> filename 폴백)]
   // 첫 H1을 찾고, 없으면 첫 H2를 찾는다. 둘 다 없으면 filename으로 가상 타이틀 노드 생성.

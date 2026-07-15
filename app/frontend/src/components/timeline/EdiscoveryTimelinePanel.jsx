@@ -1,13 +1,14 @@
 // [Flow: Step 1 (job.ediscovery_graphs/status + preview source_files 수신)
 //       -> Step 2 (노드를 date 유무로 분리: date가 있으면 Chrono, 없으면 우측 패널)
 //       -> Step 3 (React Chrono 3.x vertical 모드에 custom content(children) 주입)
-//       -> Step 4 (카드 하단 오른쪽 'read more' 버튼 클릭 시에만 미리보기/스크롤 연동)]
+//       -> Step 4 (카드 클릭으로 선택/포커스, 인라인 수정/삭제, 상단 카드 추가 메뉴)
+//       -> Step 5 (변경 시 1초 debounce 후 PUT /ediscovery/graph 자동 저장)]
 // e-Discovery GraphRAG 결과를 중앙 수직 타임라인 + 우측 페이지 기반 노드 패널로 시각화.
 // 기존 양측 주장/증거 카드, 하단 수평 스트립, 상단 재분석 버튼은 모두 제거하고 Chrono 기본 UI를 사용한다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, AlertCircle, Network, FileText } from "lucide-react";
+import { Loader2, AlertCircle, Network, FileText, Plus, Trash2, X, Check } from "lucide-react";
 import { Chrono } from "react-chrono";
 import "react-chrono/dist/style.css";
 import { api } from "../../api.js";
@@ -139,11 +140,15 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [context, setContext] = useState(job?.ediscovery_context || "");
-  const [rawNodes, setRawNodes] = useState([]);
   const [sourceFiles, setSourceFiles] = useState(externalSourceFiles || []);
+  const [draftNodes, setDraftNodes] = useState([]);
+  const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   const pollRef = useRef(null);
   const pollStartRef = useRef(0);
+  const saveTimeoutRef = useRef(null);
 
   useEffect(() => {
     setContext(job?.ediscovery_context || "");
@@ -151,12 +156,12 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
 
   useEffect(() => {
     const graph = job?.ediscovery_graphs;
-    if (!graph?.nodes?.length) {
-      setRawNodes([]);
+    const nodes = graph?.nodes || [];
+    setDraftNodes(nodes);
+    if (!nodes.length) {
       setMetrics({ total_docs: 0, processed_chunks: 0, threshold: 0, anomalies_detected: 0 });
       return;
     }
-    setRawNodes(graph.nodes);
     setMetrics(job?.ediscovery_metrics || { total_docs: 0, processed_chunks: 0, threshold: 0, anomalies_detected: 0 });
   }, [job?.ediscovery_graphs, job?.ediscovery_metrics]);
 
@@ -186,6 +191,7 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
   }, []);
 
@@ -245,9 +251,71 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
     onNodeClick?.(node);
   }, [onPreview, onNodeClick]);
 
+  const handleSelectNode = useCallback((nodeId) => {
+    setSelectedNodeId((prev) => (prev === nodeId ? null : nodeId));
+  }, []);
+
+  const handleUpdateNode = useCallback((nodeId, updates) => {
+    setDraftNodes((prev) =>
+      prev.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...updates } } : n))
+    );
+  }, []);
+
+  const handleDeleteNode = useCallback((nodeId) => {
+    setDraftNodes((prev) => prev.filter((n) => n.id !== nodeId));
+    setSelectedNodeId((prev) => (prev === nodeId ? null : prev));
+  }, []);
+
+  const handleCreateNode = useCallback(() => {
+    const newId = `manual-${Date.now()}`;
+    const today = new Date().toISOString().split("T")[0];
+    const newNode = {
+      id: newId,
+      type: "event",
+      data: {
+        label: t("page:result.ediscoveryNewCardLabel"),
+        summary: "",
+        date: today,
+        page: 1,
+        entity: "third_party",
+        confidence: 0.8,
+      },
+    };
+    setDraftNodes((prev) => [...prev, newNode]);
+    setSelectedNodeId(newId);
+  }, [t]);
+
+  const saveGraph = useCallback(async () => {
+    if (!jobId) return;
+    setIsSaving(true);
+    setSaveError("");
+    try {
+      const nodeIds = new Set(draftNodes.map((n) => n.id));
+      const edges = (job?.ediscovery_graphs?.edges || []).filter(
+        (e) => nodeIds.has(e.source) && nodeIds.has(e.target)
+      );
+      await api.saveEdiscoveryGraph(jobId, { nodes: draftNodes, edges });
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSaving(false);
+    }
+  }, [jobId, draftNodes, job?.ediscovery_graphs?.edges]);
+
+  useEffect(() => {
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    if (!jobId) return;
+    saveTimeoutRef.current = setTimeout(() => {
+      saveGraph();
+    }, 1000);
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, [jobId, draftNodes, saveGraph]);
+
   const nonSwimlaneNodes = useMemo(() => {
-    return rawNodes.filter((n) => n.type !== "swimlane");
-  }, [rawNodes]);
+    return draftNodes.filter((n) => n.type !== "swimlane");
+  }, [draftNodes]);
 
   /**
    * [Flow: Step 1 (date가 있는 노드 필터링) -> Step 2 (날짜/페이지 정렬)
@@ -286,10 +354,30 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
 
   return (
     <div
-      className="h-full w-full flex relative"
+      className="h-full w-full flex flex-col relative"
       data-oid="ediscovery-timeline-panel"
     >
-      <div className="flex-1 min-h-0 ediscovery-chrono-container">
+      <div className="flex-shrink-0 px-3 py-2 border-b border-outline-variant bg-surface-container-low flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          {isSaving && (
+            <>
+              <Loader2 size={14} className="animate-spin text-primary" />
+              <span className="text-xs text-on-surface-variant">{t("page:result.ediscoverySaving")}</span>
+            </>
+          )}
+          {saveError && <span className="text-xs text-error truncate">{saveError}</span>}
+        </div>
+        <button
+          type="button"
+          onClick={handleCreateNode}
+          className="flex-shrink-0 flex items-center gap-1 px-2 py-1 bg-primary text-white text-xs font-medium rounded hover:opacity-90 transition-opacity"
+        >
+          <Plus size={14} />
+          {t("page:result.ediscoveryAddCard")}
+        </button>
+      </div>
+      <div className="flex-1 min-h-0 flex relative overflow-hidden">
+        <div className="flex-1 min-h-0 ediscovery-chrono-container">
         {chronoItems.length > 0 ? (
           <Chrono
             items={chronoItems}
@@ -348,23 +436,16 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
             }}
           >
             {chronoItems.map((item) => (
-              <div key={item.id} className="relative flex flex-col gap-2 pb-8">
-                <p className="text-sm text-on-surface-variant leading-relaxed">
-                  {item.cardDetailedText}
-                </p>
-                <div className="absolute bottom-2 right-0">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleNodePreview(item.node);
-                    }}
-                    className="text-xs font-medium text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary/50 rounded px-1 py-0.5"
-                  >
-                    {t("page:result.readMore")}
-                  </button>
-                </div>
-              </div>
+              <CardEditor
+                key={item.id}
+                item={item}
+                isSelected={selectedNodeId === item.node.id}
+                onSelect={handleSelectNode}
+                onUpdate={handleUpdateNode}
+                onDelete={handleDeleteNode}
+                onPreview={handleNodePreview}
+                t={t}
+              />
             ))}
           </Chrono>
         ) : (
@@ -386,28 +467,22 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
           </h3>
           <div className="flex flex-col gap-3">
             {pageItems.map((item) => (
-              <div
+              <CardEditor
                 key={item.id}
-                className="bg-surface border border-outline-variant rounded-lg p-3 shadow-sm flex flex-col gap-2"
-              >
-                <div className="text-xs text-primary font-medium">{item.title}</div>
-                <div className="text-sm font-medium text-on-surface">{item.cardTitle}</div>
-                <div className="text-xs text-on-surface-variant">{item.cardSubtitle}</div>
-                <p className="text-xs text-on-surface-variant line-clamp-3">{item.cardDetailedText}</p>
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => handleNodePreview(item.node)}
-                    className="text-xs font-medium text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary/50 rounded px-1 py-0.5"
-                  >
-                    {t("page:result.readMore")}
-                  </button>
-                </div>
-              </div>
+                item={item}
+                isSelected={selectedNodeId === item.node.id}
+                onSelect={handleSelectNode}
+                onUpdate={handleUpdateNode}
+                onDelete={handleDeleteNode}
+                onPreview={handleNodePreview}
+                t={t}
+                variant="compact"
+              />
             ))}
           </div>
         </div>
       )}
+      </div>
 
       {/* 로딩 오버레이 */}
       {loading && (
@@ -438,6 +513,114 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
           <p className="text-sm text-center max-w-xs">{t("page:result.ediscoveryEmpty")}</p>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * CardEditor — 타임라인 카드 하나를 인라인 편집할 수 있는 UI.
+ *
+ * @param {Object} props
+ * @param {Object} props.item - React Chrono item 객체 (node 포함)
+ * @param {boolean} props.isSelected - 현재 선택(포커스) 상태
+ * @param {Function} props.onSelect - 카드 클릭 시 선택 콜백 (nodeId) => void
+ * @param {Function} props.onUpdate - 노드 data 수정 콜백 (nodeId, dataUpdates) => void
+ * @param {Function} props.onDelete - 노드 삭제 콜백 (nodeId) => void
+ * @param {Function} props.onPreview - 미리보기 콜백 (node) => void
+ * @param {Function} props.t - i18n translate 함수
+ * @param {string} [props.variant="default"] - "default"(Chrono 카드) | "compact"(우측 패널 카드)
+ */
+function CardEditor({ item, isSelected, onSelect, onUpdate, onDelete, onPreview, t, variant = "default" }) {
+  const data = item.node.data || {};
+  const entity = data.entity || (item.node.type === "evidence" ? "third_party" : item.node.type);
+  const isCompact = variant === "compact";
+
+  return (
+    <div
+      className={`flex flex-col justify-between transition-all ${
+        isSelected
+          ? "ring-2 ring-primary bg-primary/5 rounded-lg"
+          : "hover:bg-surface-container-high rounded-lg"
+      } ${isCompact ? "p-2 gap-2" : "min-h-[160px] p-1 gap-3"}`}
+      onClick={() => onSelect(item.node.id)}
+    >
+      <div className="flex flex-col gap-2">
+        <div className="flex items-start justify-between gap-1">
+          <input
+            value={data.label || ""}
+            onChange={(e) => onUpdate(item.node.id, { label: e.target.value })}
+            className={`w-full font-medium text-on-surface bg-transparent border-b border-outline-variant focus:border-primary focus:outline-none px-1 py-0.5 ${
+              isCompact ? "text-xs" : "text-sm"
+            }`}
+            placeholder={t("page:result.ediscoveryLabelPlaceholder")}
+            onClick={(e) => e.stopPropagation()}
+          />
+          {isSelected && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(item.node.id);
+              }}
+              className="p-1 text-error hover:bg-error/10 rounded flex-shrink-0"
+              title={t("page:result.ediscoveryDeleteCard")}
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
+        </div>
+        <textarea
+          value={data.summary || ""}
+          onChange={(e) => onUpdate(item.node.id, { summary: e.target.value })}
+          rows={isCompact ? 2 : 3}
+          className={`w-full text-on-surface-variant bg-transparent border border-outline-variant rounded p-1.5 focus:border-primary focus:outline-none resize-none ${
+            isCompact ? "text-xs" : "text-sm"
+          }`}
+          placeholder={t("page:result.ediscoverySummaryPlaceholder")}
+          onClick={(e) => e.stopPropagation()}
+        />
+        <div className="flex flex-wrap gap-2">
+          <input
+            type="date"
+            value={data.date || ""}
+            onChange={(e) => onUpdate(item.node.id, { date: e.target.value })}
+            className="text-xs bg-surface-container-high rounded px-2 py-1 border border-outline-variant focus:border-primary focus:outline-none"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <input
+            type="number"
+            min={1}
+            value={data.page || ""}
+            onChange={(e) => onUpdate(item.node.id, { page: parseInt(e.target.value, 10) || 1 })}
+            className="text-xs bg-surface-container-high rounded px-2 py-1 border border-outline-variant focus:border-primary focus:outline-none w-20"
+            placeholder={t("page:result.ediscoveryPage")}
+            onClick={(e) => e.stopPropagation()}
+          />
+          <select
+            value={entity}
+            onChange={(e) => onUpdate(item.node.id, { entity: e.target.value })}
+            className="text-xs bg-surface-container-high rounded px-2 py-1 border border-outline-variant focus:border-primary focus:outline-none"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <option value="plaintiff">{t("page:result.ediscoverySwimlanePlaintiff")}</option>
+            <option value="defendant">{t("page:result.ediscoverySwimlaneDefendant")}</option>
+            <option value="third_party">{t("page:result.ediscoverySwimlaneThirdParty")}</option>
+            <option value="issue">{t("page:result.ediscoverySwimlaneIssue")}</option>
+          </select>
+        </div>
+      </div>
+      <div className="flex justify-end pt-2">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPreview(item.node);
+          }}
+          className="text-xs font-medium text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary/50 rounded px-1 py-0.5"
+        >
+          {t("page:result.readMore")}
+        </button>
+      </div>
     </div>
   );
 }

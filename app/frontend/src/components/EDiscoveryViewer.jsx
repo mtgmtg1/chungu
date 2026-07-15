@@ -175,20 +175,22 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, onJobRefresh
   }, [job?.ediscovery_status, startPolling, stopPolling]);
 
   /**
-   * [Flow: Step 1 (previewNode 변경) -> Step 2 (해당 페이지의 sourceFile result_markdown로 원문 설정)]
+   * [Flow: Step 1 (previewNode 변경) -> Step 2 (sourceFile.result_markdown 또는 노드 data의 마크다운으로 OCR 내용 설정)]
    */
   useEffect(() => {
     if (!previewNode) return;
     const page = getNodePage(previewNode);
     const sourceFile = sourceFiles.find((f) => f.page_num === page) || sourceFiles[0];
-    if (!sourceFile?.result_markdown) {
-      setOriginalText("");
-      setOriginalLoading(false);
-      return;
-    }
+    const nodeMarkdown =
+      previewNode.data?.result_markdown ||
+      previewNode.data?.markdown ||
+      previewNode.data?.content ||
+      "";
+    const ocrText = sourceFile?.result_markdown || nodeMarkdown;
+
     setOriginalLoading(true);
     setOriginalText("");
-    setOriginalText(sourceFile.result_markdown);
+    setOriginalText(ocrText);
     setOriginalLoading(false);
   }, [previewNode, sourceFiles]);
 

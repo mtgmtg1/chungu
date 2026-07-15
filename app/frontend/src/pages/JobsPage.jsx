@@ -724,6 +724,14 @@ export default function JobsPage() {
                                 title={t("page:errors.jobExpired")}>
                                 {j.filename}
                               </span>
+                            ) : j.status === "pending" ? (
+                              <button
+                                onClick={() => openConfirmModal(j.job_id)}
+                                className="font-body-md text-body-md font-medium text-on-surface truncate hover:text-primary hover:underline block text-left w-full"
+                                data-oid="7sy3qzp-pending"
+                                title={t("page:jobs.clickToConfirm")}>
+                                {j.filename}
+                              </button>
                             ) : (
                               <Link
                                 to={`/jobs/${j.job_id}`}
@@ -834,20 +842,12 @@ export default function JobsPage() {
                         </button> :
 
                         j.status === "pending" ?
-                        <>
-                          <button
-                            onClick={() => openConfirmModal(j.job_id)}
-                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary text-on-primary border border-primary hover:bg-primary-container transition-colors text-sm font-medium"
-                            data-oid="job-list-confirm-btn">
-                            {t("page:jobs.startConversion")}
-                          </button>
-                          <button
-                            onClick={() => openDeleteModal(j)}
-                            className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
-                            data-oid="ida:p:-">
-                            <Trash2 size={18} data-oid="t.hqgua" />
-                          </button>
-                        </> :
+                        <button
+                          onClick={() => openDeleteModal(j)}
+                          className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
+                          data-oid="ida:p:-">
+                          <Trash2 size={18} data-oid="t.hqgua" />
+                        </button> :
 
                         <button
                           onClick={() => openDeleteModal(j)}
@@ -915,6 +915,14 @@ export default function JobsPage() {
                         <span className="font-body-md text-body-md font-medium text-outline block break-all" title={t("page:errors.jobExpired")}>
                           {j.filename}
                         </span>
+                      ) : j.status === "pending" ? (
+                        <button
+                          onClick={() => openConfirmModal(j.job_id)}
+                          className="font-body-md text-body-md font-medium text-on-surface hover:text-primary hover:underline block break-all text-left"
+                          title={t("page:jobs.clickToConfirm")}
+                        >
+                          {j.filename}
+                        </button>
                       ) : (
                         <Link to={`/jobs/${j.job_id}`} className="font-body-md text-body-md font-medium text-on-surface hover:text-primary hover:underline block break-all">
                           {j.filename}
@@ -959,22 +967,13 @@ export default function JobsPage() {
                           {t("page:jobs.retryOrRefund")}
                         </button>
                       ) : j.status === "pending" ? (
-                        <>
-                          <button
-                            onClick={() => openConfirmModal(j.job_id)}
-                            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-primary text-on-primary border border-primary hover:bg-primary-container transition-colors text-xs font-medium"
-                            data-oid="m-confirm-btn"
-                          >
-                            {t("page:jobs.startConversion")}
-                          </button>
-                          <button
-                            onClick={() => openDeleteModal(j)}
-                            className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
-                            data-oid="m-delete"
-                          >
-                            <Trash2 size={18} />
-                          </button>
-                        </>
+                        <button
+                          onClick={() => openDeleteModal(j)}
+                          className="p-2 rounded-lg hover:bg-surface-container-high text-outline hover:text-red-600 transition-colors"
+                          data-oid="m-delete"
+                        >
+                          <Trash2 size={18} />
+                        </button>
                       ) : (
                         <button
                           onClick={() => openDeleteModal(j)}

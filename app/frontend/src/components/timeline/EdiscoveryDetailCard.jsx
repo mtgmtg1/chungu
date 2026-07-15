@@ -1,20 +1,20 @@
-// [Flow: Step 1 (선택 노드 + 원문 마크다운 수신)
-//       -> Step 2 (헤더 + 메타데이터 + 원문 마크다운을 세로로 표시)
-//       -> Step 3 (원문이 markdown이면 marked로 렌더링, 페이지 마커 제거)]
+// [Flow: Step 1 (선택 노드 + OCR 마크다운 수신)
+//       -> Step 2 (헤더 + 메타데이터 + OCR 마크다운을 세로로 표시)
+//       -> Step 3 (OCR 내용이 markdown이면 marked로 렌더링, 페이지 마커 제거)]
 // e-Discovery Timeline 카드 "자세히 보기" 팝업.
-// 원문/썸네일 미리보기 위젯은 제거하고, source_files의 result_markdown만 보여준다.
+// 썸네일 미리보기 위젯은 제거하고, source_files의 result_markdown 또는 노드 데이터의 마크다운을 보여준다.
 
 import { useTranslation } from "react-i18next";
 import { marked } from "marked";
 import { AlertCircle } from "lucide-react";
 
 /**
- * 원문 텍스트에서 페이지/파일 마커 주석을 제거하고 HTML로 변환한다.
+ * OCR 텍스트에서 페이지/파일 마커 주석을 제거하고 HTML로 변환한다.
  *
  * @param {string} text - 원본 markdown 텍스트
  * @returns {string} 마커가 제거된 HTML
  */
-function renderOriginalText(text) {
+function renderOcrText(text) {
   if (!text) return "";
   const cleaned = text.replace(/<!--\s*(페이지|파일)\s*\d+\s*-->/gi, "").trim();
   return marked.parse(cleaned, { breaks: true, gfm: true });
@@ -25,8 +25,8 @@ function renderOriginalText(text) {
  *
  * @param {Object} props
  * @param {Object} props.node - 선택된 e-Discovery graph 노드
- * @param {string} props.originalText - 해당 노드/페이지의 원문 마크다운
- * @param {boolean} [props.originalLoading] - 원문 로딩 중 여부
+ * @param {string} props.originalText - 해당 노드/페이지의 OCR 마크다운
+ * @param {boolean} [props.originalLoading] - OCR 내용 로딩 중 여부
  */
 export default function EdiscoveryDetailCard({ node, originalText, originalLoading }) {
   const { t } = useTranslation();
@@ -42,7 +42,7 @@ export default function EdiscoveryDetailCard({ node, originalText, originalLoadi
 
   const data = node.data || {};
   const page = data.page;
-  const html = renderOriginalText(originalText);
+  const html = renderOcrText(originalText);
 
   return (
     <div className="h-full w-full flex flex-col bg-surface-container-lowest border border-outline-variant rounded-lg overflow-hidden">
@@ -81,10 +81,10 @@ export default function EdiscoveryDetailCard({ node, originalText, originalLoadi
           )}
         </div>
 
-        {/* 원문 마크다운 */}
+        {/* OCR 마크다운 */}
         <div className="flex flex-col gap-2 min-h-0">
           <div className="text-[10px] font-bold uppercase tracking-wide text-on-surface-variant">
-            {t("page:result.ediscoveryOriginalText")}
+            {t("page:result.ediscoveryOcrText")}
           </div>
           {originalLoading ? (
             <div className="text-sm text-on-surface-variant animate-pulse">
@@ -97,7 +97,7 @@ export default function EdiscoveryDetailCard({ node, originalText, originalLoadi
             />
           ) : (
             <div className="text-sm text-on-surface-variant/70 italic">
-              {t("page:result.ediscoveryNoPreview")}
+              {t("page:result.ediscoveryNoOcrText")}
             </div>
           )}
         </div>

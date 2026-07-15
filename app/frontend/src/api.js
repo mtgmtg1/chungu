@@ -278,6 +278,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ threshold }),
     }),
+  saveEdiscoveryGraph: (jobId, graph) =>
+    request(`/api/jobs/${jobId}/ediscovery/graph`, {
+      method: 'PUT',
+      body: JSON.stringify(graph),
+    }),
 
   // Evidence-to-Element Mapper — 요건사실 기반 증거 퍼즐 매퍼
   getLegalElements: (jobId, claimType = '') => {

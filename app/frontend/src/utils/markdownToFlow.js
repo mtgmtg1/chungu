@@ -217,6 +217,7 @@ export function parseMarkdownToFlow(markdownText, filename) {
 
   // [Flow: filename 기반 가상 타이틀 노드 — H1/H2가 없을 때 파일명으로 titleNode 생성]
   // 토큰에 대응하는 heading이 없으므로 루프 전에 미리 생성하여 스택에 push.
+  // titleNode는 루트로 항상 유지되므로 level을 0으로 설정한다.
   if (titleFromFilename) {
     const titleNode = {
       id: `title-${headingIndex++}`,
@@ -224,7 +225,7 @@ export function parseMarkdownToFlow(markdownText, filename) {
       data: {
         kind: "title",
         label: title,
-        level: titleLevel,
+        level: 0,
         content: [],
         contentPreview: "",
         page: currentPage,
@@ -274,13 +275,14 @@ export function parseMarkdownToFlow(markdownText, filename) {
 
     if (i === titleIndex) {
       // Step 1-2: 제목 heading을 titleNode로 생성 — 캔버스 상단에 H1 제목 노드로 표시
+      // titleNode는 루트로 항상 유지되므로 level을 0으로 설정한다.
       const titleNode = {
         id: `title-${headingIndex++}`,
         type: "titleNode",
         data: {
           kind: "title",
           label: token.text,
-          level: token.depth,
+          level: 0,
           content: [],
           contentPreview: "",
           page: currentPage,
@@ -293,9 +295,10 @@ export function parseMarkdownToFlow(markdownText, filename) {
     }
 
     // Step 3: 부모-자식 에지 생성 (스택 기반 — 현재 depth 이상의 노드들을 pop)
-    // titleNode(H1)는 level 1이므로 H2 이상에서 자동으로 상위 부모로 유지됨
+    // titleNode는 루트로 항상 유지하며, 동일 레벨(H1/H2)의 heading이 와도 pop하지 않는다.
     while (stack.length > 0) {
       const top = stack[stack.length - 1];
+      if (top.data.kind === "title") break;
       if (top.data.level >= token.depth) {
         stack.pop();
       } else {

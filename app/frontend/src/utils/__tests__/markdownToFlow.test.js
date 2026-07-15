@@ -286,6 +286,50 @@ describe("parseMarkdownToFlow", () => {
     expect(contentNodes[2].data.hasPrev).toBe(true);
     expect(contentNodes[2].data.hasNext).toBe(false);
   });
+
+  it("H1 title 아래에 동일 레벨 H1 heading이 자식으로 연결된다", () => {
+    const md = `# 메인 제목
+
+# 제목 1
+
+## 하위 1
+
+# 제목 2
+
+## 하위 2
+`;
+    const { nodes, edges } = parseMarkdownToFlow(md);
+    const titleNode = nodes.find(n => n.data.kind === "title");
+    const heading1 = nodes.find(n => n.data.label === "제목 1");
+    const heading2 = nodes.find(n => n.data.label === "제목 2");
+    expect(titleNode).toBeDefined();
+    expect(heading1).toBeDefined();
+    expect(heading2).toBeDefined();
+
+    const edgeTo1 = edges.find(e => e.type === "hierarchy" && e.source === titleNode.id && e.target === heading1.id);
+    const edgeTo2 = edges.find(e => e.type === "hierarchy" && e.source === titleNode.id && e.target === heading2.id);
+    expect(edgeTo1).toBeDefined();
+    expect(edgeTo2).toBeDefined();
+  });
+
+  it("H2가 title로 승격되었을 때 다른 H2 heading이 자식으로 연결된다", () => {
+    const md = `## 첫 번째
+
+### 하위
+
+## 두 번째
+
+본문
+`;
+    const { nodes, edges } = parseMarkdownToFlow(md);
+    const titleNode = nodes.find(n => n.data.kind === "title");
+    const second = nodes.find(n => n.data.label === "두 번째");
+    expect(titleNode).toBeDefined();
+    expect(second).toBeDefined();
+
+    const edge = edges.find(e => e.type === "hierarchy" && e.source === titleNode.id && e.target === second.id);
+    expect(edge).toBeDefined();
+  });
 });
 
 describe("parseMultiFileMarkdownToFlow", () => {

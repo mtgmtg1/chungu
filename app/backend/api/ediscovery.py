@@ -330,6 +330,57 @@ def extract_ediscovery_graph(
     }
 
 
+@router.put("/jobs/{job_id}/ediscovery/graph")
+def save_ediscovery_graph(
+    job_id: str,
+    payload: dict = Body(...),
+    user: CurrentUser = Depends(_get_current_user),
+    db: Session = Depends(get_db),
+):
+    """[Flow: Step 1 (Job 조회 + 권한/만료/완료 상태 검증) -> Step 2 (payload 검증)
+          -> Step 3 (노드 ID 고유성 + 엣지 source/target 유효성 검사)
+          -> Step 4 (job.ediscovery_graphs에 영속화) -> Step 5 (저장된 그래프 반환)]
+
+    프론트엔드에서 편집한 e-Discovery 그래프(nodes/edges)를 Supabase jobs.ediscovery_graphs JSONB에 저장한다.
+    카드 수정/삭제/생성 후 자동 저장에 사용한다.
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+    _require_job_done(job)
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid payload: expected JSON object")
+
+    nodes = payload.get("nodes", [])
+    edges = payload.get("edges", [])
+    if not isinstance(nodes, list) or not isinstance(edges, list):
+        raise HTTPException(status_code=400, detail="nodes and edges must be lists")
+
+    node_ids = set()
+    for node in nodes:
+        if not isinstance(node, dict) or not node.get("id"):
+            raise HTTPException(status_code=400, detail="All nodes must be objects with an id")
+        if node["id"] in node_ids:
+            raise HTTPException(status_code=400, detail=f"Duplicate node id: {node['id']}")
+        node_ids.add(node["id"])
+
+    for idx, edge in enumerate(edges):
+        if not isinstance(edge, dict):
+            raise HTTPException(status_code=400, detail=f"Edge {idx} must be an object")
+        if edge.get("source") not in node_ids or edge.get("target") not in node_ids:
+            raise HTTPException(status_code=400, detail=f"Edge {idx} references missing node")
+
+    job.ediscovery_graphs = {"nodes": nodes, "edges": edges}
+    db.commit()
+    logger.info(f"[ediscovery-api] save graph job={job_id} nodes={len(nodes)} edges={len(edges)}")
+
+    return {
+        "job_id": job.id,
+        "ediscovery_graphs": job.ediscovery_graphs,
+    }
+
+
 @router.post("/jobs/{job_id}/ediscovery/threshold")
 def adjust_graph_threshold(
     job_id: str,

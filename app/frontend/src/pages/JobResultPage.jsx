@@ -1,4 +1,4 @@
-// [Flow: Step 1 (job ID로 진입) -> Step 2 (작업 상태 폴링) -> Step 3 (완료 시 preview API 호출) -> Step 4 (100페이지 초과 시 페이지 단위 뷰어, 이하 시 전체 에디터) -> Step 5 (마크다운/Office/CSV 다운로드)]
+// [Flow: Step 1 (job ID로 진입) -> Step 2 (작업 상태 폴링) -> Step 3 (완료 시 preview API 호출) -> Step 4 (항상 페이지 단위 뷰어 사용) -> Step 5 (마크다운/Office/CSV 다운로드)]
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -139,11 +139,6 @@ export default function JobResultPage() {
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => setter(false), 150);
   };
-
-  const PAGE_THRESHOLD = 100;
-  const needsPagedMode = (j) =>
-  (j?.total_pages || 0) > PAGE_THRESHOLD ||
-  (j?.total_files || 0) > PAGE_THRESHOLD;
 
   // [Flow: Step 1 (source_files가 2개 이상이고 실제 마크다운이 있는지 확인) -> Step 2 (선택한 파일의 마크다운이 비어 있으면 전체 결합 마크다운로 폴백)]
   const hasFileMarkdowns = fileMarkdowns.length > 1 && fileMarkdowns.some(Boolean);
@@ -292,11 +287,8 @@ export default function JobResultPage() {
 
   async function loadPreview() {
     try {
-      // [Flow: Step 1 (DB의 total_pages/total_files로 페이징 모드 여부를 먼저 판단) -> Step 2 (페이징 모드면 첫 페이지만 로드하여 소스/메타정보 획득) -> Step 3 (비페이징 모드면 전체 마크다운 로드)]
-      const usePaged = needsPagedMode(job);
-      const preview = usePaged
-        ? await api.previewJob(jobId, 1, 1)
-        : await api.previewJob(jobId);
+      // [Flow: Step 1 (항상 페이징 모드 — 첫 페이지만 로드하여 소스/메타정보 획득) -> Step 2 (전체 페이지 메타 로드)]
+      const preview = await api.previewJob(jobId, 1, 1);
       setSourceUrl(preview.source_url);
       setSourceType(preview.source_type);
       setImageUrls(preview.image_urls || []);
@@ -309,16 +301,10 @@ export default function JobResultPage() {
         (f) => f.status === "processing"
       );
       setAddedFilesPolling(hasProcessingFiles);
-      // [Flow: Step 1 (DB의 total_pages/total_files 확인) -> Step 2 (폴백: 마크다운의 last_page 확인) -> Step 3 (둘 중 하나라도 임계값 초과 시 페이징 모드)]
-      const finalUsePaged = usePaged || (preview.last_page || 0) > PAGE_THRESHOLD;
-      if (finalUsePaged) {
-        const meta = await api.previewJobPages(jobId);
-        setPages(meta.pages || []);
-        setMarkdown("");
-      } else {
-        setMarkdown(preview.markdown || "");
-        setPages([]);
-      }
+      // [Flow: 항상 페이징 모드 — 전체 페이지 메타 로드]
+      const meta = await api.previewJobPages(jobId);
+      setPages(meta.pages || []);
+      setMarkdown("");
     } catch (e) {
       setError(e.message || t("page:errors.loadFailed"));
     } finally {
@@ -968,7 +954,7 @@ export default function JobResultPage() {
             }
             </button>
           }
-          {job?.status === "done" && !isMobile && (!needsPagedMode(job) || previewMode !== "markdown") &&
+          {job?.status === "done" && !isMobile && previewMode !== "markdown" &&
           <button
             onClick={() => setRightPanelOpen((v) => !v)}
             title={rightPanelOpen ? t("page:result.hideResultPanel") : t("page:result.showResultPanel")}
@@ -1121,7 +1107,7 @@ export default function JobResultPage() {
       </div>
       }
 
-      {job?.status === "done" && !loading && needsPagedMode(job) && previewMode === "markdown" &&
+      {job?.status === "done" && !loading && previewMode === "markdown" &&
       <PagedResultViewer
         ref={pagedViewerRef}
         jobId={jobId}
@@ -1136,7 +1122,7 @@ export default function JobResultPage() {
 
       }
 
-      {job?.status === "done" && !loading && (!needsPagedMode(job) || previewMode !== "markdown") &&
+      {job?.status === "done" && !loading && previewMode !== "markdown" &&
       <div className="flex-1 flex flex-col overflow-hidden min-h-0" data-oid="ww-27ni">
           {previewMode !== "markdown" && xlsxAdvancedPolling &&
           <div className="px-4 py-2 bg-blue-50 text-blue-700 text-sm border-b border-blue-200 flex items-center gap-2 flex-shrink-0" data-oid="advanced-progress">

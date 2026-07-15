@@ -46,7 +46,7 @@ def run_vision(
 ) -> tuple[list[tuple[int, str]], dict[int, dict]]:
     """PDF를 PNG로 렌더링한 후, 배치 PaddleOCR 또는 per-page LLM vision으로 변환한다.
 
-    [Flow: Step 1 (총 페이지 수 계산) -> Step 2 (모든 페이지 렌더링 완료 대기) -> Step 3a (fallback 선호 시: 10페이지 배치로 PaddleOCR 제출, 실패 시 per-page 폴백) / Step 3b (fallback 비선호 시: per-page LLM vision) -> Step 4 (페이지 번호 순서로 결과 정렬) -> Step 5 (searchable PDF 생성용 layout_by_page 반환)]
+    [Flow: Step 1 (총 페이지 수 계산) -> Step 2a (10페이지 이하 + fallback 선호 시: 원본 PDF 직접 AI Studio 제출, 실패 시 Step 2b로 폴백) / Step 2b (11페이지 이상 또는 직접 제출 실패: 모든 페이지 렌더링 → 10페이지 배치 PaddleOCR 또는 per-page LLM vision) -> Step 3 (페이지 번호 순서로 결과 정렬) -> Step 4 (searchable PDF 생성용 layout_by_page 반환)]
     """
     work = Path(work_dir)
     img_dir = work / "img"
@@ -57,6 +57,37 @@ def run_vision(
     total_pages = len(doc)
     doc.close()
 
+    # Step 2a: 10페이지 이하 PDF 직접 업로드 최적화 경로
+    # 원본 PDF를 렌더링/deskew/재병합 없이 AI Studio에 직접 제출하여 불필요한 왕복을 제거한다.
+    # 실패 시 기존 렌더링 → 배치 경로(Step 2b)로 자동 폴백한다.
+    pdf_size_mb = Path(pdf_path).stat().st_size / 1024 / 1024
+    if (
+        fallback_controller.is_fallback_preferred()
+        and total_pages <= BATCH_SIZE
+        and Path(pdf_path).suffix.lower() == ".pdf"
+    ):
+        try:
+            logger.info(f"[vision-pdf-direct] {total_pages}페이지 PDF 직접 업로드 경로 시도 ({pdf_size_mb:.1f}MB)")
+            if on_progress:
+                on_progress(50, 100)
+            pages = paddleocr_client.convert_pdf_with_layout(Path(pdf_path))
+            results: list[tuple[int, str | None, dict]] = []
+            for idx, (md, layout, _angle) in enumerate(pages):
+                page_num = idx + 1
+                extracted = ocr_client.extract_markdown_content(md)
+                results.append((page_num, extracted, layout))
+            if on_progress:
+                on_progress(100, 100)
+            logger.info(f"[vision-pdf-direct] PDF 직접 업로드 성공 ({len(pages)}페이지)")
+
+            results.sort(key=lambda x: x[0])
+            page_tables = [(page_num, result) for page_num, result, _ in results if result]
+            layout_by_page: dict[int, dict] = {page_num: layout for page_num, _, layout in results if layout}
+            return page_tables, layout_by_page
+        except Exception as e:
+            logger.warning(f"[vision-pdf-direct] PDF 직접 업로드 실패, 렌더링 배치 경로로 폴백: {e}")
+
+    # Step 2b: 렌더링 → 배치/per-page 경로 (11페이지 이상 또는 직접 업로드 실패 시)
     prompt = build_vision_prompt(columns, extra_prompt)
     lock = threading.Lock()
     progress_state = {"rendered": 0, "ocr_done": 0}

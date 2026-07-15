@@ -299,3 +299,99 @@ def convert_images_batch_with_layout(
             on_progress(est_pct, 100)
 
         time.sleep(POLL_INTERVAL)
+
+
+def convert_pdf_with_layout(
+    pdf_path: Path,
+    timeout: int = 1800,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> list[tuple[str, dict, int]]:
+    """원본 PDF를 렌더링 없이 AI Studio에 직접 제출하여 per-page 결과를 반환한다.
+
+    [Flow: Step 1 (PDF를 /api/convert/pdf에 업로드) -> Step 2 (task_id 폴링) -> Step 3 (per-page 결과 리스트 반환)]
+
+    원본 PDF가 10페이지 이하인 경우, 이미지 렌더링/deskew/PDF 재병합을 생략하고
+    원본 PDF를 AI Studio에 직접 제출하여 불필요한 왕복을 제거한다.
+    AI Studio 기본 제한(10페이지)을 초과하면 서비스가 400 에러를 반환한다.
+
+    Args:
+        pdf_path: 변환할 PDF 파일 경로 (최대 10페이지)
+        timeout: 최대 대기 시간 (초)
+        on_progress: 진행률 콜백
+
+    Returns:
+        [(markdown, layout, angle_code), ...] — 페이지 순서대로 per-page 결과
+    """
+    if not _is_enabled():
+        raise RuntimeError("PaddleOCR fallback service is disabled")
+
+    base_url = _get_service_url()
+    pdf_url = f"{base_url}/api/convert/pdf"
+    pdf_size = pdf_path.stat().st_size / 1024 / 1024
+    logger.info(f"[paddleocr-pdf] {pdf_path.name} 직접 변환 시작 ({pdf_size:.1f}MB)")
+
+    # Step 1: PDF 업로드
+    with open(pdf_path, "rb") as f:
+        files = {"file": (pdf_path.name, f)}
+        resp = requests.post(pdf_url, files=files, timeout=UPLOAD_TIMEOUT)
+
+    if resp.status_code >= 400:
+        logger.error(f"[paddleocr-pdf] 직접 변환 시작 실패: {resp.status_code} {resp.text[:200]}")
+        resp.raise_for_status()
+
+    task_id = resp.json().get("task_id")
+    if not task_id:
+        raise RuntimeError(f"Failed to start PDF conversion: no task_id (resp={resp.text[:200]})")
+
+    logger.info(f"[paddleocr-pdf] task_id={task_id} 폴링 시작")
+
+    # Step 2: 폴링 루프
+    start_time = time.monotonic()
+    status_url = f"{base_url}/api/convert/pdf/status/{task_id}"
+
+    while True:
+        elapsed = time.monotonic() - start_time
+
+        if elapsed > timeout:
+            raise TimeoutError(f"PaddleOCR PDF timeout: {elapsed:.0f}s > {timeout}s")
+
+        try:
+            status_resp = requests.get(status_url, timeout=POLL_TIMEOUT)
+        except Exception as e:
+            logger.warning(f"[paddleocr-pdf] 폴링 실패, 재시도: {e}")
+            time.sleep(POLL_INTERVAL)
+            continue
+
+        if status_resp.status_code == 404:
+            raise RuntimeError(f"PaddleOCR PDF task not found: {task_id}")
+
+        if status_resp.status_code >= 400:
+            logger.warning(f"[paddleocr-pdf] 폴링 에러: {status_resp.status_code}")
+            time.sleep(POLL_INTERVAL)
+            continue
+
+        data = status_resp.json()
+        status = data.get("status", "")
+
+        if status == "done":
+            result = data.get("result")
+            if result is None:
+                raise RuntimeError("PaddleOCR PDF completed but no result")
+            pages = result.get("pages", [])
+            logger.info(f"[paddleocr-pdf] 직접 변환 완료 ({elapsed:.0f}s, {len(pages)}페이지)")
+            if on_progress:
+                on_progress(100, 100)
+            return [
+                (page.get("markdown", ""), page.get("layout", {}), page.get("page_angle", -1))
+                for page in pages
+            ]
+
+        if status == "error":
+            error_msg = data.get("error", "Unknown error")
+            raise RuntimeError(f"PaddleOCR PDF failed: {error_msg}")
+
+        if status == "processing" and on_progress:
+            est_pct = min(99, int(elapsed / timeout * 99))
+            on_progress(est_pct, 100)
+
+        time.sleep(POLL_INTERVAL)

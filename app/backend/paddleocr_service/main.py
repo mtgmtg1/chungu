@@ -1043,14 +1043,133 @@ def _do_aistudio_batch_convert(task_id: str, image_paths: list[Path], filenames:
             _tasks[task_id]["finished_at"] = time.time()
 
 
+def _do_aistudio_pdf_convert(task_id: str, pdf_path: Path, filename: str) -> None:
+    """원본 PDF를 그대로 AI Studio에 제출하여 변환한다 (렌더링/deskew/병합 생략).
+
+    [Flow: Step 1 (AI Studio job 제출) -> Step 2 (폴링) -> Step 3 (JSONL 다운로드/파싱) -> Step 4 (per-page 결과 저장)]
+
+    원본 PDF가 10페이지 이하인 경우, 이미지 렌더링/deskew/PDF 재병합 없이
+    원본 PDF를 AI Studio에 직접 제출하여 불필요한 왕복을 제거한다.
+    """
+    try:
+        request_id = uuid.uuid4().hex
+
+        # Step 1-3: AI Studio job 제출 → 폴링 → 다운로드/파싱
+        job_id = _aistudio_submit_job(pdf_path)
+        jsonl_url = _aistudio_poll_job(job_id)
+        ocr_result = _aistudio_download_and_parse(jsonl_url, request_id)
+
+        # Step 4: per-page 결과 구성
+        page_markdowns = ocr_result.get("page_markdowns", [])
+        layout_pages = ocr_result.get("layout", [])
+        page_angles = ocr_result.get("page_angles", [])
+        page_count = ocr_result.get("page_count", len(page_markdowns))
+
+        pages: list[BatchPageResult] = []
+        for idx in range(page_count):
+            pages.append(BatchPageResult(
+                markdown=page_markdowns[idx] if idx < len(page_markdowns) else "",
+                layout=layout_pages[idx] if idx < len(layout_pages) else {},
+                page_angle=page_angles[idx] if idx < len(page_angles) else -1,
+            ))
+
+        batch_result = BatchConvertResponse(pages=pages, page_count=page_count)
+
+        with _tasks_lock:
+            _tasks[task_id]["status"] = "done"
+            _tasks[task_id]["result"] = batch_result
+            _tasks[task_id]["finished_at"] = time.time()
+
+        logger.info(f"[aistudio-pdf] {filename} 직접 변환 완료 ({page_count}페이지)")
+
+    except Exception as e:
+        logger.exception(f"[aistudio-pdf] {filename} 직접 변환 실패: {e}")
+        with _tasks_lock:
+            _tasks[task_id]["status"] = "error"
+            _tasks[task_id]["error"] = str(e)
+            _tasks[task_id]["finished_at"] = time.time()
+
+
+@app.post("/api/convert/pdf", response_model=AsyncConvertResponse)
+async def api_convert_pdf(file: UploadFile = File(...)) -> AsyncConvertResponse:
+    """원본 PDF를 렌더링 없이 AI Studio에 직접 제출한다 (10페이지 이하 전용).
+
+    클라이언트가 원본 PDF를 그대로 업로드하면, 서비스가 이를 AI Studio API에
+    단일 job으로 제출한다. 이미지 렌더링/deskew/PDF 재병합을 생략하여
+    10페이지 이하 PDF의 처리 시간을 대폭 단축한다.
+    AI Studio 기본 제한(10페이지)을 초과하면 400 에러를 반환한다.
+    """
+    if not AISTUDIO_API_TOKEN:
+        raise HTTPException(status_code=503, detail="PADDLEOCR_API_TOKEN is not configured")
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing filename")
+
+    ext = Path(file.filename).suffix.lower()
+    if ext != ".pdf":
+        raise HTTPException(status_code=400, detail=f"PDF endpoint supports PDF only: {file.filename}")
+
+    tmpdir = tempfile.mkdtemp()
+    tmp_path = Path(tmpdir)
+    pdf_path = tmp_path / (file.filename or "input.pdf")
+    pdf_path.write_bytes(await file.read())
+
+    # 페이지 수 검증 (AI Studio 기본 제한 10페이지)
+    try:
+        doc = fitz.open(str(pdf_path))
+        page_count = len(doc)
+        doc.close()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read PDF: {e}")
+
+    if page_count > BATCH_MAX_PAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"PDF exceeds AI Studio page limit: {page_count} > {BATCH_MAX_PAGES}. Use /api/convert/batch with rendered images.",
+        )
+
+    logger.info(f"[aistudio-pdf] {file.filename} 직접 변환 시작 ({page_count}페이지, {pdf_path.stat().st_size/1024/1024:.1f}MB)")
+
+    task_id = uuid.uuid4().hex
+    with _tasks_lock:
+        _tasks[task_id] = {
+            "status": "processing",
+            "result": None,
+            "error": None,
+            "started_at": time.time(),
+            "finished_at": None,
+            "tmpdir": tmpdir,
+        }
+
+    thread = threading.Thread(
+        target=_do_aistudio_pdf_convert,
+        args=(task_id, pdf_path, file.filename),
+        daemon=True,
+    )
+    thread.start()
+
+    return AsyncConvertResponse(task_id=task_id, status="processing")
+
+
+@app.get("/api/convert/pdf/status/{task_id}", response_model=BatchTaskStatusResponse)
+async def api_convert_pdf_status(task_id: str) -> BatchTaskStatusResponse:
+    """PDF 직접 변환 작업의 상태를 조회한다 (/api/convert/batch/status와 동일 스펙)."""
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return BatchTaskStatusResponse(
+        task_id=task_id,
+        status=task["status"],
+        result=task.get("result"),
+        error=task.get("error"),
+        started_at=task.get("started_at"),
+        finished_at=task.get("finished_at"),
+    )
+
+
 @app.post("/api/convert/batch", response_model=AsyncConvertResponse)
 async def api_convert_batch(files: list[UploadFile] = File(...)) -> AsyncConvertResponse:
-    """여러 페이지 이미지를 하나의 AI Studio job로 배치 변환한다.
-
-    클라이언트가 렌더링한 페이지 PNG 이미지들을 업로드하면, 서비스가 이를
-    multi-page TIFF로 병합하여 AI Studio API에 단일 job으로 제출한다.
-    AI Studio 기본 제한(10페이지)을 초과하지 않도록 클라이언트가 분할하여 호출해야 한다.
-    """
     if not AISTUDIO_API_TOKEN:
         raise HTTPException(status_code=503, detail="PADDLEOCR_API_TOKEN is not configured")
 

@@ -31,7 +31,6 @@ export default function DevEdiscoveryTimelinePage() {
           jobId={SAMPLE_JOB.job_id}
           job={SAMPLE_JOB}
           onNodeClick={() => {}}
-          onPreview={() => {}}
         />
       </div>
     </div>

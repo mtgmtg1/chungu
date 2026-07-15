@@ -1,6 +1,6 @@
 // [Flow: Step 1 (EDiscoveryViewer 마운트) -> Step 2 (preview API로 source_files 로드)
 //       -> Step 3 (Timeline/Mapper 탭 전환)
-//       -> Step 4 (Timeline 탭: EdiscoveryTimelinePanel 렌더링, 카드 클릭 시 미리보기 패널)
+//       -> Step 4 (Timeline 탭: EdiscoveryTimelinePanel 렌더링, 카드 클릭 시 선택)
 //       -> Step 5 (Mapper 탭: IssueTreeMapperPanel 렌더링)
 //       -> Step 6 (헤더 재분석 버튼 클릭 → extract API → 폴링 → onJobRefresh)]
 // e-Discovery GraphRAG 결과를 탭으로 전환하며 보여주는 뷰어.
@@ -8,9 +8,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CalendarDays, Loader2, RefreshCw, X, FileText } from "lucide-react";
+import { CalendarDays, Loader2, RefreshCw, X } from "lucide-react";
 import EdiscoveryTimelinePanel from "./timeline/EdiscoveryTimelinePanel.jsx";
-import EdiscoveryDetailCard from "./timeline/EdiscoveryDetailCard.jsx";
 import IssueTreeMapperPanel from "./mapper/IssueTreeMapperPanel.jsx";
 import { api } from "../api.js";
 
@@ -18,17 +17,6 @@ import { api } from "../api.js";
 const POLL_TIMEOUT_MS = 600000;
 /** 폴링 간격 — 2초. */
 const POLL_INTERVAL_MS = 2000;
-
-/**
- * 노드가 가리키는 페이지 번호를 반환한다.
- *
- * @param {Object} node - e-Discovery graph 노드
- * @returns {number} 1-based 페이지 번호
- */
-function getNodePage(node) {
-  const page = node?.data?.page;
-  return typeof page === "number" && page > 0 ? page : 1;
-}
 
 /**
  * EDiscoveryViewer — e-Discovery GraphRAG 결과를 탭으로 전환하며 시각화.
@@ -50,9 +38,6 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, onJobRefresh
   const [context, setContext] = useState(job?.ediscovery_context || "");
   const [reanalyzeOpen, setReanalyzeOpen] = useState(false);
   const [sourceFiles, setSourceFiles] = useState([]);
-  const [previewNode, setPreviewNode] = useState(null);
-  const [originalText, setOriginalText] = useState("");
-  const [originalLoading, setOriginalLoading] = useState(false);
 
   const pollRef = useRef(null);
   const pollStartRef = useRef(0);
@@ -174,42 +159,6 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, onJobRefresh
     };
   }, [job?.ediscovery_status, startPolling, stopPolling]);
 
-  /**
-   * [Flow: Step 1 (previewNode 변경) -> Step 2 (sourceFile.result_markdown 또는 노드 data의 마크다운으로 OCR 내용 설정)]
-   */
-  useEffect(() => {
-    if (!previewNode) return;
-    const page = getNodePage(previewNode);
-    const sourceFile = sourceFiles.find((f) => f.page_num === page) || sourceFiles[0];
-    const nodeMarkdown =
-      previewNode.data?.result_markdown ||
-      previewNode.data?.markdown ||
-      previewNode.data?.content ||
-      "";
-    const ocrText = sourceFile?.result_markdown || nodeMarkdown;
-
-    setOriginalLoading(true);
-    setOriginalText("");
-    setOriginalText(ocrText);
-    setOriginalLoading(false);
-  }, [previewNode, sourceFiles]);
-
-  /**
-   * [Flow: Step 1 (Chrono 카드 클릭) -> Step 2 (previewNode 상태 설정)]
-   */
-  const handlePreview = useCallback((node) => {
-    setPreviewNode(node);
-  }, []);
-
-  /**
-   * [Flow: Step 1 (미리보기 패널 닫기) -> Step 2 (상태 초기화)]
-   */
-  const handleClosePreview = useCallback(() => {
-    setPreviewNode(null);
-    setOriginalText("");
-    setOriginalLoading(false);
-  }, []);
-
   return (
     <div className="h-full flex flex-col" data-oid="ediscovery-viewer">
       {/* 헤더 */}
@@ -261,47 +210,11 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, onJobRefresh
             job={job}
             sourceFiles={sourceFiles}
             onNodeClick={onNodeClick}
-            onPreview={handlePreview}
           />
         ) : (
           <IssueTreeMapperPanel jobId={jobId} job={job} />
         )}
       </div>
-
-      {/* 미리보기 패널 모달 */}
-      {previewNode && (
-        <div
-          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={handleClosePreview}
-          data-oid="ediscovery-preview-modal"
-        >
-          <div
-            className="bg-surface max-w-4xl w-full h-[80vh] rounded-xl shadow-lg border border-outline-variant flex flex-col overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-outline-variant">
-              <h3 className="text-sm font-bold text-on-surface flex items-center gap-2">
-                <FileText size={16} />
-                {previewNode.data?.label || previewNode.id}
-              </h3>
-              <button
-                onClick={handleClosePreview}
-                className="p-1 hover:bg-surface-container-high rounded text-on-surface-variant"
-                aria-label={t("page:result.ediscoveryClose")}
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <EdiscoveryDetailCard
-                node={previewNode}
-                originalText={originalText}
-                originalLoading={originalLoading}
-              />
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* 재분석 컨텍스트 입력 팝업 */}
       {reanalyzeOpen && (

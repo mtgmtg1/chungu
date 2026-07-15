@@ -1,14 +1,14 @@
 // [Flow: Step 1 (job.ediscovery_graphs/status + preview source_files 수신)
 //       -> Step 2 (노드를 date 유무로 분리: date가 있으면 Chrono, 없으면 우측 패널)
 //       -> Step 3 (React Chrono 3.x vertical 모드에 custom content(children) 주입)
-//       -> Step 4 (카드 클릭으로 선택/포커스, 인라인 수정/삭제, 상단 카드 추가 메뉴)
+//       -> Step 4 (카드 클릭으로 선택/포커스, 수정 버튼으로 편집/삭제, 상단 카드 추가 메뉴)
 //       -> Step 5 (변경 시 1초 debounce 후 PUT /ediscovery/graph 자동 저장)]
 // e-Discovery GraphRAG 결과를 중앙 수직 타임라인 + 우측 페이지 기반 노드 패널로 시각화.
 // 기존 양측 주장/증거 카드, 하단 수평 스트립, 상단 재분석 버튼은 모두 제거하고 Chrono 기본 UI를 사용한다.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, AlertCircle, Network, FileText, Plus, Trash2, X, Check } from "lucide-react";
+import { Loader2, AlertCircle, Network, FileText, Plus, Trash2, X, Check, Pencil } from "lucide-react";
 import { Chrono } from "react-chrono";
 import "react-chrono/dist/style.css";
 import { api } from "../../api.js";
@@ -126,9 +126,8 @@ export function buildChronoItem(node, sourceFiles, t) {
  * @param {Object} props.job - Job 객체 (ediscovery_* 필드 포함)
  * @param {Array<Object>} [props.sourceFiles] - 외부에서 이미 로드된 preview source_files. 미전달 시 내부에서 로드한다.
  * @param {Function} [props.onNodeClick] - 노드/아이템 클릭 시 호출될 콜백 (node) => void
- * @param {Function} [props.onPreview] - 노드/아이템 클릭 시 미리보기 패널을 띄우기 위한 콜백 (node) => void
  */
-export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: externalSourceFiles, onNodeClick, onPreview }) {
+export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: externalSourceFiles, onNodeClick }) {
   const { t } = useTranslation();
 
   const [metrics, setMetrics] = useState({
@@ -245,11 +244,6 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job?.ediscovery_status, job?.ediscovery_graphs, job?.ediscovery_metrics, jobId]);
-
-  const handleNodePreview = useCallback((node) => {
-    onPreview?.(node);
-    onNodeClick?.(node);
-  }, [onPreview, onNodeClick]);
 
   const handleSelectNode = useCallback((nodeId) => {
     setSelectedNodeId((prev) => (prev === nodeId ? null : nodeId));
@@ -443,7 +437,6 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
                 onSelect={handleSelectNode}
                 onUpdate={handleUpdateNode}
                 onDelete={handleDeleteNode}
-                onPreview={handleNodePreview}
                 t={t}
               />
             ))}
@@ -474,7 +467,6 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
                 onSelect={handleSelectNode}
                 onUpdate={handleUpdateNode}
                 onDelete={handleDeleteNode}
-                onPreview={handleNodePreview}
                 t={t}
                 variant="compact"
               />
@@ -518,7 +510,7 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
 }
 
 /**
- * CardEditor — 타임라인 카드 하나를 인라인 편집할 수 있는 UI.
+ * CardEditor — 타임라인 카드를 읽기/수정 모드로 전환하는 UI.
  *
  * @param {Object} props
  * @param {Object} props.item - React Chrono item 객체 (node 포함)
@@ -526,15 +518,108 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
  * @param {Function} props.onSelect - 카드 클릭 시 선택 콜백 (nodeId) => void
  * @param {Function} props.onUpdate - 노드 data 수정 콜백 (nodeId, dataUpdates) => void
  * @param {Function} props.onDelete - 노드 삭제 콜백 (nodeId) => void
- * @param {Function} props.onPreview - 미리보기 콜백 (node) => void
  * @param {Function} props.t - i18n translate 함수
  * @param {string} [props.variant="default"] - "default"(Chrono 카드) | "compact"(우측 패널 카드)
  */
-function CardEditor({ item, isSelected, onSelect, onUpdate, onDelete, onPreview, t, variant = "default" }) {
+function CardEditor({ item, isSelected, onSelect, onUpdate, onDelete, t, variant = "default" }) {
+  const [isEditing, setIsEditing] = useState(false);
   const data = item.node.data || {};
   const entity = data.entity || (item.node.type === "evidence" ? "third_party" : item.node.type);
   const isCompact = variant === "compact";
 
+  const handleStartEdit = (e) => {
+    e.stopPropagation();
+    setIsEditing(true);
+    onSelect(item.node.id);
+  };
+
+  const handleDone = (e) => {
+    e.stopPropagation();
+    setIsEditing(false);
+  };
+
+  const handleDelete = (e) => {
+    e.stopPropagation();
+    onDelete(item.node.id);
+  };
+
+  // [Flow: 편집 모드 -> label/summary/date/entity 입력 + 삭제/완료 버튼]
+  if (isEditing) {
+    return (
+      <div
+        className={`flex flex-col transition-all ${
+          isSelected
+            ? "ring-2 ring-primary bg-primary/5 rounded-lg"
+            : "hover:bg-surface-container-high rounded-lg"
+        } ${isCompact ? "p-2 gap-2" : "min-h-[160px] p-1 gap-3"}`}
+        onClick={() => onSelect(item.node.id)}
+      >
+        <div className="flex flex-col gap-2">
+          <div className="flex items-start justify-between gap-1">
+            <input
+              value={data.label || ""}
+              onChange={(e) => onUpdate(item.node.id, { label: e.target.value })}
+              className={`w-full font-medium text-on-surface bg-transparent border-b border-outline-variant focus:border-primary focus:outline-none px-1 py-0.5 ${
+                isCompact ? "text-xs" : "text-sm"
+              }`}
+              placeholder={t("page:result.ediscoveryLabelPlaceholder")}
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              type="button"
+              onClick={handleDelete}
+              className="p-1 text-error hover:bg-error/10 rounded flex-shrink-0"
+              title={t("page:result.ediscoveryDeleteCard")}
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+          <textarea
+            value={data.summary || ""}
+            onChange={(e) => onUpdate(item.node.id, { summary: e.target.value })}
+            rows={isCompact ? 2 : 3}
+            className={`w-full text-on-surface-variant bg-transparent border border-outline-variant rounded p-1.5 focus:border-primary focus:outline-none resize-none ${
+              isCompact ? "text-xs" : "text-sm"
+            }`}
+            placeholder={t("page:result.ediscoverySummaryPlaceholder")}
+            onClick={(e) => e.stopPropagation()}
+          />
+          <div className="flex flex-wrap gap-2">
+            <input
+              type="date"
+              value={data.date || ""}
+              onChange={(e) => onUpdate(item.node.id, { date: e.target.value })}
+              className="text-xs bg-surface-container-high rounded px-2 py-1 border border-outline-variant focus:border-primary focus:outline-none"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <select
+              value={entity}
+              onChange={(e) => onUpdate(item.node.id, { entity: e.target.value })}
+              className="text-xs bg-surface-container-high rounded px-2 py-1 border border-outline-variant focus:border-primary focus:outline-none"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <option value="plaintiff">{t("page:result.ediscoverySwimlanePlaintiff")}</option>
+              <option value="defendant">{t("page:result.ediscoverySwimlaneDefendant")}</option>
+              <option value="third_party">{t("page:result.ediscoverySwimlaneThirdParty")}</option>
+              <option value="issue">{t("page:result.ediscoverySwimlaneIssue")}</option>
+            </select>
+          </div>
+        </div>
+        <div className="flex justify-end pt-2">
+          <button
+            type="button"
+            onClick={handleDone}
+            className="flex items-center gap-1 text-xs font-medium text-primary hover:bg-primary/10 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/50"
+          >
+            <Check size={14} />
+            {t("common:done")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // [Flow: 읽기 모드 -> label 노출 + (default) summary/date/entity badge + 수정 버튼]
   return (
     <div
       className={`flex flex-col justify-between transition-all ${
@@ -546,79 +631,54 @@ function CardEditor({ item, isSelected, onSelect, onUpdate, onDelete, onPreview,
     >
       <div className="flex flex-col gap-2">
         <div className="flex items-start justify-between gap-1">
-          <input
-            value={data.label || ""}
-            onChange={(e) => onUpdate(item.node.id, { label: e.target.value })}
-            className={`w-full font-medium text-on-surface bg-transparent border-b border-outline-variant focus:border-primary focus:outline-none px-1 py-0.5 ${
+          <div
+            className={`w-full font-medium text-on-surface px-1 py-0.5 ${
               isCompact ? "text-xs" : "text-sm"
             }`}
-            placeholder={t("page:result.ediscoveryLabelPlaceholder")}
-            onClick={(e) => e.stopPropagation()}
-          />
-          {isSelected && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(item.node.id);
-              }}
-              className="p-1 text-error hover:bg-error/10 rounded flex-shrink-0"
-              title={t("page:result.ediscoveryDeleteCard")}
-            >
-              <Trash2 size={14} />
-            </button>
-          )}
-        </div>
-        <textarea
-          value={data.summary || ""}
-          onChange={(e) => onUpdate(item.node.id, { summary: e.target.value })}
-          rows={isCompact ? 2 : 3}
-          className={`w-full text-on-surface-variant bg-transparent border border-outline-variant rounded p-1.5 focus:border-primary focus:outline-none resize-none ${
-            isCompact ? "text-xs" : "text-sm"
-          }`}
-          placeholder={t("page:result.ediscoverySummaryPlaceholder")}
-          onClick={(e) => e.stopPropagation()}
-        />
-        <div className="flex flex-wrap gap-2">
-          <input
-            type="date"
-            value={data.date || ""}
-            onChange={(e) => onUpdate(item.node.id, { date: e.target.value })}
-            className="text-xs bg-surface-container-high rounded px-2 py-1 border border-outline-variant focus:border-primary focus:outline-none"
-            onClick={(e) => e.stopPropagation()}
-          />
-          <input
-            type="number"
-            min={1}
-            value={data.page || ""}
-            onChange={(e) => onUpdate(item.node.id, { page: parseInt(e.target.value, 10) || 1 })}
-            className="text-xs bg-surface-container-high rounded px-2 py-1 border border-outline-variant focus:border-primary focus:outline-none w-20"
-            placeholder={t("page:result.ediscoveryPage")}
-            onClick={(e) => e.stopPropagation()}
-          />
-          <select
-            value={entity}
-            onChange={(e) => onUpdate(item.node.id, { entity: e.target.value })}
-            className="text-xs bg-surface-container-high rounded px-2 py-1 border border-outline-variant focus:border-primary focus:outline-none"
-            onClick={(e) => e.stopPropagation()}
           >
-            <option value="plaintiff">{t("page:result.ediscoverySwimlanePlaintiff")}</option>
-            <option value="defendant">{t("page:result.ediscoverySwimlaneDefendant")}</option>
-            <option value="third_party">{t("page:result.ediscoverySwimlaneThirdParty")}</option>
-            <option value="issue">{t("page:result.ediscoverySwimlaneIssue")}</option>
-          </select>
+            {data.label || item.id}
+          </div>
         </div>
+        {!isCompact && data.summary && (
+          <div className={`text-on-surface-variant line-clamp-2 ${isCompact ? "text-xs" : "text-sm"}`}>
+            {data.summary}
+          </div>
+        )}
+        {!isCompact && (
+          <div className="flex flex-wrap gap-2 text-xs">
+            {data.date && (
+              <span className="px-2 py-1 rounded bg-surface-container-high text-on-surface">
+                {data.date}
+              </span>
+            )}
+            <span
+              className={`px-2 py-1 rounded ${
+                entity === "plaintiff"
+                  ? "bg-blue-100 text-blue-800"
+                  : entity === "defendant"
+                  ? "bg-red-100 text-red-800"
+                  : entity === "issue"
+                  ? "bg-amber-100 text-amber-800"
+                  : "bg-surface-container-high text-on-surface"
+              }`}
+            >
+              {t(
+                `page:result.${
+                  SWIMLANE_LABEL_KEYS[entity] || `ediscoverySwimlane${entity.charAt(0).toUpperCase() + entity.slice(1)}`
+                }`
+              )}
+            </span>
+          </div>
+        )}
       </div>
       <div className="flex justify-end pt-2">
         <button
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onPreview(item.node);
-          }}
-          className="text-xs font-medium text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-primary/50 rounded px-1 py-0.5"
+          onClick={handleStartEdit}
+          className="flex items-center gap-1 text-xs font-medium text-primary hover:bg-primary/10 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/50"
         >
-          {t("page:result.readMore")}
+          <Pencil size={14} />
+          {t("page:result.ediscoveryEditCard")}
         </button>
       </div>
     </div>

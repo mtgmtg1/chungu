@@ -438,6 +438,7 @@
     "ediscoveryLabelPlaceholder": "Title",
     "ediscoverySummaryPlaceholder": "Enter summary",
     "ediscoveryDeleteCard": "Delete card",
+    "ediscoveryEditCard": "Edit",
     "pageBasedNodes": "Page-based items",
     "ediscoveryConnectionReason": "Connection to source",
     "ediscoveryConnectionReasonEmpty": "No connection reason provided.",

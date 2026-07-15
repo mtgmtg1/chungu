@@ -627,23 +627,24 @@ def run_job(job_id: str) -> dict:
                     elif ftype in media_loader.HWP_TYPES:
                         hwp_files.append(fp)
 
-                # [Flow: Step 1 (총 파일 수 설정 + 상태 ocr로 변경) -> Step 2 (Docling/HWP 파일 순차 처리하며 done_files 증가) -> Step 3 (미디어 파일 처리하며 done_files 증가)]
+                # [Flow: Step 1 (총 파일 수 설정 + 상태 ocr로 변경) -> Step 2 (Docling/HWP/vision 파일 순차 처리하며 done_files 증가) -> Step 3 (미디어 파일 처리하며 done_files 증가)]
                 total_to_process = len(docling_files) + len(hwp_files) + len(media_files)
                 job.total_files = total_to_process
                 job.done_files = 0
+                total_done_pages = 0
                 _set_status(db, job, "ocr")
                 db.commit()
 
                 for fp in docling_files:
                     docling_errors: list[str] = []
-                    # [Flow: Step 1 (페이지 크기 검사) -> Step 2 (전체 초과 시 스킵) -> Step 3 (Docling 처리)]
+                    # [Flow: Step 1 (페이지 크기 검사) -> Step 2 (전체 초과 시 스킵) -> Step 3 (텍스트 기반 PDF basic -> Docling / 이미지 기반 PDF 또는 premium -> run_vision / 비-PDF -> Docling)]
                     oversized, total_fp_pages = count_oversized_pages(fp)
                     if oversized > 0:
                         errors.append(f"{fp.name}: {oversized}페이지가 350mm를 초과하여 파싱할 수 없습니다")
                     if oversized == total_fp_pages and total_fp_pages > 0:
-                        docling_tables = []
-                    else:
-                        docling_tables = run_docling(
+                        fp_tables = []
+                    elif fp.suffix.lower() == ".pdf" and ocr_model == "basic" and has_pdf_text_layer(str(fp)):
+                        fp_tables = run_docling(
                             fp,
                             str(work_dir),
                             columns,
@@ -652,6 +653,7 @@ def run_job(job_id: str) -> dict:
                             api_key,
                             extra_prompt=job.prompt,
                             use_refinement=use_refinement,
+                            max_tokens=10000,
                             media_endpoint=media_ep,
                             media_model=media_mdl,
                             media_api_key=media_key,
@@ -659,11 +661,54 @@ def run_job(job_id: str) -> dict:
                             on_error=lambda page, msg: docling_errors.append(f"p{page}: {msg}"),
                             ocr_engine=ocr_engine,
                         )
-                    for _, table in docling_tables:
+                        _register_searchable_pdf_if_text_layer(db, job, fp)
+                    elif fp.suffix.lower() == ".pdf":
+                        fp_work_dir = work_dir / "vision" / fp.stem
+                        fp_work_dir.mkdir(parents=True, exist_ok=True)
+                        fp_tables, layout_by_page = run_vision(
+                            str(fp),
+                            str(fp_work_dir),
+                            columns,
+                            endpoint,
+                            model,
+                            api_key,
+                            extra_prompt=job.prompt,
+                            dpi=job.dpi,
+                            max_tokens=10000,
+                            media_endpoint=media_ep,
+                            media_model=media_mdl,
+                            media_api_key=media_key,
+                            on_progress=lambda done, total: None,
+                            on_error=lambda page, msg: docling_errors.append(f"{fp.name} p{page}: {msg}"),
+                        )
+                        _build_and_upload_searchable_pdf(db, job, fp, layout_by_page, job.dpi or 300)
+                        _register_searchable_pdf_if_text_layer(db, job, fp)
+                    else:
+                        fp_tables = run_docling(
+                            fp,
+                            str(work_dir),
+                            columns,
+                            endpoint,
+                            model,
+                            api_key,
+                            extra_prompt=job.prompt,
+                            use_refinement=use_refinement,
+                            max_tokens=10000,
+                            media_endpoint=media_ep,
+                            media_model=media_mdl,
+                            media_api_key=media_key,
+                            on_progress=lambda done, total: None,
+                            on_error=lambda page, msg: docling_errors.append(f"p{page}: {msg}"),
+                            ocr_engine=ocr_engine,
+                        )
+                    for _, table in fp_tables:
                         all_page_contents.append((len(all_page_contents) + 1, table))
-                    tabs[fp.name] = excel_writer.build_pdf_rows(fp.name, docling_tables, columns)
-                    file_markdowns_by_name[fp.name] = converter.build_layout_markdown_string(docling_tables)
+                    tabs[fp.name] = excel_writer.build_pdf_rows(fp.name, fp_tables, columns)
+                    file_markdowns_by_name[fp.name] = converter.build_layout_markdown_string(fp_tables)
                     errors.extend(docling_errors)
+                    total_done_pages += len(fp_tables)
+                    job.done_pages = total_done_pages
+                    job.total_pages = max(job.total_pages or 0, total_done_pages)
                     job.done_files += 1
                     db.commit()
 

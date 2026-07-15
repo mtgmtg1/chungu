@@ -109,6 +109,24 @@ describe("calculateFlowLayout", () => {
     }
   });
 
+  it("titleNode는 top-level 노드들보다 위쪽에 단독으로 배치된다", () => {
+    const titleNode = {
+      id: "title",
+      type: "titleNode",
+      data: { kind: "title", label: "문서 제목", level: 0, content: [], contentPreview: "" },
+      position: { x: 0, y: 0 },
+    };
+    const h2 = makeNode("h2-1", 2, "섹션");
+    const nodes = [titleNode, h2];
+    const edges = [makeEdge("title", "h2-1")];
+    const layouted = calculateFlowLayout(nodes, edges);
+
+    const title = layouted.find(n => n.id === "title");
+    const section = layouted.find(n => n.id === "h2-1");
+    expect(title.position.y).toBe(0);
+    expect(section.position.y).toBeGreaterThan(title.position.y + title.data.estimatedHeight);
+  });
+
   it("다중 파일에서 파일 그룹이 세로로 스택된다", () => {
     // 파일 0의 heading 노드들
     const f0h2 = makeNode("f0-h2-1", 2, "파일0 섹션");

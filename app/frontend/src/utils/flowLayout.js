@@ -225,10 +225,19 @@ export function calculateFlowLayout(nodes, edges = [], options = {}) {
       currentY = groupY + headingRowHeight + fileGapY;
     }
   } else {
-    // 단일 파일: 모든 top-level 노드를 가로로 배치 (기존 동작)
+    // 단일 파일: titleNode가 있으면 맨 위에 단독 배치, 나머지 top-level 노드는 그 아래 가로로 배치
+    const titleNode = topLevelNodes.find(n => n.data.kind === "title");
+    const restTopLevel = topLevelNodes.filter(n => n.data.kind !== "title");
+    let currentY = 0;
+
+    if (titleNode) {
+      placeNode(titleNode, 0, currentY);
+      currentY += titleNode.subtreeHeight + gapY;
+    }
+
     let x = 0;
-    for (const node of topLevelNodes) {
-      placeNode(node, x, 0);
+    for (const node of restTopLevel) {
+      placeNode(node, x, currentY);
       x += node.subtreeWidth + gapX;
     }
   }

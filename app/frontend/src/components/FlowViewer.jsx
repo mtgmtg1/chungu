@@ -54,6 +54,40 @@ import DrawingToolbar from "./flow/DrawingToolbar.jsx";
  * ========================================================== */
 
 /**
+ * 타이틀 노드 컴포넌트 — H1 제목을 캔버스 최상단에 크게 표시.
+ * 문서의 최상위 제목을 시각적으로 강조하며, 하위 H2 노드들을 자식으로 가짐.
+ * HeadingNode보다 크고 눈에 띄는 스타일로 렌더링.
+ */
+function TitleNode({ data, selected }) {
+  return (
+    <div
+      className={`bg-primary rounded-lg border-2 shadow-md px-6 py-5 transition-all min-h-[80px] ${
+        selected ? "border-primary ring-4 ring-primary/30" : "border-primary-variant"
+      }`}
+      style={{ width: "100%" }}
+    >
+      {/* 부모-자식 hierarchy 엣지: 위쪽 (타이틀은 최상단이므로 보통 없음) */}
+      {data.hasParent && <Handle type="target" position={Position.Top} id="top" isConnectable={true} />}
+      {/* 들어오는 next 엣지: 왼쪽 (다중 파일 시 이전 파일에서 연결) */}
+      {data.hasPrev && <Handle type="target" position={Position.Left} id="left" isConnectable={true} />}
+      <div className="flex items-center gap-2 mb-1">
+        <Workflow size={20} className="text-on-primary" />
+        <span className="text-xs font-bold uppercase tracking-wide text-on-primary/80">
+          TITLE
+        </span>
+      </div>
+      <div className="font-bold text-lg text-on-surface line-clamp-2 break-words">
+        {data.label}
+      </div>
+      {/* 나가는 next 엣지: 오른쪽 */}
+      {data.hasNext && <Handle type="source" position={Position.Right} id="right" isConnectable={true} />}
+      {/* 부모-자식 hierarchy 엣지: 아래쪽 (H2 자식들) */}
+      {data.hasChildren && <Handle type="source" position={Position.Bottom} id="bottom" isConnectable={true} />}
+    </div>
+  );
+}
+
+/**
  * 헤딩 노드 컴포넌트 — 제목 + H레벨 배지 + 내용 미리보기.
  * React Flow 커스텀 노드로 등록되어 nodeTypes에 매핑됨.
  * hasNext/hasPrev/hasParent/hasChildren 플래그에 따라 4방향 Handle을 동적으로 렌더링.
@@ -344,7 +378,7 @@ function FileNode({ data, selected }) {
   );
 }
 
-const nodeTypes = { headingNode: HeadingNode, contentNode: ContentNode, fileNode: FileNode, noteNode: NoteNode };
+const nodeTypes = { titleNode: TitleNode, headingNode: HeadingNode, contentNode: ContentNode, fileNode: FileNode, noteNode: NoteNode };
 
 /* ============================================================
  * 커스텀 엣지 컴포넌트

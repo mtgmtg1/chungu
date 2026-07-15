@@ -72,8 +72,14 @@ export function calculateFlowLayout(nodes, edges = [], options = {}) {
     const preview = node.data.contentPreview || "";
     const isContent = node.data.kind === "content";
     const isFile = node.data.kind === "file";
+    const isTitle = node.data.kind === "title";
 
-    if (isFile) {
+    if (isTitle) {
+      // 타이틀 노드 — H1 제목, 큰 폰트 + 여유 높이
+      const labelLines = Math.min(2, Math.max(1, Math.ceil(label.length / titleCharsPerLine)));
+      node.width = nodeWidth;
+      node.height = baseHeight + titleLineHeight * labelLines + 32; // 타이틀은 추가 여백
+    } else if (isFile) {
       // 파일 구분 노드 — 큰 라벨 + 여유 높이
       const labelLines = Math.min(2, Math.max(1, Math.ceil(label.length / titleCharsPerLine)));
       node.width = nodeWidth;
@@ -96,7 +102,7 @@ export function calculateFlowLayout(nodes, edges = [], options = {}) {
   }
 
   // Step 3: subtree 크기 bottom-up 계산
-  // 자식 노드들은 부모 아래에 가로로 나란히 배치된다 (H3-H3 가로 흐름).
+  // contentNode 자식은 부모 아래 세로로 스택, headingNode 자식은 가로로 나란히 배치.
   function computeSubtree(node) {
     if (node.children.length === 0) {
       node.subtreeWidth = node.width;
@@ -104,17 +110,36 @@ export function calculateFlowLayout(nodes, edges = [], options = {}) {
       return;
     }
 
-    let childrenWidth = 0;
-    let childrenHeight = 0;
-    for (let i = 0; i < node.children.length; i++) {
-      const child = node.children[i];
+    // contentNode 자식과 headingNode 자식을 분리
+    const contentChildren = node.children.filter(c => c.data.kind === "content");
+    const headingChildren = node.children.filter(c => c.data.kind !== "content");
+
+    // contentNode 자식은 세로 스택 — 너비는 최대값, 높이는 누적
+    let contentWidth = 0;
+    let contentHeight = 0;
+    for (let i = 0; i < contentChildren.length; i++) {
+      const child = contentChildren[i];
       computeSubtree(child);
-      childrenWidth += child.subtreeWidth + (i > 0 ? gapX : 0);
-      childrenHeight = Math.max(childrenHeight, child.subtreeHeight);
+      contentWidth = Math.max(contentWidth, child.subtreeWidth);
+      contentHeight += child.subtreeHeight + (i > 0 ? gapY : 0);
     }
 
-    node.subtreeWidth = Math.max(node.width, childrenWidth);
-    node.subtreeHeight = node.height + (childrenHeight ? gapY + childrenHeight : 0);
+    // headingNode 자식은 가로 배치 — 너비는 누적, 높이는 최대값
+    let headingWidth = 0;
+    let headingHeight = 0;
+    for (let i = 0; i < headingChildren.length; i++) {
+      const child = headingChildren[i];
+      computeSubtree(child);
+      headingWidth += child.subtreeWidth + (i > 0 ? gapX : 0);
+      headingHeight = Math.max(headingHeight, child.subtreeHeight);
+    }
+
+    // contentNode 세로 스택 아래에 headingNode 가로 배치
+    const contentBlockHeight = contentHeight > 0 ? contentHeight + gapY : 0;
+    const headingBlockHeight = headingHeight > 0 ? headingHeight + gapY : 0;
+
+    node.subtreeWidth = Math.max(node.width, contentWidth, headingWidth);
+    node.subtreeHeight = node.height + contentBlockHeight + headingBlockHeight;
   }
 
   for (const node of topLevelNodes) {
@@ -122,7 +147,7 @@ export function calculateFlowLayout(nodes, edges = [], options = {}) {
   }
 
   // Step 4: top-level 노드 배치 — 다중 파일이면 파일별 세로 스택, 단일 파일이면 가로 배치
-  // 자식 노드들은 부모 아래 한 줄로 가로로 나란히 배치된다 (H3-H3 가로 흐름).
+  // contentNode 자식은 부모 바로 아래 세로로 스택, headingNode 자식은 그 아래 가로로 배치.
   function placeNode(node, originX, originY) {
     // 부모 subtree 안에서 현재 노드를 가로 중앙에 배치
     node.position = {
@@ -132,17 +157,26 @@ export function calculateFlowLayout(nodes, edges = [], options = {}) {
 
     if (node.children.length === 0) return;
 
-    const childrenWidth = node.children.reduce(
+    // contentNode 자식과 headingNode 자식을 분리
+    const contentChildren = node.children.filter(c => c.data.kind === "content");
+    const headingChildren = node.children.filter(c => c.data.kind !== "content");
+
+    // contentNode 자식들을 부모 바로 아래 세로로 스택
+    let currentY = originY + node.height + gapY;
+    for (const child of contentChildren) {
+      placeNode(child, originX + (node.subtreeWidth - child.subtreeWidth) / 2, currentY);
+      currentY += child.subtreeHeight + gapY;
+    }
+
+    // headingNode 자식들을 contentNode 스택 아래 가로로 배치
+    const headingWidth = headingChildren.reduce(
       (sum, child, i) => sum + child.subtreeWidth + (i > 0 ? gapX : 0),
       0,
     );
-    const childrenStartX = originX + (node.subtreeWidth - childrenWidth) / 2;
-    const childY = originY + node.height + gapY;
-
-    let childX = childrenStartX;
-    for (let i = 0; i < node.children.length; i++) {
-      const child = node.children[i];
-      placeNode(child, childX, childY);
+    const headingStartX = originX + (node.subtreeWidth - headingWidth) / 2;
+    let childX = headingStartX;
+    for (const child of headingChildren) {
+      placeNode(child, childX, currentY);
       childX += child.subtreeWidth + gapX;
     }
   }

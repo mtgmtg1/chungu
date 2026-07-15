@@ -432,3 +432,9 @@ body {
   margin-left: 0.5rem !important;
   margin-right: 0.5rem !important;
 }
+
+/* 카드 본문: 줄 간격을 충분히 확보해 글자가 겹쳐 보이지 않도록 한다. */
+.ediscovery-chrono-container .ediscovery-timeline-card-text {
+  line-height: 1.5 !important;
+  white-space: normal !important;
+}

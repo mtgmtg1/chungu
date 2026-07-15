@@ -372,7 +372,7 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
       </div>
       <div className="flex-1 min-h-0 flex relative overflow-hidden">
         <div className="flex-1 min-h-0 ediscovery-chrono-container">
-        {chronoItems.length > 0 ? (
+        {chronoItems.length > 0 && (
           <Chrono
             items={chronoItems}
             mode="vertical"
@@ -441,13 +441,6 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
               />
             ))}
           </Chrono>
-        ) : (
-          <div className="h-full w-full flex items-center justify-center text-on-surface-variant gap-2" data-oid="ediscovery-timeline-empty">
-            {loading ? <Loader2 size={24} className="animate-spin text-primary" /> : <Network size={24} className="text-primary/40" />}
-            <span className="text-sm">
-              {loading ? t("page:result.ediscoveryAnalyzing") : t("page:result.ediscoveryEmpty")}
-            </span>
-          </div>
         )}
       </div>
 
@@ -502,7 +495,7 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
       {isEmpty && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-on-surface-variant gap-3" data-oid="ediscovery-empty">
           <Network size={40} className="text-primary/40" />
-          <p className="text-sm text-center max-w-xs">{t("page:result.ediscoveryEmpty")}</p>
+          <p className="text-sm text-center max-w-xs leading-relaxed">{t("page:result.ediscoveryEmpty")}</p>
         </div>
       )}
     </div>

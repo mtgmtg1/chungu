@@ -128,8 +128,8 @@ function PreviewMessage({
     return null;
   });
 
-  // [Flow: 어시스턴트 + 로딩 중 + 콘텐츠 없음 -> Thinking shimmer]
-  // 툴 콜이 진행 중일 때도 동작 중임을 표시하기 위해, 진행 중인 tool part가 있으면 activity indicator를 표시한다.
+  // [Flow: 어시스턴트 + 로딩 중 + 콘텐츠 없음/도구 진행 중 -> Thinking shimmer]
+  // AgentActivityIndicator는 메시지 카드(텍스트/도구)보다 하단에 위치한다.
   const hasAnyText = message.parts?.some(
     (part) => part.type === "text" && part.text?.trim().length > 0
   );
@@ -139,8 +139,8 @@ function PreviewMessage({
 
   const content = (
     <>
-      {isThinking && <AgentActivityIndicator toolLabels={activeToolLabels} />}
       {parts}
+      {isThinking && <AgentActivityIndicator toolLabels={activeToolLabels} />}
     </>
   );
 

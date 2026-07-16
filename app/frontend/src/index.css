@@ -66,6 +66,11 @@ body {
 .ProseMirror {
   outline: none;
   min-height: 200px;
+  /* 마크다운 에디터 상위에서 user-select: none이 상속되더라도
+     contenteditable 영역 내부는 텍스트 선택이 항상 가능하도록 강제 */
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+  user-select: text !important;
 }
 
 .ProseMirror table {

@@ -198,6 +198,16 @@ ref)
     editable
   });
 
+  // [Flow: Step 1 (editable prop 변경 감지) -> Step 2 (Tiptap v3 useEditor가 options를 자동 재적용하지 않을 경우를 대비해 editor.editable 강제 동기화)]
+  useEffect(() => {
+    if (!editor) return;
+    if (typeof editor.setEditable === "function") {
+      editor.setEditable(editable);
+    } else {
+      editor.setOptions({ editable });
+    }
+  }, [editor, editable]);
+
   // [Flow: Step 1 (사용자 입력으로 Tiptap 업데이트 이벤트 발생) -> Step 2 (1초 debounce 타이머 설정) -> Step 3 (타이머 완료 시 getMarkdown으로 변환) -> Step 4 (prop 마크다운과 다를 때만 onChange 콜백 호출)]
   useEffect(() => {
     if (!editor) return;

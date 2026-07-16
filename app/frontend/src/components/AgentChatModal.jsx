@@ -157,19 +157,20 @@ function ChatSession({
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [context?.jobId, chatId]);
 
-  // [Flow: 전송 핸들러]
+  // [Flow: 전송 핸들러 — 입력값을 먼저 비우고 메시지를 전송한다]
   const handleSubmit = () => {
     const trimmed = input.trim();
     if (!trimmed || status === "submitted" || status === "streaming") return;
-    sendContextualMessage(trimmed);
     setInput("");
+    sendContextualMessage(trimmed);
   };
 
-  // [Flow: 제안 액션 선택 시 즉시 전송]
+  // [Flow: 제안 액션 선택 시 즉시 전송 — 전송 후 입력창을 비운다]
   const handleSuggestion = (prompt) => {
     if (status === "submitted" || status === "streaming") return;
     setInput(prompt);
     sendContextualMessage(prompt);
+    setInput("");
   };
 
   // [Flow: 도구 승인 콜백 — 승인 메시지를 에이전트에게 자동 전송]

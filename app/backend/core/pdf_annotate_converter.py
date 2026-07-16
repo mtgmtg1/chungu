@@ -180,7 +180,7 @@ class AnnotateElement:
     """주석 대상이 될 수 있는 하나의 텍스트 요소 (표 행 또는 텍스트 블록)."""
 
     page_no: int  # 1-based
-    bbox_px: BBox  # PDF user-space 좌표 (x0, y0, x1, y1) — paddleocr_service에서 정규화됨
+    bbox_px: BBox  # PDF user-space 좌표 (x0, y0, x1, y1) — _collect_page_elements_*에서 변환 완료
     kind: str  # "table_row" | "text"
     text: str  # LLM에 전달할 텍스트 표현
     # 부분 하이라이트를 위해 필요한 단어/셀 단위 bbox (없으면 전체 bbox만 사용)
@@ -320,6 +320,23 @@ def _collect_page_elements_image(
                 cell_bboxes=[],
             ))
 
+    # PaddleOCR layout bbox는 0~1 normalized 좌표이므로, 주석 PDF 베이스(corrected_images)의
+    # 실제 페이지 크기를 기준으로 PDF user-space로 변환한다.
+    if elements and corrected_images:
+        pdf_bytes = _images_to_pdf(corrected_images)
+        page_rects = _page_rects(pdf_bytes)
+        for el in elements:
+            rect = page_rects.get(el.page_no)
+            if not rect:
+                continue
+            el.bbox_px = _normalized_bbox_to_pdf_user(
+                el.bbox_px, rect.width, rect.height, rect.x0, rect.y0
+            )
+            el.word_bboxes = [
+                _normalized_bbox_to_pdf_user(b, rect.width, rect.height, rect.x0, rect.y0)
+                for b in el.word_bboxes
+            ]
+
     return elements, corrected_images, layout_by_page
 
 
@@ -372,6 +389,7 @@ def _collect_page_elements_pdf_direct(
         return _collect_page_elements_image(job, temp_dir, page_range)
 
     image_paths = _get_page_image_paths(job, temp_dir, page_range=page_range)
+    page_rects = _page_rects(input_bytes)
 
     for idx, page_no in page_no_map.items():
         if idx >= len(layout_pages):
@@ -387,23 +405,38 @@ def _collect_page_elements_pdf_direct(
             final_path = _rotate_image_90(deskewed_path, angle_code, temp_dir / "rotated")
             corrected_images[page_no] = final_path
 
+        rect = page_rects.get(page_no)
+        if not rect:
+            logger.warning(f"[pdf_annotate] PDF 직접 입력 경로: page={page_no} 페이지 rect를 찾을 수 없어 건너뜀")
+            continue
+
         layout = parse_layout_result(layout_raw, page_no=page_no)
         for table in layout.tables:
             for row in table.rows:
                 if not any(cell.strip() for cell in row.cell_texts):
                     continue
+                bbox_pdf = _normalized_bbox_to_pdf_user(
+                    row.bbox_px, rect.width, rect.height, rect.x0, rect.y0
+                )
                 elements.append(AnnotateElement(
-                    page_no=page_no, bbox_px=row.bbox_px, kind="table_row",
+                    page_no=page_no, bbox_px=bbox_pdf, kind="table_row",
                     text=_row_to_text(row),
                     word_bboxes=[],
                     cell_texts=row.cell_texts,
                     cell_bboxes=[],
                 ))
         for tb in layout.text_blocks:
+            bbox_pdf = _normalized_bbox_to_pdf_user(
+                tb.bbox_px, rect.width, rect.height, rect.x0, rect.y0
+            )
+            word_bboxes_pdf = [
+                _normalized_bbox_to_pdf_user(b, rect.width, rect.height, rect.x0, rect.y0)
+                for b in tb.word_bboxes
+            ]
             elements.append(AnnotateElement(
-                page_no=page_no, bbox_px=tb.bbox_px, kind="text",
+                page_no=page_no, bbox_px=bbox_pdf, kind="text",
                 text=_text_block_to_text(tb),
-                word_bboxes=tb.word_bboxes,
+                word_bboxes=word_bboxes_pdf,
                 cell_texts=[],
                 cell_bboxes=[],
             ))
@@ -435,24 +468,54 @@ def _collect_page_elements(
         (elements, corrected_images, layout_by_page) —
         elements: 주석 대상 텍스트 요소 목록 (bbox는 PDF user-space)
         corrected_images: page_no(1-based) → 정돈된 페이지 이미지 경로
-        layout_by_page: page_no → PaddleOCR layout 원본 dict (overall_ocr_res 포함, bbox PDF user-space)
+        layout_by_page: page_no → PaddleOCR layout 원본 dict (overall_ocr_res 포함, bbox는 normalized 좌표)
     """
     if use_pdf_direct and (page_range is None or len(page_range) <= 10):
         return _collect_page_elements_pdf_direct(job, temp_dir, page_range)
     return _collect_page_elements_image(job, temp_dir, page_range)
 
 
-def _page_point_sizes(pdf_bytes: bytes) -> dict[int, tuple[float, float]]:
-    """원본 PDF에서 페이지별 실제 크기(포인트)를 1-based page_no 기준으로 반환한다."""
-    sizes: dict[int, tuple[float, float]] = {}
+def _normalized_bbox_to_pdf_user(
+    bbox: tuple[float, float, float, float],
+    page_width_pt: float,
+    page_height_pt: float,
+    page_x0: float = 0.0,
+    page_y0: float = 0.0,
+) -> tuple[float, float, float, float]:
+    """PaddleOCR에서 반환한 0~1 normalized 좌표(y=0이 상단)를 PDF user-space(y↑, y=0이 하단)로 변환한다.
+
+    [Flow: Step 1 (x 좌표에 페이지 너비를 곱하고 page_x0 오프셋 추가)
+          -> Step 2 (y 좌표를 1에서 뺀 뒤 페이지 높이를 곱하고 page_y0 오프셋 추가)
+          -> Step 3 (PDF user-space [x0, y0, x1, y1] 반환)]
+
+    이미지 좌표계(y↓)에서 normalized 좌표를 얻었으므로, PDF user-space로 변환할 때는
+    y축을 flip해야 한다. CropBox/ArtBox가 있는 PDF에서는 page_x0/page_y0 오프셋을
+    고려해야 한다.
+    """
+    nx0, ny0, nx1, ny1 = bbox
+    return (
+        nx0 * page_width_pt + page_x0,
+        (1 - ny1) * page_height_pt + page_y0,
+        nx1 * page_width_pt + page_x0,
+        (1 - ny0) * page_height_pt + page_y0,
+    )
+
+
+def _page_rects(pdf_bytes: bytes) -> dict[int, fitz.Rect]:
+    """원본 PDF에서 페이지별 실제 rect(CropBox/ArtBox를 고려한 page.rect)를 1-based page_no 기준으로 반환한다."""
+    rects: dict[int, fitz.Rect] = {}
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
         for i in range(doc.page_count):
-            r = doc[i].mediabox
-            sizes[i + 1] = (r.width, r.height)
+            rects[i + 1] = doc[i].rect
     finally:
         doc.close()
-    return sizes
+    return rects
+
+
+def _page_point_sizes(pdf_bytes: bytes) -> dict[int, tuple[float, float]]:
+    """원본 PDF에서 페이지별 실제 크기(포인트)를 1-based page_no 기준으로 반환한다."""
+    return {page_no: (rect.width, rect.height) for page_no, rect in _page_rects(pdf_bytes).items()}
 
 
 def collect_elements_for_agent(
@@ -502,7 +565,8 @@ def collect_elements_for_agent(
             page_ocr_results = extract_page_ocr_results_from_layout(layout_by_page)
             if page_ocr_results:
                 pdf_bytes = add_text_layer_from_ocr(
-                    pdf_bytes, page_ocr_results, dpi=dpi, language=job.language or "en"
+                    pdf_bytes, page_ocr_results, dpi=dpi, language=job.language or "en",
+                    layout_by_page=layout_by_page,
                 )
 
         if not elements:
@@ -625,7 +689,6 @@ def _collect_page_elements_from_searchable_pdf(
     AI 주석 생성에 필요한 요소를 확보한다. 렌더링된 페이지 이미지에 deskew를 적용해
     기울어진 스캔 문서도 수평으로 정렬된 주석 PDF 표시 이미지를 제공한다.
     """
-    scale = dpi / 72.0
     elements: list[AnnotateElement] = []
     corrected_images: dict[int, Path] = {}
 
@@ -654,21 +717,26 @@ def _collect_page_elements_from_searchable_pdf(
                 shutil.move(str(raw_img_path), str(img_path))
             corrected_images[page_no] = img_path
 
-            # 이미지 픽셀 높이 (y축 flip용: PDF 좌표계 y↑ → 이미지 좌표계 y↓)
-            page_height_px = page.rect.height * scale
-
-            blocks = page.get_text("blocks")
+            # page.get_text("blocks")보다 "dict"이 PyMuPDF 버전 간에 더 안정적이다.
+            text_dict = page.get_text("dict")
+            blocks = text_dict.get("blocks", []) if isinstance(text_dict, dict) else []
             for block in blocks:
                 try:
-                    x0, y0, x1, y1, text, _block_no, _block_type = block
+                    bbox = block["bbox"]
+                    x0, y0, x1, y1 = bbox
+                    text = "".join(
+                        span["text"]
+                        for line in block.get("lines", [])
+                        for span in line.get("spans", [])
+                    )
                 except Exception:
                     continue
                 if not text or not text.strip():
                     continue
-                # PDF 좌표계(y↑) → 이미지 좌표계(y↓)로 변환
-                img_y0 = page_height_px - y1 * scale  # bbox 상단(PDF) → 이미지 상단(y↓)
-                img_y1 = page_height_px - y0 * scale  # bbox 하단(PDF) → 이미지 하단(y↓)
-                bbox_px: BBox = (int(x0 * scale), int(img_y0), int(x1 * scale), int(img_y1))
+                # searchable PDF의 텍스트 레이어는 이미 PDF user-space(y↑) 좌표이므로
+                # _matches_to_targets와 일관되게 그대로 사용한다. 이미지 좌표계로 변환하면
+                # 위치가 완전히 망가진다.
+                bbox_px: BBox = (float(x0), float(y0), float(x1), float(y1))
                 elements.append(AnnotateElement(
                     page_no=page_no,
                     bbox_px=bbox_px,
@@ -1143,7 +1211,8 @@ def run(
                     page_ocr_results = extract_page_ocr_results_from_layout(layout_by_page)
                     if page_ocr_results:
                         pdf_bytes = add_text_layer_from_ocr(
-                            pdf_bytes, page_ocr_results, dpi=RENDER_DPI, language=language
+                            pdf_bytes, page_ocr_results, dpi=RENDER_DPI, language=language,
+                            layout_by_page=layout_by_page,
                         )
                         page_point_sizes = _page_point_sizes(pdf_bytes)
 

@@ -76,7 +76,7 @@ function useActivityPhase() {
  * @param {Object} props
  * @param {string[]} [props.toolLabels] - 현재 실행 중인 도구의 사용자 친화적 라벨 목록
  */
-export default function AgentActivityIndicator() {
+export default function AgentActivityIndicator({ toolLabels = [] }) {
   const { t } = useTranslation();
   const phase = useActivityPhase();
 
@@ -104,6 +104,11 @@ export default function AgentActivityIndicator() {
             >
               {displayText}
             </span>
+            {toolLabels.length > 0 && (
+              <span className="text-on-surface-variant/70">
+                {toolLabels.join(", ")}
+              </span>
+            )}
           </div>
         </div>
       </div>

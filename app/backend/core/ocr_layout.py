@@ -7,9 +7,10 @@
 # 공통으로 쓸 수 있는 형태로 정규화한다.
 #
 # 중요: paddleocr_service/main.py에서 PaddleOCR-VL이 반환한 이미지 좌표계 bbox를
-# PDF user-space(bottom-left origin, y↑)로 정규화한 뒤 이 모듈에 전달한다.
-# 따라서 이 모듈이 다루는 BBox는 이미 PDF user-space 좌표이며, 추가 y축 flip 없이
-# 바로 pdf_annotator / pdf_text_layer에 사용할 수 있다.
+# 0~1 normalized 좌표로 정규화한 뒤 이 모듈에 전달한다.
+# 따라서 이 모듈이 다루는 BBox는 normalized 좌표(x/y 모두 0~1, y=0이 상단)이며,
+# pdf_annotate_converter.py의 _collect_page_elements_*에서 원본 PDF/주석 PDF 페이지 크기를
+# 곱한 뒤 y-flip하여 PDF user-space로 변환해야 한다.
 #
 # 실측 스키마 (a1 프로덕션에서 실제 AI Studio 응답을 덤프해 확인, 2026-07-05):
 #   { "page_count": null, "width": <px>, "height": <px>,
@@ -39,9 +40,10 @@ import lxml.html
 
 logger = logging.getLogger(__name__)
 
-BBox = tuple[float, float, float, float]  # (x0, y0, x1, y1), PDF user-space 좌표
+BBox = tuple[float, float, float, float]  # (x0, y0, x1, y1), 0~1 normalized 좌표
                                             # paddleocr_service가 PaddleOCR-VL 이미지 좌표계를
-                                            # PDF user-space(bottom-left origin, y↑)로 정규화한 뒤 반환한다.
+                                            # normalized 좌표(y=0이 상단, y=1이 하단)로 정규화한 뒤 반환한다.
+                                            # PDF user-space로 변환은 pdf_annotate_converter에서 수행한다.
 
 
 @dataclass

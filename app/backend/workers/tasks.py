@@ -272,7 +272,7 @@ def _build_and_upload_searchable_pdf(
             if not deskewed_paths:
                 # 렌더링 실패 시 원본 PDF에 텍스트 레이어만 추가 (폴백)
                 pdf_bytes = input_path.read_bytes()
-                searchable_pdf_bytes = pdf_text_layer.add_text_layer_from_ocr(pdf_bytes, page_ocr_results, dpi=dpi, language="ko")
+                searchable_pdf_bytes = pdf_text_layer.add_text_layer_from_ocr(pdf_bytes, page_ocr_results, dpi=dpi, language="ko", layout_by_page=layout_by_page)
                 storage_path = supabase_client.upload_input(BytesIO(searchable_pdf_bytes), "searchable.pdf", job.id)
                 job.searchable_pdf_storage_path = storage_path
                 db.commit()
@@ -292,7 +292,7 @@ def _build_and_upload_searchable_pdf(
             doc.close()
 
             # Step 4: 새 PDF에 투명 텍스트 레이어 추가
-            searchable_pdf_bytes = pdf_text_layer.add_text_layer_from_ocr(deskewed_pdf_bytes, page_ocr_results, dpi=dpi, language="ko")
+            searchable_pdf_bytes = pdf_text_layer.add_text_layer_from_ocr(deskewed_pdf_bytes, page_ocr_results, dpi=dpi, language="ko", layout_by_page=layout_by_page)
 
         storage_path = supabase_client.upload_input(BytesIO(searchable_pdf_bytes), "searchable.pdf", job.id)
         job.searchable_pdf_storage_path = storage_path
@@ -355,7 +355,7 @@ def _image_to_searchable_pdf(
 
     page_ocr_results = pdf_text_layer.extract_page_ocr_results_from_layout({1: layout_raw})
     if page_ocr_results:
-        return pdf_text_layer.add_text_layer_from_ocr(pdf_bytes, page_ocr_results, dpi=dpi, language="ko")
+        return pdf_text_layer.add_text_layer_from_ocr(pdf_bytes, page_ocr_results, dpi=dpi, language="ko", layout_by_page={1: layout_raw})
     return pdf_bytes
 
 

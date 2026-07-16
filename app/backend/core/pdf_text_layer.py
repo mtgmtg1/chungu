@@ -115,20 +115,26 @@ def add_text_layer_from_ocr(
     page_ocr_results: dict[int, list[tuple[str, BBox]]],
     dpi: int = 300,
     language: str | None = None,
+    layout_by_page: dict[int, dict] | None = None,
 ) -> bytes:
     """이미지 기반 PDF에 PaddleOCR 결과를 투명 텍스트 레이어로 추가한다.
 
     [Flow: Step 1 (PDF 열기) -> Step 2 (페이지별 OCR 텍스트/bbox 순회)
-          -> Step 3 (bbox가 이미 PDF user-space이므로 clamp만 적용) -> Step 4 (투명 텍스트 삽입)
-          -> Step 5 (PDF bytes 반환)]
+          -> Step 3 (layout coordinate_system 확인: normalized면 PDF user-space로 변환)
+          -> Step 4 (clamp_rect_to_page로 페이지 범위 내에 맞춤) -> Step 5 (투명 텍스트 삽입)
+          -> Step 6 (PDF bytes 반환)]
 
     Args:
         pdf_bytes: 이미지 기반 PDF bytes
         page_ocr_results: page_no(1-based) -> [(text, bbox_pdf), ...]
-            paddleocr_service에서 PDF user-space(bottom-left origin)로 정규화된 bbox여야 한다.
+            paddleocr_service에서 normalized(0~1, y=0 상단) 또는 PDF user-space(y↑)
+            좌표로 정규화된 bbox일 수 있다.
         dpi: 이미지 렌더링 DPI (기본 300). 현재는 좌표계 변환에 사용하지 않지만
             하위 호환을 위해 시그니처를 유지한다.
         language: 언어 코드 (ko/ja/zh/zht/en). None이면 기본 CJK 폰트 사용.
+        layout_by_page: page_no -> PaddleOCR layout dict.
+            coordinate_system="normalized"이면 page_width_px/height_px를 참조해
+            PDF user-space로 변환한다.
 
     Returns:
         텍스트 레이어가 추가된 PDF bytes
@@ -148,6 +154,12 @@ def add_text_layer_from_ocr(
         page_width = page.rect.width
         page_height = page.rect.height
 
+        layout = (layout_by_page or {}).get(page_no, {})
+        coordinate_system = layout.get("_coordinate_system")
+        page_width_px = layout.get("_page_width_px")
+        page_height_px = layout.get("_page_height_px")
+        is_normalized = coordinate_system == "normalized" and page_width_px and page_height_px
+
         for text, bbox_pdf in items:
             text = _normalize_rec_text(text)
             if not text:
@@ -155,7 +167,17 @@ def add_text_layer_from_ocr(
             if not bbox_pdf or len(bbox_pdf) < 4:
                 continue
 
-            # paddleocr_service에서 이미 PDF user-space로 변환된 bbox를 그대로 사용한다.
+            if is_normalized:
+                # paddleocr_service에서 0~1 normalized 좌표(y=0 상단)를 반환한 경우
+                # PDF user-space(y↑, y=0 하단)로 변환한다.
+                nx0, ny0, nx1, ny1 = bbox_pdf
+                bbox_pdf = (
+                    nx0 * page_width,
+                    (1 - ny1) * page_height,
+                    nx1 * page_width,
+                    (1 - ny0) * page_height,
+                )
+            # paddleocr_service에서 이미 PDF user-space로 변환된 bbox라면 그대로 사용한다.
             rect = clamp_rect_to_page(bbox_pdf, page_width, page_height)
             if rect[2] <= rect[0] or rect[3] <= rect[1]:
                 continue

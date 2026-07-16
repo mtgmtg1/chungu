@@ -10,11 +10,33 @@ const DEV_SESSION_TIMEOUT_MS = 1000;
 
 const AuthContext = createContext(null);
 
+/** [Flow: 개발 환경에서 localStorage에 저장된 dev bypass session 복원]
+    새로고침 시에도 /api/dev/login을 다시 기다리지 않고 바로 세션을 복원한다. */
+function _loadDevSession() {
+  if (!import.meta.env.DEV) return null;
+  const token = localStorage.getItem("dev_access_token");
+  if (!token) return null;
+  try {
+    const user = JSON.parse(localStorage.getItem("dev_user") || "null");
+    return {
+      user,
+      access_token: token,
+      refresh_token: localStorage.getItem("dev_refresh_token") || "",
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => (import.meta.env.DEV ? MOCK_DEV_SESSION.user : null));
-  const [session, setSession] = useState(() => (import.meta.env.DEV ? MOCK_DEV_SESSION : null));
+  const devSession = _loadDevSession();
+  const [user, setUser] = useState(() => devSession?.user ?? (import.meta.env.DEV ? MOCK_DEV_SESSION.user : null));
+  const [session, setSession] = useState(() => devSession ?? (import.meta.env.DEV ? MOCK_DEV_SESSION : null));
   const [loading, setLoading] = useState(true);
-  const [devBypassMode, setDevBypassMode] = useState(() => (import.meta.env.DEV ? "mock" : null));
+  const [devBypassMode, setDevBypassMode] = useState(() => {
+    if (!import.meta.env.DEV) return null;
+    return localStorage.getItem("dev_bypass_mode") || "mock";
+  });
   const { setLanguage } = useLanguage();
 
   const devBypassModeRef = useRef(devBypassMode);
@@ -54,6 +76,11 @@ export function AuthProvider({ children }) {
             const devData = await resp.json();
             // 로컬 개발 환경에서는 Supabase auth 엔드포인트가 없으므로,
             // dev bypass 토큰을 직접 세션처럼 사용하고 API key로 백엔드에 연결한다.
+            // api.js의 getToken()이 이 토큰을 Authorization 헤더에 넣을 수 있도록 localStorage에 저장한다.
+            localStorage.setItem("dev_access_token", devData.access_token);
+            localStorage.setItem("dev_refresh_token", devData.refresh_token);
+            localStorage.setItem("dev_user", JSON.stringify(devData.user));
+            localStorage.setItem("dev_bypass_mode", "apikey");
             session = {
               user: devData.user,
               access_token: devData.access_token,
@@ -72,6 +99,7 @@ export function AuthProvider({ children }) {
 
         // 백엔드 bypass가 없으면 mock 사용자 + mock API 전환으로 UI 독립 테스트
         if (!session) {
+          localStorage.setItem("dev_bypass_mode", "mock");
           session = MOCK_DEV_SESSION;
           mode = "mock";
           enableDevMock(true);

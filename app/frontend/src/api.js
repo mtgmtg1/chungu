@@ -11,6 +11,15 @@ export function enableDevMock(enabled) {
 }
 
 export async function getToken() {
+  // 개발 환경에서 /api/dev/login으로 발급받은 bypass JWT가 있으면 먼저 사용한다.
+  // Supabase 엔드포인트가 없는 로컬 개발 환경에서도 API 인증이 정상 동작하게 한다.
+  if (import.meta.env.DEV) {
+    const devToken = localStorage.getItem("dev_access_token");
+    if (devToken && devToken.startsWith("eyJ")) {
+      console.log("[api.js getToken] dev access token 사용");
+      return devToken;
+    }
+  }
   // 로컬 개발 환경에서 supabase.auth.getSession()이 Supabase 엔드포인트가 없어
   // 토큰 갱신을 시도하며 hang되는 것을 방지하기 위해 타임아웃을 건다.
   const { data } = await Promise.race([

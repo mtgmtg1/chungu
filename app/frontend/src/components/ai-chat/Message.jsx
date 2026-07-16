@@ -7,7 +7,7 @@ import { memo, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { marked } from "marked";
 import { RefreshCw, Sparkles } from "lucide-react";
-import AgentActivityIndicator, { getActiveToolLabels } from "./AgentActivityIndicator.jsx";
+import AgentActivityIndicator from "./AgentActivityIndicator.jsx";
 import Tool from "./Tool.jsx";
 
 // [Flow: 마크다운 텍스트 -> HTML 변환 (XSS 방지를 위해 marked 옵션 설정)]
@@ -128,21 +128,7 @@ function PreviewMessage({
     return null;
   });
 
-  // [Flow: 어시스턴트 + 로딩 중 + 콘텐츠 없음/도구 진행 중 -> Thinking shimmer]
-  // AgentActivityIndicator는 메시지 카드(텍스트/도구)보다 하단에 위치한다.
-  const hasAnyText = message.parts?.some(
-    (part) => part.type === "text" && part.text?.trim().length > 0
-  );
-  const activeToolLabels = useMemo(() => getActiveToolLabels(t, message), [t, message]);
-  const hasActiveToolCall = activeToolLabels.length > 0;
-  const isThinking = isAssistant && isLoading && (!hasAnyText || hasActiveToolCall);
-
-  const content = (
-    <>
-      {parts}
-      {isThinking && <AgentActivityIndicator />}
-    </>
-  );
+  const content = <>{parts}</>;
 
   return (
     <div
@@ -194,7 +180,10 @@ function PreviewMessage({
 /**
  * ThinkingMessage — 어시스턴트 응답 대기 중 표시하는 로딩 메시지.
  * "investigating..."과 "thinking..."을 번갈아 깜빡이는 AgentActivityIndicator를 사용한다.
+ *
+ * @param {Object} props
+ * @param {string[]} [props.toolLabels] - 현재 실행 중인 도구의 사용자 친화적 라벨 목록
  */
-export const ThinkingMessage = () => <AgentActivityIndicator />;
+export const ThinkingMessage = ({ toolLabels = [] }) => <AgentActivityIndicator toolLabels={toolLabels} />;
 
 export default memo(PreviewMessage);

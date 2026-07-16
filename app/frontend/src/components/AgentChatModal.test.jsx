@@ -5,7 +5,7 @@
 // 모달이 열릴 때는 DB에서 로드된 messages를 초기값으로 useAgentChat을 호출해야 한다.
 
 import { describe, it, expect, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import AgentChatModal from "./AgentChatModal.jsx";
 import { useAgentChat } from "../hooks/useAgentChat.js";
 
@@ -98,5 +98,52 @@ describe("AgentChatModal", () => {
         initialMessages: mockMessages,
       }),
     );
+  });
+
+  it("전송 버튼 클릭 시 입력값을 즉시 비우고 메시지를 보낸다", () => {
+    const setInput = vi.fn();
+    const sendContextualMessage = vi.fn();
+    useAgentChat.mockReturnValue({
+      messages: [],
+      input: "보낼 메시지",
+      setInput,
+      status: "ready",
+      stop: vi.fn(),
+      sendContextualMessage,
+      regenerate: vi.fn(),
+      error: undefined,
+      clearError: vi.fn(),
+    });
+
+    render(<AgentChatModal isOpen={true} onClose={vi.fn()} context={{ jobId: "job-1" }} />);
+    const sendButton = screen.getByTestId("ai-chat-send");
+    fireEvent.click(sendButton);
+
+    // 입력값은 전송 후 초기화되어야 한다.
+    expect(sendContextualMessage).toHaveBeenCalledWith("보낼 메시지");
+    expect(setInput).toHaveBeenCalledWith("");
+  });
+
+  it("제안 액션 클릭 시 입력값을 비우고 해당 프롬프트를 보낸다", () => {
+    const setInput = vi.fn();
+    const sendContextualMessage = vi.fn();
+    useAgentChat.mockReturnValue({
+      messages: [],
+      input: "",
+      setInput,
+      status: "ready",
+      stop: vi.fn(),
+      sendContextualMessage,
+      regenerate: vi.fn(),
+      error: undefined,
+      clearError: vi.fn(),
+    });
+
+    render(<AgentChatModal isOpen={true} onClose={vi.fn()} context={{ jobId: "job-1" }} />);
+    const suggestButton = screen.getByText(/suggestDefaultTitle1/);
+    fireEvent.click(suggestButton);
+
+    expect(sendContextualMessage).toHaveBeenCalled();
+    expect(setInput).toHaveBeenCalledWith("");
   });
 });

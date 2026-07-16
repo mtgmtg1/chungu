@@ -340,69 +340,66 @@ def _image_polygon_to_pdf_points(
     return converted
 
 
-def _detect_coordinate_system(
+def _normalize_bbox(
+    bbox: list[float] | tuple[float, ...],
+    page_width_px: float,
     page_height_px: float,
-    page_height_pt: float | None,
-) -> tuple[str, float]:
-    """PaddleOCR-VL 반환값의 좌표계와 스케일을 추정한다.
+) -> list[float]:
+    """PaddleOCR-VL 이미지 좌표계(top-left origin, y↓) bbox를 0~1 normalized 좌표로 변환한다.
 
-    [Flow: Step 1 (원본 PDF 페이지 높이(포인트) 확인)
-          -> Step 2 (layout["height"]와 비교)
-          -> Step 3 (PDF user-space 또는 이미지 좌표계 판정 및 scale 반환)]
+    [Flow: Step 1 (x좌표를 페이지 너비로 나눔) -> Step 2 (y좌표를 페이지 높이로 나눔)
+          -> Step 3 ([x0, y0, x1, y1] normalized 좌표 반환)]
 
-    PDF 원본 페이지 높이(포인트)가 주어지면, layout["height"]가 이와 거의 같으면
-    PaddleOCR이 이미 PDF user-space를 반환한 것으로 보고 y-flip을 생략한다.
-    차이가 크면 이미지 좌표계로 보고, 원본 PDF 높이 / 픽셀 높이로 scale을 역산한다.
-
-    PDF 원본 정보가 없으면 기존 300 DPI 가정을 유지한다.
-
-    Args:
-        page_height_px: PaddleOCR layout["height"] 값 (픽셀 또는 포인트).
-        page_height_pt: 원본 PDF 페이지 높이 (포인트, 없을 수 있음).
-
-    Returns:
-        (coordinate_system, scale) 튜플.
-        coordinate_system: "pdf_user" | "image".
-        scale: PDF user-space 포인트/소스 단위 변환 비율.
+    y축 방향은 이미지 좌표계 그대로 유지(y=0이 상단, y=1이 하단)한다.
+    PDF user-space로 변환할 때 y-flip은 소비자(_collect_page_elements_*)에서 수행한다.
     """
-    if page_height_pt is not None and page_height_pt > 0 and page_height_px > 0:
-        if abs(page_height_px - page_height_pt) <= 1.0:
-            logger.info(
-                f"[paddleocr] 좌표계 감지: PDF user-space (height={page_height_px:.2f}, "
-                f"page_height_pt={page_height_pt:.2f})"
-            )
-            return "pdf_user", 1.0
-        scale = page_height_pt / page_height_px
-        inferred_dpi = scale * PDF_POINTS_PER_INCH
-        logger.info(
-            f"[paddleocr] 좌표계 감지: 이미지 좌표계 (height={page_height_px:.2f}px, "
-            f"page_height_pt={page_height_pt:.2f}pt, 추정 DPI={inferred_dpi:.1f})"
-        )
-        return "image", scale
+    if not bbox or len(bbox) < 4:
+        return list(bbox) if bbox else []
+    x0, y0, x1, y1 = (float(v) for v in bbox[:4])
+    return [
+        x0 / page_width_px,
+        y0 / page_height_px,
+        x1 / page_width_px,
+        y1 / page_height_px,
+    ]
 
-    # PDF 원본 정보 없음: 기존 300 DPI 가정
-    scale = PDF_POINTS_PER_INCH / OCR_RENDER_DPI
-    logger.info(
-        f"[paddleocr] 좌표계 감지: 이미지 좌표계 (기본 300 DPI, scale={scale:.4f})"
-    )
-    return "image", scale
+
+def _normalize_points(
+    points: list[list[float]] | list[tuple[float, ...]],
+    page_width_px: float,
+    page_height_px: float,
+) -> list[list[float]]:
+    """PaddleOCR-VL 이미지 좌표계 다각형 점들을 0~1 normalized 좌표로 변환한다."""
+    if not points:
+        return []
+    converted: list[list[float]] = []
+    for pt in points:
+        if not pt or len(pt) < 2:
+            converted.append(list(pt) if pt else [])
+            continue
+        x, y = float(pt[0]), float(pt[1])
+        converted.append([x / page_width_px, y / page_height_px])
+    return converted
 
 
 def _extract_layout_from_result(
     res: Any,
     page_height_pt: float | None = None,
 ) -> dict:
-    """PaddleOCR 결과 객체에서 bbox를 PDF user-space로 변환한 레이아웃을 반환한다.
+    """PaddleOCR 결과 객체에서 bbox를 0~1 normalized 좌표로 변환한 레이아웃을 반환한다.
 
-    [Flow: Step 1 (res.json 추출) -> Step 2 (페이지 픽셀 높이 확인)
-          -> Step 3 (좌표계 및 실제 렌더링 DPI 추정)
-          -> Step 4 (parsing_res_list / layout_det_res / overall_ocr_res의 bbox 좌표계 변환)
-          -> Step 5 (PDF user-space 기준 layout dict 반환)]
+    [Flow: Step 1 (res.json 추출) -> Step 2 (페이지 픽셀 크기 확인)
+          -> Step 3 (parsing_res_list / layout_det_res / overall_ocr_res의 bbox를 normalized 좌표로 변환)
+          -> Step 4 (normalized 좌표계 기준 layout dict 반환)]
 
-    PaddleOCR-VL-1.6은 기본적으로 이미지 좌표계(top-left origin, y↓)를 사용하지만,
-    원본 PDF를 직접 입력하면 PDF user-space(bottom-left origin, y↑)를 반환하거나
-    내부 렌더링 DPI가 300이 아닐 수 있다. 따라서 원본 PDF 페이지 높이(포인트)를
-    받아 좌표계와 scale을 동적으로 추정한다.
+    PaddleOCR-VL-1.6은 기본적으로 이미지 좌표계(top-left origin, y↓)를 사용한다.
+    DPI/해상도에 관계없이 bbox를 페이지 크기로 나누어 0~1 normalized 좌표로 변환하면
+    소비자(_collect_page_elements_*)가 원본 PDF 페이지 크기만 알면 정확한 PDF user-space
+    좌표를 계산할 수 있다.
+
+    y축 방향은 이미지 좌표계 그대로 유지(y=0이 상단, y=1이 하단)한다.
+    PDF user-space(y↑, y=0이 하단)로 변환할 때는 (1 - normalized_y) * page_height_pt
+    형태로 y-flip을 수행해야 한다.
     """
     try:
         if isinstance(res, dict):
@@ -420,33 +417,35 @@ def _extract_layout_from_result(
     if not isinstance(layout, dict):
         return layout
 
+    page_width_px = layout.get("width")
     page_height_px = layout.get("height")
-    if not isinstance(page_height_px, (int, float)) or page_height_px <= 0:
-        logger.warning("[paddleocr] layout 높이 정보가 없어 bbox 좌표계 변환을 건너뜁니다.")
+    if (
+        not isinstance(page_width_px, (int, float))
+        or page_width_px <= 0
+        or not isinstance(page_height_px, (int, float))
+        or page_height_px <= 0
+    ):
+        logger.warning("[paddleocr] layout 크기 정보가 없어 bbox 정규화를 건너뜁니다.")
         return layout
 
-    coordinate_system, scale = _detect_coordinate_system(page_height_px, page_height_pt)
-    layout["_coordinate_system"] = coordinate_system
-    layout["_scale"] = scale
+    page_width_px = float(page_width_px)
+    page_height_px = float(page_height_px)
+
+    layout["_coordinate_system"] = "normalized"
+    layout["_page_width_px"] = page_width_px
+    layout["_page_height_px"] = page_height_px
     layout["_page_height_pt"] = page_height_pt
 
-    if coordinate_system == "pdf_user":
-        # PaddleOCR이 이미 PDF user-space를 반환하면 추가 변환 불필요
-        return layout
-
-    # 이미지 좌표계 → PDF user-space 변환
     # parsing_res_list 블록 bbox 및 polygon_points 변환
     for block in layout.get("parsing_res_list", []):
         if not isinstance(block, dict):
             continue
         bbox = block.get("block_bbox")
         if bbox:
-            block["block_bbox"] = _image_bbox_to_pdf_rect(bbox, page_height_px, scale)
+            block["block_bbox"] = _normalize_bbox(bbox, page_width_px, page_height_px)
         points = block.get("block_polygon_points")
         if points:
-            block["block_polygon_points"] = _image_polygon_to_pdf_points(
-                points, page_height_px, scale
-            )
+            block["block_polygon_points"] = _normalize_points(points, page_width_px, page_height_px)
 
     # layout_det_res 내부 boxes 변환
     layout_det = layout.get("layout_det_res") or {}
@@ -456,12 +455,10 @@ def _extract_layout_from_result(
                 continue
             coord = box.get("coordinate")
             if coord:
-                box["coordinate"] = _image_bbox_to_pdf_rect(coord, page_height_px, scale)
+                box["coordinate"] = _normalize_bbox(coord, page_width_px, page_height_px)
             points = box.get("polygon_points")
             if points:
-                box["polygon_points"] = _image_polygon_to_pdf_points(
-                    points, page_height_px, scale
-                )
+                box["polygon_points"] = _normalize_points(points, page_width_px, page_height_px)
 
     # overall_ocr_res.rec_boxes 변환
     ocr_res = layout.get("overall_ocr_res") or {}
@@ -469,7 +466,7 @@ def _extract_layout_from_result(
         rec_boxes = ocr_res.get("rec_boxes")
         if isinstance(rec_boxes, list):
             ocr_res["rec_boxes"] = [
-                _image_bbox_to_pdf_rect(b, page_height_px, scale)
+                _normalize_bbox(b, page_width_px, page_height_px)
                 if b and len(b) >= 4
                 else b
                 for b in rec_boxes

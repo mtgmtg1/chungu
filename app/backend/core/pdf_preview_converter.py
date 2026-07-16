@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
-# [Flow: Step 1 (Supabase에서 원본 다운로드) -> Step 2 (LibreOffice로 PDF 변환) -> Step 3 (선형화 + 필요시 저화질 PDF 생성) -> Step 4 (Storage 업로드) -> Step 5 (서명된 URL 반환)]
+# [Flow: Step 1 (Supabase source_bucket에서 원본 다운로드) -> Step 2 (확장자별 변환: .hwp는 ODT 우선, PPTX/DOCX/ODT는 Unoserver 우선, 실패시 LibreOffice fallback) -> Step 3 (선형화 + 필요시 저화질 PDF 생성) -> Step 4 (pdfs/preview_pdfs Storage 업로드) -> Step 5 (서명된 URL 반환)]
 import logging
 import os
+import socket
 import subprocess
 import tempfile
 from pathlib import Path
 
 import fitz
 
+from ..config import settings
+
 from . import supabase_client
+
+try:
+    from unoserver.client import UnoClient
+except Exception:  # pragma: no cover - unoserver 클라이언트 패키지가 없을 때에도 모듈 로드가 깨지지 않도록
+    UnoClient = None
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +39,44 @@ def _libreoffice_env() -> dict[str, str]:
         "XDG_CONFIG_HOME": "/tmp/.config",
         "XDG_CACHE_HOME": "/tmp/.cache",
     }
+
+
+def _unoserver_ready(host: str, port: int, timeout: float = 2.0) -> bool:
+    """지정된 호스트/포트의 Unoserver XMLRPC 서비스에 TCP 연결 가능한지 확인한다."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            return True
+    except Exception:
+        return False
+
+
+def _convert_with_unoserver(input_path: Path, output_dir: Path) -> Path:
+    """Unoserver XMLRPC 클라이언트로 입력 파일을 PDF로 변환한다.
+
+    매개변수:
+        input_path: 변환할 입력 파일 경로 (클라이언트 로컬 파일시스템)
+        output_dir: 변환된 PDF를 저장할 디렉터리
+
+    반환값:
+        생성된 PDF 파일 경로
+    """
+    if UnoClient is None:
+        raise RuntimeError("unoserver client package is not installed")
+
+    output_path = output_dir / f"{input_path.stem}.pdf"
+    client = UnoClient(
+        server=settings.unoserver_host,
+        port=str(settings.unoserver_port),
+        host_location="remote",
+    )
+    client.convert(
+        inpath=str(input_path),
+        outpath=str(output_path),
+        convert_to="pdf",
+    )
+    if not output_path.exists():
+        raise FileNotFoundError(f"Unoserver PDF output not found: {output_path}")
+    return output_path
 
 
 def _run_libreoffice(input_path: Path, output_dir: Path) -> Path:
@@ -82,19 +128,28 @@ def _run_hwp5odt(input_path: Path, output_dir: Path) -> Path | None:
         return None
     if not odt_path.exists():
         return None
-    return _run_libreoffice(odt_path, output_dir)
+    return odt_path
 
 
 def _convert_to_pdf(input_path: Path, output_dir: Path) -> Path:
-    """확장자에 따라 LibreOffice 또는 hwp5odt를 이용해 PDF로 변환한다."""
+    """확장자에 따라 Unoserver, hwp5odt, LibreOffice를 이용해 PDF로 변환한다."""
     ext = input_path.suffix.lower()
+
+    # [Flow: .hwp는 pyhwp hwp5odt로 ODT 변환 후 PDF로 변환. 실패하면 원본 .hwp를 Unoserver/LibreOffice에 직접 맡긴다.]
     if ext == ".hwp":
+        odt_path = _run_hwp5odt(input_path, output_dir)
+        if odt_path:
+            input_path = odt_path
+            ext = ".odt"
+
+    # [Flow: Unoserver 우선 사용. 활성화되어 있고 TCP 연결 가능하면 변환 시도.]
+    if settings.unoserver_enabled and _unoserver_ready(settings.unoserver_host, settings.unoserver_port):
         try:
-            result = _run_hwp5odt(input_path, output_dir)
-            if result:
-                return result
+            return _convert_with_unoserver(input_path, output_dir)
         except Exception as e:
-            logger.debug(f"[hwp5odt] fallback 실패, LibreOffice 직접 변환 시도: {e}")
+            logger.warning(f"[unoserver] 변환 실패, LibreOffice fallback: {e}")
+
+    # [Flow: Unoserver 사용 불가/실패 시 직접 LibreOffice fallback]
     return _run_libreoffice(input_path, output_dir)
 
 
@@ -183,8 +238,21 @@ def _get_existing_preview_url(storage_path: str, expires_in: int) -> str | None:
     return None
 
 
-def get_preview_pdf_url(original_storage_path: str, expires_in: int = 3600) -> str | None:
-    """원본 파일에 대한 미리보기 PDF URL을 반환한다. 이미 변환된 PDF가 있으면 재사용한다."""
+def get_preview_pdf_url(
+    original_storage_path: str,
+    source_bucket: str = "pdfs",
+    expires_in: int = 3600,
+) -> str | None:
+    """원본 파일에 대한 미리보기 PDF URL을 반환한다. 이미 변환된 PDF가 있으면 재사용한다.
+
+    매개변수:
+        original_storage_path: 원본 파일의 Storage 경로
+        source_bucket: 원본 파일이 위치한 Supabase Storage 버킷 (기본값: pdfs)
+        expires_in: 서명 URL 만료 시간(초)
+
+    반환값:
+        변환된 미리보기 PDF의 서명 URL, 실패 시 None
+    """
     if not original_storage_path:
         return None
 
@@ -195,11 +263,11 @@ def get_preview_pdf_url(original_storage_path: str, expires_in: int = 3600) -> s
 
     client = supabase_client.get_service_client()
 
-    # 원본 파일 다운로드
+    # [Flow: 원본 파일은 source_bucket에서 다운로드 (sandbox 결과는 jobs 버킷)]
     try:
-        original_bytes = client.storage.from_(_PREVIEW_PDF_BUCKET).download(original_storage_path)
+        original_bytes = client.storage.from_(source_bucket).download(original_storage_path)
     except Exception as e:
-        logger.warning(f"[preview-pdf] 원본 다운로드 실패 ({original_storage_path}): {e}")
+        logger.warning(f"[preview-pdf] 원본 다운로드 실패 ({source_bucket}/{original_storage_path}): {e}")
         return None
 
     # PDF 변환
@@ -227,8 +295,18 @@ def get_preview_pdf_url(original_storage_path: str, expires_in: int = 3600) -> s
     return supabase_client.get_signed_download_url(preview_path, bucket=_PREVIEW_PDF_BUCKET, expires_in=expires_in)
 
 
-def get_lowres_preview_pdf_url(original_storage_path: str, expires_in: int = 3600) -> str | None:
-    """대용량 원본 파일에 대한 저화질 미리보기 PDF URL을 반환한다."""
+def get_lowres_preview_pdf_url(
+    original_storage_path: str,
+    source_bucket: str = "pdfs",
+    expires_in: int = 3600,
+) -> str | None:
+    """대용량 원본 파일에 대한 저화질 미리보기 PDF URL을 반환한다.
+
+    매개변수:
+        original_storage_path: 원본 파일의 Storage 경로
+        source_bucket: 원본 파일이 위치한 Supabase Storage 버킷 (기본값: pdfs)
+        expires_in: 서명 URL 만료 시간(초)
+    """
     if not original_storage_path:
         return None
 
@@ -253,7 +331,7 @@ def get_lowres_preview_pdf_url(original_storage_path: str, expires_in: int = 360
             existing_preview = client.storage.from_(_PREVIEW_PDF_BUCKET).list(_PREVIEW_PDF_PREFIX)
             names = {item["name"] for item in (existing_preview or [])}
             if Path(highres_path).name not in names:
-                return get_preview_pdf_url(original_storage_path, expires_in=expires_in)
+                return get_preview_pdf_url(original_storage_path, source_bucket=source_bucket, expires_in=expires_in)
         except Exception as e:
             logger.debug(f"[preview-pdf-lowres] 기존 PDF 확인 실패: {e}")
             return None

@@ -1460,3 +1460,10 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 - 이 두 변수는 이미 409-410번 라인에서 정의되어 있으며: `job.total_pages || job.total_files || 1` 값으로 계산됩니다.
 - 구독제에서는 실제 달러 비용이 아니라 구독 월간 페이지 한도를 차감하므로 "units"라는 명칭이 더 정확합니다.
 - i18n 키 `page:result.xlsxBasic`과 `page:result.xlsxAdvanced`는 `cost` 파라미터를 받아 표시합니다.
+
+## Backend 테스트 실행 참고
+
+- `backend` 폴더에서 `pytest`를 실행할 때 `core` 패키지와 `backend` 패키지가 모두 정상적으로 임포트되도록 하려면 작업 디렉터리를 `app/backend`로 설정하고 `PYTHONPATH`에 `app`의 상위 디렉터리(`app`)를 추가해야 한다.
+  - 예: `cd /path/to/repo/app/backend && PYTHONPATH=/path/to/repo/app python -m pytest tests/`
+  - `PYTHONPATH=/app`를 지정하면 `backend.*` 모듈 임포트가 가능하고, 현재 디렉터리 `app/backend`가 `sys.path`에 포함되어 `core.*` 직접 임포트도 가능하다.
+- 프론트엔드: `cd app/frontend && npm run test` / `npm run build`

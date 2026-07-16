@@ -30,6 +30,10 @@ services:
       - SANDBOX_RUNTIME_DENSE=${SANDBOX_RUNTIME_DENSE:-io.containerd.kata-clh-dense.v2}
       - SANDBOX_IMAGE=${SANDBOX_IMAGE:-proof-agent:latest}
       - SANDBOX_BROWSERLESS_URL=${SANDBOX_BROWSERLESS_URL:-http://192.168.1.50:20047}
+      # Unoserver (LibreOffice listener) - PPTX/DOCX/HWP PDF 미리보기 변환
+      - UNOSERVER_ENABLED=${UNOSERVER_ENABLED:-true}
+      - UNOSERVER_HOST=${UNOSERVER_HOST:-unoserver}
+      - UNOSERVER_PORT=${UNOSERVER_PORT:-2003}
     ports:
       - "${APP_PORT:-28181}:28181"
     # privileged: 호스트 containerd socket 에 접근하여 Kata VM 을 생성/관리하려면 필요.
@@ -55,6 +59,8 @@ services:
         condition: service_healthy
       ai-backend:
         condition: service_started
+      unoserver:
+        condition: service_healthy
     networks:
       - default
       - supabase-network
@@ -73,6 +79,10 @@ services:
     environment:
       - DOCLING_SERVICE_URL=http://docling:28182
       - PADDLEOCR_SERVICE_URL=http://paddleocr_service:8080
+      # Unoserver (LibreOffice listener) - PPTX/DOCX/HWP PDF 미리보기 변환
+      - UNOSERVER_ENABLED=${UNOSERVER_ENABLED:-true}
+      - UNOSERVER_HOST=${UNOSERVER_HOST:-unoserver}
+      - UNOSERVER_PORT=${UNOSERVER_PORT:-2003}
     volumes:
       - appdata:/data
     depends_on:
@@ -175,6 +185,29 @@ services:
       - LLMLINGUA_RATE=${LLMLINGUA_RATE:-0.5}
     ports:
       - "8001:8000"
+    networks:
+      - default
+    restart: unless-stopped
+
+  # [Flow: 문서(PPTX/DOCX/HWP/ODT)를 PDF로 변환하는 LibreOffice listener]
+  # 백엔드는 XMLRPC 클라이언트로 접근, 파일은 바이너리 데이터로 전송.
+  unoserver:
+    build:
+      context: .
+      dockerfile: backend/unoserver/Dockerfile
+    env_file: .env
+    environment:
+      - UNOSERVER_INTERFACE=0.0.0.0
+      - UNOSERVER_PORT=2003
+      - UNOSERVER_UNO_INTERFACE=127.0.0.1
+      - UNOSERVER_UNO_PORT=2002
+      - UNOSERVER_CONVERSION_TIMEOUT=120
+    healthcheck:
+      test: ["CMD", "unoping", "--host", "127.0.0.1", "--port", "2003", "--quiet"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     networks:
       - default
     restart: unless-stopped

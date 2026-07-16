@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     docling_max_images_per_doc: int = 20   # 문서당 LLM 전송 이미지 상한
     docling_image_max_size: int = 1920      # 추출 이미지 최대 긴 변 (px)
 
+    # Unoserver (LibreOffice listener) - 문서(PPTX/DOCX/HWP) PDF 미리보기 변환
+    unoserver_enabled: bool = False
+    unoserver_host: str = "127.0.0.1"
+    unoserver_port: int = 2003
+    unoserver_timeout: int = 120  # 변환 타임아웃(초)
+
     # PaddleOCR 폴백 서비스 (AI Studio API 프록시)
     paddleocr_service_url: str = "http://paddleocr_service:8080"
     paddleocr_api_token: str = ""

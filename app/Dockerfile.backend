@@ -39,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     unrar-free \
     libreoffice-writer \
+    libreoffice-impress \
     libreoffice-l10n-ko \
     libreoffice-help-ko \
     fonts-noto-cjk \

@@ -23,6 +23,10 @@ COLLECT_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".pdf", ".svg",
     ".mp3", ".wav", ".mp4", ".webm",
     ".zip", ".tar", ".gz",
+    # 문서 미리보기 변환 대상
+    ".pptx", ".ppt", ".ppsx", ".pps",
+    ".docx", ".doc",
+    ".hwp", ".hwpx",
 }
 
 
@@ -250,5 +254,14 @@ def _guess_content_type(extension: str) -> str:
         ".zip": "application/zip",
         ".tar": "application/x-tar",
         ".gz": "application/gzip",
+        # 문서 미리보기 변환 대상 MIME
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".ppt": "application/vnd.ms-powerpoint",
+        ".ppsx": "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+        ".pps": "application/vnd.ms-powerpoint",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".doc": "application/msword",
+        ".hwp": "application/x-hwp",
+        ".hwpx": "application/vnd.hancom.hwpx",
     }
     return content_types.get(extension.lower(), "application/octet-stream")

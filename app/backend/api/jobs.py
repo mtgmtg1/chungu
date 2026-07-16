@@ -54,6 +54,9 @@ router = APIRouter(prefix="/api", tags=["jobs"])
 # 보관 기간이 지난 후에는 UI에서만 만료로 표시하고, 실제 Storage 삭제는 별도 아카이빙 스토리지 구성 전까지 수행하지 않는다.
 RETENTION_DAYS = 30
 
+# PDF 뷰어로 미리보기할 수 있는 문서 타입 목록
+_PREVIEW_DOCUMENT_TYPES = ("pdf", "docx", "hwp", "pptx")
+
 
 def _calculate_work_units(pages: int, image_count: int, audio_seconds: int, video_seconds: int) -> int:
     """시간진행바용 총 작업량을 계산한다.
@@ -911,7 +914,7 @@ async def confirm_add_files(
     # 기존 원본 파일을 extracted_files에 합성 항목으로 추가
     # 기존 변환 결과 마크다운을 가져와 result_markdown에 채워 넣는다 —
     # 이후 run_job_added_files이 combined markdown을 재생성할 때 기존 파일 내용이 누락되지 않도록 함
-    if not existing_files and job.pdf_storage_path and job.file_type in ("pdf", "docx", "hwp"):
+    if not existing_files and job.pdf_storage_path and job.file_type in _PREVIEW_DOCUMENT_TYPES:
         existing_markdown = _extract_single_file_markdown(job)
         existing_files = [{
             "path": _normalize_display_name(job.original_filename or Path(job.pdf_storage_path).name),
@@ -925,7 +928,7 @@ async def confirm_add_files(
     merged_files = existing_files + new_extracted_infos
     job.extracted_files = merged_files
     # 단일 파일 타입 Job에 새 파일이 추가되면 mixed로 전환
-    if job.file_type in ("pdf", "docx", "hwp") and len(merged_files) > 1:
+    if job.file_type in _PREVIEW_DOCUMENT_TYPES and len(merged_files) > 1:
         job.file_type = "mixed"
     flag_modified(job, "extracted_files")
     db.commit()
@@ -1414,7 +1417,7 @@ def _get_file_names(job: Job) -> list[str]:
         파일명 문자열 리스트
     """
     files = job.extracted_files or []
-    if not files and job.pdf_storage_path and job.file_type in ("pdf", "docx", "hwp"):
+    if not files and job.pdf_storage_path and job.file_type in _PREVIEW_DOCUMENT_TYPES:
         return [_normalize_display_name(job.original_filename or Path(job.pdf_storage_path).name)]
     names: list[str] = []
     for i, info in enumerate(files):
@@ -1453,21 +1456,48 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
     if not isinstance(info, dict) or not info.get("storage_path"):
         return None
     ftype = info.get("type", "")
-    if ftype not in ("pdf", "image", "audio", "video", "docx", "hwp", "file"):
+    if ftype not in (*_PREVIEW_DOCUMENT_TYPES, "image", "audio", "video", "file"):
         return None
     bucket = info.get("bucket", "pdfs")
     try:
         storage_path = info["storage_path"]
-        if ftype in ("pdf", "docx", "hwp"):
-            # [Flow: iframe 네이티브 PDF 뷰어는 점진적 렌더링을 지원하므로 저화질 PDF 생성 불필요]
-            # 원본 PDF의 서명 URL을 직접 반환 (저화질 생성은 200초+ 블로킹 발생)
-            preview_url = supabase_client.get_signed_download_url(storage_path, bucket=bucket, expires_in=3600)
-            if not preview_url:
+        if ftype in _PREVIEW_DOCUMENT_TYPES:
+            # [Flow: PDF 뷰어로 미리보기 가능한 문서는 원본 URL과 PDF 미리보기 URL을 분리]
+            # pdf: url == preview_url (원본 또는 clean/searchable)
+            # docx/hwp/pptx: url은 원본 다운로드, preview_url은 PDF 변환 URL
+            try:
+                url = supabase_client.get_signed_download_url(storage_path, bucket=bucket, expires_in=3600)
+            except Exception:
                 return None
+            if not url:
+                return None
+
+            if ftype == "pdf":
+                preview_url = url
+            else:
+                preview_url = pdf_preview_converter.get_preview_pdf_url(
+                    storage_path, source_bucket=bucket, expires_in=3600
+                )
+
+            if not preview_url and ftype != "pdf":
+                # [Flow: PDF 변환 실패 시 file 타입으로 폴백 (다운로드 링크만 제공)]
+                return {
+                    "name": _normalize_display_name(info.get("path", info.get("storage_path", ""))),
+                    "type": "file",
+                    "url": url,
+                    "storage_path": storage_path,
+                    "bucket": bucket,
+                    "page_num": idx + 1,
+                    "result_markdown": info.get("result_markdown", ""),
+                    "source_index": idx,
+                    "source_kind": source_kind,
+                    "status": info.get("status", ""),
+                }
+
             item = {
                 "name": _normalize_display_name(info.get("path", info.get("storage_path", ""))),
                 "type": ftype,
-                "url": preview_url,
+                "url": url,
                 "storage_path": storage_path,
                 "bucket": bucket,
                 "page_num": idx + 1,
@@ -1477,20 +1507,21 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
                 "source_kind": source_kind,
                 "status": info.get("status", ""),
             }
-            # [Flow: 개별 searchable PDF가 있으면 preview_url을 대체 — 텍스트 검색/선택 가능]
+            # [Flow: 개별 searchable PDF가 있으면 preview_url을 대체 — 텍스트 검색/선택 가능 (pdf만)]
             # 각 extracted_files 항목은 자체 searchable_pdf_storage_path를 가질 수 있다.
             # job.searchable_pdf_storage_path (Job 레벨)는 첫 번째 원본 PDF에만 해당하므로
             # 여기서는 개별 항목의 searchable_pdf_storage_path만 사용한다.
-            individual_searchable = info.get("searchable_pdf_storage_path")
-            if individual_searchable:
-                try:
-                    searchable_url = supabase_client.get_signed_download_url(
-                        individual_searchable, bucket="pdfs", expires_in=3600
-                    )
-                    if searchable_url:
-                        item["preview_url"] = searchable_url
-                except Exception as e:
-                    logger.warning(f"[source_files] 개별 searchable PDF URL 생성 실패: {e}")
+            if ftype == "pdf":
+                individual_searchable = info.get("searchable_pdf_storage_path")
+                if individual_searchable:
+                    try:
+                        searchable_url = supabase_client.get_signed_download_url(
+                            individual_searchable, bucket="pdfs", expires_in=3600
+                        )
+                        if searchable_url:
+                            item["preview_url"] = searchable_url
+                    except Exception as e:
+                        logger.warning(f"[source_files] 개별 searchable PDF URL 생성 실패: {e}")
             return item
         # file 타입 (csv, md, xlsx, txt, html 등) — 다운로드용 signed URL만 생성
         if ftype == "file":
@@ -1556,7 +1587,7 @@ def _source_files(job: Job) -> list[dict]:
     """
     files = job.extracted_files or []
     source_files: list[dict] = []
-    if not files and job.pdf_storage_path and job.file_type in ("pdf", "docx", "hwp"):
+    if not files and job.pdf_storage_path and job.file_type in _PREVIEW_DOCUMENT_TYPES:
         # 단일 파일 업로드: extracted_files가 없으므로 원본 파일을 직접 표시
         original_item = _build_source_file_item(
             {
@@ -1662,7 +1693,7 @@ def _source_files(job: Job) -> list[dict]:
             if annotations_json_url:
                 # 첫 번째 원본 PDF/DOCX/HWP 항목에 주석 JSON URL을 부착한다.
                 for item in source_files:
-                    if item.get("source_kind") == "original" and item.get("type") in ("pdf", "docx", "hwp"):
+                    if item.get("source_kind") == "original" and item.get("type") in _PREVIEW_DOCUMENT_TYPES:
                         item["annotations_json_url"] = annotations_json_url
                         break
 
@@ -1671,7 +1702,7 @@ def _source_files(job: Job) -> list[dict]:
     # 여기서 AI 주석 JSON과 병합해 각 원본 탭에서 두 주석을 중복 없이 볼 수 있도록 한다.
     # 파일별 주석 JSON이 없으면 기존 공유 user_annotations.json으로 폴백 (하위 호환).
     for item in source_files:
-        if item.get("source_kind") != "original" or item.get("type") not in ("pdf", "docx", "hwp"):
+        if item.get("source_kind") != "original" or item.get("type") not in _PREVIEW_DOCUMENT_TYPES:
             continue
         file_source_index = item.get("source_index", 0)
         # [Flow: 파일별 주석 JSON 경로 — source_index별로 분리]
@@ -1997,7 +2028,7 @@ def _detect_source_type(job: Job) -> str | None:
     files = job.extracted_files or []
     if len(files) == 1:
         ftype = files[0].get("type", "")
-        if ftype in ("audio", "video", "docx", "hwp"):
+        if ftype in ("audio", "video", "docx", "hwp", "pptx"):
             return ftype
     # 파일명 확장자 기준 fallback
     ext = Path(job.pdf_storage_path).suffix.lower()
@@ -2009,6 +2040,8 @@ def _detect_source_type(job: Job) -> str | None:
         return "docx"
     if ext in (".hwp", ".hwpx"):
         return "hwp"
+    if ext in (".pptx", ".ppt", ".ppsx", ".pps"):
+        return "pptx"
     return "pdf"
 
 
@@ -2204,9 +2237,9 @@ def preview_job(
     if job.pdf_storage_path:
         try:
             source_type = _detect_source_type(job)
-            # [Flow: iframe 네이티브 PDF 뷰어는 점진적 렌더링을 지원하므로 저화질 PDF 생성 불필요]
-            # 원본 PDF의 서명 URL을 직접 반환 (저화질 생성은 200초+ 블로킹 발생)
-            source_url = supabase_client.get_signed_download_url(job.pdf_storage_path, bucket="pdfs", expires_in=3600)
+            # [Flow: PDF는 원본 서명 URL, docx/hwp/pptx는 _source_files 이후 변환된 PDF preview URL 사용]
+            if source_type == "pdf":
+                source_url = supabase_client.get_signed_download_url(job.pdf_storage_path, bucket="pdfs", expires_in=3600)
         except Exception:
             pass
 
@@ -2222,6 +2255,17 @@ def preview_job(
                     pass
 
     source_files = _source_files(job)
+
+    # [Flow: docx/hwp/pptx의 source_url은 변환된 PDF preview URL로 설정]
+    if source_type in ("docx", "hwp", "pptx"):
+        source_url = next(
+            (
+                f.get("preview_url") or f.get("url")
+                for f in source_files
+                if f.get("type") == source_type
+            ),
+            source_url,
+        )
 
     # [Flow: extracted_files의 result_markdown을 source_files에 병합]
     # _source_files는 storage_path가 있는 파일만 반환하므로,

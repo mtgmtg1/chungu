@@ -49,6 +49,10 @@ _EXTENSION_TYPE_MAP = {
     ".mp4": "video", ".webm": "video",
     ".csv": "file", ".md": "file", ".xlsx": "file", ".json": "file",
     ".txt": "file", ".html": "file", ".zip": "file", ".tar": "file", ".gz": "file",
+    # 미리보기 PDF 변환을 지원하는 문서 타입
+    ".pptx": "pptx", ".ppt": "pptx", ".ppsx": "pptx", ".pps": "pptx",
+    ".hwp": "hwp", ".hwpx": "hwp",
+    ".docx": "docx", ".doc": "docx",
 }
 
 

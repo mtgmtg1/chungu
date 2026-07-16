@@ -2,7 +2,7 @@
 // processing/error 상태의 주석 항목은 URL 없이 상태 정보만 표시한다.
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { FileText, FileUp, FileDown, ImageIcon, Volume2, Film, Trash2, Loader2, AlertCircle, RotateCw, Sparkles, ChevronDown, ChevronUp, List, Check } from "lucide-react";
+import { FileText, FileUp, FileDown, ImageIcon, Volume2, Film, Trash2, Loader2, AlertCircle, RotateCw, Sparkles, ChevronDown, ChevronUp, List, Check, Presentation } from "lucide-react";
 import { marked } from "marked";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer from "./PdfViewer.jsx";
@@ -15,6 +15,7 @@ function SourceIcon({ type }) {
   if (type === "pdf") return <FileText size={16} className="text-error flex-shrink-0" />;
   if (type === "docx") return <FileText size={16} className="text-primary flex-shrink-0" />;
   if (type === "hwp") return <FileText size={16} className="text-secondary flex-shrink-0" />;
+  if (type === "pptx") return <Presentation size={16} className="text-primary flex-shrink-0" />;
   if (type === "image") return <ImageIcon size={16} className="text-primary flex-shrink-0" />;
   if (type === "audio") return <Volume2 size={16} className="text-secondary flex-shrink-0" />;
   if (type === "video") return <Film size={16} className="text-tertiary flex-shrink-0" />;
@@ -206,7 +207,7 @@ function SingleFilePreview({ file, filename, annotationsJson, pdfViewerRef, onAn
   let content = null;
   if (file.type === "pdf") {
     content = <PdfViewer ref={pdfViewerRef} url={file.url} annotationsJson={annotationsJson} onAnnotationChanged={onAnnotationChanged} />;
-  } else if (file.type === "docx" || file.type === "hwp") {
+  } else if (file.type === "docx" || file.type === "hwp" || file.type === "pptx") {
     content = file.preview_url ? <PdfViewer ref={pdfViewerRef} url={file.preview_url} annotationsJson={annotationsJson} onAnnotationChanged={onAnnotationChanged} /> : null;
   } else if (file.type === "image") {
     content = (
@@ -884,7 +885,7 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
           />
         );
       }
-      if ((sourceType === "docx" || sourceType === "hwp") && sourceUrl) {
+      if ((sourceType === "docx" || sourceType === "hwp" || sourceType === "pptx") && sourceUrl) {
         return (
           <div className="flex flex-col h-full w-full min-h-0 overflow-hidden">
             <PdfViewer
@@ -1003,7 +1004,7 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
       );
     }
 
-    if (selectedFile.type === "docx" || selectedFile.type === "hwp") {
+    if (selectedFile.type === "docx" || selectedFile.type === "hwp" || selectedFile.type === "pptx") {
       return (
         <PdfViewerWithFab
           viewerRef={pdfViewerRef}

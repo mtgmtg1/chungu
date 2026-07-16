@@ -18,7 +18,6 @@ import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
 import { TableOfContents } from "@tiptap/extension-table-of-contents";
-import { UniqueID } from "@tiptap/extension-unique-id";
 import { marked } from "marked";
 import TurndownService from "turndown";
 import {
@@ -195,7 +194,6 @@ ref)
       link: false,
       underline: false,
     }),
-    UniqueID.configure({ types: ["heading"] }),
     TableOfContents.configure({
       onUpdate: (content) => setAnchors(content),
     }),

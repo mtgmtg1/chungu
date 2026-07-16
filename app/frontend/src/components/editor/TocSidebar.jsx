@@ -1,9 +1,9 @@
-// [Flow: Step 1 (TableOfContents 확장에서 anchors 배열 수신)
+// [Flow: Step 1 (부모 SimpleEditor에서 heading anchors 배열 수신)
 //       -> Step 2 (heading depth별 들여쓰기 + 활성 heading 하이라이트)
 //       -> Step 3 (클릭 시 해당 heading으로 스크롤)]
 //
 // 우측 미니맵 TOC 사이드바. ProseMirror editor.view.dom 내에서
-// heading id 속성을 가진 요소로 scrollIntoView 한다.
+// data-toc-id 속성을 가진 heading 요소로 scrollIntoView 한다.
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { List, ChevronUp } from "lucide-react";
@@ -12,7 +12,7 @@ import { List, ChevronUp } from "lucide-react";
  * [Flow: Step 1 (anchors 배열 순회) -> Step 2 (depth별 들여쓰기 + 활성 하이라이트) -> Step 3 (클릭 시 scrollIntoView)]
  *
  * @param {Object} props
- * @param {Array<{id:string;content:string;depth:number;isActive:boolean}>} props.anchors - TableOfContents onUpdate 데이터
+ * @param {Array<{id:string;textContent:string;level:number;isActive:boolean}>} props.anchors - SimpleEditor에서 수집한 heading 데이터
  * @param {import('@tiptap/react').Editor|null} props.editor - 스크롤 대상 에디터
  * @param {boolean} props.open - 사이드바 펼침 여부
  * @param {Function} props.onToggle - 사이드바 펼침/접힘 토글 콜백
@@ -111,11 +111,11 @@ export default function TocSidebar({ anchors, editor, open, onToggle }) {
                         : "text-on-surface-variant hover:bg-surface-container-high"
                   }`}
                   style={{
-                    paddingLeft: `${0.5 + (anchor.originalLevel - 1) * 0.75}rem`,
+                    paddingLeft: `${0.5 + (anchor.level - 1) * 0.75}rem`,
                   }}
                   data-oid={`toc-link-${anchor.id}`}
                 >
-                  {anchor.textContent || `H${anchor.originalLevel}`}
+                  {anchor.textContent || `H${anchor.level}`}
                 </button>
               </li>
             ))}

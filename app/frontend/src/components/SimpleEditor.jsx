@@ -78,8 +78,8 @@ const PageMarkerNode = Node.create({
   group: "block",
   atom: true,
   // 페이지 마커는 텍스트 선택을 막지 않아야 한다.
-  // NodeView에서 contenteditable="false"를 제거하고 pointer-events/user-select만
-  // 차단해 마우스 drag selection이 끊기지 않도록 한다.
+  // pointer-events/user-select만 차단하고 contenteditable 속성은 ProseMirror 기본값(false)을
+  // 그대로 두어, drag selection이 끊기지 않도록 한다.
   addNodeView() {
     return ({ node }) => {
       const dom = document.createElement("div");
@@ -89,9 +89,6 @@ const PageMarkerNode = Node.create({
       dom.style.pointerEvents = "none";
       dom.style.userSelect = "none";
       dom.setAttribute("aria-hidden", "true");
-      // contenteditable=false가 drag selection을 막는 브라우저 버그를 회피하기 위해
-      // 부모 editable 상태를 상속받되, atom 노드이므로 ProseMirror가 입력은 막는다.
-      dom.setAttribute("contenteditable", "true");
       return { dom };
     };
   },

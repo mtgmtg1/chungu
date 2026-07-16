@@ -17,6 +17,7 @@ import TaskItem from "@tiptap/extension-task-item";
 import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
+import { TableOfContents } from "@tiptap/extension-table-of-contents";
 import { marked } from "marked";
 import TurndownService from "turndown";
 import {
@@ -43,6 +44,7 @@ import {
   Heading4 } from
 "lucide-react";
 import AiMenu from "./AiMenu.jsx";
+import TocSidebar from "./editor/TocSidebar.jsx";
 
 
 const turndown = new TurndownService({
@@ -150,6 +152,8 @@ ref)
 {
   const { t } = useTranslation();
   const [headingOpen, setHeadingOpen] = useState(false);
+  const [tocOpen, setTocOpen] = useState(true);
+  const [anchors, setAnchors] = useState([]);
   const containerRef = useRef(null);
   const observedPageRef = useRef(null);
   const onChangeRef = useRef(onChange);
@@ -168,6 +172,9 @@ ref)
   const editor = useEditor({
     extensions: [
     StarterKit,
+    TableOfContents.configure({
+      onUpdate: (content) => setAnchors(content),
+    }),
     PageMarkerNode,
     Table.configure({ resizable: true }),
     TableRow,
@@ -481,26 +488,34 @@ ref)
           <TableIcon size={18} data-oid="k-unaiu" />
         </ToolbarButton>
       </div>
-      <div
-        className="flex-1 overflow-y-auto p-6 custom-scrollbar"
-        data-oid="qjrci2n">
+      <div className="flex-1 flex overflow-hidden" data-oid="editor-toc-layout">
+        <div
+          className="flex-1 overflow-y-auto p-6 custom-scrollbar"
+          data-oid="qjrci2n">
 
-        <EditorContent
+          <EditorContent
+            editor={editor}
+            className="prose max-w-none focus:outline-none"
+            data-oid="adafms.">
+
+            {editor && (
+              <BubbleMenu
+                editor={editor}
+                tippyOptions={{ duration: 100, placement: "top-start" }}
+                className="flex items-center gap-1 px-2 py-1.5 bg-white rounded-lg shadow-lg border border-outline-variant z-50">
+
+                <AiMenu editor={editor} editable={editable} fullMarkdown={markdown} />
+              </BubbleMenu>
+            )}
+          </EditorContent>
+
+        </div>
+        <TocSidebar
+          anchors={anchors}
           editor={editor}
-          className="prose max-w-none focus:outline-none"
-          data-oid="adafms.">
-
-          {editor && (
-            <BubbleMenu
-              editor={editor}
-              tippyOptions={{ duration: 100, placement: "top-start" }}
-              className="flex items-center gap-1 px-2 py-1.5 bg-white rounded-lg shadow-lg border border-outline-variant z-50">
-
-              <AiMenu editor={editor} editable={editable} fullMarkdown={markdown} />
-            </BubbleMenu>
-          )}
-        </EditorContent>
-
+          open={tocOpen}
+          onToggle={() => setTocOpen((v) => !v)}
+          data-oid="toc-sidebar-comp" />
       </div>
     </div>);
 

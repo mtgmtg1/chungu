@@ -73,6 +73,18 @@ body {
   user-select: text !important;
 }
 
+/* react-chrono 등 외부 라이브러리가 전역 ::selection을 투명하게 덮어쓰면
+   텍스트 선택이 보이지 않으므로 강제로 표시한다. */
+::selection {
+  background-color: rgba(59, 130, 246, 0.25) !important;
+  color: inherit !important;
+}
+
+::-moz-selection {
+  background-color: rgba(59, 130, 246, 0.25) !important;
+  color: inherit !important;
+}
+
 .ProseMirror table {
   border-collapse: collapse;
   width: 100%;

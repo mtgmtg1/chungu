@@ -455,3 +455,11 @@ body {
   line-height: 1.5 !important;
   white-space: normal !important;
 }
+
+/* [Flow: Chrono 기본 카드 제목/부제/본문은 CardEditor custom content로 완전히 대체.
+   -> 중복 노출을 막고 CardEditor가 렌더링한 label/summary/date만 보이도록 숨긴다.] */
+.ediscovery-chrono-container .ediscovery-timeline-card-title,
+.ediscovery-chrono-container .ediscovery-timeline-card-subtitle,
+.ediscovery-chrono-container .ediscovery-timeline-card-text {
+  display: none !important;
+}

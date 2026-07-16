@@ -93,23 +93,20 @@ function buildMedia(node, sourceFiles) {
  * @param {Function} t - i18n translate 함수
  * @returns {Object} React Chrono item 객체
  */
-export function buildChronoItem(node, sourceFiles, t) {
+export function buildChronoItem(node, sourceFiles, t, isEditing = false) {
   const data = node.data || {};
-  const entity = data.entity || (node.type === "evidence" ? "third_party" : node.type);
   const label = data.label || node.id;
   const page = getNodePage(node);
   const title = data.date ? String(data.date) : `p.${page}`;
-  const subtitleKey =
-    SWIMLANE_LABEL_KEYS[entity] || `ediscoverySwimlane${entity.charAt(0).toUpperCase() + entity.slice(1)}`;
-  const subtitle = t(`page:result.${subtitleKey}`);
-  const summary = data.summary || label;
 
   const item = {
     id: node.id,
     title,
-    cardTitle: label,
-    cardSubtitle: subtitle,
-    cardDetailedText: summary,
+    // [Flow: cardTitle은 Chrono 내부 W(hash)에만 참여해서 내용/편집 상태 변경 시 remount를 유도.
+    //        실제 시각적 표시는 CSS로 숨기고 아래 CardEditor custom content가 대체한다.]
+    cardTitle: `${node.id}${isEditing ? ":edit" : ""}`,
+    cardSubtitle: null,
+    cardDetailedText: null,
     node,
   };
 
@@ -144,12 +141,18 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
   const [sourceFiles, setSourceFiles] = useState(externalSourceFiles || []);
   const [draftNodes, setDraftNodes] = useState([]);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const [editingNodeId, setEditingNodeId] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
 
   const pollRef = useRef(null);
   const pollStartRef = useRef(0);
   const saveTimeoutRef = useRef(null);
+  const draftNodesRef = useRef(draftNodes);
+
+  useEffect(() => {
+    draftNodesRef.current = draftNodes;
+  }, [draftNodes]);
 
   useEffect(() => {
     setContext(job?.ediscovery_context || "");
@@ -272,14 +275,24 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
     return t(`page:result.${key}`);
   }, [metrics.stage, t]);
 
-  const handleSelectNode = useCallback((nodeId) => {
-    setSelectedNodeId((prev) => (prev === nodeId ? null : nodeId));
-    // [Flow: Step 1 (선택한 nodeId로 draftNodes에서 노드 조회)
+  const handleSelectNode = useCallback((nodeId, shouldOpenPopup = true) => {
+    setSelectedNodeId(nodeId);
+    if (!shouldOpenPopup) return;
+    // [Flow: Step 1 (선택한 nodeId로 최신 draftNodes에서 노드 조회)
     //       -> Step 2 (존재하면 상위 onNodeClick 콜백 호출)
     //       -> Step 3 (JobResultPage의 SourcePanel 스크롤/팝업 연동)]
-    const node = draftNodes.find((n) => n.id === nodeId);
+    const node = draftNodesRef.current.find((n) => n.id === nodeId);
     if (node) onNodeClick?.(node);
-  }, [draftNodes, onNodeClick]);
+  }, [onNodeClick]);
+
+  const handleStartEdit = useCallback((nodeId) => {
+    setEditingNodeId(nodeId);
+    setSelectedNodeId(nodeId);
+  }, []);
+
+  const handleFinishEdit = useCallback(() => {
+    setEditingNodeId(null);
+  }, []);
 
   const handleUpdateNode = useCallback((nodeId, updates) => {
     setDraftNodes((prev) =>
@@ -290,6 +303,7 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
   const handleDeleteNode = useCallback((nodeId) => {
     setDraftNodes((prev) => prev.filter((n) => n.id !== nodeId));
     setSelectedNodeId((prev) => (prev === nodeId ? null : prev));
+    setEditingNodeId((prev) => (prev === nodeId ? null : prev));
   }, []);
 
   const handleCreateNode = useCallback(() => {
@@ -309,6 +323,7 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
     };
     setDraftNodes((prev) => [...prev, newNode]);
     setSelectedNodeId(newId);
+    setEditingNodeId(newId);
   }, [t]);
 
   const saveGraph = useCallback(async () => {
@@ -358,8 +373,8 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
       if (aPage !== bPage) return aPage - bPage;
       return (a.id || "").localeCompare(b.id || "");
     });
-    return sorted.map((node) => buildChronoItem(node, sourceFiles, t));
-  }, [nonSwimlaneNodes, sourceFiles, t]);
+    return sorted.map((node) => buildChronoItem(node, sourceFiles, t, editingNodeId === node.id));
+  }, [nonSwimlaneNodes, sourceFiles, t, editingNodeId]);
 
   /**
    * [Flow: Step 1 (date가 없는 노드 필터링) -> Step 2 (페이지순 정렬)
@@ -373,8 +388,8 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
       if (aPage !== bPage) return aPage - bPage;
       return (a.id || "").localeCompare(b.id || "");
     });
-    return sorted.map((node) => buildChronoItem(node, sourceFiles, t));
-  }, [nonSwimlaneNodes, sourceFiles, t]);
+    return sorted.map((node) => buildChronoItem(node, sourceFiles, t, editingNodeId === node.id));
+  }, [nonSwimlaneNodes, sourceFiles, t, editingNodeId]);
 
   const isEmpty = !loading && chronoItems.length === 0 && pageItems.length === 0 && !error && job?.ediscovery_status === "done";
 
@@ -408,6 +423,7 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
           <Chrono
             items={chronoItems}
             mode="vertical"
+            allowDynamicUpdate
             layout={{
               cardWidth: 480,
               pointSize: 16,
@@ -465,8 +481,11 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
               <CardEditor
                 key={item.id}
                 item={item}
-                isSelected={selectedNodeId === item.node.id}
+                isEditing={editingNodeId === item.node.id}
+                isSelected={false}
                 onSelect={handleSelectNode}
+                onStartEdit={handleStartEdit}
+                onFinishEdit={handleFinishEdit}
                 onUpdate={handleUpdateNode}
                 onDelete={handleDeleteNode}
                 t={t}
@@ -488,8 +507,11 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
               <CardEditor
                 key={item.id}
                 item={item}
+                isEditing={editingNodeId === item.node.id}
                 isSelected={selectedNodeId === item.node.id}
                 onSelect={handleSelectNode}
+                onStartEdit={handleStartEdit}
+                onFinishEdit={handleFinishEdit}
                 onUpdate={handleUpdateNode}
                 onDelete={handleDeleteNode}
                 t={t}
@@ -555,30 +577,85 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
 /**
  * CardEditor — 타임라인 카드를 읽기/수정 모드로 전환하는 UI.
  *
+ * [Flow: Step 1 (item.node.data로 로컬 draft 상태 초기화)
+ *       -> Step 2 (편집 중에는 draft를 즉시 갱신하고 상위에 onUpdate 전달)
+ *       -> Step 3 (편집 완료/취소 시 onFinishEdit/onDelete 콜백 호출)
+ *       -> Step 4 (읽기 모드에서는 draft를 렌더링, 외부 데이터 변경 시 동기화)]
+ *
  * @param {Object} props
  * @param {Object} props.item - React Chrono item 객체 (node 포함)
+ * @param {boolean} props.isEditing - 현재 편집 중인지 여부 (부모가 제어)
  * @param {boolean} props.isSelected - 현재 선택(포커스) 상태
- * @param {Function} props.onSelect - 카드 클릭 시 선택 콜백 (nodeId) => void
+ * @param {Function} props.onSelect - 카드 클릭 시 선택 콜백 (nodeId, shouldOpenPopup) => void
+ * @param {Function} props.onStartEdit - 편집 시작 콜백 (nodeId) => void
+ * @param {Function} props.onFinishEdit - 편집 완료 콜백 () => void
  * @param {Function} props.onUpdate - 노드 data 수정 콜백 (nodeId, dataUpdates) => void
  * @param {Function} props.onDelete - 노드 삭제 콜백 (nodeId) => void
  * @param {Function} props.t - i18n translate 함수
  * @param {string} [props.variant="default"] - "default"(Chrono 카드) | "compact"(우측 패널 카드)
  */
-function CardEditor({ item, isSelected, onSelect, onUpdate, onDelete, t, variant = "default" }) {
-  const [isEditing, setIsEditing] = useState(false);
-  const data = item.node.data || {};
-  const entity = data.entity || (item.node.type === "evidence" ? "third_party" : item.node.type);
+function CardEditor({
+  item,
+  isEditing,
+  isSelected,
+  onSelect,
+  onStartEdit,
+  onFinishEdit,
+  onUpdate,
+  onDelete,
+  t,
+  variant = "default",
+}) {
+  const initialData = useMemo(() => ({ ...(item.node.data || {}) }), [item.node.id]);
+  const [draft, setDraft] = useState(initialData);
+  const lastSyncedDataRef = useRef(initialData);
   const isCompact = variant === "compact";
+
+  const entity = draft.entity || (item.node.type === "evidence" ? "third_party" : item.node.type);
+
+  /**
+   * [Flow: Step 1 (item.node.data가 실제로 변경되었는지 필드 비교)
+   *       -> Step 2 (읽기 모드일 때만 로컬 draft 동기화)
+   *       -> Step 3 (편집 중이면 사용자 입력 보존을 위해 동기화 중단)]
+   */
+  useEffect(() => {
+    if (isEditing) return;
+    const current = item.node.data || {};
+    const last = lastSyncedDataRef.current;
+    const changed =
+      current.label !== last.label ||
+      current.summary !== last.summary ||
+      current.date !== last.date ||
+      current.page !== last.page ||
+      current.entity !== last.entity;
+    if (!changed) return;
+    lastSyncedDataRef.current = { ...current };
+    setDraft({ ...current });
+  }, [item, isEditing]);
+
+  /**
+   * [Flow: Step 1 (필드 변경) -> Step 2 (로컬 draft 갱신)
+   *       -> Step 3 (상위 EdiscoveryTimelinePanel에 즉시 반영)]
+   */
+  const updateField = useCallback(
+    (field, value) => {
+      setDraft((prev) => {
+        const next = { ...prev, [field]: value };
+        onUpdate(item.node.id, { [field]: value });
+        return next;
+      });
+    },
+    [item.node.id, onUpdate]
+  );
 
   const handleStartEdit = (e) => {
     e.stopPropagation();
-    setIsEditing(true);
-    onSelect(item.node.id);
+    onStartEdit(item.node.id);
   };
 
   const handleDone = (e) => {
     e.stopPropagation();
-    setIsEditing(false);
+    onFinishEdit();
   };
 
   const handleDelete = (e) => {
@@ -586,22 +663,24 @@ function CardEditor({ item, isSelected, onSelect, onUpdate, onDelete, t, variant
     onDelete(item.node.id);
   };
 
+  const ringClass = isSelected || isEditing ? "ring-2 ring-primary bg-primary/5 rounded-lg" : "hover:bg-surface-container-high rounded-lg";
+
   // [Flow: 편집 모드 -> label/summary/date/entity 입력 + 삭제/완료 버튼]
   if (isEditing) {
     return (
       <div
-        className={`flex flex-col transition-all ${
-          isSelected
-            ? "ring-2 ring-primary bg-primary/5 rounded-lg"
-            : "hover:bg-surface-container-high rounded-lg"
-        } ${isCompact ? "p-2 gap-2" : "min-h-[160px] p-1 gap-3"}`}
-        onClick={() => onSelect(item.node.id)}
+        className={`flex flex-col transition-all ${ringClass} ${isCompact ? "p-2 gap-2" : "min-h-[160px] p-1 gap-3"}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect?.(item.node.id, false);
+        }}
       >
         <div className="flex flex-col gap-2">
           <div className="flex items-start justify-between gap-1">
             <input
-              value={data.label || ""}
-              onChange={(e) => onUpdate(item.node.id, { label: e.target.value })}
+              autoFocus
+              value={draft.label || ""}
+              onChange={(e) => updateField("label", e.target.value)}
               className={`w-full font-medium text-on-surface bg-transparent border-b border-outline-variant focus:border-primary focus:outline-none px-1 py-0.5 ${
                 isCompact ? "text-xs" : "text-sm"
               }`}
@@ -618,8 +697,8 @@ function CardEditor({ item, isSelected, onSelect, onUpdate, onDelete, t, variant
             </button>
           </div>
           <textarea
-            value={data.summary || ""}
-            onChange={(e) => onUpdate(item.node.id, { summary: e.target.value })}
+            value={draft.summary || ""}
+            onChange={(e) => updateField("summary", e.target.value)}
             rows={isCompact ? 2 : 3}
             className={`w-full text-on-surface-variant bg-transparent border border-outline-variant rounded p-1.5 focus:border-primary focus:outline-none resize-none ${
               isCompact ? "text-xs" : "text-sm"
@@ -630,14 +709,14 @@ function CardEditor({ item, isSelected, onSelect, onUpdate, onDelete, t, variant
           <div className="flex flex-wrap gap-2">
             <input
               type="date"
-              value={data.date || ""}
-              onChange={(e) => onUpdate(item.node.id, { date: e.target.value })}
+              value={draft.date || ""}
+              onChange={(e) => updateField("date", e.target.value)}
               className="text-xs bg-surface-container-high rounded px-2 py-1 border border-outline-variant focus:border-primary focus:outline-none"
               onClick={(e) => e.stopPropagation()}
             />
             <select
               value={entity}
-              onChange={(e) => onUpdate(item.node.id, { entity: e.target.value })}
+              onChange={(e) => updateField("entity", e.target.value)}
               className="text-xs bg-surface-container-high rounded px-2 py-1 border border-outline-variant focus:border-primary focus:outline-none"
               onClick={(e) => e.stopPropagation()}
             >
@@ -662,15 +741,13 @@ function CardEditor({ item, isSelected, onSelect, onUpdate, onDelete, t, variant
     );
   }
 
-  // [Flow: 읽기 모드 -> label 노출 + (default) summary/date/entity badge + 수정 버튼]
+  // [Flow: 읽기 모드 -> label 노출 + summary/date/entity badge + 수정 버튼]
   return (
     <div
-      className={`flex flex-col justify-between transition-all ${
-        isSelected
-          ? "ring-2 ring-primary bg-primary/5 rounded-lg"
-          : "hover:bg-surface-container-high rounded-lg"
-      } ${isCompact ? "p-2 gap-2" : "min-h-[160px] p-1 gap-3"}`}
-      onClick={() => onSelect(item.node.id)}
+      className={`flex flex-col justify-between transition-all ${ringClass} ${
+        isCompact ? "p-2 gap-2" : "min-h-[160px] p-1 gap-3"
+      }`}
+      onClick={() => onSelect(item.node.id, true)}
     >
       <div className="flex flex-col gap-2">
         <div className="flex items-start justify-between gap-1">
@@ -679,19 +756,19 @@ function CardEditor({ item, isSelected, onSelect, onUpdate, onDelete, t, variant
               isCompact ? "text-xs" : "text-sm"
             }`}
           >
-            {data.label || item.id}
+            {draft.label || item.id}
           </div>
         </div>
-        {!isCompact && data.summary && (
+        {!isCompact && draft.summary && (
           <div className={`text-on-surface-variant line-clamp-2 ${isCompact ? "text-xs" : "text-sm"}`}>
-            {data.summary}
+            {draft.summary}
           </div>
         )}
         {!isCompact && (
           <div className="flex flex-wrap gap-2 text-xs">
-            {data.date && (
+            {draft.date && (
               <span className="px-2 py-1 rounded bg-surface-container-high text-on-surface">
-                {data.date}
+                {draft.date}
               </span>
             )}
             <span

@@ -405,13 +405,15 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
     onRunningCountChangeRef.current?.(streamingIds.size);
   }, [streamingIds.size]);
 
-  // [Flow: 마운트해야 할 세션 ID 목록 = 스트리밍 중인 세션 + 현재 선택된 세션]
-  // 스트리밍 중이 아닌 비활성 세션은 언마운트하여 메모리를 절약한다.
+  // [Flow: 마운트해야 할 세션 ID 목록 = 스트리밍 중인 세션 + 현재 열린 모달의 선택된 세션]
+  // 모달이 닫혀 있고 스트리밍 중이 아닌 현재 세션은 언마운트한다.
+  // ChatSession은 invisible 상태에서도 마운트되면 useChat의 초기 messages가
+  // 빈 배열로 고정되므로, 이전 대화가 복원되지 않는 문제를 방지한다.
   const sessionIds = useMemo(() => {
     const ids = new Set(streamingIds);
-    if (currentId) ids.add(currentId);
+    if (isOpen && currentId) ids.add(currentId);
     return [...ids];
-  }, [streamingIds, currentId]);
+  }, [streamingIds, isOpen, currentId]);
 
   // [Flow: 모달 열림 시 현재 대화 보장(없으면 최근 대화 선택, 최근 대화 없으면 새로 생성)
   //       — DB 목록 로딩 중에는 새 대화 생성을 지연하여 premature 생성 방지

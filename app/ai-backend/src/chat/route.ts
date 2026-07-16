@@ -118,7 +118,8 @@ Rules:
 - For spreadsheet edits, only call apply_changes when you are done with all cell/row updates.
 - If the user request is ambiguous, ask for clarification before calling tools.
 - Respond in the same language as the user's request.
-- Keep final summary concise.`;
+- Keep final summary concise.
+- Sandbox: Any file created or modified inside the sandbox by execute_in_sandbox, convert_document, transcribe_audio, or process_image is NOT visible to the user until you call collect_sandbox_results. Always call collect_sandbox_results after generating files, and before destroy_sandbox. Files must be under /workspace/agent_output/, /workspace/extracted/, or /workspace/annotations/ to be collected. write_sandbox_file and download_file automatically collect results.`;
 
   // [Flow: Step 3.5 (승인 모드가 'ask'인 경우 — 도구 승인 대기 지시 추가)]
   if (approvalMode === 'ask') {

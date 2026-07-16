@@ -467,14 +467,16 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
               cardDetailsColor: "#374151",
               titleColor: "#6b7280",
             }}
-            classNames={{
-              card: "ediscovery-timeline-card",
-              cardTitle: "ediscovery-timeline-card-title",
-              cardSubTitle: "ediscovery-timeline-card-subtitle",
-              cardText: "ediscovery-timeline-card-text",
-              title: "ediscovery-timeline-title",
-              timelinePoint: "ediscovery-timeline-point",
-              timelineTrack: "ediscovery-timeline-track",
+            style={{
+              classNames: {
+                card: "ediscovery-timeline-card",
+                cardTitle: "ediscovery-timeline-card-title",
+                cardSubTitle: "ediscovery-timeline-card-subtitle",
+                cardText: "ediscovery-timeline-card-text",
+                title: "ediscovery-timeline-title",
+                timelinePoint: "ediscovery-timeline-point",
+                timelineTrack: "ediscovery-timeline-track",
+              },
             }}
           >
             {chronoItems.map((item) => (

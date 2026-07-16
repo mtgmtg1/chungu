@@ -11,6 +11,17 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key) => key, i18n: { language: "ko" } }),
 }));
 
+vi.mock("../PdfViewer.jsx", () => ({
+  default: function MockPdfViewer({ url, page }) {
+    return (
+      <div data-testid="pdf-viewer">
+        <span>{url}</span>
+        <span>p.{page}</span>
+      </div>
+    );
+  },
+}));
+
 /**
  * 테스트용 e-Discovery 노드를 생성한다.
  *
@@ -30,7 +41,7 @@ function baseNode(id, type, page, label, summary) {
 }
 
 describe("EdiscoveryDetailCard", () => {
-  it("노드 라벨, 페이지, 요약, 마크다운 원문을 렌더링한다", () => {
+  it("노드 라벨, 페이지, 마크다운 원문을 렌더링한다", () => {
     const node = baseNode("node-1", "issue", 3, "쟁점 1", "요약 텍스트입니다.");
     const sourceFiles = [
       {
@@ -53,9 +64,26 @@ describe("EdiscoveryDetailCard", () => {
 
     expect(container.textContent).toContain("쟁점 1");
     expect(container.textContent).toContain("p.3");
-    expect(container.textContent).toContain("요약 텍스트입니다.");
+    // result_markdown이 있으면 요약 블록은 중복 표시되지 않는다.
+    expect(container.textContent).not.toContain("요약 텍스트입니다.");
     expect(container.textContent).toContain("원문 제목");
     expect(container.textContent).toContain("원문 내용입니다.");
+  });
+
+  it("result_markdown이 없으면 요약을 별도로 렌더링한다", () => {
+    const node = baseNode("node-4", "issue", 4, "쟁점 2", "요약만 있는 경우");
+
+    const { container } = render(
+      <EdiscoveryDetailCard
+        node={node}
+        sourceFiles={[]}
+        onClose={() => {}}
+        onViewSource={() => {}}
+      />
+    );
+
+    expect(container.textContent).toContain("쟁점 2");
+    expect(container.textContent).toContain("요약만 있는 경우");
   });
 
   it("닫기 버튼 클릭 시 onClose를 호출한다", () => {

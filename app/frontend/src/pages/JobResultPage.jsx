@@ -689,6 +689,12 @@ export default function JobResultPage() {
               const idx = sourceFiles.findIndex((f) => f.name === sourceFileName);
               if (idx >= 0) fileIndex = idx;
             }
+            // 왼쪽 원본 패널이 접혀 있으면 펼친다. 모바일이면 Source 탭으로 전환.
+            if (isMobile) {
+              setMobileViewTab("source");
+            } else {
+              sourcePanelHandle?.expand();
+            }
             // PdfViewer의 page prop과 scrollToPage가 모두 동기화되도록 currentPage도 갱신한다.
             setCurrentPage(page);
             sourcePanelApiRef.current.scrollToPage({ fileIndex, pageNum: page });

@@ -96,18 +96,9 @@ export default function TimelinePreviewCard({ node, previewData }) {
     );
   }
 
-  // [Flow: PDF/문서 파일은 iframe + #page 앵커로 페이지 단위 미리보기]
+  // [Flow: PDF/문서 파일은 iframe 미리보기 대신 썸네일 + 요약 카드로 표시
+  //       -> iframe으로 PDF를 로드하면 브라우저가 Content-Disposition에 따라 자동 다운로드될 수 있음]
   if (type === "pdf" || type === "docx" || type === "hwp") {
-    if (!url) {
-      return (
-        <PreviewPlaceholder
-          icon={<FileText size={24} className="text-tertiary" />}
-          label={name || t("page:result.ediscoveryDocument")}
-          summary={summary}
-        />
-      );
-    }
-    const src = type === "pdf" ? `${url}#page=${page}` : url;
     return (
       <div className="flex flex-col h-full w-full bg-surface-container-lowest rounded border border-outline-variant overflow-hidden">
         <div className="flex items-center gap-1.5 px-2 py-1 border-b border-outline-variant bg-surface-container-low text-[10px] text-on-surface-variant">
@@ -115,12 +106,14 @@ export default function TimelinePreviewCard({ node, previewData }) {
           <span className="truncate">{name || t("page:result.ediscoveryDocument")}</span>
           <span className="ml-auto text-[10px]">p.{page}</span>
         </div>
-        <iframe
-          src={src}
-          title={name}
-          className="flex-1 w-full min-h-0 bg-white"
-          loading="lazy"
-        />
+        <div className="flex-1 min-h-0 flex items-center justify-center p-4">
+          <img
+            src="/assets/pdf-thumbnail.svg"
+            alt={name || t("page:result.ediscoveryDocument")}
+            className="max-h-full max-w-full object-contain opacity-70"
+            loading="lazy"
+          />
+        </div>
       </div>
     );
   }

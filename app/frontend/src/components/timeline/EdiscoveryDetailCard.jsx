@@ -11,6 +11,8 @@ import { useTranslation } from "react-i18next";
 import { marked } from "marked";
 import { X, FileText, ExternalLink } from "lucide-react";
 import TimelinePreviewCard from "./TimelinePreviewCard.jsx";
+// [Flow: PdfViewer는 내부적으로 @embedpdf/react-pdf-viewer를 동적 import하므로 정적으로 불러도 메인 번들에 포함되지 않음]
+import PdfViewer from "../PdfViewer.jsx";
 
 /** 기본 좌우 비율 — 왼쪽 미리보기 45%, 오른쪽 원문 55%. */
 const DEFAULT_LEFT_RATIO = 0.45;
@@ -82,6 +84,15 @@ export default function EdiscoveryDetailCard({ node, sourceFiles, onClose, onVie
   const entity = data.entity || (node?.type === "evidence" ? "third_party" : node?.type);
   const page = getNodePage(node);
   const sourceFile = useMemo(() => findSourceFile(node, sourceFiles), [node, sourceFiles]);
+
+  /**
+   * [Flow: Step 1 (sourceFile에서 preview_url/url 선택)
+   *       -> Step 2 (HTTP를 HTTPS로 강제 변환하여 Mixed Content 방지)]
+   */
+  const sourceFileUrl = useMemo(() => {
+    if (!sourceFile) return "";
+    return (sourceFile.preview_url || sourceFile.url || "").replace(/^http:/, "https:");
+  }, [sourceFile]);
 
   /**
    * [Flow: Step 1 (sourceFile.result_markdown 또는 node.summary 수신)
@@ -197,13 +208,19 @@ export default function EdiscoveryDetailCard({ node, sourceFiles, onClose, onVie
 
         {/* 본문 — 좌우 분할 */}
         <div className="flex-1 min-h-0 flex relative">
-          {/* 왼쪽: 미리보기 */}
+          {/* 왼쪽: 미리보기 — PDF이면 EmbedPDF PdfViewer, 그 외에는 TimelinePreviewCard */}
           <div
             className="h-full overflow-hidden flex flex-col border-r border-outline-variant"
             style={{ width: `calc(${leftRatio * 100}% - ${HANDLE_WIDTH / 2}px)` }}
           >
             <div className="flex-1 min-h-0 p-3">
-              <TimelinePreviewCard node={node} previewData={previewData} />
+              {sourceFile?.type === "pdf" && sourceFileUrl ? (
+                <div className="h-full w-full rounded border border-outline-variant overflow-hidden bg-surface-container-lowest">
+                  <PdfViewer url={sourceFileUrl} page={page} />
+                </div>
+              ) : (
+                <TimelinePreviewCard node={node} previewData={previewData} />
+              )}
             </div>
           </div>
 
@@ -229,7 +246,9 @@ export default function EdiscoveryDetailCard({ node, sourceFiles, onClose, onVie
               <h4 className="text-xs font-semibold text-on-surface-variant uppercase tracking-wider mb-3">
                 {t("page:result.ediscoveryDetailTitle")}
               </h4>
-              {summary && (
+              {/* 요약 블록은 result_markdown 원문이 없을 때만 별도로 표시
+                  -> result_markdown이 있으면 요약 내용이 이미 원문에 포함되므로 중복 방지 */}
+              {summary && !sourceFile?.result_markdown && (
                 <div className="mb-4 p-3 bg-surface rounded-lg border border-outline-variant">
                   <p className="text-sm text-on-surface leading-relaxed">{summary}</p>
                 </div>

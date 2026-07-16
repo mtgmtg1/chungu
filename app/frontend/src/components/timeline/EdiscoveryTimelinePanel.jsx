@@ -132,9 +132,11 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
 
   const [metrics, setMetrics] = useState({
     total_docs: 0,
+    total_chunks: 0,
     processed_chunks: 0,
     threshold: 0,
     anomalies_detected: 0,
+    stage: "",
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -158,10 +160,10 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
     const nodes = graph?.nodes || [];
     setDraftNodes(nodes);
     if (!nodes.length) {
-      setMetrics({ total_docs: 0, processed_chunks: 0, threshold: 0, anomalies_detected: 0 });
+      setMetrics({ total_docs: 0, total_chunks: 0, processed_chunks: 0, threshold: 0, anomalies_detected: 0, stage: "" });
       return;
     }
-    setMetrics(job?.ediscovery_metrics || { total_docs: 0, processed_chunks: 0, threshold: 0, anomalies_detected: 0 });
+    setMetrics(job?.ediscovery_metrics || { total_docs: 0, total_chunks: 0, processed_chunks: 0, threshold: 0, anomalies_detected: 0, stage: "" });
   }, [job?.ediscovery_graphs, job?.ediscovery_metrics]);
 
   useEffect(() => {
@@ -213,7 +215,7 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
         if (status.ediscovery_status === "done") {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
-          setMetrics(status.ediscovery_metrics || { total_docs: 0, processed_chunks: 0, threshold: 0, anomalies_detected: 0 });
+          setMetrics(status.ediscovery_metrics || { total_docs: 0, total_chunks: 0, processed_chunks: 0, threshold: 0, anomalies_detected: 0, stage: "" });
           setLoading(false);
         } else if (status.ediscovery_status === "error") {
           if (pollRef.current) clearInterval(pollRef.current);
@@ -236,7 +238,7 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
 
   useEffect(() => {
     if (job?.ediscovery_status === "done" && job?.ediscovery_graphs?.nodes?.length > 0) {
-      setMetrics(job.ediscovery_metrics || { total_docs: 0, processed_chunks: 0, threshold: 0, anomalies_detected: 0 });
+      setMetrics(job.ediscovery_metrics || { total_docs: 0, total_chunks: 0, processed_chunks: 0, threshold: 0, anomalies_detected: 0, stage: "" });
       return;
     }
     if (job?.ediscovery_status === "processing") {
@@ -244,6 +246,31 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job?.ediscovery_status, job?.ediscovery_graphs, job?.ediscovery_metrics, jobId]);
+
+  /**
+   * [Flow: Step 1 (metrics.processed_chunks / metrics.total_chunks) -> Step 2 (0~100%로 clamp)
+   *       -> Step 3 (정수로 반올림)]
+   */
+  const extractionProgress = useMemo(() => {
+    const total = typeof metrics.total_chunks === "number" ? metrics.total_chunks : 0;
+    const processed = typeof metrics.processed_chunks === "number" ? metrics.processed_chunks : 0;
+    if (total <= 0) return 0;
+    return Math.min(100, Math.max(0, Math.round((processed / total) * 100)));
+  }, [metrics.total_chunks, metrics.processed_chunks]);
+
+  /**
+   * [Flow: Step 1 (metrics.stage 확인) -> Step 2 (i18n 키 매핑) -> Step 3 (번역 반환)]
+   */
+  const stageLabel = useMemo(() => {
+    const stageKeyMap = {
+      preparing: "ediscoveryStagePreparing",
+      extracting: "ediscoveryStageExtracting",
+      analyzing: "ediscoveryStageAnalyzing",
+      assembling: "ediscoveryStageAssembling",
+    };
+    const key = stageKeyMap[metrics.stage] || "ediscoveryStagePreparing";
+    return t(`page:result.${key}`);
+  }, [metrics.stage, t]);
 
   const handleSelectNode = useCallback((nodeId) => {
     setSelectedNodeId((prev) => (prev === nodeId ? null : nodeId));
@@ -469,11 +496,29 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
       )}
       </div>
 
-      {/* 로딩 오버레이 */}
+      {/* 로딩 오버레이 + 진행률 */}
       {loading && (
-        <div className="absolute inset-0 z-40 bg-surface/80 flex flex-col items-center justify-center gap-3" data-oid="ediscovery-loading">
+        <div className="absolute inset-0 z-40 bg-surface/80 flex flex-col items-center justify-center gap-4 px-6" data-oid="ediscovery-loading">
           <Loader2 size={28} className="animate-spin text-primary" />
-          <p className="text-sm text-on-surface-variant">{t("page:result.ediscoveryAnalyzing")}</p>
+          <div className="w-full max-w-xs flex flex-col gap-2">
+            <div className="flex items-center justify-between text-xs text-on-surface-variant">
+              <span>{stageLabel}</span>
+              <span>{extractionProgress}%</span>
+            </div>
+            <div className="w-full h-2 bg-surface-container-high rounded-full overflow-hidden">
+              <div
+                className="h-full bg-primary transition-all duration-300 ease-out"
+                style={{ width: `${extractionProgress}%` }}
+                data-oid="ediscovery-progress-bar"
+              />
+            </div>
+            <p className="text-xs text-on-surface-variant text-center">
+              {t("page:result.ediscoveryProgress", {
+                processed: metrics.processed_chunks || 0,
+                total: metrics.total_chunks || metrics.total_docs || 0,
+              })}
+            </p>
+          </div>
         </div>
       )}
 

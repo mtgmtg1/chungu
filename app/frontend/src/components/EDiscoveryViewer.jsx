@@ -6,7 +6,7 @@
 // e-Discovery GraphRAG 결과를 탭으로 전환하며 보여주는 뷰어.
 // 상단에 재분석 버튼을 두고, Timeline 탭은 Chrono 기본 UI를 사용한다.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CalendarDays, Loader2, RefreshCw, X } from "lucide-react";
 import EdiscoveryTimelinePanel from "./timeline/EdiscoveryTimelinePanel.jsx";
@@ -38,6 +38,14 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, onJobRefresh
   const [context, setContext] = useState(job?.ediscovery_context || "");
   const [reanalyzeOpen, setReanalyzeOpen] = useState(false);
   const [sourceFiles, setSourceFiles] = useState([]);
+  const [metrics, setMetrics] = useState({
+    total_docs: 0,
+    total_chunks: 0,
+    processed_chunks: 0,
+    threshold: 0,
+    anomalies_detected: 0,
+    stage: "",
+  });
 
   const pollRef = useRef(null);
   const pollStartRef = useRef(0);
@@ -48,6 +56,22 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, onJobRefresh
   useEffect(() => {
     setContext(job?.ediscovery_context || "");
   }, [job?.ediscovery_context]);
+
+  /**
+   * [Flow: Step 1 (job.ediscovery_metrics 변경 감지) -> Step 2 (metrics 상태 동기화)]
+   */
+  useEffect(() => {
+    setMetrics(
+      job?.ediscovery_metrics || {
+        total_docs: 0,
+        total_chunks: 0,
+        processed_chunks: 0,
+        threshold: 0,
+        anomalies_detected: 0,
+        stage: "",
+      }
+    );
+  }, [job?.ediscovery_metrics]);
 
   /**
    * [Flow: Step 1 (jobId 마운트/변경) -> Step 2 (preview API로 source_files 로드)
@@ -101,6 +125,16 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, onJobRefresh
       try {
         const status = await api.getEdiscovery(jobId);
         await onJobRefresh?.();
+        setMetrics(
+          status.ediscovery_metrics || {
+            total_docs: 0,
+            total_chunks: 0,
+            processed_chunks: 0,
+            threshold: 0,
+            anomalies_detected: 0,
+            stage: "",
+          }
+        );
         if (status.ediscovery_status === "done") {
           stopPolling();
           setLoading(false);
@@ -159,6 +193,31 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, onJobRefresh
     };
   }, [job?.ediscovery_status, startPolling, stopPolling]);
 
+  /**
+   * [Flow: Step 1 (metrics.processed_chunks / metrics.total_chunks) -> Step 2 (0~100%로 clamp)
+   *       -> Step 3 (정수로 반올림)]
+   */
+  const extractionProgress = useMemo(() => {
+    const total = typeof metrics.total_chunks === "number" ? metrics.total_chunks : 0;
+    const processed = typeof metrics.processed_chunks === "number" ? metrics.processed_chunks : 0;
+    if (total <= 0) return 0;
+    return Math.min(100, Math.max(0, Math.round((processed / total) * 100)));
+  }, [metrics.total_chunks, metrics.processed_chunks]);
+
+  /**
+   * [Flow: Step 1 (metrics.stage 확인) -> Step 2 (i18n 키 매핑) -> Step 3 (번역 반환)]
+   */
+  const stageLabel = useMemo(() => {
+    const stageKeyMap = {
+      preparing: "ediscoveryStagePreparing",
+      extracting: "ediscoveryStageExtracting",
+      analyzing: "ediscoveryStageAnalyzing",
+      assembling: "ediscoveryStageAssembling",
+    };
+    const key = stageKeyMap[metrics.stage] || "ediscoveryStagePreparing";
+    return t(`page:result.${key}`);
+  }, [metrics.stage, t]);
+
   return (
     <div className="h-full flex flex-col" data-oid="ediscovery-viewer">
       {/* 헤더 */}
@@ -174,11 +233,25 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, onJobRefresh
           </span>
         )}
 
+        {/* 진행률 표시 — 분석 중일 때 헤더에 노출 */}
+        {loading && (
+          <div className="hidden md:flex items-center gap-2 ml-auto mr-2" data-oid="ediscovery-header-progress">
+            <span className="text-xs text-on-surface-variant">{stageLabel}</span>
+            <div className="w-24 h-1.5 bg-surface-container-high rounded-full overflow-hidden">
+              <div
+                className="h-full bg-primary transition-all duration-300 ease-out"
+                style={{ width: `${extractionProgress}%` }}
+              />
+            </div>
+            <span className="text-xs text-on-surface-variant w-8 text-right">{extractionProgress}%</span>
+          </div>
+        )}
+
         {/* 재분석 버튼 */}
         <button
           onClick={() => setReanalyzeOpen(true)}
           disabled={loading}
-          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white text-xs font-medium rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white text-xs font-medium rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
           data-oid="ediscovery-reanalyze-btn"
         >
           {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}

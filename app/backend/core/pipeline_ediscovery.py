@@ -9,8 +9,11 @@
 import json
 import logging
 import re
+import threading
+import time
 import traceback
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,6 +49,69 @@ def _spend_agent_step_for_call(user_id: str | uuid.UUID | None, description: str
         logger.warning(f"[ediscovery] step 크레딧 차감 실패 user={user_id} desc={description}: {e}")
     finally:
         db.close()
+
+
+# --- 진행률 추적 유틸리티 -----------------------------------------------------
+# [Flow: Step 1 (job_id로 독립 DB 세션 열기) -> Step 2 (processing 상태 확인)
+#       -> Step 3 (ediscovery_metrics에 progress 병합) -> Step 4 (throttle 기준으로 commit)]
+# 병렬 추출 중에도 프론트엔드 폴링으로 확인할 수 있도록 중간 진행률을 DB에 저장한다.
+# 스레드 안전을 위해 마지막 commit 시각을 전역 lock으로 관리하며, 0.5초당 최대 1회 commit한다.
+_progress_last_commit: dict[str, float] = {}
+_progress_lock = threading.Lock()
+
+
+def _update_progress(
+    job_id: str,
+    total_chunks: int,
+    processed_chunks: int,
+    stage: str,
+    total_docs: int | None = None,
+) -> None:
+    """[Flow: Step 1 (DB 세션 생성) -> Step 2 (Job 조회) -> Step 3 (processing 상태 확인)
+          -> Step 4 (throttle 초과 시 metrics 갱신 + commit) -> Step 5 (세션 종료)]
+
+    e-Discovery 파이프라인의 중간 진행률을 jobs.ediscovery_metrics에 저장한다.
+    실패해도 파이프라인을 중단하지 않으며, processing 상태가 아니면 무시한다.
+
+    매개변수:
+        job_id: 현재 Job ID
+        total_chunks: 전체 청크 수
+        processed_chunks: 완료된 청크 수
+        stage: 현재 단계 (preparing | extracting | analyzing | assembling)
+        total_docs: 전체 페이지(문서) 수 (None이면 기존 값 유지)
+    """
+    now = time.time()
+    with _progress_lock:
+        last = _progress_last_commit.get(job_id, 0)
+        if now - last < 0.5:
+            return
+        _progress_last_commit[job_id] = now
+
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        if job is None or job.ediscovery_status != "processing":
+            return
+
+        metrics = job.ediscovery_metrics or {}
+        metrics.update({
+            "total_docs": total_docs if total_docs is not None else metrics.get("total_docs", 0),
+            "total_chunks": total_chunks,
+            "processed_chunks": processed_chunks,
+            "stage": stage,
+        })
+        job.ediscovery_metrics = metrics
+        db.commit()
+    except Exception as e:
+        logger.warning(f"[ediscovery] progress update 실패 job={job_id}: {e}")
+    finally:
+        db.close()
+
+
+def _clear_progress_state(job_id: str) -> None:
+    """[Flow: Step 1 (lock 획득) -> Step 2 (job_id에 해당하는 throttle 상태 제거)]"""
+    with _progress_lock:
+        _progress_last_commit.pop(job_id, None)
 
 
 # --- 튜닝 상수 ---------------------------------------------------------------
@@ -742,17 +808,20 @@ def extract_nodes_concurrent(
     context: str = "",
     user_id: str | uuid.UUID | None = None,
     user_language: str = "ko",
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[EdiscoveryNode]:
     """[Flow: Step 1 (ThreadPoolExecutor 생성) -> Step 2 (청크별 1 step 크레딧 차감 + vLLM 호출 병렬화)
-          -> Step 3 (결과 취합) -> Step 4 (노드 목록 반환)]
+          -> Step 3 (완료될 때마다 progress_callback 호출) -> Step 4 (결과 취합) -> Step 5 (노드 목록 반환)]
 
     청크별 vLLM 호출을 스레드 풀로 병렬화한다. 동시 호출 수는 MAX_LLM_WORKERS로 제한.
     각 청크의 LLM 호출 직전에 1 step 크레딧을 차감한다 (thread-safe).
+    progress_callback이 주어지면 각 청크 완료 시 (완료 수, 전체 수)를 전달한다.
     """
     if not chunks:
         return []
     max_workers = min(len(chunks), MAX_LLM_WORKERS)
     all_nodes: list[EdiscoveryNode] = []
+    completed = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(extract_nodes_from_chunk, chunk, endpoint, model, api_key, context, user_id, user_language): chunk
@@ -760,6 +829,9 @@ def extract_nodes_concurrent(
         }
         for future in as_completed(futures):
             all_nodes.extend(future.result())
+            completed += 1
+            if progress_callback:
+                progress_callback(completed, len(chunks))
     return all_nodes
 
 
@@ -1378,6 +1450,8 @@ def run(
         page_texts, page_meta = extract_page_texts(job)
         if not page_texts:
             raise ValueError("문서에서 텍스트를 추출할 수 없습니다 (텍스트 레이어/마크다운 모두 비어 있음)")
+        _clear_progress_state(job_id)
+        _update_progress(job_id, total_chunks=0, processed_chunks=0, stage="preparing", total_docs=len(page_texts))
 
         # Step 2a: 파라미터가 명시되지 않으면 LLM이 전체 문서 샘플을 보고 자동 추천
         auto_params = None
@@ -1405,6 +1479,7 @@ def run(
         if not chunks:
             raise ValueError("청킹 결과가 비어 있습니다 (텍스트가 너무 짧거나 page_range 불일치)")
         logger.info(f"[ediscovery] job={job_id} 청크 {len(chunks)}개 생성 (chunk_size={chunk_size})")
+        _update_progress(job_id, total_chunks=len(chunks), processed_chunks=0, stage="extracting", total_docs=len(page_texts))
 
         # Step 5: query 필터링 — 쿼리 용어를 포함한 청크만 처리
         if query and query.strip():
@@ -1419,9 +1494,19 @@ def run(
             else:
                 logger.warning(f"[ediscovery] job={job_id} query 용어와 일치하는 청크 없음, 전체 청크 사용")
 
-        # Step 6: 병렬 노드 추출
-        raw_nodes = extract_nodes_concurrent(chunks, endpoint, model, api_key, context=context, user_id=user_id, user_language=user_language)
+        # Step 6: 병렬 노드 추출 (각 청크 완료 시 progress를 DB에 저장)
+        total_docs = len(page_texts)
+
+        def _on_chunk_progress(completed: int, total: int) -> None:
+            _update_progress(job_id, total_chunks=total, processed_chunks=completed, stage="extracting", total_docs=total_docs)
+
+        raw_nodes = extract_nodes_concurrent(
+            chunks, endpoint, model, api_key,
+            context=context, user_id=user_id, user_language=user_language,
+            progress_callback=_on_chunk_progress,
+        )
         logger.info(f"[ediscovery] job={job_id} 원시 노드 {len(raw_nodes)}개 추출")
+        _update_progress(job_id, total_chunks=len(chunks), processed_chunks=len(chunks), stage="extracting", total_docs=total_docs)
 
         # Step 6b: 1차 추출이 0개면 폴백 추출 시도 (일지/명단 등 비소송 자료 대응)
         if not raw_nodes and chunks:
@@ -1429,9 +1514,11 @@ def run(
             raw_nodes = _extract_fallback_nodes(chunks, endpoint, model, api_key, context=context, user_id=user_id, user_language=user_language)
 
         # Step 7: 임계값 필터 + 2차 LLM 패스 모순 탐지 + 그래프 조립
+        _update_progress(job_id, total_chunks=len(chunks), processed_chunks=len(chunks), stage="analyzing", total_docs=total_docs)
         filtered = filter_nodes_by_threshold(raw_nodes, threshold)
         anomalies = detect_anomalies_concurrent(filtered, endpoint, model, api_key, context=context, user_id=user_id, user_language=user_language)
         logger.info(f"[ediscovery] job={job_id} 모순 쌍 {len(anomalies)}개 탐지")
+        _update_progress(job_id, total_chunks=len(chunks), processed_chunks=len(chunks), stage="assembling", total_docs=total_docs)
         graph = assemble_graph(filtered, anomalies)
         metrics = {
             "total_docs": len(page_texts),
@@ -1455,6 +1542,7 @@ def run(
         job.ediscovery_metrics = metrics
         job.ediscovery_refundable = False
         db.commit()
+        _clear_progress_state(job_id)
         return {"job_id": job_id, "status": "done", "metrics": metrics}
 
     except Exception as e:
@@ -1469,6 +1557,7 @@ def run(
                 "traceback": tb[:2000],
             }
             db.commit()
+        _clear_progress_state(job_id)
         return {"job_id": job_id, "status": "error", "error": str(e)}
     finally:
         db.close()

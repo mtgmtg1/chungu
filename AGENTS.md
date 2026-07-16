@@ -529,7 +529,7 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **자동 저장**: 결과 페이지 마크다운 에디터에 1초 debounce 자동 저장 적용; `lastMarkdownRef` 동기화로 피드백 및 콘텐츠 중복/리셋 문제 해결.
 - **AI 텍스트 생성**: Tiptap 에디터에 Novel의 `ai/react` `useCompletion` 패턴을 참고한 AI 텍스트 생성 기능 추가.
   - **백엔드**: `POST /api/v1/ai/generate` 스트리밍 엔드포인트 (`app/backend/api/v1/ai.py`), `app/backend/core/ai_client.py`에서 OpenAI-compatible vLLM/llama.cpp endpoint로 스트리밍 요청.
-  - **LLM**: 기존 `default_llm_endpoint` (Gemma-4 26B vLLM) 재사용; `app/backend/core/llm_utils.py`로 `chat_template_kwargs.enable_thinking=false` 공통 처리.
+  - **LLM**: 기존 `default_llm_endpoint` (Gemma-4 26B vLLM) 재사용; `app/backend/core/llm_utils.py`로 `chat_template_kwargs.enable_thinking=true`와 `thinking_token_budget=256` 공통 처리.
   - **프론트**: `app/frontend/src/components/AiMenu.jsx` — Improve, Fix grammar, Make shorter, Make longer, Continue writing, Custom command (zap) 기능 제공.
   - **UX**: 텍스트 선택 시 Tiptap `BubbleMenu`로 AI 메뉴를 표시하고, 툴바에도 AI 버튼을 유지; 선택하지 않은 상태에서도 버튼이 활성화되어 AI 기능을 바로 인지할 수 있도록 수정.
   - **i18n**: `page:components.ai.*` 번역 키를 `ko/page.json`, `en/page.json`, `ja/page.json`에 추가.

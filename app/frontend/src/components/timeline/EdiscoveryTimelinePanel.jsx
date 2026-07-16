@@ -613,7 +613,9 @@ function CardEditor({
   const lastSyncedDataRef = useRef(initialData);
   const isCompact = variant === "compact";
 
-  const entity = draft.entity || (item.node.type === "evidence" ? "third_party" : item.node.type);
+  const VALID_ENTITIES = ["plaintiff", "defendant", "third_party", "issue"];
+  const rawEntity = draft.entity || (item.node.type === "evidence" ? "third_party" : item.node.type);
+  const entity = VALID_ENTITIES.includes(rawEntity) ? rawEntity : "third_party";
 
   /**
    * [Flow: Step 1 (item.node.data가 실제로 변경되었는지 필드 비교)
@@ -676,6 +678,7 @@ function CardEditor({
           e.stopPropagation();
           onSelect?.(item.node.id, false);
         }}
+        data-oid={`card-editor-edit-${item.node.id}`}
       >
         <div className="flex flex-col gap-2">
           <div className="flex items-start justify-between gap-1">
@@ -736,7 +739,7 @@ function CardEditor({
             className="flex items-center gap-1 text-xs font-medium text-primary hover:bg-primary/10 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/50"
           >
             <Check size={14} />
-            {t("common:done")}
+            {t("common:status.done")}
           </button>
         </div>
       </div>
@@ -750,6 +753,7 @@ function CardEditor({
         isCompact ? "p-2 gap-2" : "min-h-[160px] p-1 gap-3"
       }`}
       onClick={() => onSelect(item.node.id, true)}
+      data-oid={`card-editor-read-${item.node.id}`}
     >
       <div className="flex flex-col gap-2">
         <div className="flex items-start justify-between gap-1">

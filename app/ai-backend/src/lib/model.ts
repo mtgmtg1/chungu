@@ -11,8 +11,8 @@
 //   - thinking_token_budget는 chat_template_kwargs가 아닌 요청 바디 최상위 필드임
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 
-// [Flow: thinking budget — Gemma-4 모델의 사고 토큰 예산 (기본값 512, 환경변수로 오버라이드 가능)]
-const DEFAULT_THINKING_BUDGET = 512;
+// [Flow: thinking budget — Gemma-4 모델의 사고 토큰 예산 (기본값 256, 환경변수로 오버라이드 가능)]
+const DEFAULT_THINKING_BUDGET = 256;
 
 /**
  * [Flow: Step 1 (요청 바디 수신) -> Step 2 (최상위에 thinking_token_budget 주입)

@@ -1,6 +1,6 @@
 // Temporary reproduction test for timeline card editing and layout issues.
 import { describe, it, expect, vi, beforeAll } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import EdiscoveryTimelinePanel from "./EdiscoveryTimelinePanel.jsx";
 
 beforeAll(() => {
@@ -88,5 +88,113 @@ describe("EdiscoveryTimelinePanel reproduction", () => {
     await waitFor(() => {
       expect(input).toHaveValue("Updated one");
     });
+  });
+
+  it("완료를 눌러 수정한 이후에도 카드가 처음과 동일하게 보여야 한다", async () => {
+    const handleNodeClick = vi.fn();
+    const { container } = render(
+      <EdiscoveryTimelinePanel
+        jobId="job-1"
+        job={job}
+        sourceFiles={sourceFiles}
+        onNodeClick={handleNodeClick}
+      />
+    );
+
+    // Chrono 렌더링 대기
+    await waitFor(() => {
+      expect(container.querySelector('[data-oid="card-editor-read-node-1"]')).toBeInTheDocument();
+    });
+
+    const initialCard = container.querySelector('[data-oid="card-editor-read-node-1"]');
+    const initialQueries = within(initialCard);
+
+    // 초기 상태 기록
+    expect(initialQueries.getByText("Event one")).toBeInTheDocument();
+    expect(initialQueries.getByText("First summary")).toBeInTheDocument();
+    expect(initialQueries.getByText("2024-01-01")).toBeInTheDocument();
+    expect(initialQueries.getByText("원고")).toBeInTheDocument();
+
+    // 첫 번째 카드 수정 버튼 클릭
+    const editBtn = initialQueries.getByText("수정");
+    fireEvent.click(editBtn);
+
+    // 편집 모드 진입 확인
+    const editCard = await waitFor(() =>
+      container.querySelector('[data-oid="card-editor-edit-node-1"]')
+    );
+    expect(editCard).toBeInTheDocument();
+
+    // 아무 변경 없이 완료 클릭
+    const editQueries = within(editCard);
+    const doneBtn = editQueries.getByText("완료");
+    fireEvent.click(doneBtn);
+
+    // 완료 후에도 초기 카드 내용이 그대로 보여야 함
+    const finalCard = await waitFor(() =>
+      container.querySelector('[data-oid="card-editor-read-node-1"]')
+    );
+    const finalQueries = within(finalCard);
+    expect(finalQueries.getByText("Event one")).toBeInTheDocument();
+    expect(finalQueries.getByText("First summary")).toBeInTheDocument();
+    expect(finalQueries.getByText("2024-01-01")).toBeInTheDocument();
+    expect(finalQueries.getByText("원고")).toBeInTheDocument();
+  });
+
+  it("entity가 없는 노드도 수정 후 일관된 entity 뱃지를 보여야 한다", async () => {
+    const jobWithMissingEntity = {
+      ...job,
+      ediscovery_graphs: {
+        ...job.ediscovery_graphs,
+        nodes: [
+          {
+            id: "node-3",
+            type: "event",
+            data: {
+              label: "Event three",
+              summary: "Third summary",
+              date: "2024-01-03",
+              page: 3,
+            },
+          },
+        ],
+      },
+    };
+
+    const handleNodeClick = vi.fn();
+    const { container } = render(
+      <EdiscoveryTimelinePanel
+        jobId="job-1"
+        job={jobWithMissingEntity}
+        sourceFiles={sourceFiles}
+        onNodeClick={handleNodeClick}
+      />
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-oid="card-editor-read-node-3"]')).toBeInTheDocument();
+    });
+
+    const initialCard = container.querySelector('[data-oid="card-editor-read-node-3"]');
+    const initialQueries = within(initialCard);
+    expect(initialQueries.getByText("Event three")).toBeInTheDocument();
+    expect(initialQueries.getByText("제3자")).toBeInTheDocument();
+
+    const editBtn = initialQueries.getByText("수정");
+    fireEvent.click(editBtn);
+
+    const editCard = await waitFor(() =>
+      container.querySelector('[data-oid="card-editor-edit-node-3"]')
+    );
+    const editQueries = within(editCard);
+    const doneBtn = editQueries.getByText("완료");
+    fireEvent.click(doneBtn);
+
+    const finalCard = await waitFor(() =>
+      container.querySelector('[data-oid="card-editor-read-node-3"]')
+    );
+    const finalQueries = within(finalCard);
+    expect(finalQueries.getByText("Event three")).toBeInTheDocument();
+    expect(finalQueries.getByText("제3자")).toBeInTheDocument();
   });
 });

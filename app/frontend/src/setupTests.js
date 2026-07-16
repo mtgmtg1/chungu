@@ -9,6 +9,9 @@ import { initReactI18next } from "react-i18next";
 import koPage from "./locales/ko/page.json";
 import enPage from "./locales/en/page.json";
 import jaPage from "./locales/ja/page.json";
+import koCommon from "./locales/ko/common.json";
+import enCommon from "./locales/en/common.json";
+import jaCommon from "./locales/ja/common.json";
 
 // [Flow: Vitest jsdom 환경에 Supabase/환경 변수 기본값 주입 -> api.js 초기화 오류 방지]
 // 실제 서버 호출은 테스트에서 모킹하지 않으므로 더미 값으로 충분하다.
@@ -33,10 +36,12 @@ Object.defineProperty(window, "matchMedia", {
 i18n.use(initReactI18next).init({
   lng: "ko",
   fallbackLng: "ko",
+  defaultNS: "common",
+  ns: ["common", "page"],
   resources: {
-    ko: { page: koPage },
-    en: { page: enPage },
-    ja: { page: jaPage },
+    ko: { common: koCommon, page: koPage },
+    en: { common: enCommon, page: enPage },
+    ja: { common: jaCommon, page: jaPage },
   },
   interpolation: { escapeValue: false },
 });

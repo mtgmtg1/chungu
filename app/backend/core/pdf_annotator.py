@@ -143,6 +143,7 @@ def build_embedpdf_annotations(
         page_width = visual.x1 - visual.x0
         page_height = visual.height
         page_x0 = visual.x0
+        page_y0 = visual.y0
         element_bboxes = (page_elements_bboxes or {}).get(page_no, [])
         # 같은 페이지에서 이미 배치한 callout 텍스트 박스 — 후속 callout이 겹치지 않도록 장애물에 추가
         placed_callout_bboxes: list[tuple[float, float, float, float]] = []
@@ -153,7 +154,7 @@ def build_embedpdf_annotations(
 
             # 하이라이트 주석 생성 (enable_highlight일 때)
             if enable_highlight:
-                rect_ep = _rect_to_embedpdf_rect(x0, y0, x1, y1, page_height, page_x0)
+                rect_ep = _rect_to_embedpdf_rect(x0, y0, x1, y1, page_height, page_x0, page_y0)
                 annotations.append({
                     "annotation": {
                         "id": f"{base_id}-highlight",
@@ -181,6 +182,7 @@ def build_embedpdf_annotations(
                     page_width=page_width,
                     page_height=page_height,
                     page_x0=page_x0,
+                    page_y0=page_y0,
                     base_id=f"{base_id}-callout",
                     page_index=page_no - 1,
                 )
@@ -200,7 +202,7 @@ def build_embedpdf_annotations(
                             "height": rect_dev["size"]["height"] - rd["top"] - rd["bottom"],
                         },
                     }
-                    placed_callout_bboxes.append(_device_rect_to_pdf(tb_dev, page_height, page_x0))
+                    placed_callout_bboxes.append(_device_rect_to_pdf(tb_dev, page_height, page_x0, page_y0))
 
     return annotations
 
@@ -214,6 +216,7 @@ def _build_callout_annotation(
     page_width: float,
     page_height: float,
     page_x0: float,
+    page_y0: float,
     base_id: str,
     page_index: int,
 ) -> dict | None:
@@ -225,6 +228,7 @@ def _build_callout_annotation(
     텍스트 박스로 이어지는 화살표 리더 라인을 계산한다.
 
     모든 좌표는 PDF user-space(원점 좌하단, y↑)로 계산한 뒤 마지막에 device-space로 변환한다.
+    CropBox/MediaBox가 페이지 원점에서 어긋난 경우 page_x0, page_y0를 반영한다.
     """
     tb_w = CALLOUT_TEXTBOX_WIDTH_PT
     tb_h = _estimate_callout_textbox_height(comment)
@@ -240,6 +244,8 @@ def _build_callout_annotation(
         element_bboxes=element_bboxes,
         page_width=page_width,
         page_height=page_height,
+        page_x0=page_x0,
+        page_y0=page_y0,
         tb_w=tb_w,
         tb_h=tb_h,
     )
@@ -248,9 +254,9 @@ def _build_callout_annotation(
     callout_line_pdf = _compute_callout_line(target_bbox, textbox_pdf)
 
     # PDF user-space → device-space 변환 (원점 좌하단 → 좌상단, y축 flip)
-    textbox_dev = _pdf_rect_to_device(textbox_pdf, page_height, page_x0)
+    textbox_dev = _pdf_rect_to_device(textbox_pdf, page_height, page_x0, page_y0)
     callout_line_dev = [
-        _pdf_point_to_device(p[0], p[1], page_height, page_x0)
+        _pdf_point_to_device(p[0], p[1], page_height, page_x0, page_y0)
         for p in callout_line_pdf
     ]
 
@@ -290,6 +296,8 @@ def _find_free_callout_slot(
     element_bboxes: list[tuple[float, float, float, float]],
     page_width: float,
     page_height: float,
+    page_x0: float,
+    page_y0: float,
     tb_w: float,
     tb_h: float,
 ) -> tuple[float, float, float, float]:
@@ -299,6 +307,7 @@ def _find_free_callout_slot(
 
     페이지 내 기존 텍스트 요소와 대상 요소를 피해 callout 텍스트 박스를 배치할
     최적의 빈 영역을 찾는다. PDF user-space 좌표를 사용한다.
+    CropBox/MediaBox가 페이지 원점에서 어긋난 경우 page_x0, page_y0를 반영한다.
 
     Returns:
         (x0, y0, x1, y1) 텍스트 박스 영역 (PDF user-space)
@@ -307,19 +316,23 @@ def _find_free_callout_slot(
     tx_cx = (target_bbox[0] + target_bbox[2]) / 2
     tx_cy = (target_bbox[1] + target_bbox[3]) / 2
 
+    # CropBox/MediaBox 오프셋을 반영한 페이지 절대 좌표 범위
+    page_x1 = page_x0 + page_width
+    page_y1 = page_y0 + page_height
+
     # 후보 영역 8개: 4 모서리 + 4 외곽 여백 중심
     # (x0, y0, x1, y1) in PDF user-space (원점 좌하단, y↑)
     candidates: list[tuple[float, float, float, float]] = [
         # 4 모서리
-        (pad, page_height - tb_h - pad, pad + tb_w, page_height - pad),  # 좌상
-        (page_width - tb_w - pad, page_height - tb_h - pad, page_width - pad, page_height - pad),  # 우상
-        (pad, pad, pad + tb_w, pad + tb_h),  # 좌하
-        (page_width - tb_w - pad, pad, page_width - pad, pad + tb_h),  # 우하
+        (page_x0 + pad, page_y1 - tb_h - pad, page_x0 + pad + tb_w, page_y1 - pad),  # 좌상
+        (page_x1 - tb_w - pad, page_y1 - tb_h - pad, page_x1 - pad, page_y1 - pad),  # 우상
+        (page_x0 + pad, page_y0 + pad, page_x0 + pad + tb_w, page_y0 + pad + tb_h),  # 좌하
+        (page_x1 - tb_w - pad, page_y0 + pad, page_x1 - pad, page_y0 + pad + tb_h),  # 우하
         # 4 외곽 여백 중심
-        ((page_width - tb_w) / 2, page_height - tb_h - pad, (page_width + tb_w) / 2, page_height - pad),  # 상단 중앙
-        ((page_width - tb_w) / 2, pad, (page_width + tb_w) / 2, pad + tb_h),  # 하단 중앙
-        (pad, (page_height - tb_h) / 2, pad + tb_w, (page_height + tb_h) / 2),  # 좌측 중앙
-        (page_width - tb_w - pad, (page_height - tb_h) / 2, page_width - pad, (page_height + tb_h) / 2),  # 우측 중앙
+        ((page_x0 + page_x1 - tb_w) / 2, page_y1 - tb_h - pad, (page_x0 + page_x1 + tb_w) / 2, page_y1 - pad),  # 상단 중앙
+        ((page_x0 + page_x1 - tb_w) / 2, page_y0 + pad, (page_x0 + page_x1 + tb_w) / 2, page_y0 + pad + tb_h),  # 하단 중앙
+        (page_x0 + pad, (page_y0 + page_y1 - tb_h) / 2, page_x0 + pad + tb_w, (page_y0 + page_y1 + tb_h) / 2),  # 좌측 중앙
+        (page_x1 - tb_w - pad, (page_y0 + page_y1 - tb_h) / 2, page_x1 - pad, (page_y0 + page_y1 + tb_h) / 2),  # 우측 중앙
     ]
 
     margin = CALLOUT_COLLISION_MARGIN_PT
@@ -517,29 +530,35 @@ def _pdf_point_to_device(
     py: float,
     page_height: float,
     page_x0: float = 0.0,
+    page_y0: float = 0.0,
 ) -> dict:
     """[Flow: Step 1 (PDF user-space 좌표 수신) -> Step 2 (page_x0 보정 + y축 flip)
           -> Step 3 (EmbedPDF Position {x, y} 반환)]
 
     PDF user-space(원점 좌하단, y↑)를 embedpdf device-space(원점 좌상단, y↓)로 변환.
+    CropBox/MediaBox가 페이지 원점에서 어긋난 경우 page_y0를 반영한다.
     """
-    return {"x": px - page_x0, "y": page_height - py}
+    page_y1 = page_height + page_y0
+    return {"x": px - page_x0, "y": page_y1 - py}
 
 
 def _pdf_rect_to_device(
     rect: tuple[float, float, float, float],
     page_height: float,
     page_x0: float = 0.0,
+    page_y0: float = 0.0,
 ) -> dict:
     """[Flow: Step 1 (PDF user-space rect 수신) -> Step 2 (page_x0 보정 + y축 flip)
           -> Step 3 (EmbedPDF Rect {origin, size} 반환)]
 
     PDF user-space rect를 embedpdf device-space Rect로 변환.
     _rect_to_embedpdf_rect와 동일 로직이지만 tuple 입력을 받는 버전.
+    CropBox/MediaBox가 페이지 원점에서 어긋난 경우 page_y0를 반영한다.
     """
     x0, y0, x1, y1 = rect
+    page_y1 = page_height + page_y0
     return {
-        "origin": {"x": x0 - page_x0, "y": page_height - y1},
+        "origin": {"x": x0 - page_x0, "y": page_y1 - y1},
         "size": {"width": max(0.0, x1 - x0), "height": max(0.0, y1 - y0)},
     }
 
@@ -548,20 +567,23 @@ def _device_rect_to_pdf(
     rect_dev: dict,
     page_height: float,
     page_x0: float = 0.0,
+    page_y0: float = 0.0,
 ) -> tuple[float, float, float, float]:
     """[Flow: Step 1 (device-space Rect 수신) -> Step 2 (y축 flip + page_x0 복원)
           -> Step 3 (PDF user-space (x0, y0, x1, y1) tuple 반환)]
 
     embedpdf device-space Rect를 PDF user-space tuple로 역변환.
     같은 페이지의 후속 callout 배치 시 장애물 좌표계를 맞추기 위해 사용.
+    CropBox/MediaBox가 페이지 원점에서 어긋난 경우 page_y0를 반영한다.
     """
     dx0 = rect_dev["origin"]["x"]
     dy0 = rect_dev["origin"]["y"]
     dw = rect_dev["size"]["width"]
     dh = rect_dev["size"]["height"]
+    page_y1 = page_height + page_y0
     # device: origin 좌상단, y↓ → PDF: origin 좌하단, y↑
     pdf_x0 = dx0 + page_x0
-    pdf_y1 = page_height - dy0
+    pdf_y1 = page_y1 - dy0
     pdf_x1 = pdf_x0 + dw
     pdf_y0 = pdf_y1 - dh
     return (pdf_x0, pdf_y0, pdf_x1, pdf_y1)
@@ -581,6 +603,7 @@ def _rect_to_embedpdf_rect(
     y1: float,
     page_height: float,
     page_x0: float = 0.0,
+    page_y0: float = 0.0,
 ) -> dict:
     """[Flow: Step 1 (PyMuPDF PDF user-space 좌표 수신) -> Step 2 (page.rect.x0 기준 상대좌표로 변환)
           -> Step 3 (y축 flip으로 device-space 변환) -> Step 4 (EmbedPDF Rect 형식 반환)]
@@ -588,13 +611,14 @@ def _rect_to_embedpdf_rect(
     PDF 좌표계는 원점이 좌하단이고 y는 위로 증가한다. EmbedPDF는 annotation rect의
     origin.y를 device-space(원점 좌상단, y↓)로 해석해 CSS `top: origin.y * scale`로
     직접 렌더링한다. 따라서 PDF user-space 상단(y1)을 device-space 상단
-    (page_height - y1)로 flip해야 한다.
+    (page_y1 - y1, page_y1 = page_height + page_y0)로 flip해야 한다.
 
-    CropBox/MediaBox가 있는 PDF에서 page.rect.x0이 0이 아닐 경우, EmbedPDF의 좌표는
-    page.rect의 왼쪽 끝을 기준으로 상대좌표를 사용한다. 따라서 x0에서 page_x0을
-    빼서 상대 위치를 맞춘다.
+    CropBox/MediaBox가 있는 PDF에서 page.rect.x0 또는 y0이 0이 아닐 경우, EmbedPDF의 좌표는
+    page.rect의 왼쪽/아래쪽 끝을 기준으로 상대좌표를 사용한다. 따라서 x0에서 page_x0,
+    y1에서 page_y0을 보정해 상대 위치를 맞춘다.
     """
+    page_y1 = page_height + page_y0
     return {
-        "origin": {"x": x0 - page_x0, "y": page_height - y1},
+        "origin": {"x": x0 - page_x0, "y": page_y1 - y1},
         "size": {"width": max(0.0, x1 - x0), "height": max(0.0, y1 - y0)},
     }

@@ -74,10 +74,11 @@ def apply_user_annotations(
             continue
         page = doc[page_no - 1]
         page_height = page.rect.height
+        page_y0 = page.rect.y0
         page_x0 = page.rect.x0
         for raw in page_annotations:
             try:
-                a = _convert_annotation_to_device_space(raw, page_height, page_x0) if convert_from_pdf_user else raw
+                a = _convert_annotation_to_device_space(raw, page_height, page_x0, page_y0) if convert_from_pdf_user else raw
                 _apply_annotation(page, a)
                 applied += 1
             except Exception as e:
@@ -103,43 +104,45 @@ def _apply_annotation(page: fitz.Page, a: dict) -> None:
 
     EmbedPDF annotation 좌표는 device-space(원점 좌상단, y↓)이다.
     PyMuPDF는 PDF user-space(원점 좌하단, y↑)를 사용하므로 Y축 flip이 필요하다.
+    CropBox/MediaBox가 페이지 원점에서 어긋난 경우 page.rect.y0를 반영한다.
     """
     atype = a.get("type")
     color = _hex_to_rgb(a.get("strokeColor") or a.get("color"))
     opacity = a.get("opacity", 1.0)
     page_height = page.rect.height
+    page_y0 = page.rect.y0
     page_x0 = page.rect.x0
 
     if atype == HIGHLIGHT:
-        rect = _segment_rects_to_rect(a.get("segmentRects"), page_height, page_x0) or _parse_rect(a.get("rect"), page_height, page_x0)
+        rect = _segment_rects_to_rect(a.get("segmentRects"), page_height, page_x0, page_y0) or _parse_rect(a.get("rect"), page_height, page_x0, page_y0)
         if rect:
             annot = page.add_highlight_annot(rect)
             _style_annot(annot, color, opacity)
         return
 
     if atype == UNDERLINE:
-        rect = _segment_rects_to_rect(a.get("segmentRects"), page_height, page_x0) or _parse_rect(a.get("rect"), page_height, page_x0)
+        rect = _segment_rects_to_rect(a.get("segmentRects"), page_height, page_x0, page_y0) or _parse_rect(a.get("rect"), page_height, page_x0, page_y0)
         if rect:
             annot = page.add_underline_annot(rect)
             _style_annot(annot, color, opacity)
         return
 
     if atype == SQUIGGLY:
-        rect = _segment_rects_to_rect(a.get("segmentRects"), page_height, page_x0) or _parse_rect(a.get("rect"), page_height, page_x0)
+        rect = _segment_rects_to_rect(a.get("segmentRects"), page_height, page_x0, page_y0) or _parse_rect(a.get("rect"), page_height, page_x0, page_y0)
         if rect:
             annot = page.add_squiggly_annot(rect)
             _style_annot(annot, color, opacity)
         return
 
     if atype == STRIKEOUT:
-        rect = _segment_rects_to_rect(a.get("segmentRects"), page_height, page_x0) or _parse_rect(a.get("rect"), page_height, page_x0)
+        rect = _segment_rects_to_rect(a.get("segmentRects"), page_height, page_x0, page_y0) or _parse_rect(a.get("rect"), page_height, page_x0, page_y0)
         if rect:
             annot = page.add_strikeout_annot(rect)
             _style_annot(annot, color, opacity)
         return
 
     if atype == FREETEXT:
-        rect = _parse_rect(a.get("rect"), page_height, page_x0)
+        rect = _parse_rect(a.get("rect"), page_height, page_x0, page_y0)
         if rect:
             text = a.get("contents", "")
             font_size = a.get("fontSize", 14)
@@ -156,7 +159,7 @@ def _apply_annotation(page: fitz.Page, a: dict) -> None:
         return
 
     if atype == SQUARE:
-        rect = _parse_rect(a.get("rect"), page_height, page_x0)
+        rect = _parse_rect(a.get("rect"), page_height, page_x0, page_y0)
         if rect:
             annot = page.add_rect_annot(rect)
             fill_color = _hex_to_rgb(a.get("color")) if a.get("color") else None
@@ -164,7 +167,7 @@ def _apply_annotation(page: fitz.Page, a: dict) -> None:
         return
 
     if atype == CIRCLE:
-        rect = _parse_rect(a.get("rect"), page_height, page_x0)
+        rect = _parse_rect(a.get("rect"), page_height, page_x0, page_y0)
         if rect:
             annot = page.add_circle_annot(rect)
             fill_color = _hex_to_rgb(a.get("color")) if a.get("color") else None
@@ -172,22 +175,22 @@ def _apply_annotation(page: fitz.Page, a: dict) -> None:
         return
 
     if atype == LINE:
-        start = _parse_point(a.get("start"), page_height, page_x0)
-        end = _parse_point(a.get("end"), page_height, page_x0)
+        start = _parse_point(a.get("start"), page_height, page_x0, page_y0)
+        end = _parse_point(a.get("end"), page_height, page_x0, page_y0)
         if start and end:
             annot = page.add_line_annot(start, end)
             _style_annot(annot, color, opacity, width=a.get("strokeWidth", 1.0))
         return
 
     if atype == INK:
-        paths = _parse_ink_list(a.get("inkList"), page_height, page_x0) or _parse_paths(a.get("paths"), page_height, page_x0)
+        paths = _parse_ink_list(a.get("inkList"), page_height, page_x0, page_y0) or _parse_paths(a.get("paths"), page_height, page_x0, page_y0)
         if paths:
             annot = page.add_ink_annot(paths)
             _style_annot(annot, color, opacity, width=a.get("strokeWidth", 1.0))
         return
 
     if atype == STAMP:
-        rect = _parse_rect(a.get("rect"), page_height, page_x0)
+        rect = _parse_rect(a.get("rect"), page_height, page_x0, page_y0)
         if rect:
             annot = page.add_stamp_annot(rect, stamp=0)
             _style_annot(annot, color, opacity)
@@ -231,21 +234,24 @@ def _hex_to_rgb(hex_color: str | None) -> tuple[float, float, float]:
         return (0.0, 0.0, 0.0)
 
 
-def _parse_rect(rect: Any, page_height: float | None = None, page_x0: float = 0.0) -> fitz.Rect | None:
+def _parse_rect(rect: Any, page_height: float | None = None, page_x0: float = 0.0, page_y0: float = 0.0) -> fitz.Rect | None:
     """[Flow: Step 1 (EmbedPDF rect 형태 확인) -> Step 2 (origin/size 또는 x/y/width/height 추출)
           -> Step 3 (device-space y↓를 PDF user-space y↑로 flip) -> Step 4 (fitz.Rect 반환)]
 
     EmbedPDF rect는 device-space(원점 좌상단, y↓) 좌표를 사용한다.
     PyMuPDF는 PDF user-space(원점 좌하단, y↑)를 사용하므로 Y축 flip이 필요하다.
     page_height가 None이면 flip 없이 원래 좌표를 그대로 사용한다 (PyMuPDF vertex 등 PDF 좌표계 입력용).
+    CropBox/MediaBox가 페이지 원점에서 어긋난 경우 page_y0를 반영한다.
 
     Args:
         rect: EmbedPDF rect dict ({origin: {x, y}, size: {width, height}} 또는 {x, y, width, height})
         page_height: 페이지 높이 (PDF user-space). Y축 flip에 사용. None이면 flip 스킵.
         page_x0: 페이지 x 오프셋 (CropBox/MediaBox). device-space x를 PDF user-space로 변환.
+        page_y0: 페이지 y 오프셋 (CropBox/MediaBox). device-space y를 PDF user-space로 변환.
     """
     if not isinstance(rect, dict):
         return None
+    page_y1 = page_height + page_y0 if page_height is not None else None
     origin = rect.get("origin")
     size = rect.get("size")
     if not isinstance(origin, dict) or not isinstance(size, dict):
@@ -256,10 +262,10 @@ def _parse_rect(rect: Any, page_height: float | None = None, page_x0: float = 0.
         h = rect.get("height", 0)
         if w <= 0 or h <= 0:
             return None
-        if page_height is not None:
+        if page_y1 is not None:
             # device-space(y↓) → PDF user-space(y↑): y축 flip
-            pdf_y1 = page_height - y
-            pdf_y0 = page_height - y - h
+            pdf_y1 = page_y1 - y
+            pdf_y0 = page_y1 - y - h
             return fitz.Rect(x + page_x0, pdf_y0, x + w + page_x0, pdf_y1)
         return fitz.Rect(x, y, x + w, y + h)
     x = origin.get("x", 0)
@@ -268,34 +274,36 @@ def _parse_rect(rect: Any, page_height: float | None = None, page_x0: float = 0.
     h = size.get("height", 0)
     if w <= 0 or h <= 0:
         return None
-    if page_height is not None:
+    if page_y1 is not None:
         # device-space(y↓) → PDF user-space(y↑): y축 flip
-        pdf_y1 = page_height - y
-        pdf_y0 = page_height - y - h
+        pdf_y1 = page_y1 - y
+        pdf_y0 = page_y1 - y - h
         return fitz.Rect(x + page_x0, pdf_y0, x + w + page_x0, pdf_y1)
     # page_height가 None이면 flip 없이 원래 좌표 사용 (PyMuPDF vertex 등)
     return fitz.Rect(x, y - h, x + w, y)
 
 
-def _segment_rects_to_rect(segment_rects: Any, page_height: float | None = None, page_x0: float = 0.0) -> fitz.Rect | None:
+def _segment_rects_to_rect(segment_rects: Any, page_height: float | None = None, page_x0: float = 0.0, page_y0: float = 0.0) -> fitz.Rect | None:
     """[Flow: Step 1 (segmentRects 배열 확인) -> Step 2 (첫 번째 rect를 fitz.Rect로 변환)
           -> Step 3 (하나라도 실패하면 None 반환)]"""
     if not isinstance(segment_rects, list) or not segment_rects:
         return None
     first = segment_rects[0]
-    return _parse_rect(first, page_height, page_x0)
+    return _parse_rect(first, page_height, page_x0, page_y0)
 
 
-def _parse_point(point: Any, page_height: float | None = None, page_x0: float = 0.0) -> fitz.Point | None:
+def _parse_point(point: Any, page_height: float | None = None, page_x0: float = 0.0, page_y0: float = 0.0) -> fitz.Point | None:
     """[Flow: Step 1 (dict 형태 확인) -> Step 2 (x/y 추출) -> Step 3 (Y축 flip 후 fitz.Point 반환)]
 
     EmbedPDF point는 device-space(y↓) 좌표를 사용한다.
     page_height가 None이면 flip 없이 원래 좌표를 그대로 사용한다 (PyMuPDF vertex 등 PDF 좌표계 입력용).
+    CropBox/MediaBox가 페이지 원점에서 어긋난 경우 page_y0를 반영한다.
 
     Args:
         point: {x, y} dict (device-space)
         page_height: 페이지 높이. Y축 flip에 사용. None이면 flip 스킵.
         page_x0: 페이지 x 오프셋 (CropBox/MediaBox).
+        page_y0: 페이지 y 오프셋 (CropBox/MediaBox).
     """
     if not isinstance(point, dict):
         return None
@@ -303,11 +311,12 @@ def _parse_point(point: Any, page_height: float | None = None, page_x0: float = 
     y = point.get("y", 0)
     if page_height is not None:
         # device-space(y↓) → PDF user-space(y↑): y축 flip
-        return fitz.Point(x + page_x0, page_height - y)
+        page_y1 = page_height + page_y0
+        return fitz.Point(x + page_x0, page_y1 - y)
     return fitz.Point(x, y)
 
 
-def _parse_paths(paths: Any, page_height: float | None = None, page_x0: float = 0.0) -> list[list[fitz.Point]] | None:
+def _parse_paths(paths: Any, page_height: float | None = None, page_x0: float = 0.0, page_y0: float = 0.0) -> list[list[fitz.Point]] | None:
     """[Flow: Step 1 (list 형태 확인) -> Step 2 (stroke별 point 변환) -> Step 3 (2점 이상 stroke만 반환)]"""
     if not isinstance(paths, list):
         return None
@@ -315,14 +324,14 @@ def _parse_paths(paths: Any, page_height: float | None = None, page_x0: float = 
     for stroke in paths:
         if not isinstance(stroke, list):
             continue
-        points = [_parse_point(p, page_height, page_x0) for p in stroke]
+        points = [_parse_point(p, page_height, page_x0, page_y0) for p in stroke]
         points = [p for p in points if p]
         if len(points) >= 2:
             strokes.append(points)
     return strokes if strokes else None
 
 
-def _parse_ink_list(ink_list: Any, page_height: float | None = None, page_x0: float = 0.0) -> list[list[fitz.Point]] | None:
+def _parse_ink_list(ink_list: Any, page_height: float | None = None, page_x0: float = 0.0, page_y0: float = 0.0) -> list[list[fitz.Point]] | None:
     """[Flow: Step 1 (inkList 형태 확인) -> Step 2 (ink 항목별 points 변환)
           -> Step 3 (2점 이상 stroke만 반환)]"""
     if not isinstance(ink_list, list):
@@ -331,7 +340,7 @@ def _parse_ink_list(ink_list: Any, page_height: float | None = None, page_x0: fl
     for ink in ink_list:
         if not isinstance(ink, dict):
             continue
-        points = [_parse_point(p, page_height, page_x0) for p in ink.get("points", [])]
+        points = [_parse_point(p, page_height, page_x0, page_y0) for p in ink.get("points", [])]
         points = [p for p in points if p]
         if len(points) >= 2:
             strokes.append(points)
@@ -342,6 +351,7 @@ def _convert_annotation_to_device_space(
     raw: dict,
     page_height: float,
     page_x0: float = 0.0,
+    page_y0: float = 0.0,
 ) -> dict:
     """[Flow: Step 1 (PDF user-space annotation 수신) -> Step 2 (rect/segmentRects/points를 device-space로 변환)
           -> Step 3 (변환된 annotation 반환)]
@@ -352,8 +362,10 @@ def _convert_annotation_to_device_space(
 
     PDF user-space: origin 좌하단, y↑
     device-space: origin 좌상단, y↓
+    CropBox/MediaBox가 페이지 원점에서 어긋난 경우 page_y0를 반영한다.
     """
     a = dict(raw)
+    page_y1 = page_height + page_y0
 
     def _pdf_rect_to_device(rect: Any) -> dict | None:
         if not rect:
@@ -364,7 +376,7 @@ def _convert_annotation_to_device_space(
             except (ValueError, TypeError):
                 return None
             return {
-                "origin": {"x": x0 - page_x0, "y": page_height - y1},
+                "origin": {"x": x0 - page_x0, "y": page_y1 - y1},
                 "size": {"width": max(0.0, x1 - x0), "height": max(0.0, y1 - y0)},
             }
         if not isinstance(rect, dict):
@@ -380,7 +392,7 @@ def _convert_annotation_to_device_space(
         except (ValueError, TypeError):
             return None
         return {
-            "origin": {"x": x - page_x0, "y": page_height - y - h},
+            "origin": {"x": x - page_x0, "y": page_y1 - y - h},
             "size": {"width": max(0.0, w), "height": max(0.0, h)},
         }
 
@@ -392,7 +404,7 @@ def _convert_annotation_to_device_space(
         if x is None or y is None:
             return None
         try:
-            return {"x": float(x) - page_x0, "y": page_height - float(y)}
+            return {"x": float(x) - page_x0, "y": page_y1 - float(y)}
         except (ValueError, TypeError):
             return None
 
@@ -443,10 +455,12 @@ def _convert_annotations_to_device_space(
     try:
         page_heights: dict[int, float] = {}
         page_x0s: dict[int, float] = {}
+        page_y0s: dict[int, float] = {}
         for page in doc:
             page_no = page.number + 1
             page_heights[page_no] = page.rect.height
             page_x0s[page_no] = page.rect.x0
+            page_y0s[page_no] = page.rect.y0
     finally:
         doc.close()
 
@@ -465,7 +479,9 @@ def _convert_annotations_to_device_space(
         if page_height is None:
             converted.append(raw)
             continue
-        converted.append(_convert_annotation_to_device_space(raw, page_height, page_x0s.get(page_no, 0.0)))
+        converted.append(_convert_annotation_to_device_space(
+            raw, page_height, page_x0s.get(page_no, 0.0), page_y0s.get(page_no, 0.0)
+        ))
     return converted
 
 
@@ -497,20 +513,22 @@ def _fitz_color_to_hex(color: Any) -> str | None:
         return None
 
 
-def _fitz_rect_to_embedpdf_rect(rect: fitz.Rect, page_height: float, page_x0: float = 0.0) -> dict:
+def _fitz_rect_to_embedpdf_rect(rect: fitz.Rect, page_height: float, page_x0: float = 0.0, page_y0: float = 0.0) -> dict:
     """[Flow: Step 1 (PyMuPDF Rect 수신) -> Step 2 (page.rect.x0 기준 상대좌표로 변환)
           -> Step 3 (y축 flip) -> Step 4 (origin/size 형태 반환)]
 
     PyMuPDF Rect는 좌하단 원점, y가 위로 증가하는 PDF 좌표계를 사용한다.
     EmbedPDF는 origin이 좌상단, y가 아래로 증가하는 device-space 좌표계를 사용하므로
-    y축을 page_height - y1로 flip해야 한다.
+    y축을 page_y1 - y1로 flip해야 한다. page_y1은 page_height + page_y0이다.
 
-    CropBox/MediaBox가 있는 PDF에서 page.rect.x0이 0이 아닐 경우, EmbedPDF 좌표는
-    page.rect의 왼쪽 끝을 기준으로 한 상대좌표를 사용하므로 x0에서 page_x0을 빼준다.
+    CropBox/MediaBox가 있는 PDF에서 page.rect.x0 또는 y0이 0이 아닐 경우,
+    EmbedPDF 좌표는 page.rect의 왼쪽/아래쪽 끝을 기준으로 한 상대좌표를 사용하므로
+    x0에서 page_x0, y1에서 page_y0을 보정한다.
     """
     x0, y0, x1, y1 = rect.x0, rect.y0, rect.x1, rect.y1
+    page_y1 = page_height + page_y0
     return {
-        "origin": {"x": x0 - page_x0, "y": page_height - y1},
+        "origin": {"x": x0 - page_x0, "y": page_y1 - y1},
         "size": {"width": max(0.0, x1 - x0), "height": max(0.0, y1 - y0)},
     }
 
@@ -533,13 +551,15 @@ def extract_pdf_annotations(pdf_bytes: bytes) -> list[dict]:
     annotations: list[dict] = []
     for page in doc:
         page_height = page.rect.height
+        page_y0 = page.rect.y0
+        page_y1 = page_height + page_y0
         for idx, annot in enumerate(page.annots()):
             try:
                 annot_type = annot.type[0] if isinstance(annot.type, tuple) else annot.type
                 embed_type = EMBEDPDF_TYPE_MAP.get(annot_type)
                 if embed_type is None:
                     continue
-                rect = _fitz_rect_to_embedpdf_rect(annot.rect, page_height, page.rect.x0)
+                rect = _fitz_rect_to_embedpdf_rect(annot.rect, page_height, page.rect.x0, page_y0)
                 colors = annot.colors or {}
                 stroke_color = _fitz_color_to_hex(colors.get("stroke")) if colors.get("stroke") else None
                 fill_color = _fitz_color_to_hex(colors.get("fill")) if colors.get("fill") else None
@@ -576,8 +596,8 @@ def extract_pdf_annotations(pdf_bytes: bytes) -> list[dict]:
                         # PyMuPDF 버전에 따라 tuple 또는 fitz.Point 반환
                         v0x, v0y = (float(v0[0]), float(v0[1])) if isinstance(v0, (tuple, list)) else (float(v0.x), float(v0.y))
                         v1x, v1y = (float(v1[0]), float(v1[1])) if isinstance(v1, (tuple, list)) else (float(v1.x), float(v1.y))
-                        annotation["start"] = {"x": v0x - page.rect.x0, "y": page_height - v0y}
-                        annotation["end"] = {"x": v1x - page.rect.x0, "y": page_height - v1y}
+                        annotation["start"] = {"x": v0x - page.rect.x0, "y": page_y1 - v0y}
+                        annotation["end"] = {"x": v1x - page.rect.x0, "y": page_y1 - v1y}
                 elif embed_type == FREETEXT:
                     annotation["fontFamily"] = 4  # Helvetica
                     annotation["fontSize"] = info.get("fontsize", 12) or 12

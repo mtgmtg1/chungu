@@ -3309,6 +3309,15 @@ def save_user_annotations(
             {"content-type": "application/pdf", "upsert": "true"},
         )
 
+        # [Flow: 뷰어용 JSON 오버레이는 항상 device-space를 기대한다.
+        #        input_space가 pdf_user일 경우 PDF user-space → device-space로 변환한다.]
+        if input_space == "pdf_user":
+            annotations_for_json = pdf_user_annotator._convert_annotations_to_device_space(
+                valid_annotations, pdf_bytes
+            )
+        else:
+            annotations_for_json = valid_annotations
+
         # 기존 AI 주석 JSON이 있으면 사용자 주석과 병합.
         # [Flow: 사용자가 AI 주석을 편집한 경우(_userEdited 또는 내용 변경) 감지하여 보존]
         try:
@@ -3330,7 +3339,7 @@ def save_user_annotations(
         # AI 주석 중 사용자가 편집한 것은 _userEdited 플래그를 설정해 보존
         ai_annotations: list[dict] = []
         user_annotations: list[dict] = []
-        for a in valid_annotations:
+        for a in annotations_for_json:
             if not isinstance(a, dict):
                 continue
             aid = _annotation_id(a)

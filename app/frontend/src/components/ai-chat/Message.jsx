@@ -179,11 +179,8 @@ function PreviewMessage({
 
 /**
  * ThinkingMessage — 어시스턴트 응답 대기 중 표시하는 로딩 메시지.
- * "investigating..."과 "thinking..."을 번갈아 깜빡이는 AgentActivityIndicator를 사용한다.
- *
- * @param {Object} props
- * @param {string[]} [props.toolLabels] - 현재 실행 중인 도구의 사용자 친화적 라벨 목록
+ * 부드럽게 점등되는 웨이브 애니메이션을 표시한다.
  */
-export const ThinkingMessage = ({ toolLabels = [] }) => <AgentActivityIndicator toolLabels={toolLabels} />;
+export const ThinkingMessage = () => <AgentActivityIndicator />;
 
 export default memo(PreviewMessage);

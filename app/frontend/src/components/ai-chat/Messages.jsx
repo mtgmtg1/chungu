@@ -3,12 +3,10 @@
 //       -> Step 4 (submitted/streaming 상태면 대화 최하단에 ThinkingMessage 표시)
 //       -> Step 5 (scroll-to-bottom 버튼) -> Step 6 (자동 스크롤)]
 // Vercel ai-chatbot 템플릿의 messages.tsx + use-messages 훅 포팅.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowDown } from "lucide-react";
 import Greeting from "./Greeting.jsx";
 import PreviewMessage, { ThinkingMessage } from "./Message.jsx";
-import { getActiveToolLabels } from "./AgentActivityIndicator.jsx";
 
 /**
  * useMessages — 메시지 컨테이너 스크롤 상태를 관리하는 훅.
@@ -86,16 +84,10 @@ export default function Messages({
   onToolDeny,
   onToolAlways,
 }) {
-  const { t } = useTranslation();
   const { containerRef, endRef, isAtBottom, scrollToBottom, handleScroll } = useMessages({ status });
 
   // [Flow: 에이전트가 활동 중(submitted/streaming)이면 항상 대화 최하단에 인디케이터 표시]
   const isAgentActive = status === "submitted" || status === "streaming";
-  const activeToolLabels = useMemo(() => {
-    const lastAssistant = messages.at(-1);
-    if (!lastAssistant || lastAssistant.role !== "assistant") return [];
-    return getActiveToolLabels(t, lastAssistant);
-  }, [messages, t]);
 
   const lastAssistantIndex = messages.map((m) => m.role).lastIndexOf("assistant");
 
@@ -133,7 +125,7 @@ export default function Messages({
             />
           ))}
 
-          {isAgentActive && <ThinkingMessage toolLabels={activeToolLabels} />}
+          {isAgentActive && <ThinkingMessage />}
 
           <div ref={endRef} className="min-h-[24px] min-w-[24px] shrink-0" />
         </div>

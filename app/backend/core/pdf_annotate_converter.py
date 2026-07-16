@@ -622,7 +622,7 @@ def build_agent_elements_from_ocr_layout(
     Returns:
         agent용 요소 dict 목록 (page_no, bbox_pdf, text, kind)
     """
-    page_point_sizes = _page_point_sizes(pdf_bytes)
+    page_rects = _page_rects(pdf_bytes)
     page_set = set(page_range) if page_range is not None else None
     results: list[dict] = []
     for page_no_raw, layout_raw in layout_by_page.items():
@@ -630,20 +630,32 @@ def build_agent_elements_from_ocr_layout(
         if page_set is not None and page_no not in page_set:
             continue
         layout = parse_layout_result(layout_raw, page_no=page_no)
+        rect = page_rects.get(page_no)
+        # PaddleOCR layout의 bbox는 0~1 normalized 좌표이므로
+        # PDF user-space로 변환한다. CropBox/MediaBox 오프셋도 함께 보정한다.
+        if rect:
+            width_pt, height_pt = rect.width, rect.height
+            x0_pt, y0_pt = rect.x0, rect.y0
+        else:
+            width_pt, height_pt, x0_pt, y0_pt = 1.0, 1.0, 0.0, 0.0
         for table in layout.tables:
             for row in table.rows:
                 if not any(cell.strip() for cell in row.cell_texts):
                     continue
                 results.append({
                     "page_no": page_no,
-                    "bbox_pdf": row.bbox_px,  # paddleocr_service에서 PDF user-space로 정규화됨
+                    "bbox_pdf": _normalized_bbox_to_pdf_user(
+                        row.bbox_px, width_pt, height_pt, x0_pt, y0_pt
+                    ),
                     "text": _row_to_text(row),
                     "kind": "table_row",
                 })
         for tb in layout.text_blocks:
             results.append({
                 "page_no": page_no,
-                "bbox_pdf": tb.bbox_px,  # paddleocr_service에서 PDF user-space로 정규화됨
+                "bbox_pdf": _normalized_bbox_to_pdf_user(
+                    tb.bbox_px, width_pt, height_pt, x0_pt, y0_pt
+                ),
                 "text": _text_block_to_text(tb),
                 "kind": "text",
             })

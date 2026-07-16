@@ -240,15 +240,22 @@ body {
   animation: ai-chat-shimmer 1.5s ease-in-out infinite;
 }
 
-/* Agent activity: investigating... ↔ thinking... 깜빡깜빡 전환 */
-@keyframes agent-activity-blink {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
+/* Agent activity: 부드럽게 점등되는 3개 점 웨이브 */
+@keyframes agent-wave {
+  0%, 100% { opacity: 0.35; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
 }
-.agent-activity-blink {
+.agent-wave-dot {
   display: inline-block;
-  animation: agent-activity-blink 2s ease-in-out infinite;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background-color: currentColor;
+  animation: agent-wave 1.4s ease-in-out infinite both;
 }
+.agent-wave-dot:nth-child(1) { animation-delay: 0s; }
+.agent-wave-dot:nth-child(2) { animation-delay: 0.18s; }
+.agent-wave-dot:nth-child(3) { animation-delay: 0.36s; }
 
 /* 메시지 등장 애니메이션 (fade-up) */
 @keyframes ai-chat-fade-up {

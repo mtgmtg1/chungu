@@ -10,13 +10,14 @@ import os
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import fitz
 from backend.paddleocr_service.main import _extract_layout_from_result
 from backend.core.pdf_annotate_converter import (
     _collect_page_elements_from_searchable_pdf,
     _normalized_bbox_to_pdf_user,
+    build_agent_elements_from_ocr_layout,
 )
 
 PASS = 0
@@ -124,11 +125,71 @@ def test_searchable_pdf_path():
         print("  [INFO] searchable PDF 경로에서 bbox_px는 이제 PDF user-space 그대로입니다.")
 
 
+def test_build_agent_elements_coordinate_system():
+    """[Flow: Step 1 (A4 PDF bytes 생성) -> Step 2 (raw 픽셀 layout과 normalized layout 준비)
+          -> Step 3 (build_agent_elements_from_ocr_layout 호출)
+          -> Step 4 (두 좌표계가 동일한 PDF user-space bbox를 반환하는지 검증)]"""
+    print("\n=== build_agent_elements_from_ocr_layout 좌표계 감지 테스트 ===")
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    # PaddleOCR이 반환한 픽셀 좌표 (y=0이 상단, y=3508이 하단)
+    pixel_bbox = [34.0, 29.5, 561.0, 53.1]
+    page_width_px = 2479.0
+    page_height_px = 3508.0
+
+    raw_pixel_layout = {
+        1: {
+            "width": page_width_px,
+            "height": page_height_px,
+            "parsing_res_list": [
+                {"block_bbox": pixel_bbox, "block_content": "작업일보", "block_label": "title"}
+            ],
+        }
+    }
+
+    normalized_bbox = [v / page_width_px if i % 2 == 0 else v / page_height_px for i, v in enumerate(pixel_bbox)]
+    normalized_layout = {
+        1: {
+            "width": page_width_px,
+            "height": page_height_px,
+            "_coordinate_system": "normalized",
+            "_page_width_px": page_width_px,
+            "_page_height_px": page_height_px,
+            "parsing_res_list": [
+                {"block_bbox": normalized_bbox, "block_content": "작업일보", "block_label": "title"}
+            ],
+        }
+    }
+
+    pixel_results = build_agent_elements_from_ocr_layout(raw_pixel_layout, pdf_bytes)
+    norm_results = build_agent_elements_from_ocr_layout(normalized_layout, pdf_bytes)
+
+    if not pixel_results or not norm_results:
+        print("  [FAIL] OCR layout에서 요소를 추출하지 못함")
+        global FAIL
+        FAIL += 1
+        return
+
+    pixel_el = pixel_results[0]
+    norm_el = norm_results[0]
+    print(f"  raw pixel -> bbox_pdf: {pixel_el['bbox_pdf']}")
+    print(f"  normalized -> bbox_pdf: {norm_el['bbox_pdf']}")
+
+    expected = (8.16, 829.25, 134.65, 834.92)
+    check("pixel layout bbox가 PDF user-space로 정확히 변환", pixel_el["bbox_pdf"], expected, tol=0.1)
+    check("normalized layout bbox가 PDF user-space로 정확히 변환", norm_el["bbox_pdf"], expected, tol=0.1)
+    check("두 좌표계 변환 결과가 동일", pixel_el["bbox_pdf"], norm_el["bbox_pdf"], tol=0.1)
+
+
 def main():
     """[Flow: Step 1 (각 테스트 실행) -> Step 2 (PASS/FAIL 집계)]"""
     test_extract_layout_normalized()
     test_normalized_to_pdf_user()
     test_searchable_pdf_path()
+    test_build_agent_elements_coordinate_system()
     print(f"\n=== 결과: {PASS} passed, {FAIL} failed ===")
 
 

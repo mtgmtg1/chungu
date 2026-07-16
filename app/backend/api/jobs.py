@@ -11,6 +11,8 @@ import tempfile
 import unicodedata
 import uuid
 import zipfile
+
+import fitz
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
@@ -3822,6 +3824,27 @@ def get_job_elements(
     )
 
 
+def _is_rect_plausible_for_page(rect: fitz.Rect, page_rect: fitz.Rect) -> bool:
+    """검색된 텍스트 bbox가 페이지 크기 대비 비정상적으로 크거나 멀리 벗어나지 않는지 확인한다.
+
+    손상된 텍스트 레이어(잘못된 좌표계로 삽입된 OCR 텍스트 등)에서 search_for가
+    거대한 bbox를 반환할 경우 이를 걸러내어 OCR 폴백을 유도한다.
+    """
+    if not rect or not page_rect:
+        return False
+    tolerance = max(page_rect.width, page_rect.height) * 2.0
+    if rect.width > tolerance or rect.height > tolerance:
+        return False
+    if (
+        rect.x0 < page_rect.x0 - tolerance
+        or rect.x1 > page_rect.x1 + tolerance
+        or rect.y0 < page_rect.y0 - tolerance
+        or rect.y1 > page_rect.y1 + tolerance
+    ):
+        return False
+    return True
+
+
 # [Flow: Step 1 (job 조회) -> Step 2 (searchable PDF 다운로드) -> Step 3 (텍스트 검색)
 #       -> Step 4 (page_no 필터링) -> Step 5 (매치 목록 반환)]
 # Node.js AI 백엔드의 search_text 도구가 호출하는 엔드포인트.
@@ -3885,6 +3908,11 @@ def search_job_text(
                 # 정규식이 유효하지 않으면 일반 텍스트로 폴백
                 rects = page.search_for(query.replace("\\", ""))
             for rect in rects:
+                if not _is_rect_plausible_for_page(rect, page.rect):
+                    logger.warning(
+                        f"[search_job_text] {job_id} page={current_page_no} 비정상 bbox 스킵: {rect}"
+                    )
+                    continue
                 matches.append({
                     "page_no": current_page_no,
                     "bbox_pdf": [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)],

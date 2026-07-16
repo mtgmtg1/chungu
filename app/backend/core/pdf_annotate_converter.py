@@ -26,7 +26,7 @@ from . import cache, ocr_client, paddleocr_client, supabase_client
 from .image_deskew import deskew_image
 from .ocr_layout import BBox, OcrRow, OcrTextBlock, parse_layout_result
 from .pdf_annotator import AnnotationTarget, build_embedpdf_annotations
-from .pdf_coords import clamp_rect_to_page, px_bbox_to_pdf_rect
+from .pdf_coords import PDF_POINTS_PER_INCH, clamp_rect_to_page, px_bbox_to_pdf_rect
 from .pdf_text_layer import (
     TextLayerSearcher,
     add_text_layer_from_ocr,
@@ -320,8 +320,8 @@ def _collect_page_elements_image(
                 cell_bboxes=[],
             ))
 
-    # PaddleOCR layout bbox는 0~1 normalized 좌표이므로, 주석 PDF 베이스(corrected_images)의
-    # 실제 페이지 크기를 기준으로 PDF user-space로 변환한다.
+    # PaddleOCR layout bbox 좌표계를 감지해 PDF user-space로 변환한다.
+    # 서비스 버전/응답에 따라 normalized, 픽셀, top-left points 등이 섞여 있을 수 있다.
     if elements and corrected_images:
         pdf_bytes = _images_to_pdf(corrected_images)
         page_rects = _page_rects(pdf_bytes)
@@ -329,11 +329,10 @@ def _collect_page_elements_image(
             rect = page_rects.get(el.page_no)
             if not rect:
                 continue
-            el.bbox_px = _normalized_bbox_to_pdf_user(
-                el.bbox_px, rect.width, rect.height, rect.x0, rect.y0
-            )
+            layout_raw = layout_by_page.get(el.page_no)
+            el.bbox_px = _layout_bbox_to_pdf_user(layout_raw, el.bbox_px, rect, dpi=dpi)
             el.word_bboxes = [
-                _normalized_bbox_to_pdf_user(b, rect.width, rect.height, rect.x0, rect.y0)
+                _layout_bbox_to_pdf_user(layout_raw, b, rect, dpi=dpi)
                 for b in el.word_bboxes
             ]
 
@@ -415,9 +414,7 @@ def _collect_page_elements_pdf_direct(
             for row in table.rows:
                 if not any(cell.strip() for cell in row.cell_texts):
                     continue
-                bbox_pdf = _normalized_bbox_to_pdf_user(
-                    row.bbox_px, rect.width, rect.height, rect.x0, rect.y0
-                )
+                bbox_pdf = _layout_bbox_to_pdf_user(layout_raw, row.bbox_px, rect, dpi=RENDER_DPI)
                 elements.append(AnnotateElement(
                     page_no=page_no, bbox_px=bbox_pdf, kind="table_row",
                     text=_row_to_text(row),
@@ -426,11 +423,9 @@ def _collect_page_elements_pdf_direct(
                     cell_bboxes=[],
                 ))
         for tb in layout.text_blocks:
-            bbox_pdf = _normalized_bbox_to_pdf_user(
-                tb.bbox_px, rect.width, rect.height, rect.x0, rect.y0
-            )
+            bbox_pdf = _layout_bbox_to_pdf_user(layout_raw, tb.bbox_px, rect, dpi=RENDER_DPI)
             word_bboxes_pdf = [
-                _normalized_bbox_to_pdf_user(b, rect.width, rect.height, rect.x0, rect.y0)
+                _layout_bbox_to_pdf_user(layout_raw, b, rect, dpi=RENDER_DPI)
                 for b in tb.word_bboxes
             ]
             elements.append(AnnotateElement(
@@ -498,6 +493,55 @@ def _normalized_bbox_to_pdf_user(
         (1 - ny1) * page_height_pt + page_y0,
         nx1 * page_width_pt + page_x0,
         (1 - ny0) * page_height_pt + page_y0,
+    )
+
+
+def _layout_bbox_to_pdf_user(
+    layout_raw: dict | None,
+    bbox: tuple[float, float, float, float],
+    page_rect: fitz.Rect | None,
+    dpi: int = RENDER_DPI,
+) -> tuple[float, float, float, float]:
+    """OCR layout의 bbox 좌표계를 감지해 PDF user-space로 변환한다.
+
+    [Flow: Step 1 (_coordinate_system 확인: normalized면 그대로 변환)
+          -> Step 2 (heuristic: 값이 0~1 범위면 normalized로 간주)
+          -> Step 3 (source_width/source_height 확인: _page_width_px/width 우선)
+          -> Step 4 (source 크기로 normalized 후 PDF user-space로 변환)]
+
+    PaddleOCR 서비스 버전에 따라 layout bbox가 0~1 normalized, 픽셀, 또는
+    PDF top-left 좌표로 저장되어 있을 수 있다. 이 헬퍼는 메타데이터가 없어도
+    대부분의 경우를 올바르게 변환한다.
+    """
+    if not bbox or not page_rect:
+        return bbox
+
+    x0, y0, x1, y1 = bbox
+    coordinate_system = (layout_raw or {}).get("_coordinate_system")
+
+    # 명시적으로 normalized로 표시되어 있거나, 모든 값이 0~1이면 normalized로 간주한다.
+    is_normalized = coordinate_system == "normalized" or all(0.0 <= v <= 1.01 for v in (x0, y0, x1, y1))
+    if is_normalized:
+        return _normalized_bbox_to_pdf_user(bbox, page_rect.width, page_rect.height, page_rect.x0, page_rect.y0)
+
+    # normalized가 아니면 source 좌표계의 단위(픽셀 또는 top-left points)로 취급한다.
+    source_width = (layout_raw or {}).get("_page_width_px") or (layout_raw or {}).get("width")
+    source_height = (layout_raw or {}).get("_page_height_px") or (layout_raw or {}).get("height")
+    if not source_width or not source_height:
+        # 메타데이터 없이 픽셀 좌표로 가정하고 PDF 포인트로 환산한다.
+        source_width = page_rect.width * dpi / PDF_POINTS_PER_INCH
+        source_height = page_rect.height * dpi / PDF_POINTS_PER_INCH
+    source_width = float(source_width)
+    source_height = float(source_height)
+    if source_width <= 0 or source_height <= 0:
+        return bbox
+
+    nx0 = x0 / source_width
+    ny0 = y0 / source_height
+    nx1 = x1 / source_width
+    ny1 = y1 / source_height
+    return _normalized_bbox_to_pdf_user(
+        (nx0, ny0, nx1, ny1), page_rect.width, page_rect.height, page_rect.x0, page_rect.y0
     )
 
 
@@ -631,31 +675,22 @@ def build_agent_elements_from_ocr_layout(
             continue
         layout = parse_layout_result(layout_raw, page_no=page_no)
         rect = page_rects.get(page_no)
-        # PaddleOCR layout의 bbox는 0~1 normalized 좌표이므로
-        # PDF user-space로 변환한다. CropBox/MediaBox 오프셋도 함께 보정한다.
-        if rect:
-            width_pt, height_pt = rect.width, rect.height
-            x0_pt, y0_pt = rect.x0, rect.y0
-        else:
-            width_pt, height_pt, x0_pt, y0_pt = 1.0, 1.0, 0.0, 0.0
+        # PaddleOCR layout bbox 좌표계를 감지해 PDF user-space로 변환한다.
+        # 서비스 버전/응답에 따라 normalized, 픽셀, top-left points 등이 섞여 있을 수 있다.
         for table in layout.tables:
             for row in table.rows:
                 if not any(cell.strip() for cell in row.cell_texts):
                     continue
                 results.append({
                     "page_no": page_no,
-                    "bbox_pdf": _normalized_bbox_to_pdf_user(
-                        row.bbox_px, width_pt, height_pt, x0_pt, y0_pt
-                    ),
+                    "bbox_pdf": _layout_bbox_to_pdf_user(layout_raw, row.bbox_px, rect, dpi=dpi),
                     "text": _row_to_text(row),
                     "kind": "table_row",
                 })
         for tb in layout.text_blocks:
             results.append({
                 "page_no": page_no,
-                "bbox_pdf": _normalized_bbox_to_pdf_user(
-                    tb.bbox_px, width_pt, height_pt, x0_pt, y0_pt
-                ),
+                "bbox_pdf": _layout_bbox_to_pdf_user(layout_raw, tb.bbox_px, rect, dpi=dpi),
                 "text": _text_block_to_text(tb),
                 "kind": "text",
             })

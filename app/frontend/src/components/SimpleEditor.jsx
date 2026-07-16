@@ -17,7 +17,6 @@ import TaskItem from "@tiptap/extension-task-item";
 import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
-import { TableOfContents } from "@tiptap/extension-table-of-contents";
 import { marked } from "marked";
 import TurndownService from "turndown";
 import {
@@ -44,7 +43,6 @@ import {
   Heading4 } from
 "lucide-react";
 import AiMenu from "./AiMenu.jsx";
-import TocSidebar from "./editor/TocSidebar.jsx";
 
 
 const turndown = new TurndownService({
@@ -54,7 +52,7 @@ const turndown = new TurndownService({
   strongDelimiter: "**"
 });
 
-const PAGE_MARKER_RE = /<!--\s*(?:페이지|page)\s*(\d+)\s*-->/gi;
+const PAGE_MARKER_RE = /<!--\s*페이지\s*(\d+)\s*-->/gi;
 
 /**
  * [Flow: Step 1 (마크다운 HTML에서 페이지 주석 검색) -> Step 2 (각 주석을 data-page 속성을 가진 div로 교체) -> Step 3 (Tiptap이 스크롤 타겟으로 사용할 수 있는 HTML 반환)]
@@ -77,21 +75,7 @@ const PageMarkerNode = Node.create({
   name: "pageMarker",
   group: "block",
   atom: true,
-  // 페이지 마커는 텍스트 선택을 막지 않아야 한다.
-  // pointer-events/user-select만 차단하고 contenteditable 속성은 ProseMirror 기본값(false)을
-  // 그대로 두어, drag selection이 끊기지 않도록 한다.
-  addNodeView() {
-    return ({ node }) => {
-      const dom = document.createElement("div");
-      dom.setAttribute("data-page-marker", String(node.attrs.pageNum));
-      dom.className = "page-marker";
-      dom.style.height = "1px";
-      dom.style.pointerEvents = "none";
-      dom.style.userSelect = "none";
-      dom.setAttribute("aria-hidden", "true");
-      return { dom };
-    };
-  },
+  selectable: false,
   addAttributes() {
     return {
       pageNum: { default: null },
@@ -114,7 +98,7 @@ turndown.addRule("pageMarker", {
   filter: (node) =>
     node.nodeName === "DIV" && node.getAttribute("data-page-marker"),
   replacement: (_content, node) =>
-    `<!-- Page ${node.getAttribute("data-page-marker")} -->`,
+    `<!-- 페이지 ${node.getAttribute("data-page-marker")} -->`,
 });
 
 turndown.addRule("table", {
@@ -166,8 +150,6 @@ ref)
 {
   const { t } = useTranslation();
   const [headingOpen, setHeadingOpen] = useState(false);
-  const [anchors, setAnchors] = useState([]);
-  const [tocOpen, setTocOpen] = useState(true);
   const containerRef = useRef(null);
   const observedPageRef = useRef(null);
   const onChangeRef = useRef(onChange);
@@ -185,15 +167,7 @@ ref)
 
   const editor = useEditor({
     extensions: [
-    StarterKit.configure({
-      heading: { levels: [1, 2, 3, 4] },
-      // StarterKit v3에 Link/Underline이 포함되므로 별도 등록하는 확장과 중복되지 않도록 비활성화
-      link: false,
-      underline: false,
-    }),
-    TableOfContents.configure({
-      onUpdate: (content) => setAnchors(content),
-    }),
+    StarterKit,
     PageMarkerNode,
     Table.configure({ resizable: true }),
     TableRow,
@@ -214,16 +188,6 @@ ref)
     content: injectPageMarkers(marked.parse(markdown || "")),
     editable
   });
-
-  // [Flow: Step 1 (editable prop 변경 감지) -> Step 2 (Tiptap v3 useEditor가 options를 자동 재적용하지 않을 경우를 대비해 editor.editable 강제 동기화)]
-  useEffect(() => {
-    if (!editor) return;
-    if (typeof editor.setEditable === "function") {
-      editor.setEditable(editable);
-    } else {
-      editor.setOptions({ editable });
-    }
-  }, [editor, editable]);
 
   // [Flow: Step 1 (사용자 입력으로 Tiptap 업데이트 이벤트 발생) -> Step 2 (1초 debounce 타이머 설정) -> Step 3 (타이머 완료 시 getMarkdown으로 변환) -> Step 4 (prop 마크다운과 다를 때만 onChange 콜백 호출)]
   useEffect(() => {
@@ -517,34 +481,26 @@ ref)
           <TableIcon size={18} data-oid="k-unaiu" />
         </ToolbarButton>
       </div>
-      <div className="flex-1 flex overflow-hidden" data-oid="editor-toc-layout">
-        <div
-          className="flex-1 overflow-y-auto p-6 custom-scrollbar"
-          data-oid="qjrci2n">
+      <div
+        className="flex-1 overflow-y-auto p-6 custom-scrollbar"
+        data-oid="qjrci2n">
 
-          <EditorContent
-            editor={editor}
-            className="prose max-w-none focus:outline-none"
-            data-oid="adafms.">
-
-            {editor && (
-              <BubbleMenu
-                editor={editor}
-                tippyOptions={{ duration: 100, placement: "top-start" }}
-                className="flex items-center gap-1 px-2 py-1.5 bg-white rounded-lg shadow-lg border border-outline-variant z-50">
-
-                <AiMenu editor={editor} editable={editable} fullMarkdown={markdown} />
-              </BubbleMenu>
-            )}
-          </EditorContent>
-
-        </div>
-        <TocSidebar
-          anchors={anchors}
+        <EditorContent
           editor={editor}
-          open={tocOpen}
-          onToggle={() => setTocOpen((v) => !v)}
-          data-oid="toc-sidebar-comp" />
+          className="prose max-w-none focus:outline-none"
+          data-oid="adafms.">
+
+          {editor && (
+            <BubbleMenu
+              editor={editor}
+              tippyOptions={{ duration: 100, placement: "top-start" }}
+              className="flex items-center gap-1 px-2 py-1.5 bg-white rounded-lg shadow-lg border border-outline-variant z-50">
+
+              <AiMenu editor={editor} editable={editable} fullMarkdown={markdown} />
+            </BubbleMenu>
+          )}
+        </EditorContent>
+
       </div>
     </div>);
 

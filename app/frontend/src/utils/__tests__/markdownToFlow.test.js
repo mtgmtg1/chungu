@@ -369,6 +369,46 @@ describe("parseMultiFileMarkdownToFlow", () => {
     expect(nextEdgeToFile.targetHandle).toBe("left");
   });
 
+  it("다중 파일에서 fileNode는 같은 파일의 titleNode와 hierarchy 엣지로 연결된다", () => {
+    const files = [
+      { filename: "file1.md", markdown: "# 문서1\n\n## 섹션 A\n\n본문 A\n" },
+      { filename: "file2.md", markdown: "# 문서2\n\n## 섹션 B\n\n본문 B\n" },
+    ];
+    const { nodes, edges } = parseMultiFileMarkdownToFlow(files);
+
+    const fileNode = nodes.find(n => n.data.kind === "file");
+    const titleNode = nodes.find(n => n.data.kind === "title" && n.data.fileIndex === 1);
+    expect(fileNode).toBeDefined();
+    expect(titleNode).toBeDefined();
+
+    const hierarchyEdge = edges.find(
+      e => e.type === "hierarchy" && e.source === fileNode.id && e.target === titleNode.id,
+    );
+    expect(hierarchyEdge).toBeDefined();
+    expect(hierarchyEdge.sourceHandle).toBe("bottom");
+    expect(hierarchyEdge.targetHandle).toBe("top");
+  });
+
+  it("다중 파일에서 titleNode가 없으면 fileNode는 같은 파일의 첫 heading과 hierarchy 엣지로 연결된다", () => {
+    const files = [
+      { filename: "file1.md", markdown: "# 문서1\n\n## 섹션 A\n\n본문 A\n" },
+      { filename: "", markdown: "### 섹션 B\n\n본문 B\n" },
+    ];
+    const { nodes, edges } = parseMultiFileMarkdownToFlow(files);
+
+    const fileNode = nodes.find(n => n.data.kind === "file");
+    const firstHeading = nodes.find(n => n.data.kind === "heading" && n.data.fileIndex === 1);
+    expect(fileNode).toBeDefined();
+    expect(firstHeading).toBeDefined();
+
+    const hierarchyEdge = edges.find(
+      e => e.type === "hierarchy" && e.source === fileNode.id && e.target === firstHeading.id,
+    );
+    expect(hierarchyEdge).toBeDefined();
+    expect(hierarchyEdge.sourceHandle).toBe("bottom");
+    expect(hierarchyEdge.targetHandle).toBe("top");
+  });
+
   it("다중 파일의 노드 ID가 충돌하지 않는다", () => {
     const files = [
       { filename: "file1.md", markdown: "## 섹션\n\n본문\n" },

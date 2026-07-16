@@ -522,6 +522,29 @@ export function parseMultiFileMarkdownToFlow(files) {
           style: { stroke: "#6366f1", strokeWidth: 2 },
         });
       }
+
+      // [Flow: Step 3-2 — fileNode를 같은 파일의 titleNode(또는 첫 heading)와 hierarchy 엣지로 연결]
+      // fileNode가 파일 그룹의 실제 루트처럼 보이도록, 같은 파일의 첫 콘텐츠 노드로 실선을 연결한다.
+      const currentFileTitle = allNodes.find(
+        n => n.id.startsWith(idPrefix) && n.data.kind === "title",
+      );
+      const currentFileFirstHeading = allNodes.find(
+        n => n.id.startsWith(idPrefix) && n.data.kind === "heading",
+      );
+      const fileRootTarget = currentFileTitle || currentFileFirstHeading;
+      if (fileRootTarget) {
+        allEdges.push({
+          id: `e-${fileNodeId}-${fileRootTarget.id}`,
+          source: fileNodeId,
+          target: fileRootTarget.id,
+          type: "hierarchy",
+          sourceHandle: "bottom",
+          targetHandle: "top",
+          animated: false,
+          updatable: false,
+          selectable: false,
+        });
+      }
     }
   }
 

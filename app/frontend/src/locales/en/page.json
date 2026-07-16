@@ -315,7 +315,10 @@
         "add_flow_heading": "Adding flow heading",
         "delete_flow_heading": "Deleting flow heading",
         "rename_flow_heading": "Renaming flow heading",
-        "move_flow_heading": "Moving flow heading"
+        "move_flow_heading": "Moving flow heading",
+        "thinking": "Thinking…",
+        "showThinking": "Show thinking",
+        "hideThinking": "Hide thinking"
       }
     },
     "annotateTitle": "Generate AI Annotations",

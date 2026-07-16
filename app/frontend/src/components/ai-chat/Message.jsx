@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { marked } from "marked";
 import { RefreshCw, Sparkles } from "lucide-react";
 import AgentActivityIndicator from "./AgentActivityIndicator.jsx";
+import ReasoningBlock from "./ReasoningBlock.jsx";
 import Tool from "./Tool.jsx";
 
 // [Flow: 마크다운 텍스트 -> HTML 변환 (XSS 방지를 위해 marked 옵션 설정)]
@@ -122,8 +123,27 @@ function PreviewMessage({
       );
     }
 
-    // reasoning part (아직 사용하지 않지만 안전하게 무시)
-    if (type === "reasoning") return null;
+    // reasoning part: 접을 수 있는 블록으로 렌더링
+    if (type === "reasoning") {
+      const reasoningText =
+        part.text ||
+        (Array.isArray(part.details)
+          ? part.details
+              .filter((detail) => detail.type === "text")
+              .map((detail) => detail.text)
+              .join("")
+          : "");
+
+      if (!reasoningText.trim()) return null;
+
+      return (
+        <ReasoningBlock
+          key={key}
+          text={reasoningText}
+          isStreaming={part.state === "streaming"}
+        />
+      );
+    }
 
     return null;
   });

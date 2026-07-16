@@ -315,7 +315,10 @@
         "add_flow_heading": "플로우 헤딩을 추가",
         "delete_flow_heading": "플로우 헤딩을 삭제",
         "rename_flow_heading": "플로우 헤딩을 이름 변경",
-        "move_flow_heading": "플로우 헤딩을 이동"
+        "move_flow_heading": "플로우 헤딩을 이동",
+        "thinking": "생각 중…",
+        "showThinking": "생각 과정 보기",
+        "hideThinking": "생각 과정 숨기기"
       }
     },
     "annotateTitle": "AI 주석 생성",

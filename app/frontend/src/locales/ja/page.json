@@ -315,7 +315,10 @@
         "add_flow_heading": "フロー見出しを追加",
         "delete_flow_heading": "フロー見出しを削除",
         "rename_flow_heading": "フロー見出しの名前を変更",
-        "move_flow_heading": "フロー見出しを移動"
+        "move_flow_heading": "フロー見出しを移動",
+        "thinking": "考え中…",
+        "showThinking": "思考プロセスを表示",
+        "hideThinking": "思考プロセスを隠す"
       }
     },
     "annotateTitle": "AI注釈の生成",

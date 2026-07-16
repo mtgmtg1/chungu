@@ -76,15 +76,13 @@ function useActivityPhase() {
  * @param {Object} props
  * @param {string[]} [props.toolLabels] - 현재 실행 중인 도구의 사용자 친화적 라벨 목록
  */
-export default function AgentActivityIndicator({ toolLabels = [] }) {
+export default function AgentActivityIndicator() {
   const { t } = useTranslation();
   const phase = useActivityPhase();
 
   const displayText = useMemo(() => {
     return t(`page:agent.${phase}`, phase === "investigating" ? "investigating..." : "thinking...");
   }, [phase, t]);
-
-  const currentToolLabel = toolLabels[0];
 
   return (
     <div
@@ -106,11 +104,6 @@ export default function AgentActivityIndicator({ toolLabels = [] }) {
             >
               {displayText}
             </span>
-            {currentToolLabel && (
-              <span className="truncate text-xs text-on-surface-variant">
-                {t("page:agent.toolInProgress", "{{action}}하는 중…", { action: currentToolLabel })}
-              </span>
-            )}
           </div>
         </div>
       </div>

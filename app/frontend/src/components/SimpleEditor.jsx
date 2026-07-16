@@ -78,7 +78,24 @@ const PageMarkerNode = Node.create({
   name: "pageMarker",
   group: "block",
   atom: true,
-  selectable: false,
+  // 페이지 마커는 텍스트 선택을 막지 않아야 한다.
+  // NodeView에서 contenteditable="false"를 제거하고 pointer-events/user-select만
+  // 차단해 마우스 drag selection이 끊기지 않도록 한다.
+  addNodeView() {
+    return ({ node }) => {
+      const dom = document.createElement("div");
+      dom.setAttribute("data-page-marker", String(node.attrs.pageNum));
+      dom.className = "page-marker";
+      dom.style.height = "1px";
+      dom.style.pointerEvents = "none";
+      dom.style.userSelect = "none";
+      dom.setAttribute("aria-hidden", "true");
+      // contenteditable=false가 drag selection을 막는 브라우저 버그를 회피하기 위해
+      // 부모 editable 상태를 상속받되, atom 노드이므로 ProseMirror가 입력은 막는다.
+      dom.setAttribute("contenteditable", "true");
+      return { dom };
+    };
+  },
   addAttributes() {
     return {
       pageNum: { default: null },
@@ -172,7 +189,12 @@ ref)
 
   const editor = useEditor({
     extensions: [
-    StarterKit.configure({ heading: { levels: [1, 2, 3, 4] } }),
+    StarterKit.configure({
+      heading: { levels: [1, 2, 3, 4] },
+      // StarterKit v3에 Link/Underline이 포함되므로 별도 등록하는 확장과 중복되지 않도록 비활성화
+      link: false,
+      underline: false,
+    }),
     UniqueID.configure({ types: ["heading"] }),
     TableOfContents.configure({
       onUpdate: (content) => setAnchors(content),

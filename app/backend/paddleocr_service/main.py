@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import fitz  # PyMuPDF
 import requests
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -237,8 +237,11 @@ def _run_paddleocr(
     params: dict[str, Any] | None = None,
     capture_layout: bool = False,
     force_no_geometric_correction: bool = False,
+    pdf_source_path: Path | None = None,
 ) -> dict[str, Any]:
-    # [Flow: Step 1 (PaddleOCR pipeline 가져오기) -> Step 2 (파라미터 병합) -> Step 3 (각 이미지 추론) -> Step 4 (결과 병합, 필요 시 layout bbox 수집)]
+    # [Flow: Step 1 (PaddleOCR pipeline 가져오기) -> Step 2 (파라미터 병합)
+    #       -> Step 3 (원본 PDF 페이지 크기 측정) -> Step 4 (각 이미지 추론)
+    #       -> Step 5 (결과 병합, 필요 시 layout bbox 수집)]
     pipeline = get_pipeline()
     all_markdown_parts: list[str] = []
     layout_pages: list[dict] = []
@@ -250,6 +253,22 @@ def _run_paddleocr(
         predict_params["use_doc_orientation_classify"] = False
         predict_params["use_doc_unwarping"] = False
 
+    # PDF 원본을 직접 입력할 경우, PaddleOCR 반환 bbox 좌표계와 DPI를 추정하기 위해
+    # 원본 PDF의 페이지 크기(포인트)를 미리 측정한다.
+    page_sizes: dict[int, tuple[float, float]] = {}
+    if pdf_source_path and pdf_source_path.exists():
+        try:
+            doc = fitz.open(str(pdf_source_path))
+            for i, page in enumerate(doc):
+                page_sizes[i] = (page.rect.width, page.rect.height)
+            doc.close()
+            logger.info(
+                f"[paddleocr] PDF 원본 페이지 크기 측정 완료: {pdf_source_path.name} "
+                f"({len(page_sizes)}페이지)"
+            )
+        except Exception as e:
+            logger.warning(f"[paddleocr] PDF 원본 페이지 크기 측정 실패: {e}")
+
     for idx, img_path in enumerate(image_paths):
         try:
             output = pipeline.predict(str(img_path), **predict_params)
@@ -259,7 +278,10 @@ def _run_paddleocr(
                     all_markdown_parts.append(f"<!-- Page {idx + 1} -->\n{page_md}")
                     total_pages += 1
                 if capture_layout:
-                    layout_pages.append(_extract_layout_from_result(res))
+                    page_width_pt, page_height_pt = page_sizes.get(idx, (None, None))
+                    layout_pages.append(
+                        _extract_layout_from_result(res, page_height_pt=page_height_pt)
+                    )
         except Exception as e:
             logger.error(f"[paddleocr] 페이지 {idx + 1} 추론 실패: {e}")
             all_markdown_parts.append(f"<!-- Page {idx + 1} (OCR 실패) -->\n")
@@ -318,17 +340,69 @@ def _image_polygon_to_pdf_points(
     return converted
 
 
-def _extract_layout_from_result(res: Any) -> dict:
+def _detect_coordinate_system(
+    page_height_px: float,
+    page_height_pt: float | None,
+) -> tuple[str, float]:
+    """PaddleOCR-VL 반환값의 좌표계와 스케일을 추정한다.
+
+    [Flow: Step 1 (원본 PDF 페이지 높이(포인트) 확인)
+          -> Step 2 (layout["height"]와 비교)
+          -> Step 3 (PDF user-space 또는 이미지 좌표계 판정 및 scale 반환)]
+
+    PDF 원본 페이지 높이(포인트)가 주어지면, layout["height"]가 이와 거의 같으면
+    PaddleOCR이 이미 PDF user-space를 반환한 것으로 보고 y-flip을 생략한다.
+    차이가 크면 이미지 좌표계로 보고, 원본 PDF 높이 / 픽셀 높이로 scale을 역산한다.
+
+    PDF 원본 정보가 없으면 기존 300 DPI 가정을 유지한다.
+
+    Args:
+        page_height_px: PaddleOCR layout["height"] 값 (픽셀 또는 포인트).
+        page_height_pt: 원본 PDF 페이지 높이 (포인트, 없을 수 있음).
+
+    Returns:
+        (coordinate_system, scale) 튜플.
+        coordinate_system: "pdf_user" | "image".
+        scale: PDF user-space 포인트/소스 단위 변환 비율.
+    """
+    if page_height_pt is not None and page_height_pt > 0 and page_height_px > 0:
+        if abs(page_height_px - page_height_pt) <= 1.0:
+            logger.info(
+                f"[paddleocr] 좌표계 감지: PDF user-space (height={page_height_px:.2f}, "
+                f"page_height_pt={page_height_pt:.2f})"
+            )
+            return "pdf_user", 1.0
+        scale = page_height_pt / page_height_px
+        inferred_dpi = scale * PDF_POINTS_PER_INCH
+        logger.info(
+            f"[paddleocr] 좌표계 감지: 이미지 좌표계 (height={page_height_px:.2f}px, "
+            f"page_height_pt={page_height_pt:.2f}pt, 추정 DPI={inferred_dpi:.1f})"
+        )
+        return "image", scale
+
+    # PDF 원본 정보 없음: 기존 300 DPI 가정
+    scale = PDF_POINTS_PER_INCH / OCR_RENDER_DPI
+    logger.info(
+        f"[paddleocr] 좌표계 감지: 이미지 좌표계 (기본 300 DPI, scale={scale:.4f})"
+    )
+    return "image", scale
+
+
+def _extract_layout_from_result(
+    res: Any,
+    page_height_pt: float | None = None,
+) -> dict:
     """PaddleOCR 결과 객체에서 bbox를 PDF user-space로 변환한 레이아웃을 반환한다.
 
     [Flow: Step 1 (res.json 추출) -> Step 2 (페이지 픽셀 높이 확인)
-          -> Step 3 (parsing_res_list / layout_det_res / overall_ocr_res의 bbox 좌표계 변환)
-          -> Step 4 (PDF user-space 기준 layout dict 반환)]
+          -> Step 3 (좌표계 및 실제 렌더링 DPI 추정)
+          -> Step 4 (parsing_res_list / layout_det_res / overall_ocr_res의 bbox 좌표계 변환)
+          -> Step 5 (PDF user-space 기준 layout dict 반환)]
 
-    PaddleOCR-VL-1.6은 이미지 좌표계(top-left origin, y↓)를 사용하므로,
-    이 서비스에서 기본적으로 PDF user-space(bottom-left origin, y↑)로 정규화하여
-    이후 단계(core/ocr_layout.py, core/pdf_text_layer.py, core/pdf_annotate_converter.py)가
-    동일한 좌표계를 가정할 수 있게 한다.
+    PaddleOCR-VL-1.6은 기본적으로 이미지 좌표계(top-left origin, y↓)를 사용하지만,
+    원본 PDF를 직접 입력하면 PDF user-space(bottom-left origin, y↑)를 반환하거나
+    내부 렌더링 DPI가 300이 아닐 수 있다. 따라서 원본 PDF 페이지 높이(포인트)를
+    받아 좌표계와 scale을 동적으로 추정한다.
     """
     try:
         if isinstance(res, dict):
@@ -351,8 +425,16 @@ def _extract_layout_from_result(res: Any) -> dict:
         logger.warning("[paddleocr] layout 높이 정보가 없어 bbox 좌표계 변환을 건너뜁니다.")
         return layout
 
-    scale = PDF_POINTS_PER_INCH / OCR_RENDER_DPI
+    coordinate_system, scale = _detect_coordinate_system(page_height_px, page_height_pt)
+    layout["_coordinate_system"] = coordinate_system
+    layout["_scale"] = scale
+    layout["_page_height_pt"] = page_height_pt
 
+    if coordinate_system == "pdf_user":
+        # PaddleOCR이 이미 PDF user-space를 반환하면 추가 변환 불필요
+        return layout
+
+    # 이미지 좌표계 → PDF user-space 변환
     # parsing_res_list 블록 bbox 및 polygon_points 변환
     for block in layout.get("parsing_res_list", []):
         if not isinstance(block, dict):
@@ -453,8 +535,15 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def _do_convert(task_id: str, input_path: Path, filename: str) -> None:
-    # [Flow: Step 1 (파일 타입 확인) -> Step 2 (PDF→이미지 or 단일 이미지) -> Step 3 (자동 파라미터 추천) -> Step 4 (PaddleOCR 추론) -> Step 5 (결과 저장)]
+def _do_convert(
+    task_id: str,
+    input_path: Path,
+    filename: str,
+    capture_layout: bool = False,
+) -> None:
+    # [Flow: Step 1 (파일 타입 확인) -> Step 2 (PDF→이미지 or 단일 이미지)
+    #       -> Step 3 (자동 파라미터 추천) -> Step 4 (PaddleOCR 추론)
+    #       -> Step 5 (결과 저장)]
     try:
         file_type = _detect_file_type(filename)
         request_id = uuid.uuid4().hex
@@ -480,14 +569,19 @@ def _do_convert(task_id: str, input_path: Path, filename: str) -> None:
             raise RuntimeError(f"Unsupported file type: {filename}")
 
         params = _get_paddleocr_params(pdf_path, input_path.parent)
-        ocr_result = _run_paddleocr(image_paths, params)
+        ocr_result = _run_paddleocr(
+            image_paths,
+            params,
+            capture_layout=capture_layout,
+            pdf_source_path=pdf_path,
+        )
 
         convert_result = ConvertResponse(
             markdown=ocr_result["markdown"],
             images=embedded_images,
             page_count=ocr_result["page_count"],
             file_type=file_type,
-            layout=ocr_result.get("layout", []),
+            layout=ocr_result.get("layout", []) if capture_layout else [],
             page_angles=ocr_result.get("page_angles", []),
         )
 
@@ -507,7 +601,10 @@ def _do_convert(task_id: str, input_path: Path, filename: str) -> None:
 
 
 @app.post("/convert/async", response_model=AsyncConvertResponse)
-async def convert_async(file: UploadFile = File(...)) -> AsyncConvertResponse:
+async def convert_async(
+    file: UploadFile = File(...),
+    capture_layout: bool = Form(False),
+) -> AsyncConvertResponse:
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
 
@@ -529,9 +626,14 @@ async def convert_async(file: UploadFile = File(...)) -> AsyncConvertResponse:
             "started_at": time.time(),
             "finished_at": None,
             "tmpdir": tmpdir,
+            "capture_layout": capture_layout,
         }
 
-    thread = threading.Thread(target=_do_convert, args=(task_id, input_path, file.filename), daemon=True)
+    thread = threading.Thread(
+        target=_do_convert,
+        args=(task_id, input_path, file.filename, capture_layout),
+        daemon=True,
+    )
     thread.start()
 
     return AsyncConvertResponse(task_id=task_id, status="processing")
@@ -554,7 +656,10 @@ async def get_convert_status(task_id: str) -> TaskStatusResponse:
 
 
 @app.post("/convert/file", response_model=ConvertResponse)
-async def convert_file(file: UploadFile = File(...)) -> ConvertResponse:
+async def convert_file(
+    file: UploadFile = File(...),
+    capture_layout: bool = Form(False),
+) -> ConvertResponse:
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
 
@@ -592,7 +697,12 @@ async def convert_file(file: UploadFile = File(...)) -> ConvertResponse:
 
         try:
             params = _get_paddleocr_params(pdf_path, tmp_path)
-            ocr_result = _run_paddleocr(image_paths, params)
+            ocr_result = _run_paddleocr(
+                image_paths,
+                params,
+                capture_layout=capture_layout,
+                pdf_source_path=pdf_path,
+            )
         except Exception as e:
             logger.exception(f"[paddleocr-convert] {file.filename} 추론 실패: {e}")
             raise HTTPException(status_code=500, detail=f"PaddleOCR inference failed: {e}")
@@ -602,6 +712,7 @@ async def convert_file(file: UploadFile = File(...)) -> ConvertResponse:
             images=embedded_images,
             page_count=ocr_result["page_count"],
             file_type=file_type,
+            layout=ocr_result.get("layout", []) if capture_layout else [],
             page_angles=ocr_result.get("page_angles", []),
         )
 
@@ -733,10 +844,21 @@ def _aistudio_poll_job(job_id: str) -> str:
         time.sleep(AISTUDIO_POLL_INTERVAL)
 
 
-def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, Any]:
+def _aistudio_download_and_parse(
+    jsonl_url: str,
+    request_id: str,
+    pdf_source_path: Path | None = None,
+) -> dict[str, Any]:
     """JSONL 결과를 다운로드하고 페이지별 markdown + 이미지로 변환한다.
 
-    [Flow: Step 1 (JSONL 다운로드) -> Step 2 (라인별 파싱) -> Step 3 (layoutParsingResults 순회) -> Step 4 (markdown.text 추출) -> Step 5 (images 다운로드 + src 치환) -> Step 6 (페이지별 마크다운 병합)]
+    [Flow: Step 1 (JSONL 다운로드) -> Step 2 (원본 PDF 페이지 크기 측정)
+          -> Step 3 (라인별 파싱) -> Step 4 (layoutParsingResults 순회)
+          -> Step 5 (markdown.text 추출) -> Step 6 (bbox 좌표계 동적 변환)
+          -> Step 7 (images 다운로드 + src 치환) -> Step 8 (페이지별 마크다운 병합)]
+
+    Args:
+        pdf_source_path: 원본 PDF 경로. AI Studio에 원본 PDF를 직접 제출했을 때,
+            반환 bbox 좌표계와 DPI를 추정하기 위해 페이지 크기(포인트)를 미리 측정한다.
     """
     resp = requests.get(jsonl_url, timeout=AISTUDIO_DOWNLOAD_TIMEOUT)
     resp.raise_for_status()
@@ -747,6 +869,21 @@ def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, A
 
     image_dir = IMAGE_BASE_DIR / request_id
     image_dir.mkdir(parents=True, exist_ok=True)
+
+    # PDF 원본 페이지 크기 측정 (좌표계/DPI 추정용)
+    page_sizes: dict[int, tuple[float, float]] = {}
+    if pdf_source_path and pdf_source_path.exists():
+        try:
+            doc = fitz.open(str(pdf_source_path))
+            for i, page in enumerate(doc):
+                page_sizes[i] = (page.rect.width, page.rect.height)
+            doc.close()
+            logger.info(
+                f"[aistudio] PDF 원본 페이지 크기 측정 완료: {pdf_source_path.name} "
+                f"({len(page_sizes)}페이지)"
+            )
+        except Exception as e:
+            logger.warning(f"[aistudio] PDF 원본 페이지 크기 측정 실패: {e}")
 
     all_page_markdowns: list[str] = []
     page_markdowns: list[str] = []
@@ -771,10 +908,14 @@ def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, A
             md_images = md.get("images", {}) if isinstance(md, dict) else {}
             # prunedResult == 로컬 파이프라인 res.json에서 input_path/page_index만 제거한 것과 동일 스키마.
             # PDF 하이라이트/여백 주석 기능의 bbox 소스로 그대로 사용한다 (core/ocr_layout.py에서 파싱).
-            # PaddleOCR-VL은 이미지 좌표계(top-left, y↓)를 사용하므로, 이후 단계와 좌표계를 맞추기 위해
-            # PDF user-space(bottom-left, y↑)로 변환한다.
+            # PaddleOCR-VL은 이미지 좌표계(top-left, y↓)를 사용하지만, 원본 PDF 직접 제출 시
+            # PDF user-space(bottom-left, y↑)를 반환할 수도 있으므로 좌표계를 동적으로 감지한다.
             pruned = lpr.get("prunedResult", {}) or {}
-            layout_pages.append(_extract_layout_from_result(pruned))
+            page_idx = page_num - 1
+            page_width_pt, page_height_pt = page_sizes.get(page_idx, (None, None))
+            layout_pages.append(
+                _extract_layout_from_result(pruned, page_height_pt=page_height_pt)
+            )
             # doc_preprocessor_res.angle 추출 (0/1/2/3 = 0°/90°/180°/270°, -1 = 미적용)
             doc_pre = pruned.get("doc_preprocessor_res", {}) if isinstance(pruned, dict) else {}
             angle_code = doc_pre.get("angle", -1) if isinstance(doc_pre, dict) else -1
@@ -815,7 +956,12 @@ def _aistudio_download_and_parse(jsonl_url: str, request_id: str) -> dict[str, A
     }
 
 
-def _do_aistudio_convert(task_id: str, input_path: Path, filename: str) -> None:
+def _do_aistudio_convert(
+    task_id: str,
+    input_path: Path,
+    filename: str,
+    capture_layout: bool = False,
+) -> None:
     """AI Studio API를 통한 비동기 변환 작업을 실행한다.
 
     [Flow: Step 1 (job 제출) -> Step 2 (폴링) -> Step 3 (JSONL 다운로드/파싱) -> Step 4 (결과 저장)]
@@ -831,7 +977,7 @@ def _do_aistudio_convert(task_id: str, input_path: Path, filename: str) -> None:
             images=ocr_result["images"],
             page_count=ocr_result["page_count"],
             file_type=_detect_file_type(filename),
-            layout=ocr_result.get("layout", []),
+            layout=ocr_result.get("layout", []) if capture_layout else [],
             page_angles=ocr_result.get("page_angles", []),
         )
 
@@ -851,7 +997,10 @@ def _do_aistudio_convert(task_id: str, input_path: Path, filename: str) -> None:
 
 
 @app.post("/api/convert", response_model=AsyncConvertResponse)
-async def api_convert(file: UploadFile = File(...)) -> AsyncConvertResponse:
+async def api_convert(
+    file: UploadFile = File(...),
+    capture_layout: bool = Form(False),
+) -> AsyncConvertResponse:
     """AI Studio API를 호출하여 OCR 변환을 수행한다 (폴백 전용 엔드포인트).
 
     토큰은 서비스 환경 변수에서만 사용되어 클라이언트에 노출되지 않는다.
@@ -884,9 +1033,14 @@ async def api_convert(file: UploadFile = File(...)) -> AsyncConvertResponse:
             "started_at": time.time(),
             "finished_at": None,
             "tmpdir": tmpdir,
+            "capture_layout": capture_layout,
         }
 
-    thread = threading.Thread(target=_do_aistudio_convert, args=(task_id, input_path, file.filename), daemon=True)
+    thread = threading.Thread(
+        target=_do_aistudio_convert,
+        args=(task_id, input_path, file.filename, capture_layout),
+        daemon=True,
+    )
     thread.start()
 
     return AsyncConvertResponse(task_id=task_id, status="processing")
@@ -1057,7 +1211,9 @@ def _do_aistudio_pdf_convert(task_id: str, pdf_path: Path, filename: str) -> Non
         # Step 1-3: AI Studio job 제출 → 폴링 → 다운로드/파싱
         job_id = _aistudio_submit_job(pdf_path)
         jsonl_url = _aistudio_poll_job(job_id)
-        ocr_result = _aistudio_download_and_parse(jsonl_url, request_id)
+        ocr_result = _aistudio_download_and_parse(
+            jsonl_url, request_id, pdf_source_path=pdf_path
+        )
 
         # Step 4: per-page 결과 구성
         page_markdowns = ocr_result.get("page_markdowns", [])

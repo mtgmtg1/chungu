@@ -5,7 +5,7 @@
 import logging
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import requests
 
@@ -37,11 +37,13 @@ def _convert_and_poll(
     path: Path,
     timeout: int,
     on_progress: Callable[[int, int], None] | None,
+    extra_data: dict[str, Any] | None = None,
 ) -> dict:
     """이미지를 PaddleOCR 서비스(/api/convert)로 전송하고 완료될 때까지 폴링하여 결과 dict를 반환한다.
 
-    반환 dict 키: markdown, images(상대경로 리스트), layout(페이지별 bbox 원본 리스트, 보통 1개).
-    convert_file()/convert_image_with_layout() 등 공개 함수들이 이 내부 함수를 공유한다.
+    반환 dict 키: markdown, images(상대경로 리스트), layout(페이지별 bbox 원본 리스트, capture_layout=true 시),
+    page_angles(90° 회전 각도 코드 리스트).
+    convert_file()/convert_image_with_layout()/convert_pdf_with_layout() 등 공개 함수들이 이 내부 함수를 공유한다.
     """
     if not _is_enabled():
         raise RuntimeError("PaddleOCR fallback service is disabled")
@@ -65,7 +67,8 @@ def _convert_and_poll(
     convert_url = f"{base_url}/api/convert"
     with open(send_path, "rb") as f:
         files = {"file": (path.name, f)}
-        resp = requests.post(convert_url, files=files, timeout=UPLOAD_TIMEOUT)
+        data = dict(extra_data or {})
+        resp = requests.post(convert_url, files=files, data=data, timeout=UPLOAD_TIMEOUT)
 
     if resp.status_code >= 400:
         logger.error(f"[paddleocr-client] {path.name} 변환 시작 실패: {resp.status_code} {resp.text[:200]}")
@@ -111,7 +114,8 @@ def _convert_and_poll(
                 raise RuntimeError(f"PaddleOCR conversion completed but no result: {path.name}")
             logger.info(
                 f"[paddleocr-client] {path.name} 변환 완료 "
-                f"({elapsed:.0f}s, images={len(result.get('images', []))})"
+                f"({elapsed:.0f}s, images={len(result.get('images', []))}, "
+                f"layout_pages={len(result.get('layout', []))})"
             )
             if on_progress:
                 on_progress(100, 100)
@@ -170,13 +174,136 @@ def convert_image_with_layout(
         layout_dict는 res.json과 동일 스키마의 단일 페이지 원본 딕셔너리. 실패 시 빈 dict.
         angle_code는 0/1/2/3(0°/90°/180°/270°) 또는 -1(미적용).
     """
-    result = _convert_and_poll(image_path, timeout, on_progress)
+    result = _convert_and_poll(
+        image_path,
+        timeout,
+        on_progress,
+        extra_data={"capture_layout": "true"},
+    )
     markdown = result.get("markdown", "")
     layout_pages = result.get("layout", [])
     page_angles = result.get("page_angles", [])
     layout = layout_pages[0] if layout_pages else {}
     angle_code = page_angles[0] if page_angles else -1
     return markdown, layout, angle_code
+
+
+def convert_pdf_with_layout(
+    pdf_path: Path,
+    timeout: int = MAX_POLL_DURATION,
+    on_progress: Callable[[int, int], None] | None = None,
+) -> tuple[str, list[dict], list[int]]:
+    """원본 PDF를 PaddleOCR 서비스(/api/convert/pdf)로 직접 전달해 layout과 90° 회전 각도를 반환받는다.
+
+    AI Studio API에 원본 PDF를 직접 제출하여 이미지 렌더링/deskew 단계를 생략하고 속도를 높인다.
+    서비스 내부에서 원본 PDF 페이지 크기를 측정해 bbox 좌표계와 DPI를 보정한다.
+
+    Args:
+        pdf_path: 변환할 PDF 파일 경로
+        timeout: 최대 대기 시간 (초)
+        on_progress: 진행률 콜백
+
+    Returns:
+        (markdown_text, layout_pages, angle_codes) 튜플.
+        layout_pages는 페이지 순서대로 원본 dict 리스트. 실패 시 빈 리스트.
+        angle_codes는 페이지 순서대로 0/1/2/3(0°/90°/180°/270°) 또는 -1(미적용) 리스트.
+    """
+    if not _is_enabled():
+        raise RuntimeError("PaddleOCR fallback service is disabled")
+
+    ext = pdf_path.suffix.lower()
+    if ext != ".pdf":
+        raise ValueError(f"convert_pdf_with_layout supports PDF only: {pdf_path.name}")
+
+    base_url = _get_service_url()
+    logger.info(f"[paddleocr-client] {pdf_path.name} PDF 직접 변환 시작")
+
+    # Step 1: /api/convert/pdf에 PDF 업로드
+    convert_url = f"{base_url}/api/convert/pdf"
+    with open(pdf_path, "rb") as f:
+        files = {"file": (pdf_path.name, f)}
+        resp = requests.post(convert_url, files=files, timeout=UPLOAD_TIMEOUT)
+
+    if resp.status_code >= 400:
+        logger.error(
+            f"[paddleocr-client] {pdf_path.name} PDF 변환 시작 실패: "
+            f"{resp.status_code} {resp.text[:200]}"
+        )
+        resp.raise_for_status()
+
+    task_id = resp.json().get("task_id")
+    if not task_id:
+        raise RuntimeError(
+            f"Failed to start PDF conversion: no task_id (resp={resp.text[:200]})"
+        )
+
+    logger.info(f"[paddleocr-client] {pdf_path.name} PDF task_id={task_id} 폴링 시작")
+
+    # Step 2: /api/convert/pdf/status/{task_id} 폴링
+    start_time = time.monotonic()
+    status_url = f"{base_url}/api/convert/pdf/status/{task_id}"
+
+    while True:
+        elapsed = time.monotonic() - start_time
+
+        if elapsed > timeout:
+            raise TimeoutError(
+                f"PDF conversion timeout: {pdf_path.name} ({elapsed:.0f}s > {timeout}s)"
+            )
+
+        try:
+            status_resp = requests.get(status_url, timeout=POLL_TIMEOUT)
+        except Exception as e:
+            logger.warning(f"[paddleocr-client] {pdf_path.name} 폴링 실패, 재시도: {e}")
+            time.sleep(POLL_INTERVAL)
+            continue
+
+        if status_resp.status_code == 404:
+            raise RuntimeError(f"PDF task not found: {task_id}")
+
+        if status_resp.status_code >= 400:
+            logger.warning(
+                f"[paddleocr-client] {pdf_path.name} 폴링 에러: {status_resp.status_code}"
+            )
+            time.sleep(POLL_INTERVAL)
+            continue
+
+        data = status_resp.json()
+        status = data.get("status", "")
+
+        if status == "done":
+            result = data.get("result")
+            if result is None:
+                raise RuntimeError(
+                    f"PDF conversion completed but no result: {pdf_path.name}"
+                )
+            pages = result.get("pages", [])
+            if not pages:
+                raise RuntimeError(
+                    f"PDF conversion result has no pages: {pdf_path.name}"
+                )
+            markdown = result.get("markdown", "")
+            layout_pages = [p.get("layout", {}) for p in pages]
+            angle_codes = [p.get("page_angle", -1) for p in pages]
+            logger.info(
+                f"[paddleocr-client] {pdf_path.name} PDF 변환 완료 "
+                f"({elapsed:.0f}s, pages={len(pages)})"
+            )
+            if on_progress:
+                on_progress(100, 100)
+            return markdown, layout_pages, angle_codes
+
+        if status == "error":
+            error_msg = data.get("error", "Unknown error")
+            raise RuntimeError(f"PDF conversion failed: {pdf_path.name} - {error_msg}")
+
+        # status == "processing": 경과 시간 기반 추정 진행률
+        if status == "processing":
+            if on_progress:
+                est_pct = min(99, int(elapsed / timeout * 99))
+                on_progress(est_pct, 100)
+
+        time.sleep(POLL_INTERVAL)
 
 
 def convert_image(image_path: Path, timeout: int = 600) -> str:

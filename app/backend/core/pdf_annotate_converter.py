@@ -236,12 +236,37 @@ def _rotate_image_90(image_path: Path, angle_code: int, output_dir: Path) -> Pat
     return output_path
 
 
-def _collect_page_elements(
+def _extract_pages_to_pdf(
+    input_pdf_path: Path,
+    output_pdf_path: Path,
+    page_range: list[int],
+) -> None:
+    """원본 PDF에서 지정한 페이지만 추출해 새 PDF를 생성한다.
+
+    [Flow: Step 1 (원본 PDF 열기) -> Step 2 (page_range에 해당하는 페이지 선택)
+          -> Step 3 (새 PDF에 페이지 복사) -> Step 4 (저장)]
+
+    Args:
+        input_pdf_path: 원본 PDF 경로
+        output_pdf_path: 출력 PDF 경로
+        page_range: 1-based 페이지 번호 리스트
+    """
+    doc = fitz.open(str(input_pdf_path))
+    new_doc = fitz.open()
+    for page_no in page_range:
+        if 1 <= page_no <= len(doc):
+            new_doc.insert_pdf(doc, from_page=page_no - 1, to_page=page_no - 1)
+    new_doc.save(str(output_pdf_path))
+    new_doc.close()
+    doc.close()
+
+
+def _collect_page_elements_image(
     job: Job,
     temp_dir: Path,
     page_range: list[int] | None = None,
 ) -> tuple[list[AnnotateElement], dict[int, Path], dict[int, dict]]:
-    """페이지를 렌더링하고 PaddleOCR bbox를 확보해 텍스트 요소 목록을 반환한다.
+    """페이지를 렌더링하고 PaddleOCR bbox를 확보해 텍스트 요소 목록을 반환한다 (이미지 입력 경로).
 
     [Flow: Step 1 (page_range가 주어지면 해당 페이지만 이미지화) -> Step 2 (deskew 미세 회전 보정)
           -> Step 3 (PaddleOCR 전송 + bbox + angle_code 수신)
@@ -251,17 +276,6 @@ def _collect_page_elements(
     표의 행(table_row)과 텍스트 블록(text)을 모두 수집한다.
     반환하는 corrected_images는 "deskew + 90° 대회전 보정이 모두 완료된 정돈된 이미지"이며,
     이 이미지들로 주석 PDF를 생성하면 bbox와 완벽히 정렬된다.
-
-    Args:
-        job: Job 모델
-        temp_dir: 임시 출력 디렉터리
-        page_range: 1-based 페이지 번호 리스트. None이면 전체 페이지를 처리한다.
-
-    Returns:
-        (elements, corrected_images, layout_by_page) —
-        elements: 주석 대상 텍스트 요소 목록 (bbox는 PDF user-space)
-        corrected_images: page_no(1-based) → 정돈된 페이지 이미지 경로
-        layout_by_page: page_no → PaddleOCR layout 원본 dict (overall_ocr_res 포함, bbox PDF user-space)
     """
     image_paths = _get_page_image_paths(job, temp_dir, page_range=page_range)
     elements: list[AnnotateElement] = []
@@ -307,6 +321,125 @@ def _collect_page_elements(
             ))
 
     return elements, corrected_images, layout_by_page
+
+
+def _collect_page_elements_pdf_direct(
+    job: Job,
+    temp_dir: Path,
+    page_range: list[int] | None = None,
+) -> tuple[list[AnnotateElement], dict[int, Path], dict[int, dict]]:
+    """원본 PDF를 PaddleOCR 서비스에 직접 제출해 텍스트 요소를 수집한다 (PDF 원본 입력 경로).
+
+    [Flow: Step 1 (원본 PDF 다운로드) -> Step 2 (page_range가 주어지면 해당 페이지만 추출)
+          -> Step 3 (원본 PDF를 PaddleOCR /api/convert/pdf에 직접 업로드)
+          -> Step 4 (페이지별 layout + angle_code 수신)
+          -> Step 5 (원본 페이지 이미지 렌더링 + angle_code 회전 보정)
+          -> Step 6 (표 행 + 텍스트 블록 수집) -> Step 7 (layout 원본 보관)]
+
+    AI Studio API는 10페이지 이하 원본 PDF만 직접 처리할 수 있으므로,
+    이 함수는 /api/convert/pdf가 지원하는 범위 내에서만 사용해야 한다.
+    """
+    elements: list[AnnotateElement] = []
+    corrected_images: dict[int, Path] = {}
+    layout_by_page: dict[int, dict] = {}
+
+    if not job.pdf_storage_path:
+        logger.warning("[pdf_annotate] PDF 직접 입력 경로: pdf_storage_path가 없어 이미지 경로로 폴백")
+        return _collect_page_elements_image(job, temp_dir, page_range)
+
+    try:
+        input_bytes = supabase_client.download_pdf(job.pdf_storage_path).read()
+        input_path = temp_dir / "input.pdf"
+        input_path.write_bytes(input_bytes)
+    except Exception as e:
+        logger.warning(f"[pdf_annotate] PDF 직접 입력 경로: 원본 PDF 다운로드 실패, 이미지 경로로 폴백: {e}")
+        return _collect_page_elements_image(job, temp_dir, page_range)
+
+    submit_path = input_path
+    if page_range:
+        submit_path = temp_dir / "page_range.pdf"
+        _extract_pages_to_pdf(input_path, submit_path, sorted(page_range))
+        page_no_map = {idx: page_no for idx, page_no in enumerate(sorted(page_range))}
+    else:
+        doc = fitz.open(str(input_path))
+        page_no_map = {idx: idx + 1 for idx in range(len(doc))}
+        doc.close()
+
+    try:
+        _markdown, layout_pages, angle_codes = paddleocr_client.convert_pdf_with_layout(submit_path)
+    except Exception as e:
+        logger.warning(f"[pdf_annotate] PDF 직접 입력 경로: PaddleOCR PDF 변환 실패, 이미지 경로로 폴백: {e}")
+        return _collect_page_elements_image(job, temp_dir, page_range)
+
+    image_paths = _get_page_image_paths(job, temp_dir, page_range=page_range)
+
+    for idx, page_no in page_no_map.items():
+        if idx >= len(layout_pages):
+            continue
+
+        layout_raw = layout_pages[idx]
+        angle_code = angle_codes[idx] if idx < len(angle_codes) else -1
+        layout_by_page[page_no] = layout_raw or {}
+
+        img_path = image_paths.get(page_no)
+        if img_path:
+            deskewed_path, _applied = deskew_image(img_path, output_dir=temp_dir / "deskewed")
+            final_path = _rotate_image_90(deskewed_path, angle_code, temp_dir / "rotated")
+            corrected_images[page_no] = final_path
+
+        layout = parse_layout_result(layout_raw, page_no=page_no)
+        for table in layout.tables:
+            for row in table.rows:
+                if not any(cell.strip() for cell in row.cell_texts):
+                    continue
+                elements.append(AnnotateElement(
+                    page_no=page_no, bbox_px=row.bbox_px, kind="table_row",
+                    text=_row_to_text(row),
+                    word_bboxes=[],
+                    cell_texts=row.cell_texts,
+                    cell_bboxes=[],
+                ))
+        for tb in layout.text_blocks:
+            elements.append(AnnotateElement(
+                page_no=page_no, bbox_px=tb.bbox_px, kind="text",
+                text=_text_block_to_text(tb),
+                word_bboxes=tb.word_bboxes,
+                cell_texts=[],
+                cell_bboxes=[],
+            ))
+
+    return elements, corrected_images, layout_by_page
+
+
+def _collect_page_elements(
+    job: Job,
+    temp_dir: Path,
+    page_range: list[int] | None = None,
+    use_pdf_direct: bool = False,
+) -> tuple[list[AnnotateElement], dict[int, Path], dict[int, dict]]:
+    """페이지를 렌더링하고 PaddleOCR bbox를 확보해 텍스트 요소 목록을 반환한다.
+
+    [Flow: Step 1 (use_pdf_direct 및 page_range 조건 확인)
+          -> Step 2 (PDF 직접 경로 또는 이미지 경로로 분기)
+          -> Step 3 (각 경로에서 elements, corrected_images, layout_by_page 수집)]
+
+    Args:
+        job: Job 모델
+        temp_dir: 임시 출력 디렉터리
+        page_range: 1-based 페이지 번호 리스트. None이면 전체 페이지를 처리한다.
+        use_pdf_direct: True면 원본 PDF를 PaddleOCR 서비스에 직접 제출한다.
+            /api/convert/pdf는 10페이지 이하만 지원하므로, page_range가 10페이지를 초과하면
+            자동으로 이미지 경로로 폴백한다.
+
+    Returns:
+        (elements, corrected_images, layout_by_page) —
+        elements: 주석 대상 텍스트 요소 목록 (bbox는 PDF user-space)
+        corrected_images: page_no(1-based) → 정돈된 페이지 이미지 경로
+        layout_by_page: page_no → PaddleOCR layout 원본 dict (overall_ocr_res 포함, bbox PDF user-space)
+    """
+    if use_pdf_direct and (page_range is None or len(page_range) <= 10):
+        return _collect_page_elements_pdf_direct(job, temp_dir, page_range)
+    return _collect_page_elements_image(job, temp_dir, page_range)
 
 
 def _page_point_sizes(pdf_bytes: bytes) -> dict[int, tuple[float, float]]:
@@ -360,7 +493,9 @@ def collect_elements_for_agent(
             elements, _corrected = _collect_page_elements_from_searchable_pdf(searchable_pdf_bytes, temp_dir, dpi=dpi)
             pdf_bytes = searchable_pdf_bytes
         else:
-            elements, corrected_images, layout_by_page = _collect_page_elements(job, temp_dir, page_range=page_range)
+            elements, corrected_images, layout_by_page = _collect_page_elements(
+                job, temp_dir, page_range=page_range, use_pdf_direct=True
+            )
             if not corrected_images:
                 return [], None, layout_by_page
             pdf_bytes = _images_to_pdf(corrected_images)
@@ -992,7 +1127,9 @@ def run(
                     # 이유: bbox가 "deskew + AI Studio 90° 보정된 이미지" 기준으로 반환되므로,
                     # 주석 PDF의 베이스도 동일하게 보정된 이미지여야 bbox와 완벽히 정렬된다.
                     # 원본 PDF 벡터 품질 손실(텍스트 선택 불가)은 사용자가 명시적으로 수용한 트레이드오프.
-                    elements, corrected_images, layout_by_page = _collect_page_elements(job, temp_dir)
+                    elements, corrected_images, layout_by_page = _collect_page_elements(
+                        job, temp_dir, use_pdf_direct=True
+                    )
                     if not elements:
                         raise ValueError("텍스트 요소를 인식하지 못해 하이라이트/여백 주석 대상을 찾을 수 없습니다")
                     if not corrected_images:

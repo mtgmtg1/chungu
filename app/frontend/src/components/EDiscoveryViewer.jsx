@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CalendarDays, Loader2, RefreshCw, X } from "lucide-react";
 import EdiscoveryTimelinePanel from "./timeline/EdiscoveryTimelinePanel.jsx";
+import EdiscoveryDetailCard from "./timeline/EdiscoveryDetailCard.jsx";
 import IssueTreeMapperPanel from "./mapper/IssueTreeMapperPanel.jsx";
 import { api } from "../api.js";
 
@@ -37,6 +38,7 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, onJobRefresh
   const [error, setError] = useState("");
   const [context, setContext] = useState(job?.ediscovery_context || "");
   const [reanalyzeOpen, setReanalyzeOpen] = useState(false);
+  const [previewNode, setPreviewNode] = useState(null);
   const [sourceFiles, setSourceFiles] = useState([]);
   const [metrics, setMetrics] = useState({
     total_docs: 0,
@@ -182,6 +184,24 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, onJobRefresh
   }, [jobId, loading, context, startPolling, onJobRefresh]);
 
   /**
+   * [Flow: Step 1 (타임라인 노드 클릭) -> Step 2 (previewNode 상태 설정으로 상세 카드 팝업 열기)
+   *       -> Step 3 (상위 onNodeClick 콜백 호출 -> SourcePanel 원본 페이지 스크롤)]
+   */
+  const handleNodeClick = useCallback((node) => {
+    setPreviewNode(node);
+    onNodeClick?.(node);
+  }, [onNodeClick]);
+
+  /**
+   * [Flow: Step 1 (상세 카드 "원본 PDF 보기" 클릭) -> Step 2 (상세 팝업 닫기)
+   *       -> Step 3 (상위 onNodeClick 호출 -> SourcePanel 원본 페이지 스크롤)]
+   */
+  const handleViewSource = useCallback((node) => {
+    setPreviewNode(null);
+    onNodeClick?.(node);
+  }, [onNodeClick]);
+
+  /**
    * [Flow: Step 1 (job.ediscovery_status가 processing이면) -> Step 2 (폴링 시작)]
    */
   useEffect(() => {
@@ -282,7 +302,7 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, onJobRefresh
             jobId={jobId}
             job={job}
             sourceFiles={sourceFiles}
-            onNodeClick={onNodeClick}
+            onNodeClick={handleNodeClick}
           />
         ) : (
           <IssueTreeMapperPanel jobId={jobId} job={job} />
@@ -339,6 +359,16 @@ export default function EDiscoveryViewer({ jobId, job, onNodeClick, onJobRefresh
             </div>
           </div>
         </div>
+      )}
+
+      {/* 노드 상세 정보 팝업 */}
+      {previewNode && (
+        <EdiscoveryDetailCard
+          node={previewNode}
+          sourceFiles={sourceFiles}
+          onClose={() => setPreviewNode(null)}
+          onViewSource={handleViewSource}
+        />
       )}
     </div>
   );

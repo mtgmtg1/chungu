@@ -274,7 +274,12 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
 
   const handleSelectNode = useCallback((nodeId) => {
     setSelectedNodeId((prev) => (prev === nodeId ? null : nodeId));
-  }, []);
+    // [Flow: Step 1 (선택한 nodeId로 draftNodes에서 노드 조회)
+    //       -> Step 2 (존재하면 상위 onNodeClick 콜백 호출)
+    //       -> Step 3 (JobResultPage의 SourcePanel 스크롤/팝업 연동)]
+    const node = draftNodes.find((n) => n.id === nodeId);
+    if (node) onNodeClick?.(node);
+  }, [draftNodes, onNodeClick]);
 
   const handleUpdateNode = useCallback((nodeId, updates) => {
     setDraftNodes((prev) =>

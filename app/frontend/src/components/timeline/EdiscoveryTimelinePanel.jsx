@@ -110,7 +110,7 @@ export function buildChronoItem(node, sourceFiles, t, isEditing = false) {
     node,
   };
 
-  const media = buildMedia(node, sourceFiles);
+  const media = isEditing ? null : buildMedia(node, sourceFiles);
   if (media) item.media = media;
   return item;
 }
@@ -454,9 +454,9 @@ export default function EdiscoveryTimelinePanel({ jobId, job, sourceFiles: exter
               disabled: true,
             }}
             media={{
-              height: 200,
+              height: 80,
               align: "center",
-              fit: "cover",
+              fit: "contain",
             }}
             theme={{
               primary: "#2563eb",

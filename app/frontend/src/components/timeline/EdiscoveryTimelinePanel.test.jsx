@@ -71,4 +71,11 @@ describe("buildChronoItem", () => {
     const item = buildChronoItem(node, sourceFiles, t);
     expect(item.media.source.url).toBe("https://example.com/img.jpg");
   });
+
+  it("isEditing이 true이면 media prop을 생성하지 않는다", () => {
+    const node = baseNode("img-edit", "evidence", "third_party", 7, "image editing");
+    const sourceFiles = [{ page_num: 7, type: "image", url: "https://example.com/img.jpg", name: "img.jpg" }];
+    const item = buildChronoItem(node, sourceFiles, t, true);
+    expect(item.media).toBeUndefined();
+  });
 });

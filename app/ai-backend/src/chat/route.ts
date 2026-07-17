@@ -63,7 +63,7 @@ ${intentHint}Current context:
 
 Available tool categories:
 1. PDF annotation (only when source_type is pdf or docx/hwp preview):
-   - search_text, get_elements, get_annotations, read_job_json, view_page, add_highlight, add_callout, update_annotation, remove_annotation, compare_elements, apply_annotations, save_annotations
+   - search_text, get_elements, get_annotations, read_job_json, view_page, add_text_highlight, add_text_callout, update_annotation, remove_annotation, compare_elements, apply_annotations
 2. Markdown editor / report & document editor (when active_editor is markdown):
    - Users may describe this as: 보고서, 문서, 글쓰기, 메모, 메모장, 보고서 작성, 문서 정리, 요약, 마크다운, 에디터.
    - Tools: get_section, get_table, replace_selection, insert_at, apply_edits
@@ -108,14 +108,13 @@ Rules:
 - After calling a tool, summarize what you learned from its output before deciding the next step.
 - For PDF annotations, only call apply_annotations when you are done adding/removing highlights/callouts.
 - To inspect a PDF page visually, call view_page to get a vision analysis of the rendered page image (DPI is estimated from the page's embedded raster images; pass an explicit dpi between 150 and 300 only when needed).
-- To read existing annotation JSON (full EmbedPDF AnnotationTransferItem[] structure with id, type, pageIndex, rect, color, contents, calloutLine, strokeColor), call read_job_json with kind="annotations" or get_annotations. Coordinates are returned in PDF user-space (y↑, origin bottom-left), the same format expected by save_annotations. Use this to check exact annotation positions/structure before editing.
+- To read existing annotation JSON, call read_job_json with kind="annotations" or get_annotations. Coordinates are returned only for editing/deleting existing annotations by id. Do NOT reuse rect/segmentRects to create new annotations.
 - To read other job result JSON, call read_job_json with kind="ocr_layout" | "extracted_files" | "annotated_pdf_files" | "job_meta".
 - To get a quick annotation summary (id/type/page/color only), call get_annotations with summary_only=true.
-- To create annotations from get_elements results, prefer add_highlight/add_callout + apply_annotations. The tools handle coordinate conversion automatically — just pass element_index from get_elements.
-- To create annotations directly from JSON (without using add_highlight/add_callout), call save_annotations with an EmbedPDF AnnotationTransferItem[] array. rect coordinates MUST be in PDF user-space (y↑, origin bottom-left) — you can pass rect as a bbox_pdf array [x0, y0, x1, y1] directly from get_elements/get_annotations/read_job_json, or as {origin:{x,y}, size:{width,height}} where origin.y = y0 (bottom). The backend auto-converts PDF user-space to device-space. Set merge=false to replace all existing annotations.
-- CRITICAL for save_annotations: never pass device-space values (origin.y = top). If you are unsure about the coordinate system, use add_highlight/add_callout + apply_annotations instead, which handles coordinates automatically.
+- To create highlight/callout annotations, use add_text_highlight/add_text_callout with the exact text string you want to highlight or point to. The backend searches the PDF text layer and resolves the bounding box/segmentRects automatically. You MUST NOT compute or pass rect/bbox manually.
+- If you are unsure of the exact text, call search_text first to verify the wording. search_text and get_elements return text for verification only; their coordinates are intentionally hidden, so do not try to construct annotations from them.
 - For PDF text elements, use get_elements with an explicit page_no whenever possible. Without page_no, the backend may OCR the entire PDF which is very slow for large/image-based PDFs.
-- When calling add_highlight or add_callout after get_elements(page_no), pass the same page_no to avoid re-scanning the whole PDF. If the page_no is omitted, the tool will still fall back to a full-document scan but it will be slower.
+- When calling add_text_highlight or add_text_callout, you may pass the same page_no to limit the search and avoid a full-document scan.
 - To modify existing annotations, first call get_annotations or read_job_json(kind="annotations") to list them, then call update_annotation with the annotation id.
 - update_annotation immediately persists changes to storage; you do not need to call apply_annotations after it.
 - For markdown edits, only call apply_edits when you are done with all replacements/insertions.
@@ -131,7 +130,7 @@ Rules:
 
 Tool approval:
 - When a tool returns requires_approval: true in its output, STOP and wait for the user to approve or deny before proceeding with any further actions.
-- Do NOT call apply_annotations, save_annotations, apply_edits, apply_changes, or any other persisting tool until the user has approved.
+- Do NOT call apply_annotations, apply_edits, apply_changes, or any other persisting tool until the user has approved.
 - If the user denies, undo the pending change (e.g. do not persist the removal) and acknowledge the denial.`;
   }
 

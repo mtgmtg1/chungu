@@ -42,6 +42,29 @@ function rgbToHex(rgb: [number, number, number]): string {
   );
 }
 
+/**
+ * [Flow: Step 1 (rect 목록 수신) -> Step 2 (최소/최대 x, y 계산) -> Step 3 (bounding rect 반환)]
+ *
+ * 여러 검색 결과 rect를 하나의 bounding box로 합친다.
+ *
+ * @param rects PDF user-space rect 리스트
+ * @returns bounding rect [x0, y0, x1, y1]
+ */
+function _unionRects(rects: Array<[number, number, number, number]>): [number, number, number, number] {
+  if (!rects || rects.length === 0) return [0, 0, 0, 0];
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [x0, y0, x1, y1] of rects) {
+    minX = Math.min(minX, x0, x1);
+    minY = Math.min(minY, y0, y1);
+    maxX = Math.max(maxX, x0, x1);
+    maxY = Math.max(maxY, y0, y1);
+  }
+  return [minX, minY, maxX, maxY];
+}
+
 interface AnnotationContext {
   jobId?: string;
   job_id?: string;
@@ -54,6 +77,8 @@ interface AnnotationContext {
 interface AnnotationTarget {
   page_no: number;
   bbox_pdf: [number, number, number, number];
+  search_rects_pdf?: Array<[number, number, number, number]>;
+  search_text?: string;
   comment: string;
   color: [number, number, number];
   callout_color?: [number, number, number];
@@ -106,29 +131,38 @@ export function buildAnnotationTools(context: AnnotationContext) {
 
   return {
     search_text: tool({
-      description: 'Search the PDF text layer for keywords or regular expressions. Returned matches include bbox_pdf in PDF user-space (y↑, origin bottom-left), which can be used directly with save_annotations.',
+      description: 'Search the PDF text layer for keywords or regular expressions. Returns the matched text and page number for verification. Do NOT use coordinates to build annotations manually; use add_text_highlight or add_text_callout with the matched text instead.',
       inputSchema: z.object({
         query: z.string().describe('Search keyword or regular expression'),
         page_no: z.number().optional().describe('1-based page number. Searches all pages if omitted'),
       }),
       execute: async ({ query, page_no }) => {
         const { matches } = await proofApi.searchText(jobId, query, page_no, authHeaders);
-        return { matches: matches.slice(0, 20) };
+        // [Flow: 텍스트 기반 주석 생성을 유도 — 모델에 bbox_pdf 노출 금지]
+        const textOnly = matches.slice(0, 20).map((m) => ({
+          page_no: Number((m as any).page_no || 1),
+          text: String((m as any).text || ''),
+        }));
+        return { matches: textOnly };
       },
     }),
 
     get_elements: tool({
-      description: 'Return the list of page elements extracted from OCR or the text layer. Each element includes bbox_pdf in PDF user-space (y↑, origin bottom-left), which can be used directly with save_annotations. In large PDFs or image-based PDFs, omitting page_no may require OCR of the entire document, so it can be very slow. Always specify page_no when you only need elements from a specific page.',
+      description: 'Return the list of page elements extracted from OCR or the text layer for text inspection only. Coordinates are intentionally omitted; do NOT use them to build annotations. To highlight/callout text, use add_text_highlight or add_text_callout with the exact text. In large PDFs or image-based PDFs, omitting page_no may require OCR of the entire document, so it can be very slow. Always specify page_no when you only need elements from a specific page.',
       inputSchema: z.object({
         page_no: z.number().optional().describe('1-based page number. Omitting it will OCR all pages (slow)'),
       }),
       execute: async ({ page_no }) => {
-        // [Flow: Step 1 (loadElements로 FastAPI 조회) -> Step 2 (성공 시 20개로 제한 반환)
+        // [Flow: Step 1 (loadElements로 FastAPI 조회) -> Step 2 (bbox 등 위치정보 제거 후 20개로 제한 반환)
         //       -> Step 3 (연결 실패 등 오류 발생 시 에러 메시지 반환)]
         try {
           const { elements } = await loadElements(page_no);
-          // [Flow: 출력 크기 제한 — 50→20개로 축소하여 토큰 소비 절약]
-          return { elements: elements.slice(0, 20), total: elements.length };
+          const textOnly = elements.slice(0, 20).map((el) => ({
+            page_no: Number((el as any).page_no || 1),
+            text: String((el as any).text || ''),
+            kind: String((el as any).kind || ''),
+          }));
+          return { elements: textOnly, total: elements.length };
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.error(`[get_elements] job=${jobId} page=${page_no}: ${msg}`);
@@ -139,12 +173,12 @@ export function buildAnnotationTools(context: AnnotationContext) {
 
     read_job_json: tool({
       description: 'A general-purpose reader for various result JSONs of a job. Use kind to specify the data to read:\n' +
-        '- "annotations": AI/user annotation JSON in PDF user-space (full structure of EmbedPDF AnnotationTransferItem[] — id, type, pageIndex, rect, color, contents, calloutLine, strokeColor, etc.)\n' +
+        '- "annotations": AI/user annotation JSON in PDF user-space (full structure of EmbedPDF AnnotationTransferItem[] — id, type, pageIndex, rect, color, contents, calloutLine, strokeColor, etc.). Use only for inspecting or editing existing annotations by id; do NOT reuse rect/segmentRects to create new annotations.\n' +
         '- "ocr_layout": OCR layout JSON (text block/table/image position info)\n' +
         '- "extracted_files": list of extracted files (markdown/image/PDF paths, etc.)\n' +
         '- "annotated_pdf_files": annotated PDF file metadata list\n' +
         '- "job_meta": job status summary (status, total_pages, file_type, has_pdf, etc.)\n' +
-        'Use this to verify exact positions/structures of existing annotations or analyze OCR results.',
+        'To add new highlights/callouts, use add_text_highlight/add_text_callout with exact text instead.',
       inputSchema: z.object({
         kind: z.enum(['annotations', 'ocr_layout', 'extracted_files', 'annotated_pdf_files', 'job_meta'])
           .describe('Type of result JSON to read'),
@@ -168,7 +202,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     get_annotations: tool({
-      description: 'Return the list of existing AI or user annotations together with the full original JSON structure. Coordinates (rect, segmentRects, calloutLine) are in PDF user-space (y↑, origin bottom-left) so they can be reused directly with save_annotations. Includes all fields such as annotation ID, type, color, comment, page, position (bbox), calloutLine, strokeColor, etc. Use when editing/deleting annotations or avoiding conflicts with existing annotations.',
+      description: 'Return the list of existing AI or user annotations together with the full original JSON structure. Coordinates (rect, segmentRects, calloutLine) are in PDF user-space (y↑, origin bottom-left) and are provided only for editing/deleting existing annotations by id. Do NOT reuse these coordinates to create new annotations; for new highlights/callouts use add_text_highlight/add_text_callout with exact text.',
       inputSchema: z.object({
         page_no: z.number().optional().describe('1-based page number. Returns all pages if omitted'),
         summary_only: z.boolean().optional().describe('If true, return only summary fields (id/type/page_no/color/comment). If omitted, return the full original JSON'),
@@ -285,65 +319,75 @@ export function buildAnnotationTools(context: AnnotationContext) {
       },
     }),
 
-    add_highlight: tool({
-      description: 'Add a highlight annotation to the selected element. If get_elements(page_no) was called first, pass the same page_no to quickly look up that page. Omitting page_no scans the entire document, which can be slow for large PDFs.',
+    add_text_highlight: tool({
+      description: 'Add a highlight annotation by specifying the exact text to highlight. The backend searches the PDF text layer and highlights all matching occurrences. Use search_text first if you are unsure of the exact wording.',
       inputSchema: z.object({
-        element_index: z.number().describe('Index from get_elements result'),
-        page_no: z.number().optional().describe('1-based page number specified when calling get_elements. Omitting it searches the entire document'),
+        text: z.string().describe('Exact text string to highlight'),
+        page_no: z.number().optional().describe('1-based page number to limit the search. Searches all pages if omitted'),
         comment: z.string().describe('Annotation comment'),
         color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])
           .default('yellow')
           .describe('Color name'),
+        opacity: z.number().min(0).max(1).optional().describe('Highlight opacity (0.0~1.0)'),
       }),
-      execute: async ({ element_index, page_no, comment, color }) => {
-        const { elements } = await loadElements(page_no);
-        const element = elements[element_index];
-        if (!element) {
-          return { error: `element_index ${element_index} not found` };
+      execute: async ({ text, page_no, comment, color, opacity }) => {
+        const { matches } = await proofApi.searchText(jobId, text, page_no, authHeaders);
+        const validMatches = (matches || []).filter(
+          (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
+        );
+        if (validMatches.length === 0) {
+          return { error: `Text not found for highlight: '${text}'. Call search_text first to verify exact wording.` };
         }
-        const bbox = element.bbox_pdf as [number, number, number, number];
-        const pageNo = Number(element.page_no || 1);
+        const bboxes = validMatches.map((m) => (m as any).bbox_pdf as [number, number, number, number]);
+        const pageNos = validMatches.map((m) => Number((m as any).page_no || page_no || 1));
+        const pageNo = pageNos[0];
         const target: AnnotationTarget = {
           page_no: pageNo,
-          bbox_pdf: bbox,
+          bbox_pdf: _unionRects(bboxes),
+          search_rects_pdf: bboxes,
+          search_text: text,
           comment,
           color: COLOR_PALETTE[color] || DEFAULT_HIGHLIGHT_COLOR,
-          opacity: DEFAULT_OPACITY,
+          opacity: opacity ?? DEFAULT_OPACITY,
         };
         const id = `ai-${Date.now()}-${pending.length}`;
         pending.push({ id, target, type: 'highlight' });
-        return { ok: true, id, element_index, page_no: pageNo };
+        return { ok: true, id, text, match_count: validMatches.length, page_no: pageNo };
       },
     }),
 
-    add_callout: tool({
-      description: 'Add a callout (text box + arrow) annotation to the selected element. If get_elements(page_no) was called first, pass the same page_no to quickly look up that page.',
+    add_text_callout: tool({
+      description: 'Add a callout (text box + arrow) annotation by specifying the exact text to point to. The backend searches the PDF text layer and places the callout at the matching text. Use search_text first if you are unsure of the exact wording.',
       inputSchema: z.object({
-        element_index: z.number().describe('Index from get_elements result'),
-        page_no: z.number().optional().describe('1-based page number specified when calling get_elements. Omitting it searches the entire document'),
+        text: z.string().describe('Exact text string to point the callout to'),
+        page_no: z.number().optional().describe('1-based page number to limit the search. Searches all pages if omitted'),
         comment: z.string().describe('Annotation comment'),
         color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])
           .default('purple')
           .describe('Color name'),
+        opacity: z.number().min(0).max(1).optional().describe('Callout opacity (0.0~1.0)'),
       }),
-      execute: async ({ element_index, page_no, comment, color }) => {
-        const { elements } = await loadElements(page_no);
-        const element = elements[element_index];
-        if (!element) {
-          return { error: `element_index ${element_index} not found` };
+      execute: async ({ text, page_no, comment, color, opacity }) => {
+        const { matches } = await proofApi.searchText(jobId, text, page_no, authHeaders);
+        const first = (matches || []).find(
+          (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
+        );
+        if (!first) {
+          return { error: `Text not found for callout: '${text}'. Call search_text first to verify exact wording.` };
         }
-        const bbox = element.bbox_pdf as [number, number, number, number];
-        const pageNo = Number(element.page_no || 1);
+        const bbox = (first as any).bbox_pdf as [number, number, number, number];
+        const pageNo = Number((first as any).page_no || page_no || 1);
         const target: AnnotationTarget = {
           page_no: pageNo,
           bbox_pdf: bbox,
+          search_text: text,
           comment,
           color: COLOR_PALETTE[color] || DEFAULT_CALLOUT_COLOR,
-          opacity: DEFAULT_OPACITY,
+          opacity: opacity ?? DEFAULT_OPACITY,
         };
         const id = `ai-${Date.now()}-${pending.length}`;
         pending.push({ id, target, type: 'callout' });
-        return { ok: true, id, element_index, page_no: pageNo };
+        return { ok: true, id, text, page_no: pageNo };
       },
     }),
 
@@ -441,83 +485,6 @@ export function buildAnnotationTools(context: AnnotationContext) {
       },
     }),
 
-    save_annotations: tool({
-      description: 'Directly pass an annotation JSON in EmbedPDF AnnotationTransferItem[] format to Storage and reflect it in the viewer. Can be used instead of add_highlight/add_callout + apply_annotations, and is useful when creating annotations with precise positions (rect) based on information from view_page or read_job_json.\n' +
-        'Each annotation item structure: { annotation: { id, type (9=highlight, 3=freetext/callout), pageIndex (0-based), rect, color, strokeColor, opacity, contents, segmentRects (required for highlight), intent? ("FreeTextCallout"), lineEnding? (4=OpenArrow), fontFamily (4=Helvetica), fontSize, fontColor, textAlign (0=Left), verticalAlign (0=Top) } }\n' +
-        'rect coordinate system: uses PDF user-space (y↑, origin bottom-left). The following formats are supported:\n' +
-        '  1. Pass bbox_pdf array directly: rect = [x0, y0, x1, y1] (use bbox_pdf from get_elements as-is)\n' +
-        '  2. {origin, size} structure: rect = {origin: {x: x0, y: y0}, size: {width: x1-x0, height: y1-y0}} (y0 is PDF user-space bottom)\n' +
-        '  3. annotation.bbox_pdf field: bbox_pdf = [x0, y0, x1, y1] (can be used instead of rect)\n' +
-        'Coordinate conversion is performed by FastAPI pdf_user_annotator.apply_user_annotations based on the actual PDF page_height.',
-      inputSchema: z.object({
-        annotations: z.array(z.record(z.unknown()))
-          .describe('EmbedPDF AnnotationTransferItem[] array. Each item has the structure { annotation: { id, type, pageIndex, rect, color, ... } }.'),
-        merge: z.boolean().optional()
-          .describe('If true, merge with existing annotations (default). If false, replace all existing annotations.')
-      }),
-      execute: async ({ annotations, merge }) => {
-        if (!annotations || annotations.length === 0) {
-          return { saved: false, reason: 'No annotations provided' };
-        }
-        try {
-          const shouldMerge = merge !== false;
-
-          // [Flow: AI 백엔드는 좌표 변환을 하지 않고 PDF user-space 그대로 전송
-          //       -> 변환은 FastAPI pdf_user_annotator.apply_user_annotations에서 수행]
-          console.log(`[save_annotations] job=${jobId} count=${annotations.length} input_space=pdf_user`);
-
-          let toSave = annotations;
-          let saveSourceIndex = sourceIndex;
-          let usedFallback = false;
-          if (shouldMerge) {
-            try {
-              const existing = await proofApi.getAnnotations(jobId, sourceIndex, undefined, authHeaders);
-              const existingIds = new Set(existing.annotations.map((a) => {
-                const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
-                  ? (a as any).annotation : a;
-                return inner.id;
-              }));
-              const newOnes = annotations.filter((a) => {
-                const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
-                  ? (a as any).annotation : a;
-                return !existingIds.has(inner.id);
-              });
-              toSave = [...existing.annotations, ...newOnes];
-            } catch {
-              // 기존 주석 파일이 없으면 source_index = -1로 fallback (원본 PDF에 JSON 저장)
-              saveSourceIndex = -1;
-              usedFallback = true;
-              toSave = annotations;
-            }
-          }
-
-          try {
-            await proofApi.saveAnnotations(jobId, saveSourceIndex, toSave as Array<Record<string, unknown>>, 'pdf_user', authHeaders);
-          } catch (firstErr) {
-            // source_index=0으로 실패하면 -1로 재시도 (원본 PDF fallback)
-            if (saveSourceIndex >= 0) {
-              saveSourceIndex = -1;
-              usedFallback = true;
-              await proofApi.saveAnnotations(jobId, saveSourceIndex, toSave as Array<Record<string, unknown>>, 'pdf_user', authHeaders);
-            } else {
-              throw firstErr;
-            }
-          }
-          return {
-            saved: true,
-            count: toSave.length,
-            new_count: annotations.length,
-            merged: shouldMerge,
-            source_index: saveSourceIndex,
-            used_fallback: usedFallback,
-          };
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error(`[save_annotations] job=${jobId}: ${msg}`);
-          return { error: `save_annotations failed: ${msg}` };
-        }
-      },
-    }),
   };
 }
 
@@ -540,17 +507,25 @@ function _buildAnnotationItem(p: PendingAnnotation): Record<string, unknown> {
   const hexColor = _rgbToHex(p.target.color);
 
   if (p.type === 'highlight') {
+    // [Flow: search_rects_pdf가 있으면 각 rect를 segmentRects로 사용, 없으면 단일 rect]
+    const segmentRects = p.target.search_rects_pdf && p.target.search_rects_pdf.length > 0
+      ? p.target.search_rects_pdf.map(([sx0, sy0, sx1, sy1]) => ({
+          origin: { x: sx0, y: sy0 },
+          size: { width: sx1 - sx0, height: sy1 - sy0 },
+        }))
+      : [{ origin: { x: x0, y: y0 }, size: { width, height } }];
     return {
       annotation: {
         id: p.id,
         type: 9, // embedpdf HIGHLIGHT
         pageIndex: p.target.page_no - 1,
         rect: { origin: { x: x0, y: y0 }, size: { width, height } },
-        segmentRects: [{ origin: { x: x0, y: y0 }, size: { width, height } }],
+        segmentRects,
         strokeColor: hexColor,
         color: hexColor,
         opacity: p.target.opacity,
         contents: p.target.comment,
+        custom: p.target.search_text ? { searchText: p.target.search_text } : undefined,
       },
     };
   }

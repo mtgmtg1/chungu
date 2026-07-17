@@ -437,6 +437,10 @@ def _convert_annotation_to_device_space(
             for stroke in a["paths"]
             if isinstance(stroke, list)
         ]
+    if "calloutLine" in a and isinstance(a["calloutLine"], list):
+        a["calloutLine"] = [
+            (_pdf_point_to_device(p) or p) for p in a["calloutLine"] if isinstance(p, dict)
+        ]
     return a
 
 
@@ -569,13 +573,14 @@ def _convert_annotations_to_device_space(
             continue
         # AnnotationTransferItem 형식({annotation: {...}})이면 그대로 유지하고,
         # 평면 dict면 평면 dict를 반환한다.
-        _convert_annotation_to_device_space(
+        converted_a = _convert_annotation_to_device_space(
             a, page_height, page_x0s.get(page_no, 0.0), page_y0s.get(page_no, 0.0)
         )
         if "annotation" in raw and isinstance(raw["annotation"], dict):
+            raw["annotation"] = converted_a
             converted.append(raw)
         else:
-            converted.append(a)
+            converted.append(converted_a)
     return converted
 
 

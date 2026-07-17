@@ -19,6 +19,7 @@ from ..celery_app import celery
 from celery.signals import worker_ready
 from ..config import settings
 from ..core import archive_handler, converter, excel_writer, media_loader, merge, pdf_annotate_converter, pdf_text_layer, pipeline_ediscovery, points_service, subscription_service, supabase_client, xlsx_advanced_converter
+from ..core.markdown_image_rewriter import rewrite_inline_images_to_storage
 from ..core.ocr_client import has_pdf_text_layer
 from ..core.pipeline_docling import run_docling, run_hwp
 from ..core.pipeline_hybrid import run_hybrid
@@ -465,6 +466,7 @@ def run_job(job_id: str) -> dict:
                     on_error=on_error,
                     ocr_engine=ocr_engine,
                 )
+                page_tables = [(num, rewrite_inline_images_to_storage(table, job_id)) for num, table in page_tables]
                 fmt = "markdown"
                 # [Flow: 원본 PDF가 텍스트 레이어를 가지면 searchable PDF로 등록]
                 # 별도 OCR 텍스트 레이어 생성 없이 원본 PDF를 그대로 주석 검색용으로 사용한다.
@@ -487,6 +489,7 @@ def run_job(job_id: str) -> dict:
                     on_progress=on_progress,
                     on_error=on_error,
                 )
+                page_tables = [(num, rewrite_inline_images_to_storage(table, job_id)) for num, table in page_tables]
                 fmt = "markdown"
 
                 # [Flow: PaddleOCR layout로 searchable PDF 생성]
@@ -565,6 +568,7 @@ def run_job(job_id: str) -> dict:
                 on_progress=on_progress,
                 on_error=on_error,
             )
+            page_tables = [(num, rewrite_inline_images_to_storage(table, job_id)) for num, table in page_tables]
             fmt = "markdown"
 
             _set_status(db, job, "merging")
@@ -701,6 +705,7 @@ def run_job(job_id: str) -> dict:
                             on_error=lambda page, msg: docling_errors.append(f"p{page}: {msg}"),
                             ocr_engine=ocr_engine,
                         )
+                    fp_tables = [(num, rewrite_inline_images_to_storage(table, job_id)) for num, table in fp_tables]
                     for _, table in fp_tables:
                         all_page_contents.append((len(all_page_contents) + 1, table))
                     tabs[fp.name] = excel_writer.build_pdf_rows(fp.name, fp_tables, columns)
@@ -730,6 +735,7 @@ def run_job(job_id: str) -> dict:
                         on_error=lambda page, msg: hwp_errors.append(f"p{page}: {msg}"),
                         ocr_engine=ocr_engine,
                     )
+                    hwp_tables = [(num, rewrite_inline_images_to_storage(table, job_id)) for num, table in hwp_tables]
                     for _, table in hwp_tables:
                         all_page_contents.append((len(all_page_contents) + 1, table))
                     tabs[fp.name] = excel_writer.build_pdf_rows(fp.name, hwp_tables, columns)
@@ -763,6 +769,10 @@ def run_job(job_id: str) -> dict:
                     ocr_model=ocr_model,
                     ocr_engine=ocr_engine,
                 )
+                results = [
+                    (filename, position, rewrite_inline_images_to_storage(table, job_id))
+                    for filename, position, table in results
+                ]
 
                 for filename, position, table in results:
                     ftype = media_loader.detect_file_type(Path(filename))
@@ -1059,7 +1069,9 @@ def run_job_added_files(job_id: str) -> dict:
                     on_error=lambda page, msg: docling_errors.append(f"p{page}: {msg}"),
                     ocr_engine=ocr_engine,
                 )
-            info["result_markdown"] = converter.build_layout_markdown_string(docling_tables)
+            info["result_markdown"] = rewrite_inline_images_to_storage(
+                converter.build_layout_markdown_string(docling_tables), job_id
+            )
             info["status"] = "done"
             info["is_new"] = False
             errors.extend(docling_errors)
@@ -1083,7 +1095,9 @@ def run_job_added_files(job_id: str) -> dict:
                 on_error=lambda page, msg: hwp_errors.append(f"p{page}: {msg}"),
                 ocr_engine=ocr_engine,
             )
-            info["result_markdown"] = converter.build_layout_markdown_string(hwp_tables)
+            info["result_markdown"] = rewrite_inline_images_to_storage(
+                converter.build_layout_markdown_string(hwp_tables), job_id
+            )
             info["status"] = "done"
             info["is_new"] = False
             errors.extend(hwp_errors)
@@ -1108,6 +1122,10 @@ def run_job_added_files(job_id: str) -> dict:
                 ocr_model=ocr_model,
                 ocr_engine=ocr_engine,
             )
+            media_results = [
+                (filename, position, rewrite_inline_images_to_storage(table, job_id))
+                for filename, position, table in media_results
+            ]
             # run_media 결과를 파일명으로 매핑
             result_by_name: dict[str, str] = {}
             for filename, position, table in media_results:
@@ -1115,7 +1133,7 @@ def run_job_added_files(job_id: str) -> dict:
 
             # 이미지 searchable PDF 생성
             for ftype, info, fp in media_files:
-                info["result_markdown"] = result_by_name.get(fp.name, "")
+                info["result_markdown"] = rewrite_inline_images_to_storage(result_by_name.get(fp.name, ""), job_id)
                 info["status"] = "done"
                 info["is_new"] = False
                 # 이미지 파일에 searchable PDF 생성
@@ -1139,6 +1157,7 @@ def run_job_added_files(job_id: str) -> dict:
         # 모든 파일의 result_markdown을 결합
         all_file_markdowns = [f.get("result_markdown", "") for f in all_files]
         combined_markdown = converter.build_combined_file_markdowns(all_file_markdowns)
+        combined_markdown = rewrite_inline_images_to_storage(combined_markdown, job_id)
 
         # [Flow: Step 5 (combined markdown을 Storage에 재업로드 + CSV/XLSX Basic 재생성)]
         out_dir = work_dir / "result"

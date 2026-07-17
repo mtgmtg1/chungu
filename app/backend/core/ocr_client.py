@@ -16,6 +16,7 @@ from typing import Callable
 from PIL import Image
 
 from .llm_utils import with_gemma4_kwargs
+from .markdown_sanitizer import sanitize_markdown_for_llm
 
 
 logger = logging.getLogger(__name__)
@@ -265,8 +266,10 @@ def _post(endpoint: str, payload: dict, api_key: str = "", timeout: int = 1200, 
 
 def call_vision(image_path: Path, prompt: str, endpoint: str, model: str, api_key: str = "", max_tokens: int = 10000, page_text: str = "") -> tuple[str, str | None]:
     """이미지 + 프롬프트를 vision 모델로 전송한다."""
+    prompt = sanitize_markdown_for_llm(prompt)
     b64 = encode_image(image_path)
     if page_text.strip():
+        page_text = sanitize_markdown_for_llm(page_text)
         prompt = (
             f"{prompt}\n\n"
             "참고: 이 PDF 페이지에서 추출한 텍스트 레이어는 아래와 같습니다. "
@@ -288,6 +291,7 @@ def call_vision(image_path: Path, prompt: str, endpoint: str, model: str, api_ke
 
 def call_text(prompt: str, endpoint: str, model: str, api_key: str = "", max_tokens: int = 4000) -> tuple[str, str | None]:
     """텍스트 프롬프트만 전송한다."""
+    prompt = sanitize_markdown_for_llm(prompt)
     payload = {
         "model": model,
         "temperature": 0,

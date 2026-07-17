@@ -23,6 +23,7 @@ import fitz  # PyMuPDF
 from .. import settings_store
 from ..config import settings
 from ..core import points_service, supabase_client
+from ..core.markdown_sanitizer import sanitize_markdown_for_llm
 from ..core.ocr_client import call_text
 from ..core.pdf_optimizer import optimize_pdf_bytes
 from ..db.models import Job, User
@@ -245,6 +246,7 @@ def _extract_page_texts_from_markdown(markdown: str) -> dict[int, str]:
     텍스트 레이어가 없는 스캔 PDF의 폴백: 변환 결과 마크다운을 페이지 마커로 분할.
     마커가 없으면 전체를 1페이지로 취급한다.
     """
+    markdown = sanitize_markdown_for_llm(markdown)
     matches = list(PAGE_MARKER_RE.finditer(markdown))
     if not matches:
         stripped = markdown.strip()

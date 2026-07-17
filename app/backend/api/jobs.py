@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import math
+import mimetypes
 import re as _re
 import tempfile
 import unicodedata
@@ -42,6 +43,7 @@ def get_current_user_or_api_key(
     """
     return auth[0]
 from ..core import archive_handler, cache, converter, docling_client, hwp_converter, media_loader, office_converter, pdf_preview_converter, pdf_user_annotator, points_service, subscription_service, supabase_client
+from ..core.markdown_image_rewriter import rewrite_inline_images_to_storage
 
 
 logger = logging.getLogger(__name__)
@@ -2369,13 +2371,13 @@ def save_result_markdown(
         files = job.extracted_files or []
         for idx, info in enumerate(files):
             if idx < len(file_markdowns):
-                info["result_markdown"] = str(file_markdowns[idx])
+                info["result_markdown"] = rewrite_inline_images_to_storage(str(file_markdowns[idx]), job_id)
         job.extracted_files = files
         markdown = converter.build_combined_file_markdowns(
             [info.get("result_markdown", "") for info in files]
         )
     else:
-        markdown = str(payload.get("markdown", ""))
+        markdown = rewrite_inline_images_to_storage(str(payload.get("markdown", "")), job_id)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         edited_path = Path(tmpdir) / "result_edited.md"
@@ -2422,9 +2424,10 @@ def save_result_page(
     if target_idx is None:
         raise HTTPException(status_code=404, detail="File not found")
 
-    # [Flow: 편집기에서 저장된 `<!-- Page N -->` 파일 마커 제거 -> 파일 구분자로 재조합]
+    # [Flow: 편집기에서 저장된 `<!-- Page N -->` 파일 마커 제거 -> base64 이미지 외부화 -> 파일 구분자로 재조합]
     cleaned_content = _PAGE_MARKER_RE.sub("", new_content).strip()
     cleaned_content = _FILE_MARKER_RE.sub("", cleaned_content).strip()
+    cleaned_content = rewrite_inline_images_to_storage(cleaned_content, job_id)
     files[target_idx] = (page_num, cleaned_content)
     updated = "\n\n---\n\n".join([f"<!-- 파일 {num} -->\n\n{content}" for num, content in files])
 
@@ -4359,6 +4362,45 @@ def get_job_page_image(
         "height": pix.height,
         "image_url": signed_url,
     }
+
+
+# [Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (Storage path 검증)
+#       -> Step 3 (results 버킷에서 이미지 다운로드) -> Step 4 (Content-Type 설정 후 반환)]
+# 마크다운에 inline으로 저장된 OCR 이미지를 결과물 형태 그대로 제공한다.
+@router.get("/jobs/{job_id}/ocr-images/{storage_path:path}")
+def get_job_ocr_image(
+    job_id: str,
+    storage_path: str,
+    user: CurrentUser = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """[Flow: Step 1 (job 조회) -> Step 2 (Storage path 검증) -> Step 3 (results 버킷 다운로드)
+          -> Step 4 (Content-Type 설정 후 반환)]
+
+    마크다운에 저장된 inline OCR 이미지를 proxy한다.
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+
+    if ".." in storage_path or storage_path.split("/")[0] != job_id:
+        raise HTTPException(status_code=400, detail="Invalid storage path")
+
+    try:
+        client = supabase_client.get_service_client()
+        data = client.storage.from_("results").download(storage_path)
+    except Exception as e:
+        logger.warning(f"[get-job-ocr-image:{job_id}] 이미지 다운로드 실패: {e}")
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    content_type, _ = mimetypes.guess_type(storage_path)
+    if not content_type:
+        content_type = "application/octet-stream"
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 # [Flow: Step 1 (job 조회) -> Step 2 (kind에 따라 결과 JSON 소스 확보)

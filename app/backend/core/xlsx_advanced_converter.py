@@ -8,6 +8,7 @@ import traceback
 from io import BytesIO
 from pathlib import Path
 
+from .markdown_sanitizer import sanitize_markdown_for_llm
 from .. import settings_store
 from ..config import settings
 from ..core import office_converter, supabase_client
@@ -126,6 +127,7 @@ def _get_page_image_paths(
 
 def _extract_column_structure(page_markdown: str, endpoint: str, model: str, api_key: str, user_language: str = "ko") -> dict:
     """첫 페이지에서 공통 컬럼 구조를 JSON으로 추출한다."""
+    page_markdown = sanitize_markdown_for_llm(page_markdown)
     tables = office_converter._parse_markdown_tables(page_markdown)
     prompt = f"""Extract the common column structure for the entire document from the markdown table below. Return only JSON.
 
@@ -170,6 +172,7 @@ def _parse_tables_safe(page_markdown: str) -> list[dict]:
 
 def _normalize_page_with_llm(page_markdown: str, column_structure: dict, endpoint: str, model: str, api_key: str, user_language: str = "ko") -> dict:
     """LLM 텍스트로 페이지의 표를 공통 컬럼 구조에 맞춰 정리한다."""
+    page_markdown = sanitize_markdown_for_llm(page_markdown)
     columns = column_structure.get("columns", [])
     prompt = f"""Analyze the markdown table below and organize it according to the common column structure. Return only JSON.
 
@@ -209,6 +212,7 @@ Markdown:
 
 def _reconstruct_page_with_vision(image_path: Path, column_structure: dict, endpoint: str, model: str, api_key: str, page_markdown: str = "", user_language: str = "ko") -> dict:
     """vision LLM에 페이지 이미지를 전달하여 표를 재구성한다."""
+    page_markdown = sanitize_markdown_for_llm(page_markdown)
     columns = column_structure.get("columns", [])
     prompt = f"""This image is a document page. Extract the table as JSON matching the common column structure below.
 

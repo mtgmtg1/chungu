@@ -12,6 +12,7 @@ import ELK from 'elkjs/lib/elk.bundled.js';
 const elk = new (ELK as unknown as { new (): any })();
 import type { AuthHeaders } from '../lib/auth.js';
 import * as proofApi from '../lib/proof-api.js';
+import { sanitizeMarkdownForLLM } from '../lib/markdown-sanitizer.js';
 
 interface FlowToolContext {
   jobId?: string;
@@ -88,7 +89,7 @@ function _extractHeadingStructure(markdown: string): {
   nodes: Array<{ id: string; heading: string; level: number; summary: string; keywords: string[] }>;
   edges: Array<{ source: string; target: string; type: string }>;
 } {
-  const tokens = marked.lexer(markdown || '');
+  const tokens = marked.lexer(sanitizeMarkdownForLLM(markdown || ''));
   const nodes: Array<{ id: string; heading: string; level: number; summary: string; keywords: string[] }> = [];
   const edges: Array<{ source: string; target: string; type: string }> = [];
   const stack: Array<{ id: string; level: number }> = [];

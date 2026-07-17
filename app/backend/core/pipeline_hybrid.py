@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import docling_client, ocr_client
+from .markdown_sanitizer import sanitize_markdown_for_llm
 from .pdf_optimizer import optimize_pdf
 from .prompts import build_text_prompt
 from ..config import settings
@@ -46,7 +47,7 @@ def run_hybrid(
             on_error(1, str(e))
         return []
 
-    prompt = build_text_prompt(columns, markdown, extra_prompt)
+    prompt = build_text_prompt(columns, sanitize_markdown_for_llm(markdown), extra_prompt)
     try:
         content, _ = ocr_client.call_text(prompt, endpoint, model, api_key, max_tokens)
         block = ocr_client.extract_csv(content)

@@ -5,6 +5,7 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import type { AuthHeaders } from '../lib/auth.js';
 import * as proofApi from '../lib/proof-api.js';
+import { sanitizeMarkdownForLLM } from '../lib/markdown-sanitizer.js';
 
 interface MarkdownContext {
   jobId?: string;
@@ -45,7 +46,7 @@ export function buildMarkdownTools(context: MarkdownContext) {
       }),
       execute: async ({ heading }) => {
         const markdown = await proofApi.getMarkdown(jobId, authHeaders);
-        const section = _findSection(markdown, heading);
+        const section = sanitizeMarkdownForLLM(_findSection(markdown, heading));
         return { heading, content: section };
       },
     }),
@@ -58,7 +59,7 @@ export function buildMarkdownTools(context: MarkdownContext) {
       execute: async ({ table_index }) => {
         const markdown = await proofApi.getMarkdown(jobId, authHeaders);
         const tables = _findTables(markdown);
-        return { table_index, content: tables[table_index] || '' };
+        return { table_index, content: sanitizeMarkdownForLLM(tables[table_index] || '') };
       },
     }),
 
@@ -69,7 +70,11 @@ export function buildMarkdownTools(context: MarkdownContext) {
         new_text: z.string().describe('New markdown'),
       }),
       execute: async ({ old_text, new_text }) => {
-        edits.push({ type: 'replace', old_text, new_text });
+        edits.push({
+          type: 'replace',
+          old_text: sanitizeMarkdownForLLM(old_text),
+          new_text: sanitizeMarkdownForLLM(new_text),
+        });
         return { ok: true, type: 'replace', old_text, new_text };
       },
     }),
@@ -81,7 +86,7 @@ export function buildMarkdownTools(context: MarkdownContext) {
         new_text: z.string().describe('Markdown to insert'),
       }),
       execute: async ({ position, new_text }) => {
-        edits.push({ type: 'insert', position, new_text });
+        edits.push({ type: 'insert', position, new_text: sanitizeMarkdownForLLM(new_text) });
         return { ok: true, type: 'insert', position, new_text };
       },
     }),
@@ -93,7 +98,7 @@ export function buildMarkdownTools(context: MarkdownContext) {
         if (edits.length === 0) {
           return { saved: false, reason: 'No pending edits' };
         }
-        let markdown = await proofApi.getMarkdown(jobId, authHeaders);
+        let markdown = sanitizeMarkdownForLLM(await proofApi.getMarkdown(jobId, authHeaders));
         for (const edit of edits) {
           if (edit.type === 'replace' && edit.old_text) {
             markdown = markdown.replace(edit.old_text, edit.new_text);

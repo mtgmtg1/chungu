@@ -12,6 +12,7 @@ import re
 
 from sqlalchemy.orm import Session
 
+from ..core.markdown_sanitizer import sanitize_markdown_for_llm
 from ..core.ocr_client import call_text
 from ..core.points_service import spend_agent_step
 
@@ -105,6 +106,7 @@ def _build_cross_validation_prompt(
     추출된 쟁점-주장-근거 트리가 문서 내용과 일치하는지, 주장-근거 연결이 사실적으로 타당한지
     교차검증하도록 유도하는 LLM 프롬프트를 구성한다.
     """
+    page_texts = {k: sanitize_markdown_for_llm(v) for k, v in page_texts.items()}
     issues_summary = json.dumps(
         [
             {

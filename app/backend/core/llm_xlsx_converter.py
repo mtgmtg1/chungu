@@ -8,6 +8,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from .. import settings_store
+from .markdown_sanitizer import sanitize_markdown_for_llm
 from .ocr_client import call_text
 
 
@@ -92,6 +93,7 @@ def convert_markdown_to_xlsx(
     api_key: str = "",
 ) -> Path:
     """마크다운 표를 LLM을 통해 분석하여 xlsx 파일로 변환한다."""
+    markdown = sanitize_markdown_for_llm(markdown)
     if not markdown.strip():
         return _write_xlsx({"sheets": [{"name": "Sheet1", "headers": [], "rows": []}]}, out_path)
     prompt = f"{SYSTEM_PROMPT}\n\nMarkdown table to convert:\n\n{markdown}"

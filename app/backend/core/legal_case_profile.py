@@ -9,6 +9,7 @@ import json
 import logging
 import re
 
+from .markdown_sanitizer import sanitize_markdown_for_llm
 from .ocr_client import call_text
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,8 @@ def build_legal_profile_sample_text(page_texts: dict[int, str], max_chars: int =
     """
     if not page_texts:
         return ""
+
+    page_texts = {page_no: sanitize_markdown_for_llm(text) for page_no, text in page_texts.items()}
 
     pages = sorted(
         ((page_no, text.strip()) for page_no, text in page_texts.items() if text and text.strip()),

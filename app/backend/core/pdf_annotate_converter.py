@@ -386,7 +386,9 @@ def _collect_page_elements_pdf_direct(
         doc.close()
 
     try:
-        _markdown, layout_pages, angle_codes = paddleocr_client.convert_pdf_with_layout(submit_path)
+        pages = paddleocr_client.convert_pdf_with_layout(submit_path)
+        layout_pages = [p[1] for p in pages]
+        angle_codes = [p[2] for p in pages]
     except Exception as e:
         logger.warning(f"[pdf_annotate] PDF 직접 입력 경로: PaddleOCR PDF 변환 실패, 이미지 경로로 폴백: {e}")
         return _collect_page_elements_image(job, temp_dir, page_range)

@@ -247,7 +247,8 @@ def _build_and_upload_searchable_pdf(
             total_input_pages = len(doc)
             doc.close()
             if total_input_pages <= 10:
-                _, layout_pages, _ = paddleocr_client.convert_pdf_with_layout(input_path)
+                pages = paddleocr_client.convert_pdf_with_layout(input_path)
+                layout_pages = [p[1] for p in pages]
                 layout_by_page = {i + 1: layout for i, layout in enumerate(layout_pages) if layout}
                 logger.info(f"[run_job:{job.id}] searchable PDF 생성 직접 PaddleOCR layout 확보: {len(layout_by_page)}페이지")
         except Exception as e:

@@ -3280,7 +3280,7 @@ def save_user_annotations(
 
     # [Flow: AI 주석 PDF가 없으면 파일별 주석 JSON으로 저장 — 파일 추가 시 주석 합쳐짐 방지]
     if not has_annotation_pdf:
-        return _save_user_annotations_json(job, valid_annotations, db, source_index)
+        return _save_user_annotations_json(job, valid_annotations, db, source_index, input_space)
 
     # index 필드로 entry 찾기 (position 기반이 아님)
     # 하위 호환: source_index == 0이면 index == 1과 매칭 (단일 주석 PDF의 index는 1부터 시작)

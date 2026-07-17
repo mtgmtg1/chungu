@@ -479,9 +479,15 @@ def _convert_annotations_to_device_space(
         if page_height is None:
             converted.append(raw)
             continue
-        converted.append(_convert_annotation_to_device_space(
-            raw, page_height, page_x0s.get(page_no, 0.0), page_y0s.get(page_no, 0.0)
-        ))
+        # AnnotationTransferItem 형식({annotation: {...}})이면 그대로 유지하고,
+        # 평면 dict면 평면 dict를 반환한다.
+        _convert_annotation_to_device_space(
+            a, page_height, page_x0s.get(page_no, 0.0), page_y0s.get(page_no, 0.0)
+        )
+        if "annotation" in raw and isinstance(raw["annotation"], dict):
+            converted.append(raw)
+        else:
+            converted.append(a)
     return converted
 
 

@@ -1665,7 +1665,7 @@ def _source_files(job: Job) -> list[dict]:
                 "index": 1,
                 "status": "done",
                 "storage_path": job.result_annotated_pdf_storage_path,
-                "annotations_json_storage_path": None,
+                "annotations_json_storage_path": f"{job.id}/annotated.annotations.json",
                 "filename": f"{stem}_annotation1.pdf",
             }
         ]

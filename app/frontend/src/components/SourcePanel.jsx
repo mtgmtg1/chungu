@@ -700,7 +700,9 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
 
   useEffect(() => {
     const url = selectedFile?.annotations_json_url;
+    console.log("[SourcePanel] annotations_json_url:", url, "selectedFile:", selectedFile?.filename, "type:", selectedFile?.type);
     if (!url) {
+      console.log("[SourcePanel] no annotations_json_url, clearing annotations");
       setSelectedAnnotationsJson(null);
       return;
     }
@@ -711,11 +713,13 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
         return r.json();
       })
       .then((data) => {
+        console.log("[SourcePanel] annotations json fetched:", Array.isArray(data) ? data.length : "invalid", "first item:", Array.isArray(data) ? data[0] : null);
         if (!cancelled) {
           setSelectedAnnotationsJson(Array.isArray(data) ? data : null);
         }
       })
-      .catch(() => {
+      .catch((e) => {
+        console.error("[SourcePanel] annotations json fetch failed:", e);
         if (!cancelled) {
           setSelectedAnnotationsJson(null);
         }

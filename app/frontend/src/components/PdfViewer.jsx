@@ -281,9 +281,15 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
    */
   useEffect(() => {
     const api = annotationApiRef.current;
-    console.log("[PdfViewer] annotation import effect:", { isReady, hasApi: !!api, count: safeAnnotationsJson?.length });
-    if (!isReady || !api) return;
-    if (!safeAnnotationsJson || safeAnnotationsJson.length === 0) return;
+    console.log("[PdfViewer] annotation import effect:", JSON.stringify({ isReady, hasApi: !!api, count: safeAnnotationsJson?.length || 0 }));
+    if (!isReady || !api) {
+      console.warn("[PdfViewer] not ready to import annotations:", { isReady, hasApi: !!api });
+      return;
+    }
+    if (!safeAnnotationsJson || safeAnnotationsJson.length === 0) {
+      console.warn("[PdfViewer] safeAnnotationsJson is empty");
+      return;
+    }
     const currentJson = JSON.stringify(safeAnnotationsJson);
     if (currentJson === importedAnnotationsJsonRef.current) {
       console.log("[PdfViewer] annotations already imported, skipping");

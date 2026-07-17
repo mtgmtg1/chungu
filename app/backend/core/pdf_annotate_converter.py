@@ -1157,11 +1157,18 @@ def run(
         db.close()
         return {"error": "job not found"}
 
+    next_index = annotation_index
+    shared_annotations_json_path = f"{job.id}/annotated.annotations.json"
+
     # 하위 호환: 목록 컬럼 추가 전에 생성된 단일 주석 PDF를 목록으로 마이그레이션
+    # worker에 전달된 next_index와 일치하는 entry를 생성해야 후속 entry_found 검사를 통과한다.
     if job.result_annotated_pdf_storage_path and not (job.annotated_pdf_files or []):
         job.annotated_pdf_files = [
             {
+                "index": next_index,
+                "status": "processing",
                 "storage_path": job.result_annotated_pdf_storage_path,
+                "annotations_json_storage_path": shared_annotations_json_path,
                 "filename": _annotation_display_name(job, 1),
                 "instruction": job.annotate_instruction,
                 "mode": job.annotate_mode,
@@ -1170,8 +1177,6 @@ def run(
             }
         ]
         db.commit()
-
-    next_index = annotation_index
 
     endpoint = job.endpoint or settings_store.get_setting(db, "llm_endpoint") or settings.default_llm_endpoint
     model = job.model or settings_store.get_setting(db, "llm_model") or settings.default_llm_model
@@ -1322,7 +1327,6 @@ def run(
             # 프론트의 embedpdf export plugin(saveAsCopy)이 처리한다.
             # job당 하나의 공유 파일에 누적되며, run별로 고유 ID prefix를 가진다.
             shared_storage_path = f"{job.id}/annotated.pdf"
-            shared_annotations_json_path = f"{job.id}/annotated.annotations.json"
             display_name = _annotation_display_name(job, 1)
 
             # [Flow: 기존 공유 PDF가 있으면 재사용하여 사용자 주석 보존]

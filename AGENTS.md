@@ -29,30 +29,9 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **배포 시 주의**: 프론트엔드/DB 변경 없음. AI 백엔드 재배포 필요.
 - **핵심 파일**: `app/backend/api/jobs.py`, `app/backend/tests/test_jobs_result_json_annotations.py`, `app/ai-backend/src/tools/annotations.ts`, `app/ai-backend/src/chat/route.ts`.
 
-### AI Annotation Text-Search Pipeline — searchable PDF에서 LLM이 내용만 반환하고 백엔드가 SearchResult.rects로 형광펜
-
-- **목표**: 텍스트 레이어가 있는(searchable) PDF의 AI 주석 생성 시, LLM이 위치/페이지에 관여하지 않고 강조할 텍스트 내용만 반환하도록 하고, 백엔드가 PDF 텍스트 레이어를 검색해 모든 발생 위치를 `HIGHLIGHT` 주석으로 칠한다. 같은 텍스트가 한 페이지에 여러 번 있으면 `segmentRects`로 모두 highlight.
-- **Phase 1: 검색 인프라** (`app/backend/core/pdf_text_layer.py`):
-  - `TextLayerSearcher.search_all_pages()` 추가: 전체 페이지(또는 `page_range`)에서 동일 텍스트를 검색해 페이지별 `[(x0, y0, x1, y1), ...]` 목록 반환.
-- **Phase 2: LLM 프롬프트** (`app/backend/core/prompts.py`):
-  - `build_text_search_highlight_prompt()` 추가: LLM에게 정확한 텍스트 `text`만 반환하도록 지시, `matches` 항목을 `text` 기반으로 설계.
-- **Phase 3: 주석 데이터 모델 확장** (`app/backend/core/pdf_annotator.py`):
-  - `AnnotationTarget`에 `search_rects_pdf` (검색 결과 rects) / `search_text` (원본 텍스트) 추가.
-  - `build_embedpdf_annotations()`에서 `search_rects_pdf`가 있으면 `rect`는 bounding rect, `segmentRects`는 모든 검색 결과 rect로 구성. `custom.searchText` 메타데이터 보존.
-- **Phase 4: 파이프라인 연결** (`app/backend/core/pdf_annotate_converter.py`):
-  - `_collect_targets_with_searchable_text()` 추가: 페이지별 텍스트를 추출 → LLM에 전달 → 반환된 `text`들을 `TextLayerSearcher`로 검색 → `AnnotationTarget` 생성.
-  - `run()`의 searchable PDF 분기에서 OCR/요소 추출 대신 `_collect_targets_with_searchable_text()`를 사용하도록 변경.
-  - callout 배치 시 `targets`의 `bbox_pdf`를 장애물에 추가해 하이라이트 영역을 가리지 않도록 개선.
-- **Phase 5: 테스트** (`app/backend/tests/test_pdf_annotator_build.py`, `app/backend/tests/test_pdf_annotate_converter_run.py`):
-  - `test_search_rects_pdf_creates_multiple_segment_rects`: 여러 `search_rects_pdf`가 `segmentRects`로 변환되는지 검증.
-  - `TestPdfAnnotateConverterSearchableTextPipeline.test_run_searchable_pdf_highlight_all_occurrences`: searchable PDF에서 "CONFIDENTIAL" 텍스트가 2회 삽입된 PDF를 대상으로, LLM이 `text`만 반환하면 `segmentRects`가 2개 생성되는지 검증.
-- **검증**: `cd app/backend && .venv/bin/python -m pytest tests/ -q` → 223 passed (기존 221 + 신규 2).
-- **배포 시 주의**: 프론트엔드 변경 없음. `PdfViewer`는 기존 `importAnnotations()`로 백엔드가 생성한 `segmentRects`를 그대로 렌더링. 기존 non-searchable PDF 경로(OCR 기반)는 그대로 유지.
-- **핵심 파일**: `app/backend/core/pdf_text_layer.py`, `app/backend/core/prompts.py`, `app/backend/core/pdf_annotator.py`, `app/backend/core/pdf_annotate_converter.py`, `app/backend/tests/test_pdf_annotator_build.py`, `app/backend/tests/test_pdf_annotate_converter_run.py`.
-
 ### AI Annotation Text-Only + Searchable PDF Guarantee — 모든 PDF를 PaddleOCR로 searchable 변환 및 LLM 위치값 제거
 
-- **목표**: 텍스트 레이어가 없는 스캔 PDF를 포함한 모든 PDF가 PaddleOCR을 거쳐 searchable PDF가 되도록 보장하고, AI 주석 생성 시 LLM이 위치/좌표/element_index/bbox를 전혀 고려하지 않고 "강조할 텍스트 내용"만 반환하도록 한다. 백엔드가 `TextLayerSearcher`로 해당 텍스트를 검색해 모든 발생 위치를 `segmentRects`로 highlight.
+- **목표**: 텍스트 레이어가 없는 스캔 PDF를 포함한 **모든 PDF**가 PaddleOCR을 거쳐 searchable PDF가 되도록 보장하고, AI 주석 생성 시 LLM이 위치/좌표/`element_index`/bbox를 전혀 고려하지 않고 "강조할 텍스트 내용"만 반환하도록 한다. 백엔드가 `TextLayerSearcher`로 해당 텍스트를 검색해 모든 발생 위치를 `segmentRects`로 highlight.
 - **Phase 1: 프롬프트 정리** (`app/backend/core/prompts.py`):
   - `build_element_highlight_prompt`, `build_row_highlight_prompt` 삭제.
   - `build_vision_bbox_highlight_prompt`를 `build_vision_text_highlight_prompt`로 변경: 이미지를 보고 `text`만 반환.
@@ -67,13 +46,17 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
   - 10페이지 이하 PDF는 `convert_pdf_with_layout` 직접, 11페이지 이상은 렌더링 후 `convert_images_batch_with_layout` 또는 `convert_image_with_layout` per-page.
 - **Phase 4: `workers/tasks.py` searchable PDF 복구 강화**:
   - `_build_and_upload_searchable_pdf()`에서 `layout_by_page`가 비어 있을 경우 `paddleocr_client.convert_pdf_with_layout()`로 직접 layout을 복구하는 방어 로직 추가.
-- **Phase 5: 테스트** (`app/backend/tests/test_pdf_annotate_converter_run.py`):
-  - `TestAnnotationPromptsAreTextOnly`: 모든 annotation prompt가 text 기반이고 위치값을 요구하지 않음을 검증.
-  - `TestScannedPdfTextSearchPipeline`: searchable PDF가 없는 스캔 PDF에서 LLM이 `text`만 반환하면 backend가 검색해 highlight.
-  - `test_run_advanced_vision_returns_text_only`: `advanced=True` Vision LLM이 `text`만 반환하면 backend가 검색.
+- **Phase 5: `paddleocr_client.py` 중복 함수 정리**:
+  - `convert_pdf_with_layout`이 두 번 정의되어 있던 문제 수정 (shadowing 제거). 모든 호출자가 per-page `(markdown, layout, angle_code)` tuple list를 반환하는 단일 함수를 사용하도록 정리.
+- **Phase 6: 테스트 및 디버그 스크립트**:
+  - `app/backend/tests/test_pdf_annotate_converter_run.py`:
+    - `TestAnnotationPromptsAreTextOnly`: 모든 annotation prompt가 text 기반이고 위치값을 요구하지 않음을 검증.
+    - `TestScannedPdfTextSearchPipeline`: searchable PDF가 없는 스캔 PDF에서 LLM이 `text`만 반환하면 backend가 검색해 highlight.
+    - `test_run_advanced_vision_returns_text_only`: `advanced=True` Vision LLM이 `text`만 반환하면 backend가 검색.
+  - `app/backend/test_annotate_compare.py`: text-only prompt와 OCR bbox 검색 방식으로 갱신.
 - **검증**: `cd app/backend && .venv/bin/python -m pytest tests/ -q` → 227 passed.
-- **배포 시 주의**: 프론트엔드 변경 없음. `advanced` 모드는 여전히 Vision LLM을 호출하지만 위치값 대신 텍스트 내용만 반환. PaddleOCR 장애 시 `run_vision` 및 searchable PDF 생성이 실패할 수 있음.
-- **핵심 파일**: `app/backend/core/prompts.py`, `app/backend/core/pdf_annotate_converter.py`, `app/backend/core/pipeline_vision.py`, `app/backend/workers/tasks.py`, `app/backend/tests/test_pdf_annotate_converter_run.py`, `app/backend/test_annotate_compare.py`.
+- **배포 시 주의**: 프론트엔드/DB 변경 없음. `advanced` 모드는 여전히 Vision LLM을 호출하지만 위치값 대신 텍스트 내용만 반환. PaddleOCR 장애 시 `run_vision` 및 searchable PDF 생성이 실패할 수 있음.
+- **핵심 파일**: `app/backend/core/prompts.py`, `app/backend/core/pdf_annotate_converter.py`, `app/backend/core/pipeline_vision.py`, `app/backend/core/paddleocr_client.py`, `app/backend/workers/tasks.py`, `app/backend/tests/test_pdf_annotate_converter_run.py`, `app/backend/test_annotate_compare.py`.
 
 ### IRAC Argument Map — 쟁점/주장/근거 3단계 행렬 + 원문 스크롤 연동 뷰 모드
 

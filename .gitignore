@@ -89,3 +89,7 @@ infra/kata-guest/kata-agent.service.real
 
 # Test artifacts
 dummy_test.txt
+
+# Redis
+dump.rdb
+*.rdb

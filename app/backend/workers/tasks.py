@@ -18,7 +18,7 @@ from sqlalchemy import text as sql_text
 from ..celery_app import celery
 from celery.signals import worker_ready
 from ..config import settings
-from ..core import archive_handler, converter, excel_writer, media_loader, merge, paddleocr_client, pdf_annotate_converter, pdf_text_layer, pipeline_ediscovery, points_service, subscription_service, xlsx_advanced_converter
+from ..core import archive_handler, converter, excel_writer, media_loader, merge, paddleocr_client, pdf_annotate_converter, pdf_text_layer, pipeline_ediscovery, points_service, subscription_service, supabase_client, xlsx_advanced_converter
 from ..core.markdown_image_rewriter import rewrite_inline_images_to_storage
 from ..core.ocr_client import has_pdf_text_layer
 from ..core.pipeline_docling import run_docling, run_hwp

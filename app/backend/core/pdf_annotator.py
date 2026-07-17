@@ -46,7 +46,12 @@ DEFAULT_OPACITY = 0.5  # 하이라이트/callout 공통 기본 투명도 (50%)
 
 @dataclass
 class AnnotationTarget:
-    """하이라이트/callout 공용 대상 하나 (표의 한 행 또는 텍스트 블록에 대응)."""
+    """[Flow: Step 1 (하이라이트/callout 대상 데이터 정의) -> Step 2 (선택적 검색 결과 rects 보관)]
+
+    하이라이트/callout 공용 대상 하나.
+    단일 bbox_pdf만 있으면 단순 bbox로 주석을 생성하고,
+    search_rects_pdf가 추가되면 한 주석의 segmentRects를 여러 rect로 구성할 수 있다.
+    """
 
     page_no: int  # 1-based
     bbox_pdf: tuple[float, float, float, float]  # (x0, y0, x1, y1), 시각적(렌더링된 이미지 기준) PDF 포인트 좌표
@@ -58,6 +63,10 @@ class AnnotationTarget:
     # 하이라이트/callout 투명도 (0.0=완전 투명, 1.0=완전 불투명).
     # None이면 DEFAULT_OPACITY(0.5) 사용. 사용자가 투명도를 요청한 경우에만 설정.
     opacity: float | None = None
+    # 텍스트 레이어 검색 결과로 얻은 여러 rect. 한 텍스트가 페이지에서 여러 줄/영역에 걸쳐 있을 때 사용.
+    search_rects_pdf: list[tuple[float, float, float, float]] | None = None
+    # 검색에 사용된 원본 텍스트. 주석 메타데이터로 남겨두면 프론트엔드 재검색/디버깅에 유용하다.
+    search_text: str | None = None
 
 
 # --- EmbedPDF PdfAnnotationSubtype enum 값 (숫자 상수) ---
@@ -152,22 +161,34 @@ def build_embedpdf_annotations(
             base_id = f"backend-{annotation_index}-{page_no}-{idx}"
             x0, y0, x1, y1 = t.bbox_pdf
 
+            # [Flow: Step 1 (segmentRects 구성 — 검색 결과 rects가 있으면 모두 사용, 없으면 bbox_pdf 단일 rect)
+            #       -> Step 2 (하이라이트 주석 생성) -> Step 3 (callout 주석 생성)]
+            segment_bboxes_pdf = t.search_rects_pdf if t.search_rects_pdf else [(x0, y0, x1, y1)]
+            segment_rects_ep = [
+                _rect_to_embedpdf_rect(sx0, sy0, sx1, sy1, page_height, page_x0, page_y0)
+                for sx0, sy0, sx1, sy1 in segment_bboxes_pdf
+            ]
+            bounding_rect_ep = _rect_to_embedpdf_rect(x0, y0, x1, y1, page_height, page_x0, page_y0)
+
             # 하이라이트 주석 생성 (enable_highlight일 때)
             if enable_highlight:
-                rect_ep = _rect_to_embedpdf_rect(x0, y0, x1, y1, page_height, page_x0, page_y0)
-                annotations.append({
+                highlight_annotation = {
                     "annotation": {
                         "id": f"{base_id}-highlight",
                         "type": HIGHLIGHT_TYPE,
                         "pageIndex": page_no - 1,
-                        "rect": rect_ep,
-                        "segmentRects": [rect_ep],
+                        "rect": bounding_rect_ep,
+                        "segmentRects": segment_rects_ep,
                         "strokeColor": _rgb_to_hex(t.color),
                         "color": _rgb_to_hex(t.color),
                         "opacity": t.opacity if t.opacity is not None else DEFAULT_OPACITY,
                         "contents": t.comment,
                     }
-                })
+                }
+                # [Flow: 검색에 사용된 원본 텍스트가 있으면 custom 메타데이터로 보존]
+                if t.search_text:
+                    highlight_annotation["annotation"]["custom"] = {"searchText": t.search_text}
+                annotations.append(highlight_annotation)
 
             # callout 주석 생성 (needs_callout일 때)
             if needs_callout:

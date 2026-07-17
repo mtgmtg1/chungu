@@ -4486,6 +4486,17 @@ def get_job_result_json(
 
     if kind == "annotations":
         all_annotations = _load_all_annotations(job, source_index, page_no)
+        # [Flow: read_job_json도 get_annotations과 동일하게 AI 백엔드가 사용하는 PDF user-space 좌표계로 반환
+        #       -> save_annotations 등에서 read_job_json 결과를 그대로 재사용할 때 좌표계 불일치 방지]
+        if all_annotations and job.pdf_storage_path:
+            try:
+                client = supabase_client.get_service_client()
+                pdf_bytes = client.storage.from_("pdfs").download(job.pdf_storage_path)
+                all_annotations = pdf_user_annotator._convert_annotations_to_pdf_user(
+                    all_annotations, pdf_bytes
+                )
+            except Exception as e:
+                logger.warning(f"[get_job_result_json] {job.id} device→pdf_user 변환 실패: {e}")
         return {"kind": "annotations", "data": all_annotations, "total": len(all_annotations)}
 
     raise HTTPException(status_code=400, detail=f"Unknown kind: {kind}. Supported: annotations|ocr_layout|extracted_files|annotated_pdf_files|job_meta")

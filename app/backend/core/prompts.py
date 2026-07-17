@@ -246,6 +246,76 @@ def build_element_highlight_prompt(
     )
 
 
+def build_text_search_highlight_prompt(
+    page_texts: list[tuple[int, str]],
+    instruction: str,
+    want_llm_comment: bool,
+) -> str:
+    """[Flow: Step 1 (페이지별 텍스트 인덱스 생성) -> Step 2 (조건 + 예시 JSON 포함 프롬프트 조립)]
+
+    검색 가능한 PDF의 텍스트 레이어에서 직접 검색할 때 사용하는 프롬프트.
+    LLM은 위치(페이지/좌표)에 관여하지 않고, 강조해야 할 정확한 텍스트 내용만 반환한다.
+    백엔드가 반환된 text를 PDF 텍스트 레이어에서 검색해 모든 발생 위치를 형광펜으로 칠한다.
+
+    Args:
+        page_texts: (1-based page_no, 페이지 텍스트) 튜플 목록
+        instruction: 사용자가 입력한 조건 문구
+        want_llm_comment: True면 LLM이 요약 코멘트를 생성, False면 사용자 문구를 그대로 사용
+
+    Returns:
+        LLM에 전송할 프롬프트 문자열
+    """
+    page_blocks = []
+    for page_no, text in page_texts:
+        page_blocks.append(f"--- Page {page_no} ---\n{text}")
+    pages_section = "\n\n".join(page_blocks)
+
+    comment_instr = (
+        "For each matched text, write a short comment (about 10 characters) summarizing why it was selected. "
+        "Write the comment in the SAME language as the user's condition text above."
+        if want_llm_comment
+        else 'Repeat the "Condition" text verbatim as the comment for every matched text (do not summarize or rephrase). '
+        "Keep the original language of the condition text."
+    )
+
+    return (
+        "You are an assistant reviewing a searchable PDF. Below are text excerpts from each page. "
+        "The PDF already has a text layer, so you do NOT need to provide coordinates or page numbers. "
+        "Only return the exact text content that should be highlighted according to the condition. "
+        "If the same text appears multiple times, it will be highlighted on every occurrence.\n\n"
+        f"--- Page texts ---\n{pages_section}\n\n"
+        f"--- Condition ---\n{instruction}\n\n"
+        "Find all exact text spans in the document that match the condition. "
+        "Return the text exactly as it appears in the document (preserve punctuation, spaces, numbers, and line breaks). "
+        "For table rows, you may either return the full row text with cells separated by pipes (|), "
+        "or return the exact text of the specific cell/cells that match the condition. "
+        "Do not paraphrase or summarize the text; use the exact wording from the page excerpts above. "
+        "When the user asks for a specific highlight color (e.g., red, yellow, green, blue), use the corresponding color name. "
+        "Available colors: red, yellow, green, blue, orange, purple, pink, gray. If no color is implied, default to yellow.\n"
+        "Determine the annotation display mode based on the user's request: "
+        "'highlight' if the user asks for highlights only, "
+        "'margin_note' if the user asks for margin notes only, "
+        "'both' if the user asks for both or does not specify.\n"
+        "Determine the comment mode based on the user's request: "
+        "'user_text' if the user explicitly says to use the input text verbatim as the comment, "
+        "'llm_summary' if the user wants AI-generated summaries or does not specify.\n"
+        "When the user asks for a specific opacity/transparency (e.g., 'transparently', 'lightly', '50%', 'semi-transparent'), "
+        "include an 'opacity' field with a value between 0.0 (fully transparent) and 1.0 (fully opaque). "
+        "If no opacity is requested, omit the 'opacity' field.\n"
+        "\n"
+        f"{comment_instr}\n"
+        "If no text matches, return an empty matches array.\n"
+        "Output strictly in the following JSON format. Do not include explanations or code block markers (```).\n"
+        "{\n"
+        '  "mode": "both",\n'
+        '  "comment_mode": "llm_summary",\n'
+        '  "matches": [\n'
+        '    {"text": "exact text from the document", "comment": "...", "color": "yellow", "opacity": 0.5}\n'
+        "  ]\n"
+        "}\n"
+    )
+
+
 def build_docling_refinement_prompt(columns: list[str], docling_markdown: str, extra: str = "") -> str:
     """Prompt to clean up and restructure markdown extracted by Docling using an LLM."""
     cols = ", ".join(columns) if columns else "content"

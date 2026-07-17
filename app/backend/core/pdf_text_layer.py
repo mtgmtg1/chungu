@@ -342,6 +342,37 @@ class TextLayerSearcher:
 
         return []
 
+    def search_all_pages(
+        self,
+        text: str,
+        page_range: list[int] | None = None,
+    ) -> list[tuple[int, list[tuple[float, float, float, float]]]]:
+        """[Flow: Step 1 (검색 대상 페이지 번호 결정) -> Step 2 (각 페이지에서 전체 텍스트 검색)
+              -> Step 3 (매칭된 페이지별 bbox 목록 반환)]
+
+        텍스트 레이어 PDF의 모든 페이지(또는 지정한 페이지 범위)에서 동일한 텍스트를 검색한다.
+        한 페이지에서 동일한 텍스트가 여러 번 나타나면 해당 페이지에 대한 bbox 목록에 모두 포함된다.
+
+        Args:
+            text: 검색할 텍스트
+            page_range: 1-based 페이지 번호 리스트. None이면 전체 페이지를 검색한다.
+
+        Returns:
+            [(page_no, [(x0, y0, x1, y1), ...]), ...] 형태의 매칭 결과 목록
+        """
+        if not text or not text.strip():
+            return []
+
+        page_numbers = page_range if page_range else list(range(1, self.doc.page_count + 1))
+        results: list[tuple[int, list[tuple[float, float, float, float]]]] = []
+        for page_no in page_numbers:
+            if page_no < 1 or page_no > self.doc.page_count:
+                continue
+            rects = self.search(page_no, text)
+            if rects:
+                results.append((page_no, rects))
+        return results
+
     def close(self) -> None:
         """PDF 문서를 닫는다."""
         if self.doc:

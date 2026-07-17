@@ -106,7 +106,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
 
   return {
     search_text: tool({
-      description: 'Search the PDF text layer for keywords or regular expressions.',
+      description: 'Search the PDF text layer for keywords or regular expressions. Returned matches include bbox_pdf in PDF user-space (y↑, origin bottom-left), which can be used directly with save_annotations.',
       inputSchema: z.object({
         query: z.string().describe('Search keyword or regular expression'),
         page_no: z.number().optional().describe('1-based page number. Searches all pages if omitted'),
@@ -118,7 +118,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     get_elements: tool({
-      description: 'Return the list of page elements extracted from OCR or the text layer. In large PDFs or image-based PDFs, omitting page_no may require OCR of the entire document, so it can be very slow. Always specify page_no when you only need elements from a specific page.',
+      description: 'Return the list of page elements extracted from OCR or the text layer. Each element includes bbox_pdf in PDF user-space (y↑, origin bottom-left), which can be used directly with save_annotations. In large PDFs or image-based PDFs, omitting page_no may require OCR of the entire document, so it can be very slow. Always specify page_no when you only need elements from a specific page.',
       inputSchema: z.object({
         page_no: z.number().optional().describe('1-based page number. Omitting it will OCR all pages (slow)'),
       }),
@@ -139,7 +139,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
 
     read_job_json: tool({
       description: 'A general-purpose reader for various result JSONs of a job. Use kind to specify the data to read:\n' +
-        '- "annotations": AI/user annotation JSON (full structure of EmbedPDF AnnotationTransferItem[] — id, type, pageIndex, rect, color, contents, calloutLine, strokeColor, etc.)\n' +
+        '- "annotations": AI/user annotation JSON in PDF user-space (full structure of EmbedPDF AnnotationTransferItem[] — id, type, pageIndex, rect, color, contents, calloutLine, strokeColor, etc.)\n' +
         '- "ocr_layout": OCR layout JSON (text block/table/image position info)\n' +
         '- "extracted_files": list of extracted files (markdown/image/PDF paths, etc.)\n' +
         '- "annotated_pdf_files": annotated PDF file metadata list\n' +
@@ -168,7 +168,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     get_annotations: tool({
-      description: 'Return the list of existing AI or user annotations together with the full original JSON structure. Includes all fields such as annotation ID, type, color, comment, page, position (bbox), calloutLine, strokeColor, etc. Use when editing/deleting annotations or avoiding conflicts with existing annotations.',
+      description: 'Return the list of existing AI or user annotations together with the full original JSON structure. Coordinates (rect, segmentRects, calloutLine) are in PDF user-space (y↑, origin bottom-left) so they can be reused directly with save_annotations. Includes all fields such as annotation ID, type, color, comment, page, position (bbox), calloutLine, strokeColor, etc. Use when editing/deleting annotations or avoiding conflicts with existing annotations.',
       inputSchema: z.object({
         page_no: z.number().optional().describe('1-based page number. Returns all pages if omitted'),
         summary_only: z.boolean().optional().describe('If true, return only summary fields (id/type/page_no/color/comment). If omitted, return the full original JSON'),

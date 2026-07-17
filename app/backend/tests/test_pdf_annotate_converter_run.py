@@ -175,3 +175,112 @@ class TestPdfAnnotateConverterRunBackwardCompat:
         assert entry["status"] == "done"
         assert entry["storage_path"] == f"{job.id}/annotated.pdf"
         assert entry["annotations_json_storage_path"] == json_path
+
+
+def _make_searchable_pdf_with_duplicate_text() -> bytes:
+    """[Flow: PyMuPDF 문서 생성 -> 동일한 텍스트를 2회 삽입 -> 바이트 반환]"""
+    doc = fitz.open()
+    page = doc.new_page(width=595.0, height=842.0)
+    page.insert_text((100, 750), "CONFIDENTIAL")
+    page.insert_text((100, 700), "CONFIDENTIAL")
+    stream = io.BytesIO()
+    doc.save(stream)
+    doc.close()
+    return stream.getvalue()
+
+
+class TestPdfAnnotateConverterSearchableTextPipeline:
+    """searchable PDF가 있을 때 LLM이 text만 반환하면 모든 발생 위치를 highlight한다."""
+
+    def test_run_searchable_pdf_highlight_all_occurrences(self, tmp_path, monkeypatch):
+        # [Flow: Job 인스턴스 생성 -> searchable PDF 설정]
+        job = Job()
+        job.id = "test-job-searchable"
+        job.searchable_pdf_storage_path = "searchable.pdf"
+        job.annotated_pdf_files = [
+            {
+                "index": 1,
+                "status": "processing",
+                "storage_path": "",
+                "annotations_json_storage_path": "",
+            }
+        ]
+        job.annotate_instruction = "highlight confidential"
+        job.annotate_mode = "highlight"
+        job.annotate_comment_mode = "llm_summary"
+        job.endpoint = None
+        job.model = None
+
+        db = _make_mock_db(job)
+
+        # [Flow: 의존성 모킹]
+        mock_storage = MockStorage()
+        mock_client = MagicMock()
+        mock_client.storage = mock_storage
+
+        searchable_pdf_bytes = _make_searchable_pdf_with_duplicate_text()
+
+        def _download_pdf(path: str):
+            return io.BytesIO(searchable_pdf_bytes)
+
+        def _render_pdf(input_path: str, output_dir: str, dpi: int = 300):
+            out_dir = Path(output_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            _make_dummy_png(out_dir / "page-1.png")
+            return {1: out_dir / "page-1.png"}
+
+        def _settings_get(db, key: str):
+            defaults = {
+                "llm_endpoint": "http://test-llm",
+                "llm_model": "test-model",
+                "llm_api_key": "test-key",
+            }
+            return defaults.get(key, "")
+
+        import backend.core.pdf_annotate_converter as pac
+
+        monkeypatch.setattr(pac, "SessionLocal", lambda: db)
+        monkeypatch.setattr(pac.supabase_client, "download_pdf", _download_pdf)
+        monkeypatch.setattr(pac.supabase_client, "get_service_client", lambda: mock_client)
+        monkeypatch.setattr(pac, "_render_pdf_to_image_paths", _render_pdf)
+        monkeypatch.setattr(pac.settings_store, "get_setting", _settings_get)
+        monkeypatch.setattr(pac, "flag_modified", lambda *args, **kwargs: None)
+        monkeypatch.setattr(pac.cache, "invalidate_pattern", lambda *args, **kwargs: None)
+
+        # [Flow: LLM이 text만 반환하도록 모킹]
+        def _call_text(prompt, endpoint, model, api_key, max_tokens=None):
+            return (
+                '{"mode": "highlight", "comment_mode": "llm_summary", "matches": ['
+                '{"text": "CONFIDENTIAL", "comment": "secret", "color": "red", "opacity": 0.5}'
+                ']}'
+            ), None
+
+        monkeypatch.setattr(pac.ocr_client, "call_text", _call_text)
+
+        # [Flow: run 실행 -> 검증]
+        result = pac.run(
+            job_id=job.id,
+            instruction="highlight confidential",
+            mode="highlight",
+            comment_mode="llm_summary",
+            language="en",
+            advanced=False,
+            annotation_index=1,
+            page_range=None,
+        )
+
+        assert result["status"] == "done"
+
+        json_path = f"{job.id}/annotated.annotations.json"
+        assert json_path in mock_storage.uploaded
+        uploaded_json = json.loads(mock_storage.uploaded[json_path])
+        assert isinstance(uploaded_json, list)
+        assert len(uploaded_json) == 1
+        ann = uploaded_json[0]["annotation"]
+        assert ann["type"] == 9
+        # 같은 텍스트가 한 페이지에 2회 있으므로 segmentRects가 2개여야 한다.
+        assert "segmentRects" in ann
+        assert len(ann["segmentRects"]) == 2
+        assert ann["custom"] == {"searchText": "CONFIDENTIAL"}
+        # bounding rect는 두 세그먼트를 모두 감싸므로, 세그먼트 하나보다 높이가 커야 한다.
+        assert ann["rect"]["size"]["height"] > ann["segmentRects"][0]["size"]["height"]

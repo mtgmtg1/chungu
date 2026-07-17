@@ -169,3 +169,23 @@ class TestBuildEmbedpdfAnnotations:
         # y0 기준 오름차순(PDF user-space)이므로 lower(500) 먼저, upper(700) 다음
         assert result[0]["annotation"]["contents"] == "lower"
         assert result[1]["annotation"]["contents"] == "upper"
+
+    def test_search_rects_pdf_creates_multiple_segment_rects(self):
+        # [Flow: 한 대상에 여러 검색 결과 rects가 있을 때 -> segmentRects가 모두 포함되고 custom에 searchText가 남는지 확인]
+        pdf_bytes = _make_a4_pdf()
+        target = AnnotationTarget(
+            page_no=1,
+            bbox_pdf=(50, 700, 250, 720),
+            comment="multiple",
+            search_rects_pdf=[(50, 700, 150, 720), (150, 700, 250, 720)],
+            search_text="hello",
+        )
+
+        result = build_embedpdf_annotations(pdf_bytes, [target], mode="highlight")
+
+        assert len(result) == 1
+        ann = result[0]["annotation"]
+        assert ann["type"] == HIGHLIGHT_TYPE
+        assert "segmentRects" in ann
+        assert len(ann["segmentRects"]) == 2
+        assert ann["custom"] == {"searchText": "hello"}

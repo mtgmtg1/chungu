@@ -107,12 +107,12 @@ Rules:
 - CRITICAL: Always read and analyze tool results before making the next tool call. Do NOT call another tool based on assumptions — use the actual data returned by the previous tool. If a tool returns an error, read the error message and adjust your approach accordingly.
 - After calling a tool, summarize what you learned from its output before deciding the next step.
 - For PDF annotations, only call apply_annotations when you are done adding/removing highlights/callouts.
-- To inspect a PDF page visually, call view_page to get a vision analysis of the rendered page image (DPI is estimated from the page's embedded raster images; pass an explicit dpi between 150 and 300 only when needed).
-- To read existing annotation JSON, call read_job_json with kind="annotations" or get_annotations. Coordinates are returned only for editing/deleting existing annotations by id. Do NOT reuse rect/segmentRects to create new annotations.
+- OLD TOOLS REMOVED: add_highlight, add_callout, and save_annotations are no longer available. Calling them will fail. Always use add_text_highlight/add_text_callout for new highlights/callouts.
+- To inspect a PDF page visually, call view_page to get a vision analysis. The output is text-only and does NOT contain coordinates or bounding boxes. Pass an explicit dpi between 150 and 300 only when needed.
+- To read existing annotation JSON, call read_job_json with kind="annotations" or get_annotations. Coordinate fields (rect, segmentRects, calloutLine, bbox_pdf) are REDACTED. Use the returned id, type, page_no, color, and comment only for editing or deleting.
 - To read other job result JSON, call read_job_json with kind="ocr_layout" | "extracted_files" | "annotated_pdf_files" | "job_meta".
-- To get a quick annotation summary (id/type/page/color only), call get_annotations with summary_only=true.
 - To create highlight/callout annotations, use add_text_highlight/add_text_callout with the exact text string you want to highlight or point to. The backend searches the PDF text layer and resolves the bounding box/segmentRects automatically. You MUST NOT compute or pass rect/bbox manually.
-- If you are unsure of the exact text, call search_text first to verify the wording. search_text and get_elements return text for verification only; their coordinates are intentionally hidden, so do not try to construct annotations from them.
+- If you are unsure of the exact text, call search_text first to verify the wording. search_text, get_elements, and compare_elements return text for verification only; their coordinates are intentionally hidden, so do not try to construct annotations from them.
 - For PDF text elements, use get_elements with an explicit page_no whenever possible. Without page_no, the backend may OCR the entire PDF which is very slow for large/image-based PDFs.
 - When calling add_text_highlight or add_text_callout, you may pass the same page_no to limit the search and avoid a full-document scan.
 - To modify existing annotations, first call get_annotations or read_job_json(kind="annotations") to list them, then call update_annotation with the annotation id.

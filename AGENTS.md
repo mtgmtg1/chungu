@@ -8,7 +8,27 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
-### AI Annotation 좌표계 통일 — read_job_json 및 도구 설명/시스템 프롬프트 일관성 확보
+### AI Annotation Agent Tool Audit — text-only workflow 및 좌표 redaction
+
+- **목표**: AI 채팅 에이전트가 여전히 `get_elements`/`search_text`의 `bbox_pdf`나 `add_highlight`/`save_annotations` 같은 구식 tool로 rect를 조립하려는 문제를 완전히 차단. LLM은 "강조할 텍스트 내용"만 식별하고, 모든 bbox/segmentRects 결정은 백엔드가 검색해서 수행.
+- **Phase 1: AI tool 출력에서 좌표 제거** (`app/ai-backend/src/tools/annotations.ts`):
+  - `search_text`, `get_elements`, `compare_elements`는 `page_no`, `text`, `kind`만 반환. `bbox_pdf` 및 위치 정보를 모델에 노출하지 않음.
+  - `get_annotations`, `read_job_json(kind="annotations")`는 `rect`, `segmentRects`, `calloutLine`, `bbox_pdf`를 REDACTION하여 반환. `id`, `type`, `pageIndex`, `color`, `contents`만 남김.
+  - `view_page`는 텍스트 분석만 반환하며 좌표/위치가 포함되지 않음을 명시.
+- **Phase 2: text-only annotation tool 교체** (`app/ai-backend/src/tools/annotations.ts`):
+  - `add_highlight`/`add_callout` 제거, `add_text_highlight`/`add_text_callout` 추가.
+  - 입력은 `text`, `page_no`(선택), `comment`, `color`, `opacity`(선택)뿐. 내부에서 `searchText`로 텍스트 레이어를 검색해 `bbox`를 자동 결정.
+  - `add_text_highlight`는 동일 텍스트의 모든 발생 위치를 `segmentRects`로 highlight. `add_text_callout`은 첫 매치를 가리킴.
+  - `save_annotations` tool 제거. `apply_annotations`가 pending을 저장.
+- **Phase 3: 시스템 프롬프트 강화** (`app/ai-backend/src/chat/route.ts`):
+  - tool 목록에서 `add_highlight`/`add_callout`/`save_annotations` 제거.
+  - "OLD TOOLS REMOVED" 문구 추가: `add_highlight`, `add_callout`, `save_annotations`는 더 이상 존재하지 않으며, `rect/bbox`를 수동으로 계산/전달하면 안 된다고 강조.
+  - `search_text`/`get_elements`/`compare_elements`/`view_page`는 좌표 없이 텍스트/분석만 제공함을 명시.
+- **검증**: `cd app/ai-backend && npm run build` → tsc 성공. a1 서버 배포 완료 및 `ai-backend` 컨테이너 `Up` 확인.
+- **배포 시 주의**: `ai-backend` 재배포 필요. 프론트엔드/DB 변경 없음.
+- **핵심 파일**: `app/ai-backend/src/tools/annotations.ts`, `app/ai-backend/src/chat/route.ts`.
+
+### AI Annotation 좌표계 통일 — read_job_json 및 도구 설명/시스템 프롬프트 일관성 확보 (legacy, superseded by text-only audit above)
 
 - **목표**: AI 백엔드가 주석을 조회할 때 `get_annotations`은 PDF user-space를 반환하지만 `read_job_json`은 device-space를 반환해, 모델이 `read_job_json` 결과를 `save_annotations`에 그대로 재사용하면 상하 반전되는 버그를 수정. 또한 AI 시스템 프롬프트가 구식 `pdf_user_space` 파라미터와 device-space 기준으로 안내하던 문제를 함께 바로잡음.
 - **Phase 1: 백엔드 변환 추가** (`app/backend/api/jobs.py`):

@@ -173,7 +173,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
 
     read_job_json: tool({
       description: 'A general-purpose reader for various result JSONs of a job. Use kind to specify the data to read:\n' +
-        '- "annotations": AI/user annotation JSON in PDF user-space (full structure of EmbedPDF AnnotationTransferItem[] — id, type, pageIndex, rect, color, contents, calloutLine, strokeColor, etc.). Use only for inspecting or editing existing annotations by id; do NOT reuse rect/segmentRects to create new annotations.\n' +
+        '- "annotations": AI/user annotation JSON (id, type, pageIndex, color, contents, strokeColor, opacity, etc.). Coordinate fields (rect, segmentRects, calloutLine, bbox_pdf) are REDACTED. Use only to inspect or edit existing annotations by id.\n' +
         '- "ocr_layout": OCR layout JSON (text block/table/image position info)\n' +
         '- "extracted_files": list of extracted files (markdown/image/PDF paths, etc.)\n' +
         '- "annotated_pdf_files": annotated PDF file metadata list\n' +
@@ -188,9 +188,12 @@ export function buildAnnotationTools(context: AnnotationContext) {
         try {
           const result = await proofApi.getResultJson(jobId, kind, sourceIndex, page_no, authHeaders);
           // [Flow: 출력 크기 제한 — 80→30개로 축소하여 토큰 소비 절약]
-          const data = result.data;
-          if (Array.isArray(data) && data.length > 30) {
-            return { kind, total: data.length, data: data.slice(0, 30), truncated: true };
+          let data = result.data;
+          if (kind === 'annotations' && Array.isArray(data)) {
+            // [Flow: annotations 조회 시 좌표 필드 redaction — 모델이 좌표를 재사용하지 못하도록 차단]
+            data = data.slice(0, 30).map((a) => _redactAnnotationCoords(a as Record<string, unknown>));
+          } else if (Array.isArray(data) && data.length > 30) {
+            data = data.slice(0, 30);
           }
           return { kind, total: result.total ?? (Array.isArray(data) ? data.length : undefined), data };
         } catch (err) {
@@ -202,23 +205,24 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     get_annotations: tool({
-      description: 'Return the list of existing AI or user annotations together with the full original JSON structure. Coordinates (rect, segmentRects, calloutLine) are in PDF user-space (y↑, origin bottom-left) and are provided only for editing/deleting existing annotations by id. Do NOT reuse these coordinates to create new annotations; for new highlights/callouts use add_text_highlight/add_text_callout with exact text.',
+      description: 'Return the list of existing AI or user annotations. Coordinate fields (rect, segmentRects, calloutLine, bbox_pdf) are REDACTED from the output to prevent reuse for new annotations. Use only to list ids, comments, and colors for editing or deleting existing annotations (update_annotation/remove_annotation). For new highlights/callouts use add_text_highlight/add_text_callout with exact text.',
       inputSchema: z.object({
         page_no: z.number().optional().describe('1-based page number. Returns all pages if omitted'),
-        summary_only: z.boolean().optional().describe('If true, return only summary fields (id/type/page_no/color/comment). If omitted, return the full original JSON'),
+        summary_only: z.boolean().optional().describe('If true, return only summary fields (id/type/page_no/color/comment).'),
       }),
       execute: async ({ page_no, summary_only }) => {
         // [Flow: Step 1 (FastAPI에서 주석 목록 조회) -> Step 2 (404 시 빈 배열로 폴백)
-        //       -> Step 3 (summary_only면 요약 필드만 추출) -> Step 4 (결과 반환)]
+        //       -> Step 3 (좌표 필드 redaction) -> Step 4 (summary 또는 전체 반환)]
         // Vercel AI SDK가 tool 에러를 "An error occurred."로 마스킹하므로
         // try/catch로 명확한 결과를 tool output에 포함한다.
         try {
           const { annotations, total } = await proofApi.getAnnotations(jobId, sourceIndex, page_no, authHeaders);
           // [Flow: 출력 크기 제한 — 80→30개로 축소하여 토큰 소비 절약]
           const sliced = annotations.slice(0, 30);
+          const redacted = sliced.map((a) => _redactAnnotationCoords(a as Record<string, unknown>));
           if (summary_only) {
             return {
-              annotations: sliced.map((a) => {
+              annotations: redacted.map((a) => {
                 const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
                   ? (a as any).annotation
                   : a;
@@ -233,8 +237,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
               total,
             };
           }
-          // 원본 JSON 전체 구조 반환 — EmbedPDF AnnotationTransferItem[] 형식 그대로
-          return { annotations: sliced, total };
+          return { annotations: redacted, total };
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           // 404는 "주석이 아직 없음"을 의미하므로 에러가 아닌 빈 상태로 반환
@@ -248,7 +251,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     view_page: tool({
-      description: 'Render a specific page of the PDF as an image and analyze it directly with the VLLM vision model. Returns an analysis summarizing the page\'s text, layout, tables, and key elements. DPI is automatically estimated from the actual resolution of raster images on the page; if needed, specify between 150 and 300.',
+      description: 'Render a specific page of the PDF as an image and analyze it directly with the VLLM vision model. Returns a textual analysis summarizing the page\'s text, layout, tables, and key elements. This output is text-only and does NOT contain coordinates, bounding boxes, or precise positions. Use it only to understand what is on the page, then create annotations with add_text_highlight/add_text_callout using exact text strings.',
       inputSchema: z.object({
         page_no: z.number().describe('1-based page number'),
         dpi: z.number().min(150).max(300).optional().describe('Rendering DPI (150-300; if omitted, auto-estimated from the page\'s image resolution)'),
@@ -403,7 +406,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     compare_elements: tool({
-      description: 'Compare and analyze elements across multiple pages.',
+      description: 'Compare text elements across multiple pages. Returns page_no, text, and kind only; coordinates are intentionally omitted. Do not use the output to construct annotation positions.',
       inputSchema: z.object({
         description: z.string().describe('Comparison criteria or condition'),
         page_nos: z.array(z.number()).describe('List of 1-based page numbers to compare'),
@@ -416,7 +419,11 @@ export function buildAnnotationTools(context: AnnotationContext) {
           results.push({
             page_no: pageNo,
             count: pageElements.length,
-            elements: pageElements.slice(0, 10),
+            elements: pageElements.slice(0, 10).map((el) => ({
+              page_no: Number((el as any).page_no || 1),
+              text: String((el as any).text || ''),
+              kind: String((el as any).kind || ''),
+            })),
           });
         }
         return { description, page_nos, results };
@@ -550,6 +557,30 @@ function _buildAnnotationItem(p: PendingAnnotation): Record<string, unknown> {
       verticalAlign: 0, // PdfVerticalAlignment.Top
     },
   };
+}
+
+/**
+ * [Flow: Step 1 (AnnotationTransferItem 수신) -> Step 2 (좌표 관련 필드 제거)
+ *       -> Step 3 (에이전트에 안전한 사본 반환)]
+ *
+ * 기존 주석의 id/type/pageIndex/contents/color 등은 유지하면서,
+ * rect, segmentRects, calloutLine, bbox_pdf 등 위치 정보를 제거한다.
+ * 에이전트가 기존 좌표를 새 주석 생성에 재사용하지 못하도록 차단한다.
+ *
+ * @param item 주석 아이템 ({annotation: {...}} 또는 평탄한 구조)
+ * @returns 좌표가 제거된 주석 아이템
+ */
+function _redactAnnotationCoords(item: Record<string, unknown>): Record<string, unknown> {
+  const clone = JSON.parse(JSON.stringify(item));
+  const inner = clone.annotation && typeof clone.annotation === 'object'
+    ? (clone.annotation as Record<string, unknown>)
+    : clone;
+  delete inner.rect;
+  delete inner.segmentRects;
+  delete inner.calloutLine;
+  delete inner.bbox_pdf;
+  delete inner.callout;
+  return clone;
 }
 
 /**

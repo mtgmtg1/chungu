@@ -443,7 +443,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
 
     save_annotations: tool({
       description: 'Directly pass an annotation JSON in EmbedPDF AnnotationTransferItem[] format to Storage and reflect it in the viewer. Can be used instead of add_highlight/add_callout + apply_annotations, and is useful when creating annotations with precise positions (rect) based on information from view_page or read_job_json.\n' +
-        'Each annotation item structure: { annotation: { id, type (9=highlight, 3=freetext/callout), pageIndex (0-based), rect, color, strokeColor, opacity, contents, intent? ("FreeTextCallout"), lineEnding? (4=OpenArrow), segmentRects? } }\n' +
+        'Each annotation item structure: { annotation: { id, type (9=highlight, 3=freetext/callout), pageIndex (0-based), rect, color, strokeColor, opacity, contents, segmentRects (required for highlight), intent? ("FreeTextCallout"), lineEnding? (4=OpenArrow), fontFamily (4=Helvetica), fontSize, fontColor, textAlign (0=Left), verticalAlign (0=Top) } }\n' +
         'rect coordinate system: uses PDF user-space (y↑, origin bottom-left). The following formats are supported:\n' +
         '  1. Pass bbox_pdf array directly: rect = [x0, y0, x1, y1] (use bbox_pdf from get_elements as-is)\n' +
         '  2. {origin, size} structure: rect = {origin: {x: x0, y: y0}, size: {width: x1-x0, height: y1-y0}} (y0 is PDF user-space bottom)\n' +
@@ -568,6 +568,11 @@ function _buildAnnotationItem(p: PendingAnnotation): Record<string, unknown> {
       opacity: p.target.opacity,
       contents: p.target.comment,
       lineEnding: 4, // OpenArrow
+      fontFamily: 4, // PdfStandardFont.Helvetica
+      fontSize: 8,
+      fontColor: '#333333',
+      textAlign: 0, // PdfTextAlignment.Left
+      verticalAlign: 0, // PdfVerticalAlignment.Top
     },
   };
 }

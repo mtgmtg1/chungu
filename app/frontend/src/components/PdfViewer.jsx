@@ -257,11 +257,12 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
   }, [normalizedPage, isReady]);
 
   /**
-   * [Flow: Step 1 (annotation plugin이 있으면 importAnnotations Task를 Promise로 변환)
-   *       -> Step 2 (toPromise/wait 중 사용 가능한 메서드로 await)]
+   * [Flow: Step 1 (api.importAnnotations(items) 호출) -> Step 2 (반환값 종류 판별)
+   *       -> Step 3 (Task/Promise면 await, void면 즉시 완료)]
    */
   const importAnnotationsAsPromise = async (api, items) => {
     const task = api.importAnnotations(items);
+    console.log("[PdfViewer] importAnnotations returned:", typeof task, task ? Object.keys(task) : null);
     if (!task) return;
     if (typeof task.toPromise === "function") {
       await task.toPromise();
@@ -269,6 +270,8 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
       await new Promise((resolve, reject) => {
         task.wait(resolve, reject);
       });
+    } else if (typeof task.then === "function") {
+      await task;
     }
   };
 
@@ -278,16 +281,22 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
    */
   useEffect(() => {
     const api = annotationApiRef.current;
+    console.log("[PdfViewer] annotation import effect:", { isReady, hasApi: !!api, count: safeAnnotationsJson?.length });
     if (!isReady || !api) return;
     if (!safeAnnotationsJson || safeAnnotationsJson.length === 0) return;
     const currentJson = JSON.stringify(safeAnnotationsJson);
-    if (currentJson === importedAnnotationsJsonRef.current) return;
+    if (currentJson === importedAnnotationsJsonRef.current) {
+      console.log("[PdfViewer] annotations already imported, skipping");
+      return;
+    }
     const runImport = async () => {
       try {
+        console.log("[PdfViewer] importing annotations (effect):", safeAnnotationsJson.length);
         await importAnnotationsAsPromise(api, safeAnnotationsJson);
         importedAnnotationsJsonRef.current = currentJson;
+        console.log("[PdfViewer] annotations imported (effect)");
       } catch (e) {
-        console.error("[PdfViewer] importAnnotations failed:", e);
+        console.error("[PdfViewer] importAnnotations failed (effect):", e);
       }
     };
     runImport();
@@ -332,6 +341,11 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
   const handleReady = (registry) => {
     annotationApiRef.current = registry?.getPlugin("annotation")?.provides() ?? null;
     scrollApiRef.current = registry?.getPlugin("scroll")?.provides() ?? null;
+    console.log("[PdfViewer] onReady:", {
+      hasAnnotationApi: !!annotationApiRef.current,
+      hasScrollApi: !!scrollApiRef.current,
+      annotationCount: safeAnnotationsJson?.length,
+    });
     setIsReady(true);
 
     if (scrollApiRef.current && normalizedPage > 1) {
@@ -343,9 +357,11 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
       if (safeAnnotationsJson && safeAnnotationsJson.length > 0) {
         const currentJson = JSON.stringify(safeAnnotationsJson);
         if (currentJson !== importedAnnotationsJsonRef.current) {
+          console.log("[PdfViewer] importing annotations (onReady):", safeAnnotationsJson.length);
           importAnnotationsAsPromise(api, safeAnnotationsJson)
             .then(() => {
               importedAnnotationsJsonRef.current = currentJson;
+              console.log("[PdfViewer] annotations imported (onReady)");
             })
             .catch((e) => {
               console.error("[PdfViewer] initial importAnnotations failed:", e);
@@ -359,6 +375,8 @@ const PdfViewer = forwardRef(function PdfViewer({ url, page = 1, annotationsJson
           }
         });
       }
+    } else {
+      console.warn("[PdfViewer] annotation plugin API not available in registry");
     }
   };
 

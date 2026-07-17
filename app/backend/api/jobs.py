@@ -4118,12 +4118,23 @@ def get_job_annotations(
 
     AI 에이전트가 기존 주석 목록을 확인할 때 사용한다.
     AI 주석 PDF가 없어도 사용자 주석이 존재하면 반환하며, 주석이 전혀 없으면 빈 리스트를 반환한다.
+    저장된 좌표는 embedpdf device-space이므로 AI 백엔드가 다시 save할 때 일관되게
+    PDF user-space로 역변환하여 반환한다.
     """
     job = db.get(Job, job_id)
     _require_job_access(job, user)
     _require_job_not_expired(job)
 
     all_annotations = _load_all_annotations(job, source_index, page_no)
+    if all_annotations and job.pdf_storage_path:
+        try:
+            client = supabase_client.get_service_client()
+            pdf_bytes = client.storage.from_("pdfs").download(job.pdf_storage_path)
+            all_annotations = pdf_user_annotator._convert_annotations_to_pdf_user(
+                all_annotations, pdf_bytes
+            )
+        except Exception as e:
+            logger.warning(f"[get_job_annotations] {job_id} device→pdf_user 변환 실패: {e}")
     return {"annotations": all_annotations, "total": len(all_annotations)}
 
 

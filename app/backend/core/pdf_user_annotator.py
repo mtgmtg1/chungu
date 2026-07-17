@@ -440,6 +440,94 @@ def _convert_annotation_to_device_space(
     return a
 
 
+def _convert_annotation_to_pdf_user(
+    raw: dict,
+    page_height: float,
+    page_x0: float = 0.0,
+    page_y0: float = 0.0,
+) -> dict:
+    """[Flow: Step 1 (embedpdf device-space annotation dict 추출) -> Step 2 (page_y1 = page_height + page_y0 계산)
+          -> Step 3 (rect/segmentRects/calloutLine 좌표를 PDF user-space로 flip) -> Step 4 (원본 형식 유지 반환)]
+
+    embedpdf device-space 좌표(원점 좌상단, y↓)를 PDF user-space(원점 좌하단, y↑)로 역변환한다.
+    AnnotationTransferItem({annotation: {...}}) 형식이면 원본 dict를 수정하고 그대로 반환한다.
+    """
+    a = _extract_annotation(raw)
+    if not a:
+        return raw
+
+    page_y1 = page_height + page_y0
+
+    def _device_rect_to_pdf_user(rect: dict) -> dict:
+        dx0 = rect["origin"]["x"]
+        dy0 = rect["origin"]["y"]
+        dw = rect["size"]["width"]
+        dh = rect["size"]["height"]
+        pdf_x0 = dx0 + page_x0
+        pdf_y1 = page_y1 - dy0
+        return {
+            "origin": {"x": pdf_x0, "y": pdf_y1 - dh},
+            "size": {"width": dw, "height": dh},
+        }
+
+    def _device_point_to_pdf_user(p: dict) -> dict:
+        return {"x": p["x"] + page_x0, "y": page_y1 - p["y"]}
+
+    if "rect" in a and isinstance(a["rect"], dict):
+        a["rect"] = _device_rect_to_pdf_user(a["rect"])
+    if "segmentRects" in a and isinstance(a["segmentRects"], list):
+        a["segmentRects"] = [_device_rect_to_pdf_user(r) for r in a["segmentRects"] if isinstance(r, dict)]
+    if "calloutLine" in a and isinstance(a["calloutLine"], list):
+        a["calloutLine"] = [_device_point_to_pdf_user(p) for p in a["calloutLine"] if isinstance(p, dict)]
+    return raw
+
+
+def _convert_annotations_to_pdf_user(
+    annotations: list[dict],
+    pdf_bytes: bytes,
+) -> list[dict]:
+    """[Flow: Step 1 (PDF 열기) -> Step 2 (페이지별 높이/오프셋 캐시)
+          -> Step 3 (각 annotation의 pageIndex로 해당 페이지 높이/오프셋 조회)
+          -> Step 4 (device-space → PDF user-space 변환) -> Step 5 (변환된 목록 반환)]
+
+    저장된 embedpdf device-space 좌표를 AI 백엔드가 생성하는 PDF user-space 좌표계로 일괄 역변환한다.
+    get_job_annotations API에서 AI 백엔드가 save_annotations를 호출할 때 좌표계가 일관되도록 사용한다.
+    """
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        page_heights: dict[int, float] = {}
+        page_x0s: dict[int, float] = {}
+        page_y0s: dict[int, float] = {}
+        for page in doc:
+            page_no = page.number + 1
+            page_heights[page_no] = page.rect.height
+            page_x0s[page_no] = page.rect.x0
+            page_y0s[page_no] = page.rect.y0
+    finally:
+        doc.close()
+
+    converted: list[dict] = []
+    for raw in annotations:
+        a = _extract_annotation(raw)
+        if not a:
+            converted.append(raw)
+            continue
+        page_index = a.get("pageIndex")
+        if not isinstance(page_index, int) or page_index < 0:
+            converted.append(raw)
+            continue
+        page_no = page_index + 1
+        page_height = page_heights.get(page_no)
+        if page_height is None:
+            converted.append(raw)
+            continue
+        _convert_annotation_to_pdf_user(
+            raw, page_height, page_x0s.get(page_no, 0.0), page_y0s.get(page_no, 0.0)
+        )
+        converted.append(raw)
+    return converted
+
+
 def _convert_annotations_to_device_space(
     annotations: list[dict],
     pdf_bytes: bytes,

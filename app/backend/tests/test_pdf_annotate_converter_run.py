@@ -284,3 +284,213 @@ class TestPdfAnnotateConverterSearchableTextPipeline:
         assert ann["custom"] == {"searchText": "CONFIDENTIAL"}
         # bounding rect는 두 세그먼트를 모두 감싸므로, 세그먼트 하나보다 높이가 커야 한다.
         assert ann["rect"]["size"]["height"] > ann["segmentRects"][0]["size"]["height"]
+
+
+class TestAnnotationPromptsAreTextOnly:
+    """[Flow: 각 프롬프트가 위치/좌표/element_index 없이 text 기반 출력을 요구하는지 검증]"""
+
+    def test_build_text_search_highlight_prompt_is_text_only(self):
+        from backend.core.prompts import build_text_search_highlight_prompt
+
+        prompt = build_text_search_highlight_prompt([(1, "page text")], "find sample", want_llm_comment=True)
+        assert "do not need to provide coordinates" in prompt.lower()
+        assert "element_index" not in prompt
+        assert "bbox" not in prompt.lower()
+        assert '"text"' in prompt
+
+    def test_build_vision_text_highlight_prompt_is_text_only(self):
+        from backend.core.prompts import build_vision_text_highlight_prompt
+
+        prompt = build_vision_text_highlight_prompt("find sample", want_llm_comment=True)
+        assert "do not need to provide" in prompt.lower()
+        assert "bbox" not in prompt.lower()
+        assert "[x_min" not in prompt
+        assert '"text"' in prompt
+
+
+class TestScannedPdfTextSearchPipeline:
+    """[Flow: searchable PDF가 없는 스캔 PDF -> PaddleOCR로 text layer 생성 -> LLM이 text만 반환 -> 백엔드 검색]"""
+
+    def test_run_scanned_pdf_highlight_from_text_layer(self, tmp_path, monkeypatch):
+        job = Job()
+        job.id = "test-job-scanned"
+        job.searchable_pdf_storage_path = None
+        job.pdf_storage_path = None
+        job.annotated_pdf_files = [
+            {
+                "index": 1,
+                "status": "processing",
+                "storage_path": "",
+                "annotations_json_storage_path": "",
+            }
+        ]
+        job.annotate_instruction = "highlight confidential"
+        job.annotate_mode = "highlight"
+        job.annotate_comment_mode = "llm_summary"
+        job.endpoint = None
+        job.model = None
+
+        db = _make_mock_db(job)
+        mock_storage = MockStorage()
+        mock_client = MagicMock()
+        mock_client.storage = mock_storage
+
+        dummy_png = tmp_path / "page-1.png"
+        _make_dummy_png(dummy_png)
+
+        # _collect_page_elements가 PaddleOCR layout + corrected images를 반환하도록 모킹
+        # layout은 normalized 좌표계의 overall_ocr_res를 포함한다.
+        layout_by_page = {
+            1: {
+                "_coordinate_system": "normalized",
+                "_page_width_px": 1240,
+                "_page_height_px": 1754,
+                "overall_ocr_res": {
+                    "rec_texts": ["CONFIDENTIAL"],
+                    "rec_boxes": [[0.08, 0.83, 0.42, 0.88]],
+                },
+            }
+        }
+
+        def _fake_collect_page_elements(job, temp_dir, page_range=None, use_pdf_direct=True):
+            corrected_images = {1: dummy_png}
+            return [], corrected_images, layout_by_page
+
+        def _settings_get(db, key: str):
+            defaults = {
+                "llm_endpoint": "http://test-llm",
+                "llm_model": "test-model",
+                "llm_api_key": "test-key",
+            }
+            return defaults.get(key, "")
+
+        import backend.core.pdf_annotate_converter as pac
+
+        monkeypatch.setattr(pac, "SessionLocal", lambda: db)
+        monkeypatch.setattr(pac.supabase_client, "download_pdf", lambda path: io.BytesIO(b""))
+        monkeypatch.setattr(pac.supabase_client, "get_service_client", lambda: mock_client)
+        monkeypatch.setattr(pac, "_get_page_image_paths", lambda *args, **kwargs: {1: dummy_png})
+        monkeypatch.setattr(pac, "_collect_page_elements", _fake_collect_page_elements)
+        monkeypatch.setattr(pac.settings_store, "get_setting", _settings_get)
+        monkeypatch.setattr(pac, "flag_modified", lambda *args, **kwargs: None)
+        monkeypatch.setattr(pac.cache, "invalidate_pattern", lambda *args, **kwargs: None)
+
+        def _call_text(prompt, endpoint, model, api_key, max_tokens=None):
+            return (
+                '{"mode": "highlight", "comment_mode": "llm_summary", "matches": ['
+                '{"text": "CONFIDENTIAL", "comment": "secret", "color": "red", "opacity": 0.5}'
+                ']}'
+            ), None
+
+        monkeypatch.setattr(pac.ocr_client, "call_text", _call_text)
+
+        result = pac.run(
+            job_id=job.id,
+            instruction="highlight confidential",
+            mode="highlight",
+            comment_mode="llm_summary",
+            language="en",
+            advanced=False,
+            annotation_index=1,
+            page_range=None,
+        )
+
+        assert result["status"] == "done"
+        json_path = f"{job.id}/annotated.annotations.json"
+        assert json_path in mock_storage.uploaded
+        uploaded_json = json.loads(mock_storage.uploaded[json_path])
+        assert len(uploaded_json) == 1
+        ann = uploaded_json[0]["annotation"]
+        assert ann["type"] == 9
+        assert ann["segmentRects"][0]["size"]["width"] > 0
+
+    def test_run_advanced_vision_returns_text_only(self, tmp_path, monkeypatch):
+        job = Job()
+        job.id = "test-job-advanced"
+        job.searchable_pdf_storage_path = None
+        job.pdf_storage_path = None
+        job.annotated_pdf_files = [
+            {
+                "index": 1,
+                "status": "processing",
+                "storage_path": "",
+                "annotations_json_storage_path": "",
+            }
+        ]
+        job.annotate_instruction = "highlight confidential"
+        job.annotate_mode = "highlight"
+        job.annotate_comment_mode = "llm_summary"
+        job.endpoint = None
+        job.model = None
+
+        db = _make_mock_db(job)
+        mock_storage = MockStorage()
+        mock_client = MagicMock()
+        mock_client.storage = mock_storage
+
+        dummy_png = tmp_path / "page-1.png"
+        _make_dummy_png(dummy_png)
+
+        layout_by_page = {
+            1: {
+                "_coordinate_system": "normalized",
+                "_page_width_px": 1240,
+                "_page_height_px": 1754,
+                "overall_ocr_res": {
+                    "rec_texts": ["CONFIDENTIAL"],
+                    "rec_boxes": [[0.08, 0.83, 0.42, 0.88]],
+                },
+            }
+        }
+
+        def _fake_collect_page_elements(job, temp_dir, page_range=None, use_pdf_direct=True):
+            return [], {1: dummy_png}, layout_by_page
+
+        def _settings_get(db, key: str):
+            defaults = {
+                "llm_endpoint": "http://test-llm",
+                "llm_model": "test-model",
+                "llm_api_key": "test-key",
+            }
+            return defaults.get(key, "")
+
+        import backend.core.pdf_annotate_converter as pac
+
+        monkeypatch.setattr(pac, "SessionLocal", lambda: db)
+        monkeypatch.setattr(pac.supabase_client, "download_pdf", lambda path: io.BytesIO(b""))
+        monkeypatch.setattr(pac.supabase_client, "get_service_client", lambda: mock_client)
+        monkeypatch.setattr(pac, "_render_pdf_to_image_paths", lambda *args, **kwargs: {1: dummy_png})
+        monkeypatch.setattr(pac, "_collect_page_elements", _fake_collect_page_elements)
+        monkeypatch.setattr(pac.settings_store, "get_setting", _settings_get)
+        monkeypatch.setattr(pac, "flag_modified", lambda *args, **kwargs: None)
+        monkeypatch.setattr(pac.cache, "invalidate_pattern", lambda *args, **kwargs: None)
+
+        def _fit_image(img_path):
+            return img_path
+
+        def _call_vision(img_path, prompt, endpoint, model, api_key, max_tokens=None):
+            return (
+                '{"mode": "highlight", "comment_mode": "llm_summary", "matches": ['
+                '{"text": "CONFIDENTIAL", "comment": "secret", "color": "red", "opacity": 0.5}'
+                ']}'
+            ), None
+
+        monkeypatch.setattr(pac.ocr_client, "fit_image_to_gemma4_resolution", _fit_image)
+        monkeypatch.setattr(pac.ocr_client, "call_vision", _call_vision)
+
+        result = pac.run(
+            job_id=job.id,
+            instruction="highlight confidential",
+            mode="highlight",
+            comment_mode="llm_summary",
+            language="en",
+            advanced=True,
+            annotation_index=1,
+            page_range=None,
+        )
+
+        assert result["status"] == "done"
+        json_path = f"{job.id}/annotated.annotations.json"
+        assert json_path in mock_storage.uploaded
+        uploaded_json = json.loads(mock_storage.uploaded[json_path])
+        assert len(uploaded_json) == 1

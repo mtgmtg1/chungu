@@ -26,7 +26,7 @@ from .core import ocr_client, paddleocr_client
 from .core.ocr_layout import parse_layout_result
 from .core.pdf_annotator import AnnotationTarget, build_embedpdf_annotations
 from .core.pdf_coords import clamp_rect_to_page, px_bbox_to_pdf_rect
-from .core.prompts import build_element_highlight_prompt, build_vision_bbox_highlight_prompt
+from .core.prompts import build_text_search_highlight_prompt, build_vision_text_highlight_prompt
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -90,10 +90,10 @@ def run_pipeline_a(image_path: Path, instruction: str, mode: str, want_llm_comme
     if not elements:
         raise ValueError("PaddleOCR로 텍스트 요소를 찾지 못했습니다")
 
-    # LLM으로 요소 선택
-    truncated = elements[:MAX_ELEMENTS_FOR_LLM]
-    prompt = build_element_highlight_prompt(truncated, instruction, want_llm_comment)
-    logger.info("[Pipeline A] LLM 요소 선택 요청...")
+    # PaddleOCR로부터 추출한 전체 텍스트를 한 페이지로 구성
+    page_text = "\n".join(el.get("text", "") for el in elements)
+    prompt = build_text_search_highlight_prompt([(1, page_text)], instruction, want_llm_comment)
+    logger.info("[Pipeline A] LLM 텍스트 선택 요청...")
     content, _ = ocr_client.call_text(prompt, LLM_ENDPOINT, LLM_MODEL, LLM_API_KEY, max_tokens=4000)
     content = _strip_json_fence(content)
     data = json.loads(content)
@@ -114,14 +114,17 @@ def run_pipeline_a(image_path: Path, instruction: str, mode: str, want_llm_comme
 
     targets: list[AnnotationTarget] = []
     for m in matches:
-        idx = m.get("element_index")
-        if not isinstance(idx, int) or idx < 0 or idx >= len(element_bboxes):
+        text = str(m.get("text") or "").strip()
+        if not text:
             continue
-        bbox_px = element_bboxes[idx]
-        rect_pdf = px_bbox_to_pdf_rect(bbox_px, dpi=RENDER_DPI, page_height_px=img_h)
-        rect_pdf = clamp_rect_to_page(rect_pdf, page_width, page_height)
-        comment = str(m.get("comment") or instruction).strip() or instruction
-        targets.append(AnnotationTarget(page_no=1, bbox_pdf=rect_pdf, comment=comment))
+        # OCR로 수집한 텍스트 중 일치하는 첫 번째 요소의 bbox 사용
+        for el, bbox_px in zip(elements, element_bboxes):
+            if text in el.get("text", "") or el.get("text", "") in text:
+                rect_pdf = px_bbox_to_pdf_rect(bbox_px, dpi=RENDER_DPI, page_height_px=img_h)
+                rect_pdf = clamp_rect_to_page(rect_pdf, page_width, page_height)
+                comment = str(m.get("comment") or instruction).strip() or instruction
+                targets.append(AnnotationTarget(page_no=1, bbox_pdf=rect_pdf, comment=comment))
+                break
 
     logger.info(f"[Pipeline A] 주석 적용: {len(targets)}개 타겟")
     annotations = build_embedpdf_annotations(pdf_bytes, targets, mode)
@@ -129,27 +132,19 @@ def run_pipeline_a(image_path: Path, instruction: str, mode: str, want_llm_comme
 
 
 # ---------------------------------------------------------------------------
-# Pipeline B: Vision LLM only (PaddleOCR 없음)
+# Pipeline B: Vision LLM text + OCR bbox 검색
 # ---------------------------------------------------------------------------
 
 def run_pipeline_b(image_path: Path, instruction: str, mode: str, want_llm_comment: bool) -> bytes:
-    """Vision LLM이 이미지를 직접 보고 bbox를 검출 + 요소를 선택하는 파이프라인."""
+    """Vision LLM이 이미지에서 텍스트 내용만 반환하고, PaddleOCR로 bbox를 검색하는 파이프라인."""
     with Image.open(image_path) as img:
         img_w, img_h = img.size
     logger.info(f"[Pipeline B] 이미지 크기: {img_w}x{img_h}")
 
-    # fit_image_to_gemma4_resolution가 내부에서 이미지를 리사이즈할 수 있으므로,
-    # LLM이 반환하는 bbox는 리사이즈된 이미지 기준일 수 있다.
-    # encode_image()가 리사이즈된 이미지의 JPEG을 만들어 LLM에 전달하므로,
-    # LLM에게는 리사이즈된 이미지의 크기를 알려주어야 한다.
     fitted = ocr_client.fit_image_to_gemma4_resolution(image_path)
-    with Image.open(fitted) as fitted_img:
-        fitted_w, fitted_h = fitted_img.size
-    logger.info(f"[Pipeline B] Gemma4 해상도 맞춤 후: {fitted_w}x{fitted_h}")
-
-    prompt = build_vision_bbox_highlight_prompt(instruction, fitted_w, fitted_h, want_llm_comment)
-    logger.info("[Pipeline B] Vision LLM bbox 검출 + 요소 선택 요청...")
-    content, _ = ocr_client.call_vision(image_path, prompt, LLM_ENDPOINT, LLM_MODEL, LLM_API_KEY, max_tokens=4000)
+    prompt = build_vision_text_highlight_prompt(instruction, want_llm_comment)
+    logger.info("[Pipeline B] Vision LLM 텍스트 내용 요청...")
+    content, _ = ocr_client.call_vision(fitted, prompt, LLM_ENDPOINT, LLM_MODEL, LLM_API_KEY, max_tokens=4000)
     content = _strip_json_fence(content)
 
     try:
@@ -162,10 +157,15 @@ def run_pipeline_b(image_path: Path, instruction: str, mode: str, want_llm_comme
     matches = data.get("matches", []) if isinstance(data, dict) else []
     logger.info(f"[Pipeline B] LLM 반환 매칭: {len(matches)}개")
 
-    # LLM이 본 이미지(fitted)의 픽셀 좌표 → 원본 이미지 픽셀 좌표로 스케일 변환
-    scale_x = img_w / fitted_w if fitted_w > 0 else 1.0
-    scale_y = img_h / fitted_h if fitted_h > 0 else 1.0
-    logger.info(f"[Pipeline B] 스케일 보정: x={scale_x:.4f}, y={scale_y:.4f}")
+    # PaddleOCR로 bbox를 확보해 Vision LLM이 반환한 text를 검색한다.
+    _md, layout_raw = paddleocr_client.convert_image_with_layout(image_path)
+    ocr_texts: list[str] = []
+    ocr_bboxes: list[tuple[float, float, float, float]] = []
+    overall = (layout_raw or {}).get("overall_ocr_res", {}) if isinstance(layout_raw, dict) else {}
+    for rec_text, rec_box in zip(overall.get("rec_texts", []), overall.get("rec_boxes", [])):
+        if isinstance(rec_text, str) and isinstance(rec_box, (list, tuple)) and len(rec_box) == 4:
+            ocr_texts.append(rec_text.strip())
+            ocr_bboxes.append(tuple(float(v) for v in rec_box))
 
     # PDF 생성 (원본 이미지 기준)
     pdf_bytes = _image_to_pdf(image_path)
@@ -176,21 +176,24 @@ def run_pipeline_b(image_path: Path, instruction: str, mode: str, want_llm_comme
 
     targets: list[AnnotationTarget] = []
     for m in matches:
-        bbox = m.get("bbox")
-        if not isinstance(bbox, list) or len(bbox) < 4:
-            logger.warning(f"[Pipeline B] 잘못된 bbox: {m}")
+        text = str(m.get("text") or "").strip()
+        if not text:
             continue
-        # fitted 이미지 좌표 → 원본 이미지 좌표
-        x0 = float(bbox[0]) * scale_x
-        y0 = float(bbox[1]) * scale_y
-        x1 = float(bbox[2]) * scale_x
-        y1 = float(bbox[3]) * scale_y
-        # 원본 이미지 픽셀 → PDF 포인트 (y축 flip 포함)
-        rect_pdf = px_bbox_to_pdf_rect((x0, y0, x1, y1), dpi=RENDER_DPI, page_height_px=img_h)
-        rect_pdf = clamp_rect_to_page(rect_pdf, page_width, page_height)
-        comment = str(m.get("comment") or instruction).strip() or instruction
-        targets.append(AnnotationTarget(page_no=1, bbox_pdf=rect_pdf, comment=comment))
-        logger.info(f"[Pipeline B] 매칭: bbox_px=({x0:.0f},{y0:.0f},{x1:.0f},{y1:.0f}) comment={comment!r}")
+        for ocr_text, ocr_box in zip(ocr_texts, ocr_bboxes):
+            if text in ocr_text or ocr_text in text:
+                # normalized 좌표라고 가정하고 픽셀 좌표로 변환
+                x0, y0, x1, y1 = ocr_box
+                if all(0 <= v <= 1.01 for v in (x0, y0, x1, y1)):
+                    x0 *= img_w
+                    y0 *= img_h
+                    x1 *= img_w
+                    y1 *= img_h
+                rect_pdf = px_bbox_to_pdf_rect((x0, y0, x1, y1), dpi=RENDER_DPI, page_height_px=img_h)
+                rect_pdf = clamp_rect_to_page(rect_pdf, page_width, page_height)
+                comment = str(m.get("comment") or instruction).strip() or instruction
+                targets.append(AnnotationTarget(page_no=1, bbox_pdf=rect_pdf, comment=comment))
+                logger.info(f"[Pipeline B] 매칭: text={text!r} comment={comment!r}")
+                break
 
     logger.info(f"[Pipeline B] 주석 적용: {len(targets)}개 타겟")
     if not targets:

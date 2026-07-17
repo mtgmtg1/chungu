@@ -106,146 +106,6 @@ def build_paddleocr_parameter_recommendation_prompt() -> str:
     )
 
 
-def build_row_highlight_prompt(
-    rows: list[list[str]],
-    instruction: str,
-    want_llm_comment: bool,
-    user_language: str = "ko",
-) -> str:
-    """Prompt to select table rows for highlight/margin annotation based on row text only.
-
-    Bbox (coordinate) inference is never delegated to this prompt — coordinates are already
-    determined from OCR bboxes, and the LLM performs purely text-based condition judgment
-    (reflecting research showing Gemma-4's bbox grounding reliability is low).
-
-    The LLM is instructed to write comments in the same language the user used in the
-    instruction, so that users of any language (not just the app's supported ones) get
-    comments in their own language.
-
-    Args:
-        rows: list of cell texts in row index order (e.g. [["1", "2026-01-01", "820,000", "transfer"], ...])
-        instruction: user-entered condition (e.g. "rows where 800,000 KRW or more was transferred")
-        want_llm_comment: if True, the LLM generates a short justification comment for each matched row
-
-    Returns:
-        Prompt string to send to the LLM
-    """
-    rows_text = "\n".join(f"{i}: {' | '.join(cell for cell in row)}" for i, row in enumerate(rows))
-    comment_instr = (
-        "For each matched row, write a short comment (about 10 characters) summarizing why it was selected. "
-        "Write the comment in the user's configured language (" + user_language + ") if known; otherwise, use the same language as the user's condition text above."
-        if want_llm_comment
-        else 'Repeat the "Condition" text verbatim as the comment for every matched row (do not summarize or rephrase). '
-        "Keep the original language of the condition text."
-    )
-    return (
-        "You are an assistant reviewing tables in a document. Below is the text of a table divided row by row. "
-        "Each row is in the format `row_index: cell1 | cell2 | ...`. "
-        "Rows from multiple tables/pages may be concatenated, and the first row of each table is usually a header row "
-        "containing column names (e.g. 'No. | Category | Withdrawal (KRW) | Deposit (KRW) | ...'). "
-        "Column order may differ between tables, so before evaluating the condition, find the nearest preceding header row "
-        "and compare only the value in the column whose name exactly matches the condition. "
-        "For example, if the condition is 'Withdrawal >= X', check only the column named 'Withdrawal' in the header "
-        "and never use values from columns with different names such as 'Deposit'.\n\n"
-        f"--- Table data ---\n{rows_text}\n\n"
-        f"--- Condition ---\n{instruction}\n\n"
-        "Find all row numbers that match the condition above (exclude header rows themselves from matching). "
-        "If numeric comparison is needed, remove commas and currency symbols and convert to numbers before comparing. "
-        f"{comment_instr}\n"
-        "If no rows match, return an empty matches array.\n"
-        "Output strictly in the following JSON format. Do not include explanations or code block markers (```).\n"
-        "{\n"
-        '  "matches": [\n'
-        '    {"row_index": 0, "comment": "..."}\n'
-        "  ]\n"
-        "}\n"
-    )
-
-
-def build_element_highlight_prompt(
-    elements: list[dict],
-    instruction: str,
-    want_llm_comment: bool,
-) -> str:
-    """Prompt to select elements (table rows + text blocks) for highlight/margin annotation.
-
-    Each element is a dict with the following keys:
-      - kind: "table_row" | "text"
-      - text: for table rows, joined text in "cell1 | cell2 | ..." form; for text blocks, the block content
-
-    The LLM is instructed to write comments in the same language the user used in the
-    instruction, so that users of any language (not just the app's supported ones) get
-    comments in their own language.
-
-    Args:
-        elements: list of element dicts in element index order
-        instruction: user-entered condition (e.g. "sections containing a person's name", "rows where 800,000 KRW or more was transferred")
-        want_llm_comment: if True, the LLM generates a short justification comment for each matched element
-
-    Returns:
-        Prompt string to send to the LLM
-    """
-    lines: list[str] = []
-    for i, el in enumerate(elements):
-        kind = el.get("kind", "text")
-        text = el.get("text", "")
-        tag = "[table row]" if kind == "table_row" else "[text]"
-        lines.append(f"{i}: {tag} {text}")
-    elements_text = "\n".join(lines)
-
-    comment_instr = (
-        "For each matched element, write a short comment (about 10 characters) summarizing why it was selected. "
-        "Write the comment in the SAME language as the user's condition text above — if the condition is in "
-        "Korean, write in Korean; if in English, write in English; if in French, write in French, and so on."
-        if want_llm_comment
-        else 'Repeat the "Condition" text verbatim as the comment for every matched element (do not summarize or rephrase). '
-        "Keep the original language of the condition text."
-    )
-    return (
-        "You are an assistant reviewing a document. Below are text elements extracted from each page of the document. "
-        "Each element is in the format `element_index: [kind] content`, where kind is either [table row] (a single row of a table) "
-        "or [text] (a heading/paragraph/footnote/seal text, etc.). "
-        "Table rows have cells separated by pipes (|) in the form `cell1 | cell2 | ...`, and the first row may be a header (column names). "
-        "Text elements are paragraphs/headings with newlines collapsed to spaces. "
-        "Elements from multiple pages may be concatenated in order.\n\n"
-        f"--- Element list ---\n{elements_text}\n\n"
-        f"--- Condition ---\n{instruction}\n\n"
-        "Find all element numbers (element_index) that match the condition above. "
-        "For table rows, if numeric comparison is needed, remove commas and currency symbols and convert to numbers before comparing. "
-        "For text elements, judge based on whether specific words/names/dates are present. "
-        "If the condition is ambiguous, select the elements most contextually relevant. "
-        "\n"
-        "When the user asks to highlight only a specific part of an element (for example, a particular column of a table row, "
-        "a cell containing an amount, a person's name, or a specific keyword), specify the exact highlight scope. "
-        "Use one of the following scope values, or describe the exact column name/keyword in the user's language: "
-        "'full' (entire element), 'first_column', 'last_column', 'amount_cell', 'name_cell', 'date_cell', or 'keyword: <word>'. "
-        "If the user does not specify a part, default to 'full'. "
-        "When the user asks for a specific highlight color (e.g., red, yellow, green, blue), use the corresponding color name. "
-        "Available colors: red, yellow, green, blue, orange, purple, pink, gray. If no color is implied, default to yellow.\n"
-        "Determine the annotation display mode based on the user's request: "
-        "'highlight' if the user asks for highlights only, "
-        "'margin_note' if the user asks for margin notes only, "
-        "'both' if the user asks for both or does not specify.\n"
-        "Determine the comment mode based on the user's request: "
-        "'user_text' if the user explicitly says to use the input text verbatim as the comment, "
-        "'llm_summary' if the user wants AI-generated summaries or does not specify.\n"
-        "When the user asks for a specific opacity/transparency (e.g., 'transparently', 'lightly', '50%', 'semi-transparent'), "
-        "include an 'opacity' field with a value between 0.0 (fully transparent) and 1.0 (fully opaque). "
-        "If no opacity is requested, omit the 'opacity' field.\n"
-        "\n"
-        f"{comment_instr}\n"
-        "If no elements match, return an empty matches array.\n"
-        "Output strictly in the following JSON format. Do not include explanations or code block markers (```).\n"
-        "{\n"
-        '  "mode": "both",\n'
-        '  "comment_mode": "llm_summary",\n'
-        '  "matches": [\n'
-        '    {"element_index": 0, "comment": "...", "highlight_scope": "full", "color": "yellow", "opacity": 0.5}\n'
-        "  ]\n"
-        "}\n"
-    )
-
-
 def build_text_search_highlight_prompt(
     page_texts: list[tuple[int, str]],
     instruction: str,
@@ -413,48 +273,40 @@ def build_video_prompt(
     return f"{base}\nAdditional instructions: {extra}" if extra.strip() else base
 
 
-def build_vision_bbox_highlight_prompt(
+def build_vision_text_highlight_prompt(
     instruction: str,
-    image_width: int,
-    image_height: int,
     want_llm_comment: bool,
 ) -> str:
-    """Prompt to ask the Vision LLM to directly detect bounding boxes of matching elements in an image.
+    """Vision LLM이 문서 이미지를 보고 강조할 텍스트 내용만 반환하도록 하는 프롬프트.
 
-    Unlike build_element_highlight_prompt which relies on PaddleOCR for bbox detection and only asks
-    the LLM to do text-based selection, this prompt asks the Vision LLM to look at the image and
-    directly output pixel-coordinate bounding boxes of elements matching the user's condition.
-
-    The LLM is told the exact image dimensions so it can produce precise pixel coordinates.
+    LLM은 위치(페이지/좌표/bbox)에 관여하지 않고, 조건에 맞는 텍스트 내용만 반환한다.
+    백엔드가 searchable PDF의 텍스트 레이어에서 해당 text를 검색해 모든 발생 위치를 highlight한다.
 
     Args:
-        instruction: user-entered condition (e.g. "100만원이 넘는 거래에 하이라이트하고 주석으로 내용을 달아줘")
-        image_width: image width in pixels
-        image_height: image height in pixels
-        want_llm_comment: if True, the LLM generates a short justification comment for each match
+        instruction: 사용자가 입력한 조건 문구
+        want_llm_comment: True면 LLM이 요약 코멘트를 생성, False면 사용자 문구를 그대로 사용
 
     Returns:
-        Prompt string to send to the Vision LLM (along with the image)
+        Vision LLM에 전송할 프롬프트 문자열
     """
     comment_instr = (
-        "For each matched element, write a short comment (about 10-20 characters) summarizing its content. "
-        "Write the comment in the user's configured language if known; otherwise, use the same language as the user's condition text."
+        "For each matched text, write a short comment (about 10-20 characters) summarizing its content. "
+        "Write the comment in the SAME language as the user's condition text above."
         if want_llm_comment
-        else 'Repeat the "Condition" text verbatim as the comment for every matched element (do not summarize or rephrase). '
+        else 'Repeat the "Condition" text verbatim as the comment for every matched text (do not summarize or rephrase). '
         "Keep the original language of the condition text."
     )
     return (
         "You are a document annotation assistant. Examine the provided document image carefully. "
-        f"The image is {image_width} pixels wide and {image_height} pixels tall. "
-        "The coordinate origin (0,0) is the top-left corner. "
-        "All bounding box coordinates are in pixels relative to this image.\n\n"
+        "The document has already been processed into a searchable text layer, so you do NOT need to provide "
+        "coordinates, page numbers, or bounding boxes. "
+        "Only return the exact text content that should be highlighted according to the condition. "
+        "If the same text appears multiple times, it will be highlighted on every occurrence.\n\n"
         f"--- Condition ---\n{instruction}\n\n"
-        "Find ALL elements in the image that match the condition above. "
-        "Each element is a row of a table, a paragraph, a heading, or any other text region. "
-        "For each matching element, output its bounding box as [x_min, y_min, x_max, y_max] in pixels, "
-        "where (x_min, y_min) is the top-left corner and (x_max, y_max) is the bottom-right corner. "
-        "Be as precise as possible — the bounding box should tightly enclose the text of the matching element. "
-        "For table rows, include only the cells that match the user's request, not necessarily the entire row. "
+        "Find ALL text in the image that matches the condition above. "
+        "For table rows, you may return the full row text with cells separated by pipes (|), "
+        "or return the exact text of the specific cell/cells that match the condition. "
+        "Do not paraphrase or summarize the text; use the exact wording visible in the image. "
         "If numeric comparison is needed, remove commas and currency symbols and convert to numbers. "
         "When the user asks for a specific highlight color, use one of the following colors: "
         "red, yellow, green, blue, orange, purple, pink, gray. If no color is implied, default to yellow.\n"
@@ -469,13 +321,13 @@ def build_vision_bbox_highlight_prompt(
         "include an 'opacity' field with a value between 0.0 (fully transparent) and 1.0 (fully opaque). "
         "If no opacity is requested, omit the 'opacity' field.\n"
         f"{comment_instr}\n"
-        "If no elements match, return an empty matches array.\n"
+        "If no text matches, return an empty matches array.\n"
         "Output strictly in the following JSON format. Do not include explanations or code block markers (```).\n"
         "{\n"
         '  "mode": "both",\n'
         '  "comment_mode": "llm_summary",\n'
         '  "matches": [\n'
-        '    {"bbox": [x_min, y_min, x_max, y_max], "comment": "...", "color": "yellow", "opacity": 0.5}\n'
+        '    {"text": "exact text from the document", "comment": "...", "color": "yellow", "opacity": 0.5}\n'
         "  ]\n"
         "}\n"
     )

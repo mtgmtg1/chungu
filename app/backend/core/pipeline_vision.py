@@ -8,9 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import ocr_client, paddleocr_client
-from .paddleocr_fallback import fallback_controller
 from .pdf_optimizer import optimize_pdf
-from .prompts import build_vision_prompt
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -65,11 +63,7 @@ def run_vision(
     # 원본 PDF를 렌더링/deskew/재병합 없이 AI Studio에 직접 제출하여 불필요한 왕복을 제거한다.
     # 실패 시 기존 렌더링 → 배치 경로(Step 2b)로 자동 폴백한다.
     pdf_size_mb = Path(pdf_path).stat().st_size / 1024 / 1024
-    if (
-        fallback_controller.is_fallback_preferred()
-        and total_pages <= BATCH_SIZE
-        and Path(pdf_path).suffix.lower() == ".pdf"
-    ):
+    if total_pages <= BATCH_SIZE and Path(pdf_path).suffix.lower() == ".pdf":
         try:
             logger.info(f"[vision-pdf-direct] {total_pages}페이지 PDF 직접 업로드 경로 시도 ({pdf_size_mb:.1f}MB)")
             if on_progress:
@@ -91,8 +85,7 @@ def run_vision(
         except Exception as e:
             logger.warning(f"[vision-pdf-direct] PDF 직접 업로드 실패, 렌더링 배치 경로로 폴백: {e}")
 
-    # Step 2b: 렌더링 → 배치/per-page 경로 (11페이지 이상 또는 직접 업로드 실패 시)
-    prompt = build_vision_prompt(columns, extra_prompt)
+    # Step 2b: 렌더링 → 배치/per-page PaddleOCR 경로 (11페이지 이상 또는 직접 업로드 실패 시)
     lock = threading.Lock()
     progress_state = {"rendered": 0, "ocr_done": 0}
     results: list[tuple[int, str | None, dict]] = []
@@ -103,54 +96,30 @@ def run_vision(
         progress = min(100, int((progress_state["rendered"] + progress_state["ocr_done"]) / (2 * total_pages) * 100))
         on_progress(progress, 100)
 
-    def resolve_endpoint(idx: int) -> tuple[str, str, str]:
-        return endpoint, model, api_key
+    def _paddleocr_page(img: Path, page_num: int) -> tuple[str | None, dict]:
+        """PaddleOCR로 단일 페이지 이미지를 처리한다.
 
-    def _try_paddleocr_fallback(img: Path, page_num: int) -> tuple[str | None, dict]:
-        """PaddleOCR 폴백으로 단일 페이지 이미지를 처리한다.
-
-        [Flow: Step 1 (폴백 가능 여부 확인) -> Step 2 (paddleocr_client.convert_image_with_layout 호출)
-              -> Step 3 (성공 시 consume_fallback, markdown + layout 반환) -> Step 4 (실패 시 None, {})]
+        [Flow: Step 1 (paddleocr_client.convert_image_with_layout 호출)
+              -> Step 2 (markdown + layout 반환)]
         """
-        if not fallback_controller.can_use_fallback():
-            return None, {}
         try:
             md, layout, _ = paddleocr_client.convert_image_with_layout(img)
-            fb_result = ocr_client.extract_markdown_content(md)
-            if not fb_result:
-                return None, {}
-            fallback_controller.consume_fallback()
-            logger.info(f"[vision-fallback] page {page_num} PaddleOCR 단일 폴백 성공")
-            return fb_result, layout
+            extracted = ocr_client.extract_markdown_content(md)
+            if extracted:
+                logger.info(f"[vision-paddleocr] page {page_num} PaddleOCR 단일 처리 성공")
+            return extracted, layout
         except Exception as e:
-            logger.warning(f"[vision-fallback] page {page_num} PaddleOCR 단일 폴백 실패: {e}")
-            return None, {}
+            logger.warning(f"[vision-paddleocr] page {page_num} PaddleOCR 단일 처리 실패: {e}")
+            raise
 
     def process(page_idx: int, page_num: int, img: Path) -> tuple[int, str | None, dict]:
-        """단일 페이지 이미지를 OCR 처리한다 (LLM vision 경로 + 단일 PaddleOCR 폴백).
+        """단일 페이지 이미지를 PaddleOCR로 처리한다.
 
-        [Flow: Step 1 (PaddleOCR 폴백 우선 시도) -> Step 2 (폴백 실패 시 LLM vision 호출) -> Step 3 (예외 발생 시 최종 폴백 시도) -> Step 4 (완료 시 진행률 갱신)]
+        [Flow: Step 1 (PaddleOCR 단일 페이지 변환) -> Step 2 (완료 시 진행률 갱신)]
         """
-        layout_raw: dict = {}
         try:
-            if fallback_controller.is_fallback_preferred():
-                fb_result, layout_raw = _try_paddleocr_fallback(img, page_num)
-                if fb_result:
-                    return page_num, fb_result, layout_raw
-                # 폴백 실패 시 기본 요청으로 진행
-
-            ep, mdl, key = resolve_endpoint(page_idx)
-            try:
-                content, _ = ocr_client.call_vision(img, prompt, ep, mdl, key, max_tokens)
-                fallback_controller.record_success()
-                return page_num, ocr_client.extract_markdown_content(content), layout_raw
-            except Exception as e:
-                fallback_controller.record_failure()
-                logger.warning(f"[vision] page {page_num} 기본 요청 실패, PaddleOCR 폴백 시도: {e}")
-                fb_result, layout_raw = _try_paddleocr_fallback(img, page_num)
-                if fb_result:
-                    return page_num, fb_result, layout_raw
-                raise
+            extracted, layout = _paddleocr_page(img, page_num)
+            return page_num, extracted, layout
         finally:
             with lock:
                 progress_state["ocr_done"] += 1
@@ -198,8 +167,8 @@ def run_vision(
     if not page_images:
         return [], {}
 
-    # Step 3: OCR 처리 경로 선택
-    use_batch = fallback_controller.is_fallback_preferred() and len(page_images) > 1
+    # Step 3: OCR 처리 경로 선택 — 2페이지 이상이면 배치, 1페이지는 단일 처리
+    use_batch = len(page_images) > 1
 
     if use_batch:
         # Step 3a: 배치 PaddleOCR 경로 — 10페이지 단위로 묶어 병렬 제출

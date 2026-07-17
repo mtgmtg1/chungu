@@ -12,6 +12,7 @@ import tempfile
 import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -26,23 +27,21 @@ from . import cache, ocr_client, paddleocr_client, supabase_client
 from .image_deskew import deskew_image
 from .ocr_layout import BBox, OcrRow, OcrTextBlock, parse_layout_result
 from .pdf_annotator import AnnotationTarget, build_embedpdf_annotations
-from .pdf_coords import PDF_POINTS_PER_INCH, clamp_rect_to_page, px_bbox_to_pdf_rect
+from .pdf_coords import PDF_POINTS_PER_INCH
 from .pdf_text_layer import (
     TextLayerSearcher,
     add_text_layer_from_ocr,
     extract_page_ocr_results_from_layout,
 )
 from .prompts import (
-    build_element_highlight_prompt,
     build_text_search_highlight_prompt,
-    build_vision_bbox_highlight_prompt,
+    build_vision_text_highlight_prompt,
 )
 from .xlsx_advanced_converter import _get_page_image_paths
 
 logger = logging.getLogger(__name__)
 
 RENDER_DPI = 300  # 업로드 시점 렌더링 DPI와 동일해야 bbox 좌표가 맞는다 (최대 300, 저해상도는 자동 낮춤).
-MAX_ELEMENTS_FOR_LLM = 400  # 프롬프트 폭주 방지
 MAX_TEXT_BLOCK_CHARS = 200  # 텍스트 블록은 앞 200자만 LLM에 전달 (토큰 폭증 방지)
 MAX_PAGE_TEXT_CHARS_FOR_LLM = 3000  # 검색 가능한 PDF의 페이지 텍스트는 페이지당 최대 3000자까지 LLM에 전달
 
@@ -475,6 +474,50 @@ def _collect_page_elements(
     return _collect_page_elements_image(job, temp_dir, page_range)
 
 
+def _ensure_searchable_pdf(
+    job: Job,
+    temp_dir: Path,
+    language: str = "en",
+) -> tuple[bytes, list[AnnotateElement], dict[int, dict], bool]:
+    """[Flow: Step 1 (job.searchable_pdf_storage_path 확인)
+          -> Step 2 (없으면 PaddleOCR로 OCR 수행 → corrected_images + layout_by_page 획득)
+          -> Step 3 (보정된 이미지로 PDF 생성 → add_text_layer_from_ocr로 텍스트 레이어 추가)
+          -> Step 4 (searchable PDF Storage 업로드 → job.searchable_pdf_storage_path 설정)]
+
+    모든 PDF가 PaddleOCR을 거쳐 텍스트 레이어가 있는 searchable PDF가 되도록 보장한다.
+    """
+    if job.searchable_pdf_storage_path:
+        try:
+            pdf_bytes = supabase_client.download_pdf(job.searchable_pdf_storage_path).read()
+            logger.info(f"[pdf_annotate] searchable PDF 사용: {job.searchable_pdf_storage_path}")
+            return pdf_bytes, [], {}, False
+        except Exception as e:
+            logger.warning(f"[pdf_annotate] searchable PDF 다운로드 실패, PaddleOCR로 재생성: {e}")
+
+    elements, corrected_images, layout_by_page = _collect_page_elements(
+        job, temp_dir, page_range=None, use_pdf_direct=True
+    )
+    if not corrected_images:
+        raise ValueError("PaddleOCR로 페이지 이미지를 확보하지 못해 searchable PDF를 생성할 수 없습니다")
+
+    pdf_bytes = _images_to_pdf(corrected_images)
+    page_ocr_results = extract_page_ocr_results_from_layout(layout_by_page)
+    if page_ocr_results:
+        pdf_bytes = add_text_layer_from_ocr(
+            pdf_bytes, page_ocr_results, dpi=RENDER_DPI, language=language,
+            layout_by_page=layout_by_page,
+        )
+
+    try:
+        from io import BytesIO
+        storage_path = supabase_client.upload_input(BytesIO(pdf_bytes), "searchable.pdf", job.id)
+        job.searchable_pdf_storage_path = storage_path
+    except Exception as e:
+        logger.warning(f"[pdf_annotate] searchable PDF 업로드 실패 (계속 진행): {e}")
+
+    return pdf_bytes, elements, layout_by_page, True
+
+
 def _normalized_bbox_to_pdf_user(
     bbox: tuple[float, float, float, float],
     page_width_pt: float,
@@ -864,161 +907,6 @@ def _parse_opacity(value) -> float | None:
     return max(0.0, min(1.0, v))
 
 
-def _narrow_bbox_by_scope(element: AnnotateElement, scope: str | None) -> BBox | None:
-    """LLM이 지정한 scope에 따라 element의 bbox를 좁힌다.
-
-    [Flow: Step 1 (scope 파싱) -> Step 2 (scope 유형별 bbox 계산) -> Step 3 (좁힌 bbox 반환)]
-
-    지원 scope:
-      - "full" 또는 None → element 전체 bbox 반환
-      - "first_column" → 표 첫 번째 셀 bbox (셀 bbox 없으면 전체)
-      - "last_column" → 표 마지막 셀 bbox (셀 bbox 없으면 전체)
-      - "amount_cell" / "name_cell" / "date_cell" → 셀 텍스트에서 키워드 기반 매칭
-      - "keyword: <word>" → 텍스트 블록/표 셀에서 키워드가 포함된 영역 bbox
-      - "column N" → N번째 셀 bbox (1-based, 셀 bbox 없으면 전체)
-
-    Args:
-        element: 주석 대상 요소 (word_bboxes/cell_texts/cell_bboxes 포함 가능)
-        scope: LLM이 반환한 highlight_scope 문자열
-
-    Returns:
-        좁혀진 bbox 또는 None. None이면 element 전체 bbox를 사용한다.
-    """
-    full_bbox = element.bbox_px
-    if not scope or scope.strip().lower() == "full":
-        return None
-
-    scope_clean = scope.strip().lower()
-
-    # 표 셀 단위 scope
-    if element.kind == "table_row" and element.cell_texts:
-        # first_column / last_column
-        if scope_clean == "first_column" and element.cell_bboxes:
-            return element.cell_bboxes[0]
-        if scope_clean == "last_column" and element.cell_bboxes:
-            return element.cell_bboxes[-1]
-        if scope_clean.startswith("column "):
-            try:
-                idx = int(scope_clean.split(" ", 1)[1]) - 1  # 1-based → 0-based
-                if 0 <= idx < len(element.cell_bboxes):
-                    return element.cell_bboxes[idx]
-            except ValueError:
-                pass
-
-        # keyword 기반 셀 매칭 (amount_cell, name_cell, date_cell, keyword:xxx)
-        keyword = None
-        if scope_clean in ("amount_cell", "name_cell", "date_cell"):
-            keyword_map = {
-                "amount_cell": ["amount", "금액", "가격", "합계", "total", "sum", "price"],
-                "name_cell": ["name", "이름", "성명", "명", "담당자", "고객"],
-                "date_cell": ["date", "날짜", "일자", "연월일", "기간", "period"],
-            }
-            keywords = keyword_map.get(scope_clean, [])
-        elif scope_clean.startswith("keyword:"):
-            keywords = [scope_clean.split(":", 1)[1].strip().lower()]
-        else:
-            keywords = []
-
-        if keywords and element.cell_bboxes:
-            best_idx = -1
-            best_score = -1.0
-            for idx, cell_text in enumerate(element.cell_texts):
-                cell_lower = cell_text.lower()
-                for kw in keywords:
-                    if kw in cell_lower:
-                        # 헤더 행과 구분하기 위해 짧은 셀 텍스트 우선 (데이터가 짧음)
-                        score = 1.0 / max(1, len(cell_text))
-                        if score > best_score:
-                            best_score = score
-                            best_idx = idx
-                        break
-            if 0 <= best_idx < len(element.cell_bboxes):
-                return element.cell_bboxes[best_idx]
-
-    # 텍스트 블록/표 행 공통 keyword scope
-    if scope_clean.startswith("keyword:"):
-        keyword = scope_clean.split(":", 1)[1].strip().lower()
-    elif scope_clean not in ("full", "first_column", "last_column") and not scope_clean.startswith("column "):
-        # scope_clean 자체를 키워드로 간주 (예: "amount", "name")
-        keyword = scope_clean
-    else:
-        keyword = None
-
-    if keyword and element.word_bboxes:
-        # word_bboxes에 텍스트가 없으므로 keyword가 블록 텍스트에 있으면
-        # 블록 내 모든 word_bboxes를 사용해 좌우 폭을 줄인다.
-        # 더 정밀하게 하려면 word_bboxes에 텍스트도 포함해야 함.
-        if keyword in element.text.lower():
-            matched = element.word_bboxes
-            min_x = min(b[0] for b in matched)
-            min_y = min(b[1] for b in matched)
-            max_x = max(b[2] for b in matched)
-            max_y = max(b[3] for b in matched)
-            return (min_x, min_y, max_x, max_y)
-
-    return None
-
-
-def _matches_to_targets(
-    matches: list[dict],
-    elements: list[AnnotateElement],
-    page_point_sizes: dict[int, tuple[float, float]],
-    text_searcher: TextLayerSearcher | None = None,
-) -> list[AnnotationTarget]:
-    """LLM이 반환한 match 목록을 AnnotationTarget 목록으로 변환한다 (scope/색상 적용).
-
-    [Flow: Step 1 (match 순회) -> Step 2 (element_index 유효성 검사)
-          -> Step 3 (텍스트 레이어 검색 우선 — 없으면 OCR bbox 사용) -> Step 4 (페이지 범위 clamp)
-          -> Step 5 (AnnotationTarget 생성)]
-
-    텍스트 레이어가 추가된 PDF가 있으면, OCR bbox 변환 대신 PDF 텍스트 레이어에서 직접
-    텍스트를 검색하여 bbox를 얻는다. 이 방식은 좌표 변환 오차 없이 정확한 위치를 제공한다.
-    """
-    targets: list[AnnotationTarget] = []
-    for m in matches:
-        idx = m.get("element_index")
-        if not isinstance(idx, int) or idx < 0 or idx >= len(elements):
-            continue
-        el = elements[idx]
-        scope = m.get("highlight_scope")
-        narrowed_bbox = _narrow_bbox_by_scope(el, scope)
-        bbox_px = narrowed_bbox if narrowed_bbox is not None else el.bbox_px
-
-        # 텍스트 레이어에서 직접 검색하면 bbox 변환 오차를 피할 수 있다.
-        rect_pdf: tuple[float, float, float, float] | None = None
-        if text_searcher is not None:
-            search_text = el.text.replace(" | ", " ").strip()[:80]
-            if search_text:
-                found = text_searcher.search(el.page_no, search_text)
-                if found:
-                    rect_pdf = found[0]
-                    logger.info(f"[pdf_annotate] 텍스트 레이어 검색 성공 page={el.page_no}: '{search_text[:30]}'")
-                else:
-                    logger.info(f"[pdf_annotate] 텍스트 레이어 검색 실패 page={el.page_no}: '{search_text[:30]}'")
-
-        if rect_pdf is None:
-            # paddleocr_service에서 bbox를 PDF user-space로 정규화해서 반환하므로
-            # 폴백 시에도 추가 변환 없이 그대로 사용한다.
-            rect_pdf = bbox_px
-
-        page_pt = page_point_sizes.get(el.page_no)
-        if page_pt:
-            rect_pdf = clamp_rect_to_page(rect_pdf, page_pt[0], page_pt[1])
-        comment = str(m.get("comment") or "").strip()
-        color_name = m.get("color")
-        color = _color_name_to_rgb(color_name)
-        # 사용자가 명시적으로 색상을 요청한 경우에만 callout에도 같은 색 적용.
-        # 요청이 없으면 callout_color=None → pdf_annotator에서 DEFAULT_CALLOUT_COLOR(보라) 사용.
-        callout_color = color if color_name else None
-        # 사용자가 투명도를 요청한 경우에만 opacity 설정. 없으면 None → 기본 0.5.
-        opacity = _parse_opacity(m.get("opacity"))
-        targets.append(AnnotationTarget(
-            page_no=el.page_no, bbox_pdf=rect_pdf, comment=comment,
-            color=color, callout_color=callout_color, opacity=opacity,
-        ))
-    return targets
-
-
 def _union_rects(rects: list[tuple[float, float, float, float]]) -> tuple[float, float, float, float]:
     """[Flow: Step 1 (여러 rect의 좌표를 수집) -> Step 2 (최소/최대 x, y 계산) -> Step 3 (합친 bbox 반환)]
 
@@ -1124,117 +1012,84 @@ def _collect_targets_with_searchable_text(
 
 def _collect_targets_with_vision_llm(
     image_paths: dict[int, Path],
+    pdf_bytes: bytes,
     instruction: str,
     endpoint: str,
     model: str,
     api_key: str,
+    page_range: list[int] | None = None,
 ) -> tuple[list[AnnotationTarget], str | None, str | None]:
-    """Vision LLM에 페이지 이미지를 보내 정밀 bbox + 색상 + 코멘트를 얻어 AnnotationTarget 목록을 반환한다.
-
-    [Flow: Step 1 (페이지별 이미지 순회) -> Step 2 (Gemma4 해상도 맞춤) -> Step 3 (Vision LLM bbox 요청)
-          -> Step 4 (원본 이미지 좌표로 스케일 복원) -> Step 5 (AnnotationTarget 생성)
+    """[Flow: Step 1 (페이지별 이미지 순회) -> Step 2 (Gemma4 해상도 맞춤)
+          -> Step 3 (Vision LLM에 텍스트 내용만 요청)
+          -> Step 4 (TextLayerSearcher로 searchable PDF에서 text 검색)
+          -> Step 5 (매칭된 모든 rect를 bounding rect + segmentRects로 변환)
           -> Step 6 (페이지별 mode/comment_mode 추출, 마지막 유효 값 사용)]
 
-    프롬프트는 LLM이 사용자 요청에 따라 표시 방식(mode)과 코멘트 모드(comment_mode)를
-    결정하도록 유도한다. 반환된 값은 상위 run()에서 최종 주석 옵션으로 오버라이드한다.
+    Vision LLM은 이미지에서 조건에 맞는 텍스트 내용만 반환하고,
+    백엔드가 searchable PDF의 텍스트 레이어에서 해당 text를 검색해 bbox를 결정한다.
     """
     targets: list[AnnotationTarget] = []
     mode: str | None = None
     comment_mode: str | None = None
-    for page_no, img_path in sorted(image_paths.items()):
-        try:
-            from PIL import Image
-
-            with Image.open(img_path) as img:
-                img_w, img_h = img.size
-            fitted = ocr_client.fit_image_to_gemma4_resolution(img_path)
-            with Image.open(fitted) as fitted_img:
-                fitted_w, fitted_h = fitted_img.size
-            scale_x = img_w / fitted_w if fitted_w > 0 else 1.0
-            scale_y = img_h / fitted_h if fitted_h > 0 else 1.0
-
-            # 코멘트는 AI 요약으로 생성한 뒤, comment_mode가 user_text이면 백엔드에서 교체한다.
-            prompt = build_vision_bbox_highlight_prompt(instruction, fitted_w, fitted_h, want_llm_comment=True)
-            content, _ = ocr_client.call_vision(img_path, prompt, endpoint, model, api_key, max_tokens=4000)
-            content = _strip_json_fence(content)
-            try:
-                data = json.loads(content)
-            except json.JSONDecodeError as e:
-                logger.warning(f"[pdf_annotate] page={page_no} Vision LLM JSON 파싱 실패: {e}")
-                continue
-
-            page_mode = data.get("mode") if isinstance(data, dict) else None
-            page_comment_mode = data.get("comment_mode") if isinstance(data, dict) else None
-            if page_mode in ("highlight", "margin_note", "both"):
-                mode = page_mode
-            if page_comment_mode in ("user_text", "llm_summary"):
-                comment_mode = page_comment_mode
-
-            matches = data.get("matches", []) if isinstance(data, dict) else []
-            for m in matches:
-                bbox = m.get("bbox")
-                if not isinstance(bbox, list) or len(bbox) < 4:
-                    continue
-                try:
-                    x0 = float(bbox[0]) * scale_x
-                    y0 = float(bbox[1]) * scale_y
-                    x1 = float(bbox[2]) * scale_x
-                    y1 = float(bbox[3]) * scale_y
-                except (ValueError, TypeError):
-                    continue
-                rect_pdf = px_bbox_to_pdf_rect((x0, y0, x1, y1), dpi=RENDER_DPI, page_height_px=img_h)
-                comment = str(m.get("comment") or "").strip()
-                color_name = m.get("color")
-                color = _color_name_to_rgb(color_name)
-                callout_color = color if color_name else None
-                opacity = _parse_opacity(m.get("opacity"))
-                targets.append(AnnotationTarget(
-                    page_no=page_no, bbox_pdf=rect_pdf, comment=comment,
-                    color=color, callout_color=callout_color, opacity=opacity,
-                ))
-        except Exception as e:
-            logger.warning(f"[pdf_annotate] page={page_no} Vision LLM 처리 실패: {e}")
-            continue
-    return targets, mode, comment_mode
-
-
-def _select_elements_with_llm(
-    elements: list[AnnotateElement],
-    instruction: str,
-    endpoint: str,
-    model: str,
-    api_key: str,
-) -> tuple[list[dict], str | None, str | None]:
-    """LLM에게 요소 텍스트만 전달해 조건에 맞는 요소 인덱스+코멘트+scope+색상을 받는다.
-
-    [Flow: Step 1 (요소 목록을 LLM용 dict로 변환) -> Step 2 (프롬프트 생성 후 텍스트 LLM 호출)
-          -> Step 3 (JSON 파싱) -> Step 4 (matches 필터링 및 mode/comment_mode 추출)]
-
-    프롬프트는 LLM이 표시 방식(mode)과 코멘트 모드(comment_mode)를 사용자 요청에 따라
-    결정하도록 유도한다. 반환된 mode/comment_mode는 상위 run()에서 최종 주석 생성
-    옵션으로 오버라이드에 사용된다.
-    """
-    if not elements:
-        return [], None, None
-
-    truncated = elements[:MAX_ELEMENTS_FOR_LLM]
-    element_dicts = [{"kind": e.kind, "text": e.text} for e in truncated]
-    # 코멘트는 AI가 요약하도록 생성한 뒤, comment_mode가 user_text이면 백엔드에서 교체한다.
-    prompt = build_element_highlight_prompt(element_dicts, instruction, want_llm_comment=True)
-
-    content, _ = ocr_client.call_text(prompt, endpoint, model, api_key, max_tokens=4000)
-    content = _strip_json_fence(content)
+    text_searcher = TextLayerSearcher(pdf_bytes)
     try:
-        data = json.loads(content)
-    except Exception as e:
-        raise ValueError(f"LLM 응답 JSON 파싱 실패: {e} (content={content[:200]})")
+        for page_no, img_path in sorted(image_paths.items()):
+            if page_range is not None and page_no not in page_range:
+                continue
+            try:
+                fitted = ocr_client.fit_image_to_gemma4_resolution(img_path)
 
-    mode = data.get("mode") if isinstance(data, dict) else None
-    comment_mode = data.get("comment_mode") if isinstance(data, dict) else None
-    matches = data.get("matches", []) if isinstance(data, dict) else []
-    if not isinstance(matches, list):
-        return [], mode, comment_mode
-    return [m for m in matches if isinstance(m, dict) and "element_index" in m], mode, comment_mode
+                # 코멘트는 AI 요약으로 생성한 뒤, comment_mode가 user_text이면 백엔드에서 교체한다.
+                prompt = build_vision_text_highlight_prompt(instruction, want_llm_comment=True)
+                content, _ = ocr_client.call_vision(fitted, prompt, endpoint, model, api_key, max_tokens=4000)
+                content = _strip_json_fence(content)
+                try:
+                    data = json.loads(content)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"[pdf_annotate] page={page_no} Vision LLM JSON 파싱 실패: {e}")
+                    continue
+
+                page_mode = data.get("mode") if isinstance(data, dict) else None
+                page_comment_mode = data.get("comment_mode") if isinstance(data, dict) else None
+                if page_mode in ("highlight", "margin_note", "both"):
+                    mode = page_mode
+                if page_comment_mode in ("user_text", "llm_summary"):
+                    comment_mode = page_comment_mode
+
+                matches = data.get("matches", []) if isinstance(data, dict) else []
+                for m in matches:
+                    text = str(m.get("text") or "").strip()
+                    if not text:
+                        continue
+                    comment = str(m.get("comment") or "").strip()
+                    color_name = m.get("color")
+                    color = _color_name_to_rgb(color_name)
+                    callout_color = color if color_name else None
+                    opacity = _parse_opacity(m.get("opacity"))
+
+                    # Vision LLM이 본 페이지에서만 검색한다.
+                    found = text_searcher.search(page_no, text)
+                    if not found:
+                        logger.info(f"[pdf_annotate] page={page_no} 텍스트 레이어 검색 실패: '{text[:50]}'")
+                        continue
+
+                    bounding_rect = _union_rects(found)
+                    targets.append(AnnotationTarget(
+                        page_no=page_no,
+                        bbox_pdf=bounding_rect,
+                        comment=comment,
+                        color=color,
+                        callout_color=callout_color,
+                        opacity=opacity,
+                        search_rects_pdf=found,
+                        search_text=text,
+                    ))
+            except Exception as e:
+                logger.warning(f"[pdf_annotate] page={page_no} Vision LLM 처리 실패: {e}")
+                continue
+    finally:
+        text_searcher.close()
+    return targets, mode, comment_mode
 
 
 def run(
@@ -1294,127 +1149,56 @@ def run(
         with tempfile.TemporaryDirectory() as tmpdir:
             temp_dir = Path(tmpdir)
 
-            # [Flow: searchable PDF가 있으면 이를 사용 — OCR 중복 방지]
-            searchable_pdf_bytes: bytes | None = None
-            if job.searchable_pdf_storage_path:
+            # [Flow: searchable PDF 확보 — PaddleOCR로 텍스트 레이어가 없으면 생성]
+            # 모든 PDF는 검색 가능한 텍스트 레이어를 가진 PDF를 베이스로 사용한다.
+            pdf_bytes, elements, layout_by_page, _created = _ensure_searchable_pdf(
+                job, temp_dir, language=language
+            )
+
+            # [Flow: OCR layout 저장 — agent의 get_elements/search_text가 재사용할 수 있도록]
+            if layout_by_page:
                 try:
-                    searchable_pdf_bytes = supabase_client.download_pdf(job.searchable_pdf_storage_path).read()
-                    logger.info(f"[pdf_annotate] searchable PDF 사용: {job.searchable_pdf_storage_path}")
+                    data = json.dumps(layout_by_page, ensure_ascii=False, default=str).encode("utf-8")
+                    storage_path = f"{job.id}/ocr_layout.json"
+                    client = supabase_client.get_service_client()
+                    client.storage.from_("results").upload(
+                        storage_path,
+                        data,
+                        {"content-type": "application/json", "upsert": "true"},
+                    )
+                    job.result_ocr_layout_storage_path = storage_path
+                    db.commit()
+                    logger.info(f"[pdf_annotate] {job.id} OCR layout 저장 완료: {storage_path}")
                 except Exception as e:
-                    logger.warning(f"[pdf_annotate] searchable PDF 다운로드 실패, 원본 PDF 사용: {e}")
+                    logger.warning(f"[pdf_annotate] {job.id} OCR layout 저장 실패: {e}")
 
-            if searchable_pdf_bytes:
-                image_paths = _render_pdf_to_image_paths(searchable_pdf_bytes, temp_dir, dpi=RENDER_DPI)
-            else:
-                image_paths = _get_page_image_paths(job, temp_dir)
-            if not image_paths:
-                raise ValueError("원본 파일을 이미지로 렌더링하지 못해 주석을 생성할 수 없습니다")
-
-            # [Flow: 페이지 범위 필터링 — 지정한 페이지만 처리하여 LLM 프롬프트 폭주 방지]
-            # page_range가 None이면 전체 페이지를 처리한다 (현행 동작).
-            # page_range는 1-based 페이지 번호 리스트이며, image_paths/elements/targets에 모두 적용된다.
-            if page_range is not None:
-                page_set = set(page_range)
-                image_paths = {p: path for p, path in image_paths.items() if p in page_set}
-                if not image_paths:
-                    _update_entry_status(db, job_id, next_index, "done", recovery_notes=[{"reason": "지정한 페이지 범위에 해당하는 페이지가 없습니다"}])
-                    return {"job_id": job_id, "status": "done", "matched_rows": 0}
-                logger.info(f"[pdf_annotate] page_range 필터 적용: {sorted(page_set)} ({len(image_paths)}페이지)")
-
+            page_point_sizes = _page_point_sizes(pdf_bytes)
             llm_mode: str | None = None
             llm_comment_mode: str | None = None
-            elements: list[AnnotateElement] = []  # callout 배치 시 충돌 회피용 (고급주석 경로에서는 미사용)
-            layout_by_page: dict[int, dict] = {}
+
             if advanced:
-                # [Flow: 고급주석 — Vision LLM이 이미지를 직접 보고 정밀 bbox + 색상 + 코멘트 반환]
-                pdf_bytes = _images_to_pdf(image_paths)
-                page_point_sizes = _page_point_sizes(pdf_bytes)
+                # [Flow: 고급주석 — Vision LLM이 이미지를 보고 텍스트 내용만 반환, 백엔드가 검색]
+                image_paths = _render_pdf_to_image_paths(pdf_bytes, temp_dir, dpi=RENDER_DPI)
+                if page_range is not None:
+                    page_set = set(page_range)
+                    image_paths = {p: path for p, path in image_paths.items() if p in page_set}
+                    if not image_paths:
+                        _update_entry_status(db, job_id, next_index, "done", recovery_notes=[{"reason": "지정한 페이지 범위에 해당하는 페이지가 없습니다"}])
+                        return {"job_id": job_id, "status": "done", "matched_rows": 0}
+                    logger.info(f"[pdf_annotate] page_range 필터 적용: {sorted(page_set)} ({len(image_paths)}페이지)")
+
                 targets, llm_mode, llm_comment_mode = _collect_targets_with_vision_llm(
-                    image_paths, instruction, endpoint, model, api_key
+                    image_paths, pdf_bytes, instruction, endpoint, model, api_key, page_range=page_range
                 )
-                if not targets:
-                    _update_entry_status(db, job_id, next_index, "done", recovery_notes=[{"reason": "조건에 맞는 요소를 찾지 못했습니다"}])
-                    return {"job_id": job_id, "status": "done", "matched_rows": 0}
             else:
-                if searchable_pdf_bytes:
-                    # [Flow: searchable PDF 기반 AI 주석 — OCR 생략]
-                    # LLM은 위치(페이지/좌표)에 관여하지 않고, 강조해야 할 정확한 텍스트만 반환한다.
-                    # 백엔드가 searchable PDF의 텍스트 레이어에서 text를 검색해 모든 발생 위치를 highlight.
-                    pdf_bytes = searchable_pdf_bytes
-                    page_point_sizes = _page_point_sizes(pdf_bytes)
-                    targets, llm_mode, llm_comment_mode = _collect_targets_with_searchable_text(
-                        pdf_bytes, instruction, endpoint, model, api_key, page_range=page_range
-                    )
-                    if not targets:
-                        _update_entry_status(db, job_id, next_index, "done", recovery_notes=[{"reason": "조건에 맞는 텍스트를 찾지 못했습니다"}])
-                        return {"job_id": job_id, "status": "done", "matched_rows": 0}
-                else:
-                    # [Flow: 주석 PDF 베이스 — 정돈된 이미지(deskew + 90° 대회전 보정 완료)로 PDF 생성]
-                    # 원본 PDF를 사용하지 않고 보정된 페이지 이미지로 새 PDF를 생성한다.
-                    # 이유: bbox가 "deskew + AI Studio 90° 보정된 이미지" 기준으로 반환되므로,
-                    # 주석 PDF의 베이스도 동일하게 보정된 이미지여야 bbox와 완벽히 정렬된다.
-                    # 원본 PDF 벡터 품질 손실(텍스트 선택 불가)은 사용자가 명시적으로 수용한 트레이드오프.
-                    elements, corrected_images, layout_by_page = _collect_page_elements(
-                        job, temp_dir, use_pdf_direct=True
-                    )
-                    if not elements:
-                        raise ValueError("텍스트 요소를 인식하지 못해 하이라이트/여백 주석 대상을 찾을 수 없습니다")
-                    if not corrected_images:
-                        raise ValueError("보정된 페이지 이미지를 생성하지 못해 주석 PDF를 만들 수 없습니다")
-
-                    pdf_bytes = _images_to_pdf(corrected_images)
-                    page_point_sizes = _page_point_sizes(pdf_bytes)
-
-                    # [Flow: 텍스트 레이어 추가 — OCR 결과로 검색/선택 가능한 PDF 생성]
-                    # 텍스트 레이어가 있으면 AI 주석 생성 시 텍스트 검색으로 정확한 bbox를 얻는다.
-                    page_ocr_results = extract_page_ocr_results_from_layout(layout_by_page)
-                    if page_ocr_results:
-                        pdf_bytes = add_text_layer_from_ocr(
-                            pdf_bytes, page_ocr_results, dpi=RENDER_DPI, language=language,
-                            layout_by_page=layout_by_page,
-                        )
-                        page_point_sizes = _page_point_sizes(pdf_bytes)
-
-                    # [Flow: OCR layout 저장 — agent의 get_elements/search_text가 재사용할 수 있도록]
-                    if layout_by_page:
-                        try:
-                            data = json.dumps(layout_by_page, ensure_ascii=False, default=str).encode("utf-8")
-                            storage_path = f"{job.id}/ocr_layout.json"
-                            client = supabase_client.get_service_client()
-                            client.storage.from_("results").upload(
-                                storage_path,
-                                data,
-                                {"content-type": "application/json", "upsert": "true"},
-                            )
-                            job.result_ocr_layout_storage_path = storage_path
-                            db.commit()
-                            logger.info(f"[pdf_annotate] {job.id} OCR layout 저장 완료: {storage_path}")
-                        except Exception as e:
-                            logger.warning(f"[pdf_annotate] {job.id} OCR layout 저장 실패: {e}")
-
-                    # [Flow: elements를 페이지 범위로 필터링 — LLM에 지정 페이지 요소만 전달]
-                    if page_range is not None:
-                        page_set = set(page_range)
-                        elements = [e for e in elements if e.page_no in page_set]
-
-                    matches, llm_mode, llm_comment_mode = _select_elements_with_llm(
-                        elements, instruction, endpoint, model, api_key
-                    )
-                    if not matches:
-                        _update_entry_status(db, job_id, next_index, "done", recovery_notes=[{"reason": "조건에 맞는 요소를 찾지 못했습니다"}])
-                        return {"job_id": job_id, "status": "done", "matched_rows": 0}
-
-                    text_searcher = None
-                    if pdf_bytes:
-                        text_searcher = TextLayerSearcher(pdf_bytes)
-                    try:
-                        targets = _matches_to_targets(matches, elements, page_point_sizes, text_searcher)
-                    finally:
-                        if text_searcher:
-                            text_searcher.close()
+                # [Flow: 일반주석 — LLM이 페이지 텍스트를 보고 텍스트 내용만 반환, 백엔드가 검색]
+                targets, llm_mode, llm_comment_mode = _collect_targets_with_searchable_text(
+                    pdf_bytes, instruction, endpoint, model, api_key, page_range=page_range
+                )
 
             if not targets:
-                raise ValueError("LLM이 선택한 요소를 원본 bbox로 매핑하지 못했습니다")
+                _update_entry_status(db, job_id, next_index, "done", recovery_notes=[{"reason": "조건에 맞는 텍스트를 찾지 못했습니다"}])
+                return {"job_id": job_id, "status": "done", "matched_rows": 0}
 
             # LLM이 사용자 요청에 따라 mode/comment_mode를 결정하면 프론트에서 전달된 기본값을 오버라이드한다.
             if llm_mode in ("highlight", "margin_note", "both"):

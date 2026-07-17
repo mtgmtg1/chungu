@@ -18,7 +18,7 @@ from sqlalchemy import text as sql_text
 from ..celery_app import celery
 from celery.signals import worker_ready
 from ..config import settings
-from ..core import archive_handler, converter, excel_writer, media_loader, merge, pdf_annotate_converter, pdf_text_layer, pipeline_ediscovery, points_service, subscription_service, supabase_client, xlsx_advanced_converter
+from ..core import archive_handler, converter, excel_writer, media_loader, merge, paddleocr_client, pdf_annotate_converter, pdf_text_layer, pipeline_ediscovery, points_service, subscription_service, xlsx_advanced_converter
 from ..core.markdown_image_rewriter import rewrite_inline_images_to_storage
 from ..core.ocr_client import has_pdf_text_layer
 from ..core.pipeline_docling import run_docling, run_hwp
@@ -239,6 +239,19 @@ def _build_and_upload_searchable_pdf(
     """
     from ..core.image_deskew import deskew_image
     from ..core.ocr_client import render_pdf
+
+    # [Flow: run_vision에서 layout이 비어 있을 경우(방어), PaddleOCR client를 직접 호출해 layout 복구]
+    if not layout_by_page:
+        try:
+            doc = fitz.open(str(input_path))
+            total_input_pages = len(doc)
+            doc.close()
+            if total_input_pages <= 10:
+                _, layout_pages, _ = paddleocr_client.convert_pdf_with_layout(input_path)
+                layout_by_page = {i + 1: layout for i, layout in enumerate(layout_pages) if layout}
+                logger.info(f"[run_job:{job.id}] searchable PDF 생성 직접 PaddleOCR layout 확보: {len(layout_by_page)}페이지")
+        except Exception as e:
+            logger.warning(f"[run_job:{job.id}] searchable PDF 생성 직접 PaddleOCR layout 확보 실패: {e}")
 
     # OCR layout을 먼저 Storage에 저장해 agent 도구가 재사용할 수 있게 한다.
     if layout_by_page:

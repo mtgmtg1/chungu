@@ -39,7 +39,7 @@ export function buildMarkdownTools(context: MarkdownContext) {
 
   return {
     get_section: tool({
-      description: 'Extract the section with the specified heading from the markdown.',
+      description: 'Extract the section with the specified heading from the markdown report/document editor (보고서, 문서, 글쓰기, 메모장).',
       inputSchema: z.object({
         heading: z.string().describe('Heading of the section to find'),
       }),
@@ -51,7 +51,7 @@ export function buildMarkdownTools(context: MarkdownContext) {
     }),
 
     get_table: tool({
-      description: 'Extract the Nth table from the markdown.',
+      description: 'Extract the Nth table from the markdown report/document editor (보고서, 문서, 글쓰기, 표).',
       inputSchema: z.object({
         table_index: z.number().describe('0-based table index'),
       }),
@@ -63,7 +63,7 @@ export function buildMarkdownTools(context: MarkdownContext) {
     }),
 
     replace_selection: tool({
-      description: 'Replace the selected text with new markdown.',
+      description: 'Replace the selected text in the document/report editor with new markdown (문서/보고서 내용 교체, 글 수정).',
       inputSchema: z.object({
         old_text: z.string().describe('Existing text to replace'),
         new_text: z.string().describe('New markdown'),
@@ -75,7 +75,7 @@ export function buildMarkdownTools(context: MarkdownContext) {
     }),
 
     insert_at: tool({
-      description: 'Insert markdown at the specified position.',
+      description: 'Insert markdown at the specified position in the document/report editor (문서/보고서에 내용 추가, 글 삽입).',
       inputSchema: z.object({
         position: z.string().describe('"cursor" | "end" | "beginning" | heading text'),
         new_text: z.string().describe('Markdown to insert'),
@@ -87,7 +87,7 @@ export function buildMarkdownTools(context: MarkdownContext) {
     }),
 
     apply_edits: tool({
-      description: 'Save the markdown edits made so far to FastAPI.',
+      description: 'Save the markdown edits made so far to the document/report editor (보고서/문서 편집 내용 저장).',
       inputSchema: z.object({}),
       execute: async () => {
         if (edits.length === 0) {

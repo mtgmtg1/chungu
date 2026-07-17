@@ -14,6 +14,7 @@ import type { Request, Response } from 'express';
 import { getAuthHeaders } from '../lib/auth.js';
 import * as proofApi from '../lib/proof-api.js';
 import { compressToolResults, shouldCompress } from '../lib/llmlingua.js';
+import { buildIntentHint } from '../lib/intent-synonyms.js';
 import { buildModel } from '../lib/model.js';
 import { buildAnnotationTools } from '../tools/annotations.js';
 import { createBrowserlessTools } from '../tools/browserless.js';
@@ -35,37 +36,41 @@ const DEFAULT_AGENT_MAX_STEPS = 100;
 const COMPRESSION_THRESHOLD_CHARS = 4000;
 
 /**
- * [Flow: Step 1 (context 수신) -> Step 2 (job_id, source_type, page, editor 등 추출)
- *       -> Step 3 (도구 사용 규칙 + 도구 결과 분석 지시를 포함한 system prompt 생성) -> Step 4 (반환)]
+ * [Flow: Step 1 (context와 마지막 사용자 메시지 수신) -> Step 2 (job_id, source_type, page, editor 등 추출)
+ *       -> Step 3 (의도 정규화 힌트 생성) -> Step 4 (도구 사용 규칙 + 카테고리 설명을 포함한 system prompt 생성) -> Step 5 (반환)]
  *
  * @param context 프론트엔드에서 전달된 에이전트 컨텍스트
+ * @param userMessage 마지막 사용자 발화 (비개발자 용어를 매핑하기 위한 힌트 생성에 사용, 선택적)
  * @returns system prompt 문자열
  */
-function buildSystemPrompt(context: Record<string, unknown>): string {
+function buildSystemPrompt(context: Record<string, unknown>, userMessage?: string): string {
   const jobId = context.jobId || context.job_id || 'unknown';
   const sourceType = context.sourceType || context.source_type || 'unknown';
   const currentPage = context.currentPage || context.current_page || 1;
   const selectedFileIndex = context.selectedFileIndex ?? context.selected_file_index ?? 0;
   const activeEditor = context.activeEditor || context.active_editor || 'markdown';
   const approvalMode = context.approvalMode || 'ask';
+  const intentHint = buildIntentHint(userMessage);
 
   const basePrompt = `You are PROOF Agent, an AI assistant that helps users manipulate PDF annotations, markdown editor content, and spreadsheets.
 
-Current context:
+${intentHint}Current context:
 - job_id: ${jobId}
 - source_type: ${sourceType}
 - current_page: ${currentPage}
 - selected_file_index: ${selectedFileIndex}
-- active_editor: ${activeEditor}
+- active_editor: ${activeEditor} (markdown = document/report editor; xlsxBasic/xlsxAdvanced = spreadsheet)
 
 Available tool categories:
 1. PDF annotation (only when source_type is pdf or docx/hwp preview):
    - search_text, get_elements, get_annotations, read_job_json, view_page, add_highlight, add_callout, update_annotation, remove_annotation, compare_elements, apply_annotations, save_annotations
-2. Markdown editor (when active_editor is markdown):
-   - get_section, get_table, replace_selection, insert_at, apply_edits
+2. Markdown editor / report & document editor (when active_editor is markdown):
+   - Users may describe this as: 보고서, 문서, 글쓰기, 메모, 메모장, 보고서 작성, 문서 정리, 요약, 마크다운, 에디터.
+   - Tools: get_section, get_table, replace_selection, insert_at, apply_edits
 3. Spreadsheet (when active_editor is xlsxBasic or xlsxAdvanced):
    - get_sheet, update_cell, add_row, delete_row, apply_changes
-4. Sandbox (when user asks to run code or process files in isolation):
+4. Sandbox / code execution environment (when user asks to run code, scripts, or process files in isolation):
+   - Users may describe this as: 코드 실행, 파이썬, 스크립트, 프로그램, 계산, 코딩, 샌드박스, 돌리기, 테스트.
    - create_sandbox, execute_in_sandbox, read_sandbox_file, write_sandbox_file, list_sandbox_files, commit_sandbox_changes, get_sandbox_diff, collect_sandbox_results, destroy_sandbox
    - IMPORTANT: User-visible filenames are preserved in /workspace/original/. For example, if the user says "report.pdf", the file is at /workspace/original/report.pdf. Read /workspace/_file_mapping.json to see the full mapping of user filenames to sandbox paths. Do NOT use /workspace/input.pdf — use the original filename instead.
 5. Web browsing (when user asks to capture or extract web content):
@@ -135,6 +140,34 @@ Tool approval:
 }
 
 /**
+ * [Flow: Step 1 (UIMessage 목록 역순 탐색) -> Step 2 (role=user 메시지 발견)
+ *       -> Step 3 (텍스트 content 또는 text parts 추출) -> Step 4 (문자열 반환)]
+ *
+ * Vercel AI SDK 5.x는 content 문자열 또는 parts 배열을 모두 지원할 수 있으므로
+ * 둘 다 처리한다. 추출된 텍스트는 buildIntentHint로 전달되어 비개발자 용어를 매핑한다.
+ *
+ * @param messages UIMessage 목록
+ * @returns 마지막 사용자 발화 텍스트 (없으면 undefined)
+ */
+function _getLastUserText(messages: UIMessage[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i] as any;
+    if (message.role !== 'user') continue;
+
+    if (typeof message.content === 'string') {
+      return message.content;
+    }
+
+    const parts = message.parts ?? [];
+    const textParts = parts.filter((part: any) => part?.type === 'text');
+    const text = textParts.map((part: any) => part.text).join('');
+    if (text) return text;
+  }
+
+  return undefined;
+}
+
+/**
  * [Flow: Step 1 (요청 본문 파싱) -> Step 2 (도구 컨텍스트 생성) -> Step 3 (streamText 실행)
  *       -> Step 4 (prepareStep에서 이전 스텝 tool 결과 압축) -> Step 5 (UIMessage 스트림 반환)]
  *
@@ -147,6 +180,7 @@ export async function chatHandler(req: Request, res: Response) {
     context?: Record<string, unknown>;
   };
   const messages = body.messages || [];
+  const userMessageText = _getLastUserText(messages);
   // [Flow: Step 1 (body.context 우선) -> Step 2 (messages의 system message에서 JSON context 추출)
   //       -> Step 3 (두 출처 병합)]
   const contextFromBody = body.context || {};
@@ -172,7 +206,7 @@ export async function chatHandler(req: Request, res: Response) {
 
   const result = streamText({
     model: buildModel() as any,
-    system: buildSystemPrompt(context),
+    system: buildSystemPrompt(context, userMessageText),
     messages: await convertToModelMessages(messages),
     tools: {
       ...buildAnnotationTools(toolContext),

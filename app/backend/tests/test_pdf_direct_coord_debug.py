@@ -59,7 +59,6 @@ def test_extract_layout_normalized():
     """[Flow: Step 1 (이미지 좌표계 mock res 생성) -> Step 2 (_extract_layout_from_result 호출)
           -> Step 3 (bbox가 0~1 normalized 좌표인지 검증)]"""
     print("\n=== _extract_layout_from_result normalized 좌표 반환 테스트 ===")
-    page_height_pt = 842.0
     page_width_px = 2479.0
     page_height_px = 3508.0
 
@@ -74,7 +73,7 @@ def test_extract_layout_normalized():
             "rec_texts": ["text"]
         }
     }
-    layout = _extract_layout_from_result(res_image, page_height_pt=page_height_pt)
+    layout = _extract_layout_from_result(res_image)
     check("_coordinate_system == 'normalized'", layout.get("_coordinate_system") == "normalized", True, tol=0)
     block = layout["parsing_res_list"][0]
     bbox = block["block_bbox"]

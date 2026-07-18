@@ -237,11 +237,9 @@ def _run_paddleocr(
     params: dict[str, Any] | None = None,
     capture_layout: bool = False,
     force_no_geometric_correction: bool = False,
-    pdf_source_path: Path | None = None,
 ) -> dict[str, Any]:
     # [Flow: Step 1 (PaddleOCR pipeline 가져오기) -> Step 2 (파라미터 병합)
-    #       -> Step 3 (원본 PDF 페이지 크기 측정) -> Step 4 (각 이미지 추론)
-    #       -> Step 5 (결과 병합, 필요 시 layout bbox 수집)]
+    #       -> Step 3 (각 이미지 추론) -> Step 4 (결과 병합, 필요 시 layout bbox 수집)]
     pipeline = get_pipeline()
     all_markdown_parts: list[str] = []
     layout_pages: list[dict] = []
@@ -253,22 +251,6 @@ def _run_paddleocr(
         predict_params["use_doc_orientation_classify"] = False
         predict_params["use_doc_unwarping"] = False
 
-    # PDF 원본을 직접 입력할 경우, PaddleOCR 반환 bbox 좌표계와 DPI를 추정하기 위해
-    # 원본 PDF의 페이지 크기(포인트)를 미리 측정한다.
-    page_sizes: dict[int, tuple[float, float]] = {}
-    if pdf_source_path and pdf_source_path.exists():
-        try:
-            doc = fitz.open(str(pdf_source_path))
-            for i, page in enumerate(doc):
-                page_sizes[i] = (page.rect.width, page.rect.height)
-            doc.close()
-            logger.info(
-                f"[paddleocr] PDF 원본 페이지 크기 측정 완료: {pdf_source_path.name} "
-                f"({len(page_sizes)}페이지)"
-            )
-        except Exception as e:
-            logger.warning(f"[paddleocr] PDF 원본 페이지 크기 측정 실패: {e}")
-
     for idx, img_path in enumerate(image_paths):
         try:
             output = pipeline.predict(str(img_path), **predict_params)
@@ -278,10 +260,7 @@ def _run_paddleocr(
                     all_markdown_parts.append(f"<!-- Page {idx + 1} -->\n{page_md}")
                     total_pages += 1
                 if capture_layout:
-                    page_width_pt, page_height_pt = page_sizes.get(idx, (None, None))
-                    layout_pages.append(
-                        _extract_layout_from_result(res, page_width_pt=page_width_pt, page_height_pt=page_height_pt)
-                    )
+                    layout_pages.append(_extract_layout_from_result(res))
         except Exception as e:
             logger.error(f"[paddleocr] 페이지 {idx + 1} 추론 실패: {e}")
             all_markdown_parts.append(f"<!-- Page {idx + 1} (OCR 실패) -->\n")
@@ -344,28 +323,17 @@ def _normalize_bbox(
     bbox: list[float] | tuple[float, ...],
     page_width_px: float,
     page_height_px: float,
-    flip_y: bool = False,
 ) -> list[float]:
     """PaddleOCR-VL 좌표계 bbox를 0~1 normalized 좌표로 변환한다.
 
     [Flow: Step 1 (x좌표를 페이지 너비로 나눔) -> Step 2 (y좌표를 페이지 높이로 나눔)
-          -> Step 3 (flip_y=True면 PDF user-space y↑를 top-left y↓로 뒤집음)
-          -> Step 4 ([x0, y0, x1, y1] normalized 좌표 반환)]
+          -> Step 3 ([x0, y0, x1, y1] normalized 좌표 반환)]
 
-    기본적으로 이미지 좌표계(top-left origin, y↓)를 가정한다.
-    AI Studio에 원본 PDF를 직접 제출했을 때는 bbox가 PDF user-space(bottom-left, y↑)
-    로 반환될 수 있으므로, flip_y=True면 y축을 뒤집어 y=0이 상단인 normalized로 변환한다.
+    PaddleOCR-VL은 이미지 좌표계(top-left origin, y↓)를 사용한다.
     """
     if not bbox or len(bbox) < 4:
         return list(bbox) if bbox else []
     x0, y0, x1, y1 = (float(v) for v in bbox[:4])
-    if flip_y:
-        return [
-            x0 / page_width_px,
-            1.0 - (y1 / page_height_px),
-            x1 / page_width_px,
-            1.0 - (y0 / page_height_px),
-        ]
     return [
         x0 / page_width_px,
         y0 / page_height_px,
@@ -378,14 +346,12 @@ def _normalize_points(
     points: list[list[float]] | list[tuple[float, ...]],
     page_width_px: float,
     page_height_px: float,
-    flip_y: bool = False,
 ) -> list[list[float]]:
     """PaddleOCR-VL 좌표계 다각형 점들을 0~1 normalized 좌표로 변환한다.
 
     [Flow: Step 1 (각 점의 x를 페이지 너비로 나눔)
           -> Step 2 (각 점의 y를 페이지 높이로 나눔)
-          -> Step 3 (flip_y=True면 1 - y로 top-left y↓로 변환)
-          -> Step 4 (변환된 점 목록 반환)]
+          -> Step 3 (변환된 점 목록 반환)]
     """
     if not points:
         return []
@@ -395,81 +361,11 @@ def _normalize_points(
             converted.append(list(pt) if pt else [])
             continue
         x, y = float(pt[0]), float(pt[1])
-        ny = 1.0 - (y / page_height_px) if flip_y else y / page_height_px
-        converted.append([x / page_width_px, ny])
+        converted.append([x / page_width_px, y / page_height_px])
     return converted
 
 
-def _is_pdf_user_space_layout(
-    layout: dict,
-    page_width_px: float,
-    page_height_px: float,
-    page_width_pt: float | None,
-    page_height_pt: float | None,
-) -> bool:
-    """레이아웃 bbox가 PDF user-space(y↑)인지 동적으로 감지한다.
-
-    [Flow: Step 1 (page_height_px가 page_height_pt와 비슷한 points 단위인지 확인)
-          -> Step 2 (page_width_px도 points 단위인지 보조 확인)
-          -> Step 3 (상단 블록 샘플의 y 평균이 페이지 상반부에 있는지 확인)
-          -> Step 4 (PDF user-space로 판단되면 True 반환)]
-
-    PDF를 AI Studio에 직접 제출하면 반환 bbox가 PDF user-space일 수 있다.
-    이 경우 page 크기는 PDF points(약 595x842) 단위이고, 상단 텍스트일수록 y값이 크다.
-    이미지 좌표계는 page 크기가 픽셀(수천) 단위이고 상단 텍스트의 y값이 작으므로 구분 가능하다.
-    """
-    if not page_height_pt or page_height_pt <= 1 or page_height_px <= 1:
-        return False
-
-    h_ratio = page_height_px / page_height_pt
-    if not (0.8 < h_ratio < 1.2):
-        return False
-
-    if page_width_pt and page_width_pt > 1:
-        w_ratio = page_width_px / page_width_pt
-        if not (0.8 < w_ratio < 1.2):
-            return False
-
-    # page 크기가 points 단위로 보임. 상단 블록 y 분포로 y축 방향 확인.
-    candidates: list[Any] = []
-    parsing_blocks = layout.get("parsing_res_list")
-    if isinstance(parsing_blocks, list):
-        for block in parsing_blocks:
-            if isinstance(block, dict):
-                bbox = block.get("block_bbox")
-                if bbox and len(bbox) >= 4:
-                    candidates.append(bbox)
-
-    if not candidates:
-        ocr_res = layout.get("overall_ocr_res") or {}
-        if isinstance(ocr_res, dict):
-            rec_boxes = ocr_res.get("rec_boxes")
-            if isinstance(rec_boxes, list):
-                candidates = [b for b in rec_boxes if b and len(b) >= 4]
-
-    if not candidates:
-        return False
-
-    sample_ys: list[float] = []
-    for bbox in candidates[:3]:
-        try:
-            y0, y1 = float(bbox[1]), float(bbox[3])
-            sample_ys.append((y0 + y1) / 2.0)
-        except (ValueError, TypeError):
-            continue
-
-    if not sample_ys:
-        return False
-
-    avg_y = sum(sample_ys) / len(sample_ys)
-    return avg_y > page_height_px * 0.5
-
-
-def _extract_layout_from_result(
-    res: Any,
-    page_width_pt: float | None = None,
-    page_height_pt: float | None = None,
-) -> dict:
+def _extract_layout_from_result(res: Any) -> dict:
     """PaddleOCR 결과 객체에서 bbox를 0~1 normalized 좌표로 변환한 레이아웃을 반환한다.
 
     [Flow: Step 1 (res.json 추출) -> Step 2 (페이지 픽셀 크기 확인)
@@ -480,10 +376,6 @@ def _extract_layout_from_result(
     DPI/해상도에 관계없이 bbox를 페이지 크기로 나누어 0~1 normalized 좌표로 변환하면
     소비자(_collect_page_elements_*)가 원본 PDF 페이지 크기만 알면 정확한 PDF user-space
     좌표를 계산할 수 있다.
-
-    y축 방향은 이미지 좌표계 그대로 유지(y=0이 상단, y=1이 하단)한다.
-    PDF user-space(y↑, y=0이 하단)로 변환할 때는 (1 - normalized_y) * page_height_pt
-    형태로 y-flip을 수행해야 한다.
     """
     try:
         if isinstance(res, dict):
@@ -515,17 +407,9 @@ def _extract_layout_from_result(
     page_width_px = float(page_width_px)
     page_height_px = float(page_height_px)
 
-    # PDF user-space(y↑) 입력인지 동적으로 감지해 y축을 뒤집을지 결정한다.
-    flip_y = _is_pdf_user_space_layout(
-        layout, page_width_px, page_height_px, page_width_pt, page_height_pt
-    )
-    if flip_y:
-        layout["_pdf_user_space_detected"] = True
-
     layout["_coordinate_system"] = "normalized"
     layout["_page_width_px"] = page_width_px
     layout["_page_height_px"] = page_height_px
-    layout["_page_height_pt"] = page_height_pt
 
     # parsing_res_list 블록 bbox 및 polygon_points 변환
     for block in layout.get("parsing_res_list", []):
@@ -533,10 +417,10 @@ def _extract_layout_from_result(
             continue
         bbox = block.get("block_bbox")
         if bbox:
-            block["block_bbox"] = _normalize_bbox(bbox, page_width_px, page_height_px, flip_y=flip_y)
+            block["block_bbox"] = _normalize_bbox(bbox, page_width_px, page_height_px)
         points = block.get("block_polygon_points")
         if points:
-            block["block_polygon_points"] = _normalize_points(points, page_width_px, page_height_px, flip_y=flip_y)
+            block["block_polygon_points"] = _normalize_points(points, page_width_px, page_height_px)
 
     # layout_det_res 내부 boxes 변환
     layout_det = layout.get("layout_det_res") or {}
@@ -546,10 +430,10 @@ def _extract_layout_from_result(
                 continue
             coord = box.get("coordinate")
             if coord:
-                box["coordinate"] = _normalize_bbox(coord, page_width_px, page_height_px, flip_y=flip_y)
+                box["coordinate"] = _normalize_bbox(coord, page_width_px, page_height_px)
             points = box.get("polygon_points")
             if points:
-                box["polygon_points"] = _normalize_points(points, page_width_px, page_height_px, flip_y=flip_y)
+                box["polygon_points"] = _normalize_points(points, page_width_px, page_height_px)
 
     # overall_ocr_res.rec_boxes 변환
     ocr_res = layout.get("overall_ocr_res") or {}
@@ -557,7 +441,7 @@ def _extract_layout_from_result(
         rec_boxes = ocr_res.get("rec_boxes")
         if isinstance(rec_boxes, list):
             ocr_res["rec_boxes"] = [
-                _normalize_bbox(b, page_width_px, page_height_px, flip_y=flip_y)
+                _normalize_bbox(b, page_width_px, page_height_px)
                 if b and len(b) >= 4
                 else b
                 for b in rec_boxes
@@ -661,7 +545,6 @@ def _do_convert(
             image_paths,
             params,
             capture_layout=capture_layout,
-            pdf_source_path=pdf_path,
         )
 
         convert_result = ConvertResponse(
@@ -789,7 +672,6 @@ async def convert_file(
                 image_paths,
                 params,
                 capture_layout=capture_layout,
-                pdf_source_path=pdf_path,
             )
         except Exception as e:
             logger.exception(f"[paddleocr-convert] {file.filename} 추론 실패: {e}")
@@ -935,18 +817,13 @@ def _aistudio_poll_job(job_id: str) -> str:
 def _aistudio_download_and_parse(
     jsonl_url: str,
     request_id: str,
-    pdf_source_path: Path | None = None,
 ) -> dict[str, Any]:
     """JSONL 결과를 다운로드하고 페이지별 markdown + 이미지로 변환한다.
 
-    [Flow: Step 1 (JSONL 다운로드) -> Step 2 (원본 PDF 페이지 크기 측정)
-          -> Step 3 (라인별 파싱) -> Step 4 (layoutParsingResults 순회)
-          -> Step 5 (markdown.text 추출) -> Step 6 (bbox 좌표계 동적 변환)
-          -> Step 7 (images 다운로드 + src 치환) -> Step 8 (페이지별 마크다운 병합)]
-
-    Args:
-        pdf_source_path: 원본 PDF 경로. AI Studio에 원본 PDF를 직접 제출했을 때,
-            반환 bbox 좌표계와 DPI를 추정하기 위해 페이지 크기(포인트)를 미리 측정한다.
+    [Flow: Step 1 (JSONL 다운로드) -> Step 2 (라인별 파싱)
+          -> Step 3 (layoutParsingResults 순회) -> Step 4 (markdown.text 추출)
+          -> Step 5 (bbox를 top-left normalized로 변환)
+          -> Step 6 (images 다운로드 + src 치환) -> Step 7 (페이지별 마크다운 병합)]
     """
     resp = requests.get(jsonl_url, timeout=AISTUDIO_DOWNLOAD_TIMEOUT)
     resp.raise_for_status()
@@ -957,21 +834,6 @@ def _aistudio_download_and_parse(
 
     image_dir = IMAGE_BASE_DIR / request_id
     image_dir.mkdir(parents=True, exist_ok=True)
-
-    # PDF 원본 페이지 크기 측정 (좌표계/DPI 추정용)
-    page_sizes: dict[int, tuple[float, float]] = {}
-    if pdf_source_path and pdf_source_path.exists():
-        try:
-            doc = fitz.open(str(pdf_source_path))
-            for i, page in enumerate(doc):
-                page_sizes[i] = (page.rect.width, page.rect.height)
-            doc.close()
-            logger.info(
-                f"[aistudio] PDF 원본 페이지 크기 측정 완료: {pdf_source_path.name} "
-                f"({len(page_sizes)}페이지)"
-            )
-        except Exception as e:
-            logger.warning(f"[aistudio] PDF 원본 페이지 크기 측정 실패: {e}")
 
     all_page_markdowns: list[str] = []
     page_markdowns: list[str] = []
@@ -996,14 +858,8 @@ def _aistudio_download_and_parse(
             md_images = md.get("images", {}) if isinstance(md, dict) else {}
             # prunedResult == 로컬 파이프라인 res.json에서 input_path/page_index만 제거한 것과 동일 스키마.
             # PDF 하이라이트/여백 주석 기능의 bbox 소스로 그대로 사용한다 (core/ocr_layout.py에서 파싱).
-            # PaddleOCR-VL은 이미지 좌표계(top-left, y↓)를 사용하지만, 원본 PDF 직접 제출 시
-            # PDF user-space(bottom-left, y↑)를 반환할 수도 있으므로 좌표계를 동적으로 감지한다.
             pruned = lpr.get("prunedResult", {}) or {}
-            page_idx = page_num - 1
-            page_width_pt, page_height_pt = page_sizes.get(page_idx, (None, None))
-            layout_pages.append(
-                _extract_layout_from_result(pruned, page_width_pt=page_width_pt, page_height_pt=page_height_pt)
-            )
+            layout_pages.append(_extract_layout_from_result(pruned))
             # doc_preprocessor_res.angle 추출 (0/1/2/3 = 0°/90°/180°/270°, -1 = 미적용)
             doc_pre = pruned.get("doc_preprocessor_res", {}) if isinstance(pruned, dict) else {}
             angle_code = doc_pre.get("angle", -1) if isinstance(doc_pre, dict) else -1
@@ -1252,7 +1108,7 @@ def _do_aistudio_batch_convert(task_id: str, image_paths: list[Path], filenames:
         # Step 3-5: AI Studio job 제출 → 폴링 → 다운로드/파싱
         job_id = _aistudio_submit_job(pdf_path)
         jsonl_url = _aistudio_poll_job(job_id)
-        ocr_result = _aistudio_download_and_parse(jsonl_url, request_id, pdf_source_path=pdf_path)
+        ocr_result = _aistudio_download_and_parse(jsonl_url, request_id)
 
         # Step 6: per-page 결과 구성
         page_markdowns = ocr_result.get("page_markdowns", [])
@@ -1299,9 +1155,7 @@ def _do_aistudio_pdf_convert(task_id: str, pdf_path: Path, filename: str) -> Non
         # Step 1-3: AI Studio job 제출 → 폴링 → 다운로드/파싱
         job_id = _aistudio_submit_job(pdf_path)
         jsonl_url = _aistudio_poll_job(job_id)
-        ocr_result = _aistudio_download_and_parse(
-            jsonl_url, request_id, pdf_source_path=pdf_path
-        )
+        ocr_result = _aistudio_download_and_parse(jsonl_url, request_id)
 
         # Step 4: per-page 결과 구성
         page_markdowns = ocr_result.get("page_markdowns", [])

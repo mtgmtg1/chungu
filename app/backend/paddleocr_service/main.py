@@ -1252,7 +1252,7 @@ def _do_aistudio_batch_convert(task_id: str, image_paths: list[Path], filenames:
         # Step 3-5: AI Studio job 제출 → 폴링 → 다운로드/파싱
         job_id = _aistudio_submit_job(pdf_path)
         jsonl_url = _aistudio_poll_job(job_id)
-        ocr_result = _aistudio_download_and_parse(jsonl_url, request_id)
+        ocr_result = _aistudio_download_and_parse(jsonl_url, request_id, pdf_source_path=pdf_path)
 
         # Step 6: per-page 결과 구성
         page_markdowns = ocr_result.get("page_markdowns", [])

@@ -68,7 +68,8 @@ Available tool categories:
    - Users may describe this as: 보고서, 문서, 글쓰기, 메모, 메모장, 보고서 작성, 문서 정리, 요약, 마크다운, 에디터.
    - Tools: get_markdown, get_page, get_headings, get_section, get_table, read_first_chunk, read_next_chunk, read_previous_chunk, replace_text, insert_text, apply_edits
    - Guidelines:
-     - Always use get_headings first to see the document outline.
+     - Before answering questions or making edits, ALWAYS read the markdown first using get_markdown, get_page, or read_first_chunk to understand the content.
+     - After reading, use get_headings to see the document outline and identify relevant sections.
      - For reading, prefer get_page or get_markdown (selected_file_index is used by default).
      - For large files, use read_first_chunk / read_next_chunk instead of get_markdown.
      - For editing, use replace_text with old_text/new_text (fuzzy matching).

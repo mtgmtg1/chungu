@@ -17,6 +17,12 @@ from dataclasses import dataclass
 
 import fitz  # PyMuPDF
 
+from .pdf_coordinate_transform import (
+    embedpdf_rect_from_pdf_user,
+    pdf_user_rect_from_embedpdf,
+    pdf_user_to_device_point,
+)
+
 logger = logging.getLogger(__name__)
 
 # --- callout 텍스트 박스 크기/스타일 상수 ---
@@ -553,14 +559,15 @@ def _pdf_point_to_device(
     page_x0: float = 0.0,
     page_y0: float = 0.0,
 ) -> dict:
-    """[Flow: Step 1 (PDF user-space 좌표 수신) -> Step 2 (page_x0 보정 + y축 flip)
-          -> Step 3 (EmbedPDF Position {x, y} 반환)]
+    """[Flow: Step 1 (PDF user-space 좌표 수신) -> Step 2 (page rect 생성)
+          -> Step 3 (pdf_user_to_device_point로 변환) -> Step 4 (EmbedPDF Position {x, y} 반환)]
 
     PDF user-space(원점 좌하단, y↑)를 embedpdf device-space(원점 좌상단, y↓)로 변환.
-    CropBox/MediaBox가 페이지 원점에서 어긋난 경우 page_y0를 반영한다.
+    좌표 변환은 pdf_coordinate_transform에서 matrix로 일원화 처리한다.
     """
-    page_y1 = page_height + page_y0
-    return {"x": px - page_x0, "y": page_y1 - py}
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    device_point = pdf_user_to_device_point((px, py), page_rect)
+    return {"x": device_point.x, "y": device_point.y}
 
 
 def _pdf_rect_to_device(
@@ -569,19 +576,14 @@ def _pdf_rect_to_device(
     page_x0: float = 0.0,
     page_y0: float = 0.0,
 ) -> dict:
-    """[Flow: Step 1 (PDF user-space rect 수신) -> Step 2 (page_x0 보정 + y축 flip)
-          -> Step 3 (EmbedPDF Rect {origin, size} 반환)]
+    """[Flow: Step 1 (PDF user-space rect 수신) -> Step 2 (page rect 생성)
+          -> Step 3 (embedpdf_rect_from_pdf_user로 변환) -> Step 4 (EmbedPDF Rect {origin, size} 반환)]
 
     PDF user-space rect를 embedpdf device-space Rect로 변환.
-    _rect_to_embedpdf_rect와 동일 로직이지만 tuple 입력을 받는 버전.
-    CropBox/MediaBox가 페이지 원점에서 어긋난 경우 page_y0를 반영한다.
+    _rect_to_embedpdf_rect와 동일한 중앙 변환 함수를 사용한다.
     """
-    x0, y0, x1, y1 = rect
-    page_y1 = page_height + page_y0
-    return {
-        "origin": {"x": x0 - page_x0, "y": page_y1 - y1},
-        "size": {"width": max(0.0, x1 - x0), "height": max(0.0, y1 - y0)},
-    }
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    return embedpdf_rect_from_pdf_user(rect, page_rect)
 
 
 def _device_rect_to_pdf(
@@ -590,24 +592,15 @@ def _device_rect_to_pdf(
     page_x0: float = 0.0,
     page_y0: float = 0.0,
 ) -> tuple[float, float, float, float]:
-    """[Flow: Step 1 (device-space Rect 수신) -> Step 2 (y축 flip + page_x0 복원)
-          -> Step 3 (PDF user-space (x0, y0, x1, y1) tuple 반환)]
+    """[Flow: Step 1 (device-space Rect 수신) -> Step 2 (page rect 생성)
+          -> Step 3 (pdf_user_rect_from_embedpdf로 변환) -> Step 4 (PDF user-space tuple 반환)]
 
     embedpdf device-space Rect를 PDF user-space tuple로 역변환.
     같은 페이지의 후속 callout 배치 시 장애물 좌표계를 맞추기 위해 사용.
-    CropBox/MediaBox가 페이지 원점에서 어긋난 경우 page_y0를 반영한다.
     """
-    dx0 = rect_dev["origin"]["x"]
-    dy0 = rect_dev["origin"]["y"]
-    dw = rect_dev["size"]["width"]
-    dh = rect_dev["size"]["height"]
-    page_y1 = page_height + page_y0
-    # device: origin 좌상단, y↓ → PDF: origin 좌하단, y↑
-    pdf_x0 = dx0 + page_x0
-    pdf_y1 = page_y1 - dy0
-    pdf_x1 = pdf_x0 + dw
-    pdf_y0 = pdf_y1 - dh
-    return (pdf_x0, pdf_y0, pdf_x1, pdf_y1)
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    pdf_rect = pdf_user_rect_from_embedpdf(rect_dev, page_rect)
+    return (pdf_rect.x0, pdf_rect.y0, pdf_rect.x1, pdf_rect.y1)
 
 
 def _rgb_to_hex(rgb: tuple[float, float, float]) -> str:
@@ -626,20 +619,15 @@ def _rect_to_embedpdf_rect(
     page_x0: float = 0.0,
     page_y0: float = 0.0,
 ) -> dict:
-    """[Flow: Step 1 (PyMuPDF PDF user-space 좌표 수신) -> Step 2 (page.rect.x0 기준 상대좌표로 변환)
-          -> Step 3 (y축 flip으로 device-space 변환) -> Step 4 (EmbedPDF Rect 형식 반환)]
+    """[Flow: Step 1 (PDF user-space fitz.Rect와 page rect 생성)
+          -> Step 2 (embedpdf_rect_from_pdf_user로 device-space 변환)
+          -> Step 3 (EmbedPDF Rect dict 반환)]
 
     PDF 좌표계는 원점이 좌하단이고 y는 위로 증가한다. EmbedPDF는 annotation rect의
     origin.y를 device-space(원점 좌상단, y↓)로 해석해 CSS `top: origin.y * scale`로
-    직접 렌더링한다. 따라서 PDF user-space 상단(y1)을 device-space 상단
-    (page_y1 - y1, page_y1 = page_height + page_y0)로 flip해야 한다.
-
-    CropBox/MediaBox가 있는 PDF에서 page.rect.x0 또는 y0이 0이 아닐 경우, EmbedPDF의 좌표는
-    page.rect의 왼쪽/아래쪽 끝을 기준으로 상대좌표를 사용한다. 따라서 x0에서 page_x0,
-    y1에서 page_y0을 보정해 상대 위치를 맞춘다.
+    직접 렌더링한다. pdf_coordinate_transform.embedpdf_rect_from_pdf_user에서
+    matrix로 y축 flip과 CropBox offset을 한 번에 처리한다.
     """
-    page_y1 = page_height + page_y0
-    return {
-        "origin": {"x": x0 - page_x0, "y": page_y1 - y1},
-        "size": {"width": max(0.0, x1 - x0), "height": max(0.0, y1 - y0)},
-    }
+    pdf_rect = fitz.Rect(x0, y0, x1, y1)
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    return embedpdf_rect_from_pdf_user(pdf_rect, page_rect)

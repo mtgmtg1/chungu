@@ -12,6 +12,15 @@ from typing import Any
 
 import fitz  # PyMuPDF
 
+from .pdf_coordinate_transform import (
+    device_to_pdf_user,
+    device_to_pdf_user_point,
+    embedpdf_rect_from_pdf_user,
+    pdf_user_rect_from_embedpdf,
+    pdf_user_to_device,
+    pdf_user_to_device_point,
+)
+
 logger = logging.getLogger(__name__)
 
 # EmbedPDF PdfAnnotationSubtype enum 값 (숫자 상수)
@@ -236,25 +245,31 @@ def _hex_to_rgb(hex_color: str | None) -> tuple[float, float, float]:
 
 def _parse_rect(rect: Any, page_height: float | None = None, page_x0: float = 0.0, page_y0: float = 0.0) -> fitz.Rect | None:
     """[Flow: Step 1 (EmbedPDF rect 형태 확인) -> Step 2 (origin/size 또는 x/y/width/height 추출)
-          -> Step 3 (device-space y↓를 PDF user-space y↑로 flip) -> Step 4 (fitz.Rect 반환)]
+          -> Step 3 (pdf_user_rect_from_embedpdf로 device-space → PDF user-space 변환)
+          -> Step 4 (fitz.Rect 반환)]
 
     EmbedPDF rect는 device-space(원점 좌상단, y↓) 좌표를 사용한다.
     PyMuPDF는 PDF user-space(원점 좌하단, y↑)를 사용하므로 Y축 flip이 필요하다.
+    좌표 변환은 pdf_coordinate_transform에서 matrix로 일원화 처리한다.
     page_height가 None이면 flip 없이 원래 좌표를 그대로 사용한다 (PyMuPDF vertex 등 PDF 좌표계 입력용).
-    CropBox/MediaBox가 페이지 원점에서 어긋난 경우 page_y0를 반영한다.
-
-    Args:
-        rect: EmbedPDF rect dict ({origin: {x, y}, size: {width, height}} 또는 {x, y, width, height})
-        page_height: 페이지 높이 (PDF user-space). Y축 flip에 사용. None이면 flip 스킵.
-        page_x0: 페이지 x 오프셋 (CropBox/MediaBox). device-space x를 PDF user-space로 변환.
-        page_y0: 페이지 y 오프셋 (CropBox/MediaBox). device-space y를 PDF user-space로 변환.
     """
     if not isinstance(rect, dict):
         return None
-    page_y1 = page_height + page_y0 if page_height is not None else None
+    if page_height is None:
+        # 하위 호환: page_height가 주어지지 않으면 y축 flip 없이 x/y/w/h를 PDF user-space로 해석
+        x = rect.get("x", 0)
+        y = rect.get("y", 0)
+        w = rect.get("width", 0)
+        h = rect.get("height", 0)
+        if w <= 0 or h <= 0:
+            return None
+        return fitz.Rect(x, y, x + w, y + h)
+
     origin = rect.get("origin")
     size = rect.get("size")
-    if not isinstance(origin, dict) or not isinstance(size, dict):
+    if isinstance(origin, dict) and isinstance(size, dict):
+        device_rect = {"origin": origin, "size": size}
+    else:
         # 하위 호환: x/y/width/height 형태도 지원
         x = rect.get("x", 0)
         y = rect.get("y", 0)
@@ -262,25 +277,10 @@ def _parse_rect(rect: Any, page_height: float | None = None, page_x0: float = 0.
         h = rect.get("height", 0)
         if w <= 0 or h <= 0:
             return None
-        if page_y1 is not None:
-            # device-space(y↓) → PDF user-space(y↑): y축 flip
-            pdf_y1 = page_y1 - y
-            pdf_y0 = page_y1 - y - h
-            return fitz.Rect(x + page_x0, pdf_y0, x + w + page_x0, pdf_y1)
-        return fitz.Rect(x, y, x + w, y + h)
-    x = origin.get("x", 0)
-    y = origin.get("y", 0)
-    w = size.get("width", 0)
-    h = size.get("height", 0)
-    if w <= 0 or h <= 0:
-        return None
-    if page_y1 is not None:
-        # device-space(y↓) → PDF user-space(y↑): y축 flip
-        pdf_y1 = page_y1 - y
-        pdf_y0 = page_y1 - y - h
-        return fitz.Rect(x + page_x0, pdf_y0, x + w + page_x0, pdf_y1)
-    # page_height가 None이면 flip 없이 원래 좌표 사용 (PyMuPDF vertex 등)
-    return fitz.Rect(x, y - h, x + w, y)
+        device_rect = {"origin": {"x": x, "y": y}, "size": {"width": w, "height": h}}
+
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    return pdf_user_rect_from_embedpdf(device_rect, page_rect)
 
 
 def _segment_rects_to_rect(segment_rects: Any, page_height: float | None = None, page_x0: float = 0.0, page_y0: float = 0.0) -> fitz.Rect | None:
@@ -293,27 +293,22 @@ def _segment_rects_to_rect(segment_rects: Any, page_height: float | None = None,
 
 
 def _parse_point(point: Any, page_height: float | None = None, page_x0: float = 0.0, page_y0: float = 0.0) -> fitz.Point | None:
-    """[Flow: Step 1 (dict 형태 확인) -> Step 2 (x/y 추출) -> Step 3 (Y축 flip 후 fitz.Point 반환)]
+    """[Flow: Step 1 (dict 형태 확인) -> Step 2 (x/y 추출)
+          -> Step 3 (device_to_pdf_user_point로 device-space → PDF user-space 변환)
+          -> Step 4 (fitz.Point 반환)]
 
     EmbedPDF point는 device-space(y↓) 좌표를 사용한다.
-    page_height가 None이면 flip 없이 원래 좌표를 그대로 사용한다 (PyMuPDF vertex 등 PDF 좌표계 입력용).
-    CropBox/MediaBox가 페이지 원점에서 어긋난 경우 page_y0를 반영한다.
-
-    Args:
-        point: {x, y} dict (device-space)
-        page_height: 페이지 높이. Y축 flip에 사용. None이면 flip 스킵.
-        page_x0: 페이지 x 오프셋 (CropBox/MediaBox).
-        page_y0: 페이지 y 오프셋 (CropBox/MediaBox).
+    좌표 변환은 pdf_coordinate_transform에서 matrix로 일원화 처리한다.
+    page_height가 None이면 flip 없이 원래 좌표를 그대로 사용한다.
     """
     if not isinstance(point, dict):
         return None
     x = point.get("x", 0)
     y = point.get("y", 0)
-    if page_height is not None:
-        # device-space(y↓) → PDF user-space(y↑): y축 flip
-        page_y1 = page_height + page_y0
-        return fitz.Point(x + page_x0, page_y1 - y)
-    return fitz.Point(x, y)
+    if page_height is None:
+        return fitz.Point(x, y)
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    return device_to_pdf_user_point((x, y), page_rect)
 
 
 def _parse_paths(paths: Any, page_height: float | None = None, page_x0: float = 0.0, page_y0: float = 0.0) -> list[list[fitz.Point]] | None:
@@ -353,32 +348,25 @@ def _convert_annotation_to_device_space(
     page_x0: float = 0.0,
     page_y0: float = 0.0,
 ) -> dict:
-    """[Flow: Step 1 (PDF user-space annotation 수신) -> Step 2 (rect/segmentRects/points를 device-space로 변환)
-          -> Step 3 (변환된 annotation 반환)]
+    """[Flow: Step 1 (PDF user-space annotation 수신) -> Step 2 (page rect 생성)
+          -> Step 3 (embedpdf_rect_from_pdf_user / pdf_user_to_device_point로 변환)
+          -> Step 4 (변환된 annotation 반환)]
 
     AI 백엔드가 보내는 PDF user-space 좌표를 embedpdf device-space로 변환한다.
-    변환된 좌표는 기존 `_apply_annotation`이 device-space를 PDF user-space로 변환하는
-    로직을 그대로 타도록 하기 위한 중간 형태이다.
-
-    PDF user-space: origin 좌하단, y↑
-    device-space: origin 좌상단, y↓
-    CropBox/MediaBox가 페이지 원점에서 어긋난 경우 page_y0를 반영한다.
+    모든 좌표 변환은 pdf_coordinate_transform에서 matrix로 일원화 처리한다.
     """
     a = dict(raw)
-    page_y1 = page_height + page_y0
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
 
     def _pdf_rect_to_device(rect: Any) -> dict | None:
         if not rect:
             return None
-        if isinstance(rect, list) and len(rect) >= 4:
+        if isinstance(rect, (list, tuple)) and len(rect) >= 4:
             try:
-                x0, y0, x1, y1 = (float(v) for v in rect[:4])
+                pdf_rect = fitz.Rect(*(float(v) for v in rect[:4]))
             except (ValueError, TypeError):
                 return None
-            return {
-                "origin": {"x": x0 - page_x0, "y": page_y1 - y1},
-                "size": {"width": max(0.0, x1 - x0), "height": max(0.0, y1 - y0)},
-            }
+            return embedpdf_rect_from_pdf_user(pdf_rect, page_rect)
         if not isinstance(rect, dict):
             return None
         x = rect.get("x", rect.get("origin", {}).get("x"))
@@ -391,10 +379,8 @@ def _convert_annotation_to_device_space(
             x, y, w, h = float(x), float(y), float(w), float(h)
         except (ValueError, TypeError):
             return None
-        return {
-            "origin": {"x": x - page_x0, "y": page_y1 - y - h},
-            "size": {"width": max(0.0, w), "height": max(0.0, h)},
-        }
+        pdf_rect = fitz.Rect(x, y, x + w, y + h)
+        return embedpdf_rect_from_pdf_user(pdf_rect, page_rect)
 
     def _pdf_point_to_device(p: Any) -> dict | None:
         if not isinstance(p, dict):
@@ -404,7 +390,8 @@ def _convert_annotation_to_device_space(
         if x is None or y is None:
             return None
         try:
-            return {"x": float(x) - page_x0, "y": page_y1 - float(y)}
+            device_point = pdf_user_to_device_point((float(x), float(y)), page_rect)
+            return {"x": device_point.x, "y": device_point.y}
         except (ValueError, TypeError):
             return None
 
@@ -450,8 +437,9 @@ def _convert_annotation_to_pdf_user(
     page_x0: float = 0.0,
     page_y0: float = 0.0,
 ) -> dict:
-    """[Flow: Step 1 (embedpdf device-space annotation dict 추출) -> Step 2 (page_y1 = page_height + page_y0 계산)
-          -> Step 3 (rect/segmentRects/calloutLine 좌표를 PDF user-space로 flip) -> Step 4 (원본 형식 유지 반환)]
+    """[Flow: Step 1 (embedpdf device-space annotation dict 추출) -> Step 2 (page rect 생성)
+          -> Step 3 (pdf_user_rect_from_embedpdf / device_to_pdf_user_point으로 PDF user-space 변환)
+          -> Step 4 (원본 형식 유지 반환)]
 
     embedpdf device-space 좌표(원점 좌상단, y↓)를 PDF user-space(원점 좌하단, y↑)로 역변환한다.
     AnnotationTransferItem({annotation: {...}}) 형식이면 원본 dict를 수정하고 그대로 반환한다.
@@ -460,22 +448,18 @@ def _convert_annotation_to_pdf_user(
     if not a:
         return raw
 
-    page_y1 = page_height + page_y0
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
 
     def _device_rect_to_pdf_user(rect: dict) -> dict:
-        dx0 = rect["origin"]["x"]
-        dy0 = rect["origin"]["y"]
-        dw = rect["size"]["width"]
-        dh = rect["size"]["height"]
-        pdf_x0 = dx0 + page_x0
-        pdf_y1 = page_y1 - dy0
+        pdf_rect = pdf_user_rect_from_embedpdf(rect, page_rect)
         return {
-            "origin": {"x": pdf_x0, "y": pdf_y1 - dh},
-            "size": {"width": dw, "height": dh},
+            "origin": {"x": pdf_rect.x0, "y": pdf_rect.y0},
+            "size": {"width": max(0.0, pdf_rect.x1 - pdf_rect.x0), "height": max(0.0, pdf_rect.y1 - pdf_rect.y0)},
         }
 
     def _device_point_to_pdf_user(p: dict) -> dict:
-        return {"x": p["x"] + page_x0, "y": page_y1 - p["y"]}
+        pdf_point = device_to_pdf_user_point((p["x"], p["y"]), page_rect)
+        return {"x": pdf_point.x, "y": pdf_point.y}
 
     if "rect" in a and isinstance(a["rect"], dict):
         a["rect"] = _device_rect_to_pdf_user(a["rect"])
@@ -613,23 +597,16 @@ def _fitz_color_to_hex(color: Any) -> str | None:
 
 
 def _fitz_rect_to_embedpdf_rect(rect: fitz.Rect, page_height: float, page_x0: float = 0.0, page_y0: float = 0.0) -> dict:
-    """[Flow: Step 1 (PyMuPDF Rect 수신) -> Step 2 (page.rect.x0 기준 상대좌표로 변환)
-          -> Step 3 (y축 flip) -> Step 4 (origin/size 형태 반환)]
+    """[Flow: Step 1 (PyMuPDF Rect 수신) -> Step 2 (page rect 생성)
+          -> Step 3 (embedpdf_rect_from_pdf_user로 y-flip/offset 변환)
+          -> Step 4 (origin/size 형태 반환)]
 
     PyMuPDF Rect는 좌하단 원점, y가 위로 증가하는 PDF 좌표계를 사용한다.
     EmbedPDF는 origin이 좌상단, y가 아래로 증가하는 device-space 좌표계를 사용하므로
-    y축을 page_y1 - y1로 flip해야 한다. page_y1은 page_height + page_y0이다.
-
-    CropBox/MediaBox가 있는 PDF에서 page.rect.x0 또는 y0이 0이 아닐 경우,
-    EmbedPDF 좌표는 page.rect의 왼쪽/아래쪽 끝을 기준으로 한 상대좌표를 사용하므로
-    x0에서 page_x0, y1에서 page_y0을 보정한다.
+    pdf_coordinate_transform에서 matrix로 y-flip과 CropBox offset을 한 번에 처리한다.
     """
-    x0, y0, x1, y1 = rect.x0, rect.y0, rect.x1, rect.y1
-    page_y1 = page_height + page_y0
-    return {
-        "origin": {"x": x0 - page_x0, "y": page_y1 - y1},
-        "size": {"width": max(0.0, x1 - x0), "height": max(0.0, y1 - y0)},
-    }
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    return embedpdf_rect_from_pdf_user(rect, page_rect)
 
 
 def extract_pdf_annotations(pdf_bytes: bytes) -> list[dict]:

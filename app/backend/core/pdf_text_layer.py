@@ -12,6 +12,7 @@ import fitz  # PyMuPDF
 
 from .ocr_layout import BBox
 from .pdf_coords import clamp_rect_to_page
+from .pdf_coordinate_transform import normalized_top_left_to_pdf_user
 
 logger = logging.getLogger(__name__)
 
@@ -110,39 +111,114 @@ def _insert_invisible_text(
         logger.warning(f"[pdf_text_layer] 텍스트 레이어 삽입 실패 '{text[:20]}': {e}")
 
 
-def add_text_layer_from_ocr(
+def _flip_pdf_user_rect_vertically(rect: fitz.Rect, page_rect: fitz.Rect) -> fitz.Rect:
+    """[Flow: Step 1 (PDF user-space rect 수신)
+          -> Step 2 (페이지 중심 y = (y0 + y1) / 2를 기준으로 y축 반전)
+          -> Step 3 (뒤집힌 fitz.Rect 반환)]
+
+    OCR 좌표계가 실제로는 PDF user-space(y↑)였을 때, top-left normalized 변환을
+    거치면 상하가 반대로 계산된다. 이 함수는 PDF user-space rect를 페이지 세로축
+    중심으로 뒤집어 올바른 위치를 복원한다.
+    """
+    mid_y = page_rect.y0 + page_rect.y1
+    return fitz.Rect(rect.x0, mid_y - rect.y1, rect.x1, mid_y - rect.y0)
+
+
+def _rect_iou(a: fitz.Rect, b: fitz.Rect) -> float:
+    """[Flow: Step 1 (두 fitz.Rect 교차) -> Step 2 (교차 영역 / 합집합 영역)
+          -> Step 3 (IoU 반환)]"""
+    if not a or not b:
+        return 0.0
+    inter = a & b
+    if not inter or inter.is_empty or inter.is_infinite:
+        return 0.0
+    union = a | b
+    if not union or union.is_empty or union.is_infinite or union.get_area() <= 0:
+        return 0.0
+    return inter.get_area() / union.get_area()
+
+
+def _detect_flip_with_canary(
     pdf_bytes: bytes,
     page_ocr_results: dict[int, list[tuple[str, BBox]]],
-    dpi: int = 300,
-    language: str | None = None,
-    layout_by_page: dict[int, dict] | None = None,
-) -> bytes:
-    """이미지 기반 PDF에 PaddleOCR 결과를 투명 텍스트 레이어로 추가한다.
+    layout_by_page: dict[int, dict] | None,
+) -> bool:
+    """[Flow: Step 1 (원본 PDF에서 ground truth 텍스트 한 개 선택)
+          -> Step 2 (해당 텍스트의 원본 bbox와 OCR bbox를 PDF user-space로 변환)
+          -> Step 3 (두 변환 방향 중 ground truth와 더 잘 겹치는 쪽 선택)
+          -> Step 4 (파일 전체에 적용할 flip_y 플래그 반환)]
 
-    [Flow: Step 1 (PDF 열기) -> Step 2 (페이지별 OCR 텍스트/bbox 순회)
-          -> Step 3 (layout coordinate_system 확인: normalized면 PDF user-space로 변환)
-          -> Step 4 (clamp_rect_to_page로 페이지 범위 내에 맞춤) -> Step 5 (투명 텍스트 삽입)
-          -> Step 6 (PDF bytes 반환)]
-
-    Args:
-        pdf_bytes: 이미지 기반 PDF bytes
-        page_ocr_results: page_no(1-based) -> [(text, bbox_pdf), ...]
-            paddleocr_service에서 normalized(0~1, y=0 상단) 또는 PDF user-space(y↑)
-            좌표로 정규화된 bbox일 수 있다.
-        dpi: 이미지 렌더링 DPI (기본 300). 현재는 좌표계 변환에 사용하지 않지만
-            하위 호환을 위해 시그니처를 유지한다.
-        language: 언어 코드 (ko/ja/zh/zht/en). None이면 기본 CJK 폰트 사용.
-        layout_by_page: page_no -> PaddleOCR layout dict.
-            coordinate_system="normalized"이면 page_width_px/height_px를 참조해
-            PDF user-space로 변환한다.
-
-    Returns:
-        텍스트 레이어가 추가된 PDF bytes
+    원본 PDF에 동일 텍스트가 있는 페이지 하나를 canary로 삼아,
+    OCR bbox가 원본 텍스트 위치와 일치하는지 검증한다.
+    모든 페이지는 같은 PDF/같은 OCR 변환 경로를 공유하므로 파일당 1개 페이지만 검증해도 된다.
     """
-    if not page_ocr_results:
-        return pdf_bytes
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        logger.warning(f"[pdf_text_layer] canary PDF 열기 실패: {e}")
+        return False
 
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        for page_no, items in page_ocr_results.items():
+            if page_no < 1 or page_no > doc.page_count:
+                continue
+            page = doc[page_no - 1]
+            for text, bbox in items:
+                text = _normalize_rec_text(text)
+                if not text or len(text) < 2:
+                    continue
+                if not bbox or len(bbox) < 4:
+                    continue
+
+                ground_truth_rects = page.search_for(text)
+                if not ground_truth_rects:
+                    continue
+
+                layout = (layout_by_page or {}).get(page_no, {})
+                coordinate_system = layout.get("_coordinate_system")
+                page_width_px = layout.get("_page_width_px")
+                page_height_px = layout.get("_page_height_px")
+                is_normalized = coordinate_system == "normalized" and page_width_px and page_height_px
+
+                try:
+                    if is_normalized:
+                        ocr_rect = normalized_top_left_to_pdf_user(bbox, page.rect)
+                    else:
+                        ocr_rect = fitz.Rect(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+                except Exception:
+                    continue
+
+                flipped_rect = _flip_pdf_user_rect_vertically(ocr_rect, page.rect)
+
+                best_standard = max((_rect_iou(ocr_rect, gt) for gt in ground_truth_rects), default=0.0)
+                best_flipped = max((_rect_iou(flipped_rect, gt) for gt in ground_truth_rects), default=0.0)
+
+                logger.info(
+                    f"[pdf_text_layer] canary page={page_no} text='{text[:20]}' "
+                    f"standard_iou={best_standard:.3f} flipped_iou={best_flipped:.3f}"
+                )
+
+                if best_flipped > best_standard and best_flipped > 0.3:
+                    return True
+                return False
+    finally:
+        doc.close()
+
+    return False
+
+
+def _insert_text_layer_into_doc(
+    doc: fitz.Document,
+    page_ocr_results: dict[int, list[tuple[str, BBox]]],
+    layout_by_page: dict[int, dict] | None,
+    language: str | None,
+    flip_y: bool = False,
+) -> None:
+    """[Flow: Step 1 (문서의 각 페이지 순회)
+          -> Step 2 (layout coordinate_system 확인)
+          -> Step 3 (normalized_top_left_to_pdf_user로 PDF user-space 변환)
+          -> Step 4 (flip_y=True면 페이지 세로축 중심으로 y-flip)
+          -> Step 5 (페이지 경계 내로 clamp) -> Step 6 (투명 텍스트 삽입)]"""
     font_name = _pick_font_name(language)
 
     for page in doc:
@@ -151,9 +227,7 @@ def add_text_layer_from_ocr(
         if not items:
             continue
 
-        page_width = page.rect.width
-        page_height = page.rect.height
-
+        page_rect = page.rect
         layout = (layout_by_page or {}).get(page_no, {})
         coordinate_system = layout.get("_coordinate_system")
         page_width_px = layout.get("_page_width_px")
@@ -167,24 +241,72 @@ def add_text_layer_from_ocr(
             if not bbox_pdf or len(bbox_pdf) < 4:
                 continue
 
-            if is_normalized:
-                # paddleocr_service에서 0~1 normalized 좌표(y=0 상단)를 반환한 경우
-                # PDF user-space(y↑, y=0 하단)로 변환한다.
-                nx0, ny0, nx1, ny1 = bbox_pdf
-                bbox_pdf = (
-                    nx0 * page_width,
-                    (1 - ny1) * page_height,
-                    nx1 * page_width,
-                    (1 - ny0) * page_height,
-                )
-            # paddleocr_service에서 이미 PDF user-space로 변환된 bbox라면 그대로 사용한다.
-            rect = clamp_rect_to_page(bbox_pdf, page_width, page_height)
-            if rect[2] <= rect[0] or rect[3] <= rect[1]:
+            try:
+                if is_normalized:
+                    ocr_rect = normalized_top_left_to_pdf_user(bbox_pdf, page_rect)
+                else:
+                    ocr_rect = fitz.Rect(float(bbox_pdf[0]), float(bbox_pdf[1]), float(bbox_pdf[2]), float(bbox_pdf[3]))
+            except Exception as e:
+                logger.warning(f"[pdf_text_layer] bbox 변환 실패 '{text[:20]}': {e}")
                 continue
 
-            _insert_invisible_text(page, text, rect, font_name)
+            if flip_y:
+                ocr_rect = _flip_pdf_user_rect_vertically(ocr_rect, page_rect)
 
-    return doc.tobytes()
+            # 페이지 경계 내로 clamp. CropBox/MediaBox offset도 자동 처리.
+            clamped_rect = ocr_rect & page_rect
+            if not clamped_rect or clamped_rect.is_empty or clamped_rect.is_infinite:
+                continue
+
+            _insert_invisible_text(page, text, (clamped_rect.x0, clamped_rect.y0, clamped_rect.x1, clamped_rect.y1), font_name)
+
+
+def add_text_layer_from_ocr(
+    pdf_bytes: bytes,
+    page_ocr_results: dict[int, list[tuple[str, BBox]]],
+    dpi: int = 300,
+    language: str | None = None,
+    layout_by_page: dict[int, dict] | None = None,
+    force_flip_y: bool | None = None,
+) -> bytes:
+    """이미지 기반 PDF에 PaddleOCR 결과를 투명 텍스트 레이어로 추가한다.
+
+    [Flow: Step 1 (canary 페이지 1개로 OCR y-flip 여부 검증)
+          -> Step 2 (PDF 열기) -> Step 3 (페이지별 OCR 텍스트/bbox 순회)
+          -> Step 4 (layout coordinate_system 확인: normalized면 PDF user-space로 변환)
+          -> Step 5 (flip_y 플래그 적용) -> Step 6 (페이지 경계 내에 맞춤)
+          -> Step 7 (투명 텍스트 삽입) -> Step 8 (PDF bytes 반환)]
+
+    Args:
+        pdf_bytes: 이미지 기반 PDF bytes
+        page_ocr_results: page_no(1-based) -> [(text, bbox_pdf), ...]
+            paddleocr_service에서 normalized(0~1, y=0 상단) 또는 PDF user-space(y↑)
+            좌표로 정규화된 bbox일 수 있다.
+        dpi: 이미지 렌더링 DPI (기본 300). 현재는 좌표계 변환에 사용하지 않지만
+            하위 호환을 위해 시그니처를 유지한다.
+        language: 언어 코드 (ko/ja/zh/zht/en). None이면 기본 CJK 폰트 사용.
+        layout_by_page: page_no -> PaddleOCR layout dict.
+            coordinate_system="normalized"이면 page_width_px/height_px를 참조해
+            PDF user-space로 변환한다.
+        force_flip_y: True/False로 강제할 수 있다. None이면 canary 1페이지 검증 결과를 사용한다.
+
+    Returns:
+        텍스트 레이어가 추가된 PDF bytes
+    """
+    if not page_ocr_results:
+        return pdf_bytes
+
+    if force_flip_y is None:
+        flip_y = _detect_flip_with_canary(pdf_bytes, page_ocr_results, layout_by_page)
+    else:
+        flip_y = force_flip_y
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        _insert_text_layer_into_doc(doc, page_ocr_results, layout_by_page, language, flip_y)
+        return doc.tobytes()
+    finally:
+        doc.close()
 
 
 # 텍스트가 포함될 수 있는 block_label 집합 (ocr_layout.py와 동일 기준).

@@ -1553,3 +1553,14 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 - `_normalize_bbox` / `_normalize_points`는 `flip_y` 플래그로 top-left normalized(y=0 상단)를 생성한다.
 - 이렇게 하면 OCR로 생성된 searchable PDF 텍스트 레이어 좌표가 원문과 상하 반전되는 문제를 방어할 수 있다.
 - 회귀 테스트: `tests/test_paddleocr_layout_pdf_user_space.py`
+
+## OCR searchable PDF y-flip canary 검증 + 좌표계 변환 일원화
+
+- `app/backend/core/pdf_text_layer.py`의 `add_text_layer_from_ocr`는 파일당 1개 canary 페이지로 y-flip을 검증한다.
+  - 원본 PDF에서 canary 텍스트를 `page.search_for`로 찾아 ground truth bbox를 확보한다.
+  - OCR bbox를 PDF user-space로 변환한 표준/반전 두 rect 중 ground truth와 IoU가 더 높은 쪽을 선택해 파일 전체에 적용한다.
+  - `force_flip_y` 파라미터로 외부에서 강제할 수도 있다.
+- `app/backend/core/pdf_coordinate_transform.py`를 신설해 모든 y-flip/스케일 변환을 `fitz.Matrix`로 한 곳에서 처리한다.
+  - `normalized_top_left_to_pdf_user`, `image_top_left_to_pdf_user`, `pdf_user_to_device`, `device_to_pdf_user`, `embedpdf_rect_from_pdf_user`, `pdf_user_rect_from_embedpdf` 등을 제공한다.
+- `pdf_text_layer.py`, `pdf_coords.py`, `pdf_annotator.py`, `pdf_user_annotator.py`의 산발적 `1 - y` 계산을 `pdf_coordinate_transform` 함수로 대체한다.
+- 회귀 테스트: `tests/test_pdf_text_layer_canary.py`, `tests/test_pdf_coordinate_transform.py`, `tests/test_coord_transform.py`

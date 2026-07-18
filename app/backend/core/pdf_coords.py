@@ -5,7 +5,10 @@
 # 따라서 page_height_px에서 pixel y를 빼서 y축을 flip한 뒤 스케일 변환해야 한다.
 from __future__ import annotations
 
+import fitz
+
 from .ocr_layout import BBox
+from .pdf_coordinate_transform import image_top_left_to_pdf_user
 
 PDF_POINTS_PER_INCH = 72.0
 
@@ -31,16 +34,18 @@ def px_bbox_to_pdf_rect(
     """
     if dpi <= 0:
         raise ValueError(f"Invalid dpi: {dpi}")
-    scale = PDF_POINTS_PER_INCH / float(dpi)
-    x0, y0, x1, y1 = bbox_px
 
     if page_height_px is not None and page_height_px > 0:
-        # 이미지 좌표계(y↓) → PDF 좌표계(y↑): y를 페이지 높이에서 뺀다
-        pdf_y0 = (page_height_px - y1) * scale  # bbox 하단(이미지) → PDF 하단
-        pdf_y1 = (page_height_px - y0) * scale  # bbox 상단(이미지) → PDF 상단
-        return (x0 * scale, pdf_y0, x1 * scale, pdf_y1)
+        # pdf_coordinate_transform이 단일 matrix로 이미지 좌표계(y↓) → PDF user-space(y↑) 변환을 처리한다.
+        # page_rect.width는 실제 너비 대신 point 높이로 임시 설정해도 matrix에서 y1/x0만 사용하므로 무관하다.
+        point_height = page_height_px * (PDF_POINTS_PER_INCH / dpi)
+        page_rect = fitz.Rect(0, 0, point_height, point_height)
+        pdf_rect = image_top_left_to_pdf_user(bbox_px, page_rect, dpi)
+        return (pdf_rect.x0, pdf_rect.y0, pdf_rect.x1, pdf_rect.y1)
 
     # 레거시: y-flip 없이 단순 스케일만 변환
+    scale = PDF_POINTS_PER_INCH / float(dpi)
+    x0, y0, x1, y1 = bbox_px
     return (x0 * scale, y0 * scale, x1 * scale, y1 * scale)
 
 

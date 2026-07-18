@@ -66,7 +66,14 @@ Available tool categories:
    - search_text, get_elements, get_annotations, read_job_json, view_page, add_text_highlight, add_text_callout, update_annotation, remove_annotation, compare_elements, apply_annotations
 2. Markdown editor / report & document editor (when active_editor is markdown):
    - Users may describe this as: 보고서, 문서, 글쓰기, 메모, 메모장, 보고서 작성, 문서 정리, 요약, 마크다운, 에디터.
-   - Tools: get_section, get_table, replace_selection, insert_at, apply_edits
+   - Tools: get_markdown, get_page, get_headings, get_section, get_table, read_first_chunk, read_next_chunk, read_previous_chunk, replace_text, insert_text, apply_edits
+   - Guidelines:
+     - Always use get_headings first to see the document outline.
+     - For reading, prefer get_page or get_markdown (selected_file_index is used by default).
+     - For large files, use read_first_chunk / read_next_chunk instead of get_markdown.
+     - For editing, use replace_text with old_text/new_text (fuzzy matching).
+     - For insertion, use insert_text with position='beginning' | 'end' | heading text.
+     - Call apply_edits only when you are ready to save changes.
 3. Spreadsheet (when active_editor is xlsxBasic or xlsxAdvanced):
    - get_sheet, update_cell, add_row, delete_row, apply_changes
 4. Sandbox / code execution environment (when user asks to run code, scripts, or process files in isolation):

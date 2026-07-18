@@ -1176,25 +1176,19 @@ def _delete_original_file(job: Job, source_index: int, db: Session) -> dict:
 def _delete_annotation_file(job: Job, source_index: int, db: Session) -> dict:
     """AI 주석 파일을 Storage와 DB에서 삭제한다.
 
-    [Flow: Step 1 (하위 호환 단일 주석이면 result_annotated_pdf_storage_path 삭제)
-          -> Step 2 (annotated_pdf_files에서 대상 entry 찾기)
-          -> Step 3 (공유 파일을 사용하는 모든 entry의 processing task 취소 및 환불)
-          -> Step 4 (공유 Storage 파일 삭제) -> Step 5 (모든 AI 주석 entry 제거 + 상태 초기화)
-          -> Step 6 (preview 캐시 무효화)]
+    [Flow: Step 1 (annotated_pdf_files에서 대상 entry 찾기)
+          -> Step 2 (공유 파일을 사용하는 모든 entry의 processing task 취소 및 환불)
+          -> Step 3 (공유 annotations.json 삭제) -> Step 4 (AI 주석 entry 제거 + 상태 초기화)
+          -> Step 5 (preview 캐시 무효화)]
 
     UI에서는 AI 주석 entry들이 하나의 파일로 축소되어 표시되므로, 삭제 시 job의 모든 AI 주석과
-    공유 파일을 한 번에 제거한다. source_index는 annotated_pdf_files 내의 position이 아닌
+    공유 annotations.json을 한 번에 제거한다. searchable PDF는 원본 텍스트 레이어 파일이므로
+    삭제하지 않는다. source_index는 annotated_pdf_files 내의 position이 아닌
     entry의 index 필드 값이다.
     """
     entries = list(job.annotated_pdf_files or [])
-    if not entries and job.result_annotated_pdf_storage_path and source_index == 0:
-        supabase_client.delete_storage_path("results", job.result_annotated_pdf_storage_path)
-        job.result_annotated_pdf_storage_path = ""
-        job.annotated_pdf_files = []
-        flag_modified(job, "annotated_pdf_files")
-        cache.invalidate_pattern(f"preview:{job.id}:*")
-        db.commit()
-        return {"deleted": True, "source_kind": "annotation", "source_index": 0}
+    if not entries:
+        raise HTTPException(status_code=404, detail="Annotation file not found")
 
     # index 필드로 대상 entry 찾기 (position 기반이 아님)
     target_entry = next((e for e in entries if e.get("index") == source_index), None)
@@ -1230,15 +1224,14 @@ def _delete_annotation_file(job: Job, source_index: int, db: Session) -> dict:
                             period_start=datetime.fromisoformat(period_start_raw) if period_start_raw else None,
                         )
 
-    if shared_storage_path:
-        supabase_client.delete_storage_path("results", shared_storage_path)
+    # searchable PDF는 원본 텍스트 레이어 파일이므로 삭제하지 않고,
+    # annotations.json만 제거한다.
     if shared_annotations_json_path:
         supabase_client.delete_storage_path("results", shared_annotations_json_path)
 
     job.annotated_pdf_files = kept_entries
     flag_modified(job, "annotated_pdf_files")
     if not kept_entries:
-        job.result_annotated_pdf_storage_path = ""
         job.annotate_status = ""
     else:
         job.annotate_status = _overall_annotation_status(kept_entries)
@@ -1303,7 +1296,6 @@ def download_job(
         "xlsx_advanced": job.result_xlsx_advanced_storage_path,
         "docx": job.result_docx_storage_path,
         "pptx": job.result_pptx_storage_path,
-        "annotated_pdf": job.result_annotated_pdf_storage_path,
     }
     path = path_map.get(type)
     if not path:
@@ -1657,18 +1649,6 @@ def _source_files(job: Job) -> list[dict]:
     # processing/error 상태는 FAB 위 상태 카드에서만 표시하며, 원본 파일 탭에는
     # 별도 항목을 추가하지 않는다.
     annotated_entries = list(job.annotated_pdf_files or [])
-    if not annotated_entries and job.annotate_status == "done" and job.result_annotated_pdf_storage_path:
-        # 하위 호환: 목록 컬럼 추가 전에 생성된 단일 주석 PDF
-        stem = Path(_normalize_display_name(job.original_filename)).stem if job.original_filename else "result"
-        annotated_entries = [
-            {
-                "index": 1,
-                "status": "done",
-                "storage_path": job.result_annotated_pdf_storage_path,
-                "annotations_json_storage_path": f"{job.id}/annotated.annotations.json",
-                "filename": f"{stem}_annotation1.pdf",
-            }
-        ]
 
     shared_annotations_json_path = None
     if annotated_entries:
@@ -2723,17 +2703,11 @@ def annotate_job(
         ),
         None,
     )
-    if not existing and job.result_annotated_pdf_storage_path and job.annotate_instruction == instruction and job.annotate_mode == mode and job.annotate_comment_mode == comment_mode:
-        # 하위 호환: 목록 컬럼 추가 전에 생성된 단일 주석 PDF
-        stem = Path(_normalize_display_name(job.original_filename)).stem if job.original_filename else "result"
-        existing = {
-            "storage_path": job.result_annotated_pdf_storage_path,
-            "filename": f"{stem}_annotation1.pdf",
-        }
     if existing:
         try:
-            url = supabase_client.get_signed_download_url(existing["storage_path"], bucket="results", expires_in=3600)
-            return {"download_url": url, "status": "done", "storage_path": existing["storage_path"], "filename": existing.get("filename")}
+            shared_storage_path = job.searchable_pdf_storage_path or existing["storage_path"]
+            url = supabase_client.get_signed_download_url(shared_storage_path, bucket="pdfs", expires_in=3600)
+            return {"download_url": url, "status": "done", "storage_path": shared_storage_path, "filename": existing.get("filename")}
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Failed to generate download URL: {e}")
 
@@ -2798,10 +2772,11 @@ def annotate_job(
     if not annotation_index:
         raise HTTPException(status_code=500, detail="주석 인덱스 할당에 실패했습니다.")
 
-    shared_storage_path = f"{job.id}/annotated.pdf"
+    shared_storage_path = job.searchable_pdf_storage_path or f"{job.id}/searchable.pdf"
     shared_annotations_json_path = f"{job.id}/annotated.annotations.json"
 
     # processing entry를 annotated_pdf_files에 추가한다.
+    # storage_path는 searchable PDF 경로를 사용한다.
     # 동시 쓰기 안전성을 위해 SELECT FOR UPDATE로 행을 잠근다.
     locked_job = db.execute(
         select(Job).where(Job.id == job_id).with_for_update()
@@ -3141,7 +3116,7 @@ def annotate_edit_job_endpoint(
     if not annotation_index:
         raise HTTPException(status_code=500, detail="주석 인덱스 할당에 실패했습니다.")
 
-    shared_storage_path = f"{job.id}/annotated.pdf"
+    shared_storage_path = job.searchable_pdf_storage_path or f"{job.id}/searchable.pdf"
     shared_annotations_json_path = f"{job.id}/annotated.annotations.json"
 
     # processing entry를 annotated_pdf_files에 추가한다 (edit: true 플래그로 편집 run임을 표시).
@@ -3218,11 +3193,14 @@ def save_user_annotations(
     user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """[Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (source_index에 해당하는 주석 PDF 항목 찾기)
-          -> Step 3 (Storage에서 PDF 다운로드) -> Step 4 (사용자 주석을 PyMuPDF로 적용)
-          -> Step 5 (새 PDF 및 annotations.json 업로드) -> Step 6 (preview 캐시 무효화 후 OK 반환)]
+    """[Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (주석 유효성 검사 및 중복 제거)
+          -> Step 3 (source_index에 따른 JSON 경로 결정)
+          -> Step 4 (input_space가 pdf_user이면 device-space로 변환)
+          -> Step 5 (AI 주석 JSON과 병합) -> Step 6 (JSON 오버레이 저장)
+          -> Step 7 (preview 캐시 무효화 후 OK 반환)]
 
-    사용자가 EmbedPDF 뷰어에서 추가/편집한 주석을 받아 기존 annotation PDF에 병합한다.
+    사용자가 EmbedPDF 뷰어에서 추가/편집한 주석을 JSON 오버레이로만 저장한다.
+    PDF flatten 다운로드는 EmbedPDF 브라우저 내 export 기능(saveAsCopy)을 사용한다.
     """
     job = db.get(Job, job_id)
     _require_job_access(job, user)
@@ -3250,143 +3228,104 @@ def save_user_annotations(
     if valid_count == 0:
         return {"ok": True, "annotations_json_storage_path": None}
 
-    # [Flow: source_index가 -1이면 원본 PDF에 대한 사용자 주석을 JSON으로만 저장한다]
-    # 별도의 주석 PDF 파일을 생성하지 않고, 원본 PDF 뷰어에서 annotations_json_url로 로드한다.
-    # source_index >= 0이면 파일별로 분리된 user_annotations_{source_index}.json에 저장한다.
-    if source_index < 0:
-        return _save_user_annotations_json(job, valid_annotations, db, source_index, input_space)
-
-    # [Flow: source_index >= 0 — AI 주석 PDF가 있는지 확인]
-    # AI 주석 PDF가 있으면 기존 동작 (주석 PDF에 병합), 없으면 파일별 주석 JSON으로 저장.
-    locked_job = db.execute(
-        select(Job).where(Job.id == job_id).with_for_update()
-    ).scalar_one()
-    entries = list(locked_job.annotated_pdf_files or [])
-    has_annotation_pdf = False
-    if not entries:
-        # 하위 호환: 목록 컬럼 추가 전에 생성된 단일 주석 PDF
-        if locked_job.result_annotated_pdf_storage_path and source_index == 0:
-            stem = Path(locked_job.original_filename).stem if locked_job.original_filename else "result"
-            entries = [
-                {
-                    "index": 1,
-                    "status": "done",
-                    "storage_path": locked_job.result_annotated_pdf_storage_path,
-                    "annotations_json_storage_path": None,
-                    "filename": f"{stem}_annotation1.pdf",
-                }
-            ]
-            has_annotation_pdf = True
-    else:
-        # index 필드로 entry 찾기 — 해당 source_index에 AI 주석 PDF가 있는지 확인
-        has_annotation_pdf = any(e.get("index") == source_index for e in entries)
-
-    # [Flow: AI 주석 PDF가 없으면 파일별 주석 JSON으로 저장 — 파일 추가 시 주석 합쳐짐 방지]
-    if not has_annotation_pdf:
-        return _save_user_annotations_json(job, valid_annotations, db, source_index, input_space)
-
-    # index 필드로 entry 찾기 (position 기반이 아님)
-    # 하위 호환: source_index == 0이면 index == 1과 매칭 (단일 주석 PDF의 index는 1부터 시작)
-    entry = next((e for e in entries if e.get("index") == source_index), None)
-    if entry is None and source_index == 0:
+    # source_index >= 0: AI 주석이 있는 searchable PDF용, AI 주석 JSON과 병합
+    # source_index < 0: 원본 PDF용, 사용자 주석만 저장
+    if source_index >= 0:
+        locked_job = db.execute(
+            select(Job).where(Job.id == job_id).with_for_update()
+        ).scalar_one()
+        entries = list(locked_job.annotated_pdf_files or [])
+        # AI annotate는 현재 단일 entry(index=1)를 사용한다.
         entry = next((e for e in entries if e.get("index") == 1), None)
-    if entry is None:
-        raise HTTPException(status_code=404, detail="Annotation file not found")
-
-    storage_path = entry.get("storage_path")
-    if not storage_path:
-        raise HTTPException(status_code=404, detail="Annotation file not found")
-
-    annotations_json_storage_path = entry.get("annotations_json_storage_path")
-    if not annotations_json_storage_path:
-        # 공유 AI 주석 파일을 사용하는 신규 모드에서는 고정된 경로를 사용한다.
-        annotations_json_storage_path = f"{job_id}/annotated.annotations.json"
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Annotation file not found")
+        annotations_json_storage_path = entry.get("annotations_json_storage_path") or f"{job_id}/annotated.annotations.json"
+    else:
+        annotations_json_storage_path = f"{job_id}/user_annotations.json"
 
     try:
         client = supabase_client.get_service_client()
-        pdf_bytes = client.storage.from_("results").download(storage_path)
-        new_pdf_bytes = pdf_user_annotator.apply_user_annotations(
-            pdf_bytes, valid_annotations, input_space=input_space
-        )
-        client.storage.from_("results").upload(
-            storage_path,
-            new_pdf_bytes,
-            {"content-type": "application/pdf", "upsert": "true"},
-        )
 
-        # [Flow: 뷰어용 JSON 오버레이는 항상 device-space를 기대한다.
-        #        input_space가 pdf_user일 경우 PDF user-space → device-space로 변환한다.]
-        if input_space == "pdf_user":
-            annotations_for_json = pdf_user_annotator._convert_annotations_to_device_space(
-                valid_annotations, pdf_bytes
-            )
-        else:
-            annotations_for_json = valid_annotations
+        # [Flow: AI 백엔드가 보내는 PDF user-space 좌표를 device-space로 변환]
+        # 뷰어는 항상 device-space를 기대하므로, JSON 저장 전에 좌표계를 맞춘다.
+        if input_space == "pdf_user" and valid_annotations:
+            original_path = job.pdf_storage_path
+            if original_path:
+                try:
+                    pdf_bytes = client.storage.from_("pdfs").download(original_path)
+                    valid_annotations = pdf_user_annotator._convert_annotations_to_device_space(
+                        valid_annotations, pdf_bytes
+                    )
+                except Exception as e:
+                    logger.warning(f"[save_user_annotations] {job_id} PDF user-space 변환 실패: {e}")
 
-        # 기존 AI 주석 JSON이 있으면 사용자 주석과 병합.
-        # [Flow: 사용자가 AI 주석을 편집한 경우(_userEdited 또는 내용 변경) 감지하여 보존]
-        try:
-            existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
-            existing = json.loads(existing_bytes.decode("utf-8"))
-            if not isinstance(existing, list):
+        valid_annotations = _deduplicate_annotations(valid_annotations)
+
+        if source_index >= 0:
+            # [Flow: 기존 AI 주석 JSON과 병합]
+            # 사용자가 AI 주석을 편집/삭제한 경우를 감지해 보존한다.
+            try:
+                existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
+                existing = json.loads(existing_bytes.decode("utf-8"))
+                if not isinstance(existing, list):
+                    existing = []
+            except Exception:
                 existing = []
-        except Exception:
-            existing = []
 
-        # 기존 AI 주석을 ID 기준으로 인덱싱
-        existing_by_id: dict[str, dict] = {}
-        for a in existing:
-            aid = _annotation_id(a)
-            if aid.startswith("backend-"):
-                existing_by_id[aid] = a
+            existing_by_id: dict[str, dict] = {}
+            for a in existing:
+                aid = _annotation_id(a)
+                if aid.startswith("backend-"):
+                    existing_by_id[aid] = a
 
-        # export된 주석을 AI 주석과 사용자 주석으로 분류하되,
-        # AI 주석 중 사용자가 편집한 것은 _userEdited 플래그를 설정해 보존
-        ai_annotations: list[dict] = []
-        user_annotations: list[dict] = []
-        for a in annotations_for_json:
-            if not isinstance(a, dict):
-                continue
-            aid = _annotation_id(a)
-            if aid.startswith("backend-"):
-                orig = existing_by_id.get(aid)
-                if orig is None:
-                    # 기존에 없는 AI 주석 — 새로 추가된 것으로 간주
-                    ai_annotations.append(a)
-                elif _is_annotation_edited(a, orig):
-                    # 사용자가 편집한 AI 주석 — _userEdited 플래그 설정 후 보존
-                    _mark_user_edited(a)
-                    ai_annotations.append(a)
-                    logger.info(f"[save_user_annotations] {job_id} AI 주석 편집 감지: {aid}")
+            ai_annotations: list[dict] = []
+            user_annotations: list[dict] = []
+            for a in valid_annotations:
+                if not isinstance(a, dict):
+                    continue
+                aid = _annotation_id(a)
+                if aid.startswith("backend-"):
+                    orig = existing_by_id.get(aid)
+                    if orig is None:
+                        ai_annotations.append(a)
+                    elif _is_annotation_edited(a, orig):
+                        _mark_user_edited(a)
+                        ai_annotations.append(a)
+                        logger.info(f"[save_user_annotations] {job_id} AI 주석 편집 감지: {aid}")
+                    else:
+                        ai_annotations.append(orig)
                 else:
-                    # 변경 없음 — 기존 것 유지 (멱등성)
-                    ai_annotations.append(orig)
-            else:
-                user_annotations.append(a)
+                    user_annotations.append(a)
 
-        # 기존 JSON에만 있고 export에 없는 AI 주석 (사용자가 삭제한 것)은 제외
-        exported_ai_ids = {_annotation_id(a) for a in ai_annotations}
-        for aid, orig in existing_by_id.items():
-            if aid not in exported_ai_ids:
-                # 삭제된 주석 — 사용자가 의도적으로 삭제한 것이므로 포함하지 않음
-                logger.info(f"[save_user_annotations] {job_id} AI 주석 삭제 감지: {aid}")
+            exported_ai_ids = {_annotation_id(a) for a in ai_annotations}
+            for aid, orig in existing_by_id.items():
+                if aid not in exported_ai_ids:
+                    logger.info(f"[save_user_annotations] {job_id} AI 주석 삭제 감지: {aid}")
 
-        merged = ai_annotations + user_annotations
+            merged = ai_annotations + user_annotations
 
-        client.storage.from_("results").upload(
-            annotations_json_storage_path,
-            json.dumps(merged, ensure_ascii=False).encode("utf-8"),
-            {"content-type": "application/json", "upsert": "true"},
-        )
-        if entry.get("annotations_json_storage_path") != annotations_json_storage_path:
-            entry["annotations_json_storage_path"] = annotations_json_storage_path
-            locked_job.annotated_pdf_files = entries
-            flag_modified(locked_job, "annotated_pdf_files")
-            db.commit()
+            client.storage.from_("results").upload(
+                annotations_json_storage_path,
+                json.dumps(merged, ensure_ascii=False).encode("utf-8"),
+                {"content-type": "application/json", "upsert": "true"},
+            )
+            if entry.get("annotations_json_storage_path") != annotations_json_storage_path:
+                entry["annotations_json_storage_path"] = annotations_json_storage_path
+                locked_job.annotated_pdf_files = entries
+                flag_modified(locked_job, "annotated_pdf_files")
+                db.commit()
+        else:
+            user_annotations = [a for a in valid_annotations if _is_user_annotation(a)]
+            user_annotations = _deduplicate_annotations(user_annotations)
+            client.storage.from_("results").upload(
+                annotations_json_storage_path,
+                json.dumps(user_annotations, ensure_ascii=False).encode("utf-8"),
+                {"content-type": "application/json", "upsert": "true"},
+            )
+
         cache.invalidate_pattern(f"preview:{job_id}:*")
         return {
             "ok": True,
-            "storage_path": storage_path,
             "annotations_json_storage_path": annotations_json_storage_path,
         }
     except Exception as e:
@@ -3408,181 +3347,6 @@ def _is_user_annotation(item: dict) -> bool:
     if annotation_id.startswith("backend-"):
         return bool(a.get("_userEdited"))
     return True
-
-
-def _save_user_annotations_json(
-    job: Job,
-    annotations: list,
-    db: Session,
-    source_index: int = -1,
-    input_space: str = "device",
-) -> dict:
-    """[Flow: Step 1 (사용자 주석만 필터링) -> Step 2 (AI 주석 JSON 다운로드)
-          -> Step 3 (input_space가 pdf_user이면 PDF user-space → device-space 변환)
-          -> Step 4 (중복 제거 후 병합) -> Step 5 (results 버킷에 저장)
-          -> Step 6 (preview 캐시 무효화)]
-
-    원본 PDF에 대한 사용자 주석을 JSON 형태로만 저장한다.
-    별도의 주석 PDF 파일을 생성하지 않고, 원본 PDF 뷰어에서 annotations_json_url로 로드한다.
-    AI 주석과의 병합은 _source_files()에서 수행하며, 여기서는 사용자 주석만 저장해
-    동일한 주석이 반복 저장되면서 색이 진해지는 것을 방지한다.
-
-    매개변수:
-        job: Job 객체
-        annotations: 저장할 주석 목록
-        db: DB 세션
-        source_index: 파일 인덱스 (-1이면 기존 공유 user_annotations.json, 0 이상이면
-            user_annotations_{source_index}.json에 저장하여 파일별 주석 분리)
-        input_space: 입력 좌표계 ("device" 또는 "pdf_user")
-
-    반환값:
-        저장 결과 dict (ok, annotations_json_storage_path)
-    """
-    job_id = job.id
-    # [Flow: source_index >= 0이면 파일별로 분리된 주석 JSON 사용 — 파일 추가 시 주석 합쳐짐 방지]
-    if source_index >= 0:
-        storage_path = f"{job_id}/user_annotations_{source_index}.json"
-    else:
-        storage_path = f"{job_id}/user_annotations.json"
-    try:
-        client = supabase_client.get_service_client()
-        # AI 주석은 제외하고 사용자가 추가/편집한 주석만 저장한다.
-        user_annotations = [a for a in annotations if _is_user_annotation(a)]
-
-        # [Flow: AI 백엔드가 보내는 PDF user-space 좌표를 device-space로 변환]
-        # 뷰어는 항상 device-space를 기대하므로, JSON 저장 전에 좌표계를 맞춘다.
-        if input_space == "pdf_user" and user_annotations:
-            original_path = job.pdf_storage_path
-            if original_path:
-                try:
-                    pdf_bytes = client.storage.from_("pdfs").download(original_path)
-                    user_annotations = pdf_user_annotator._convert_annotations_to_device_space(
-                        user_annotations, pdf_bytes
-                    )
-                except Exception as e:
-                    logger.warning(f"[_save_user_annotations_json] {job_id} PDF user-space 변환 실패: {e}")
-
-        user_annotations = _deduplicate_annotations(user_annotations)
-        client.storage.from_("results").upload(
-            storage_path,
-            json.dumps(user_annotations, ensure_ascii=False).encode("utf-8"),
-            {"content-type": "application/json", "upsert": "true"},
-        )
-        cache.invalidate_pattern(f"preview:{job_id}:*")
-        return {
-            "ok": True,
-            "annotations_json_storage_path": storage_path,
-        }
-    except Exception as e:
-        logger.exception(f"[_save_user_annotations_json] {job_id} 실패: {e}")
-        raise HTTPException(status_code=500, detail=f"주석 저장 실패: {e}")
-
-
-def _annotation_display_name(job: Job, n: int) -> str:
-    """[Flow: Step 1 (원본 파일명 확인) -> Step 2 (확장자 제거) -> Step 3 (주석 순서 접미사 추가)]"""
-    stem = Path(_normalize_display_name(job.original_filename)).stem if job.original_filename else "result"
-    return f"{stem}_annotation{n}.pdf"
-
-
-def _create_user_annotated_pdf(job: Job, annotations: list, db: Session) -> dict:
-    """[Flow: Step 1 (원본 PDF storage_path 확인) -> Step 2 (기존 user 모드 주석 PDF 확인)
-          -> Step 3a (있으면 해당 파일 덮어쓰기) -> Step 3b (없으면 원본 PDF 다운로드 후 새 파일 생성)
-          -> Step 4 (results 버킷에 PDF + JSON 업로드) -> Step 5 (DB commit 및 preview 캐시 무효화)]
-
-    사용자가 원본 PDF에 직접 추가한 주석을 받아 annotation PDF 파일을 생성/갱신한다.
-    이미 user 모드 주석 PDF가 존재하면 덮어쓰고, 없으면 새로 생성한다.
-    자동 저장이 반복되어도 파일이 계속 늘어나지 않도록 한다.
-    """
-    job_id = job.id
-    original_path = job.pdf_storage_path
-    if not original_path:
-        raise HTTPException(status_code=404, detail="Original PDF not found")
-
-    try:
-        client = supabase_client.get_service_client()
-
-        # [Flow: 기존 user 모드 주석 PDF가 있으면 재사용한다]
-        annotated_files = list(job.annotated_pdf_files or [])
-        existing_user_entry = next(
-            (e for e in annotated_files if e.get("mode") == "user"),
-            None,
-        )
-
-        if existing_user_entry:
-            # [Flow: Step 3a (기존 user 주석 PDF 경로 재사용)]
-            storage_path = existing_user_entry.get("storage_path")
-            annotations_json_storage_path = existing_user_entry.get("annotations_json_storage_path")
-            if not storage_path:
-                raise HTTPException(status_code=500, detail="Invalid user annotation entry")
-            if not annotations_json_storage_path:
-                annotations_json_storage_path = f"{job_id}/annotated_{existing_user_entry.get('index', 1)}.annotations.json"
-            # 기존 주석 PDF를 다운로드하여 원본에 주석을 다시 적용하는 대신,
-            # 원본 PDF에 최신 주석을 적용하여 덮어쓴다 (사용자 주석은 원본 기준).
-            pdf_bytes = client.storage.from_("pdfs").download(original_path)
-            new_pdf_bytes = pdf_user_annotator.apply_user_annotations(pdf_bytes, annotations)
-        else:
-            # [Flow: Step 3b (원본 PDF 다운로드 후 새 주석 PDF 생성)]
-            pdf_bytes = client.storage.from_("pdfs").download(original_path)
-            new_pdf_bytes = pdf_user_annotator.apply_user_annotations(pdf_bytes, annotations)
-
-            # 원자적으로 다음 인덱스를 할당한다.
-            result = db.execute(
-                update(Job)
-                .where(Job.id == job_id)
-                .values(annotated_pdf_next_index=Job.annotated_pdf_next_index + 1)
-                .returning(Job.annotated_pdf_next_index)
-            )
-            db.commit()
-            next_index = result.scalar()
-            if not next_index:
-                raise HTTPException(status_code=500, detail="Failed to allocate annotation index")
-
-            storage_path = f"{job_id}/annotated_{next_index}.pdf"
-            annotations_json_storage_path = f"{job_id}/annotated_{next_index}.annotations.json"
-
-            entry = {
-                "index": next_index,
-                "status": "done",
-                "storage_path": storage_path,
-                "annotations_json_storage_path": annotations_json_storage_path,
-                "filename": _annotation_display_name(job, next_index),
-                "instruction": "",
-                "mode": "user",
-                "comment_mode": "user",
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
-            annotated_files.append(entry)
-            job.annotated_pdf_files = annotated_files
-            flag_modified(job, "annotated_pdf_files")
-            job.result_annotated_pdf_storage_path = storage_path
-
-        client.storage.from_("results").upload(
-            storage_path,
-            new_pdf_bytes,
-            {"content-type": "application/pdf", "upsert": "true"},
-        )
-        client.storage.from_("results").upload(
-            annotations_json_storage_path,
-            json.dumps(annotations, ensure_ascii=False).encode("utf-8"),
-            {"content-type": "application/json", "upsert": "true"},
-        )
-
-        # 기존 entry의 annotations_json_storage_path가 비어 있었다면 갱신한다.
-        if existing_user_entry and not existing_user_entry.get("annotations_json_storage_path"):
-            existing_user_entry["annotations_json_storage_path"] = annotations_json_storage_path
-            job.annotated_pdf_files = annotated_files
-            flag_modified(job, "annotated_pdf_files")
-
-        db.commit()
-        cache.invalidate_pattern(f"preview:{job_id}:*")
-        return {
-            "ok": True,
-            "storage_path": storage_path,
-            "annotations_json_storage_path": annotations_json_storage_path,
-        }
-    except Exception as e:
-        logger.exception(f"[_create_user_annotated_pdf] {job_id} 실패: {e}")
-        raise HTTPException(status_code=500, detail=f"주석 PDF 생성 실패: {e}")
 
 
 @router.post("/jobs/{job_id}/action")
@@ -3999,17 +3763,6 @@ def _resolve_annotations_json_path(job: Job, source_index: int) -> str | None:
     entries = list(job.annotated_pdf_files or [])
     if source_index == 0:
         source_index = 1
-    if not entries and job.result_annotated_pdf_storage_path and source_index == 1:
-        stem = Path(_normalize_display_name(job.original_filename)).stem if job.original_filename else "result"
-        entries = [
-            {
-                "index": 1,
-                "status": "done",
-                "storage_path": job.result_annotated_pdf_storage_path,
-                "annotations_json_storage_path": None,
-                "filename": f"{stem}_annotation1.pdf",
-            }
-        ]
 
     entry = next((e for e in entries if e.get("index") == source_index), None)
     if entry is None or not entry.get("annotations_json_storage_path"):
@@ -4552,7 +4305,7 @@ def _job_summary(job: Job) -> dict:
         "xlsx_advanced_recovery_notes": job.xlsx_advanced_recovery_notes,
         "refundable": job.refundable,
         "retry_count": job.retry_count,
-        "annotated_pdf": bool(job.result_annotated_pdf_storage_path),
+        "annotated_pdf": bool(job.annotated_pdf_files or job.annotate_status),
         "annotated_pdf_files": job.annotated_pdf_files or [],
         "annotate_status": job.annotate_status,
         "annotate_job_id": job.annotate_job_id,

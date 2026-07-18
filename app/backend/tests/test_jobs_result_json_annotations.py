@@ -68,7 +68,7 @@ class TestGetJobResultJsonAnnotations:
             {
                 "index": 1,
                 "status": "done",
-                "storage_path": f"{job_id}/annotated.pdf",
+                "storage_path": f"{job_id}/searchable.pdf",
                 "annotations_json_storage_path": f"{job_id}/annotated.annotations.json",
             }
         ]

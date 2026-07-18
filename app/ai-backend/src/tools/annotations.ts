@@ -453,13 +453,13 @@ export function buildAnnotationTools(context: AnnotationContext) {
 
         try {
           // [Flow: AI 백엔드는 좌표 변환을 하지 않고 PDF user-space 그대로 전송
-          //       -> 변환은 FastAPI pdf_user_annotator.apply_user_annotations에서 수행]
+          //       -> 변환은 FastAPI /jobs/{id}/user-annotations에서 JSON으로 저장하며 수행]
           console.log(`[apply_annotations] job=${jobId} count=${pending.length} input_space=pdf_user`);
           const annotations = pending.map((pendingAnnotation) => _buildAnnotationItem(pendingAnnotation));
           let saveSourceIndex = sourceIndex;
           let usedFallback = false;
 
-          // [Flow: Step 1 (source_index로 주석 PDF 저장) -> Step 2 (404/실패 감지)
+          // [Flow: Step 1 (source_index로 주석 JSON 저장) -> Step 2 (404/실패 감지)
           //       -> Step 3 (source_index=-1로 원본 PDF의 JSON 저장)]
           try {
             await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'pdf_user', authHeaders);
@@ -499,7 +499,8 @@ export function buildAnnotationTools(context: AnnotationContext) {
  * [Flow: Step 1 (PendingAnnotation 수신) -> Step 2 (PDF user-space AnnotationTransferItem 생성) -> Step 3 (반환)]
  *
  * AI 백엔드는 좌표 변환을 하지 않고 PDF user-space 좌표를 그대로 전달한다.
- * 변환은 FastAPI의 pdf_user_annotator.apply_user_annotations에서 실제 PDF page_height를 기준으로 수행한다.
+ * 변환은 FastAPI의 /jobs/{id}/user-annotations 엔드포인트에서 JSON 저장 시
+ * 실제 PDF page_height를 기준으로 수행한다.
  *
  * PDF user-space rect: origin.y = y0 (페이지 하단 기준), size.height = y1 - y0.
  *

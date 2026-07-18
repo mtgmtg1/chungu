@@ -4,8 +4,7 @@
 
 api/jobs.py의 _source_files 함수가 AI 주석 완료 후 각 원본 문서 항목에
 annotations_json_url을 정확히 부착하는지 테스트한다.
-특히 하위 호환 상황(annotated_pdf_files가 비어 있고 result_annotated_pdf_storage_path만
-있는 경우)과 파일별 user_annotations 병합 경로를 커버한다.
+파일별 user_annotations 병합 경로를 커버한다.
 """
 import sys
 import os
@@ -38,7 +37,6 @@ def _make_job(job_id: str = "test-job-001") -> Job:
     ]
     job.annotated_pdf_files = []
     job.annotate_status = ""
-    job.result_annotated_pdf_storage_path = ""
     job.searchable_pdf_storage_path = ""
     return job
 
@@ -103,9 +101,9 @@ class TestSourceFilesAnnotationsJsonUrl:
             {
                 "index": 1,
                 "status": "done",
-                "storage_path": f"{job_id}/annotated.pdf",
+                "storage_path": f"{job_id}/searchable.pdf",
                 "annotations_json_storage_path": f"{job_id}/annotated.annotations.json",
-                "filename": "test_annotation1.pdf",
+                "filename": "test_searchable.pdf",
             }
         ]
         job.annotate_status = "done"
@@ -118,28 +116,12 @@ class TestSourceFilesAnnotationsJsonUrl:
         assert len(result) == 1
         assert result[0]["annotations_json_url"] == "https://signed.example.com/annotated.json"
 
-    def test_backward_compat_uses_fallback_annotations_json_path(self, mock_deps, monkeypatch):
-        # [Flow: annotated_pdf_files 비어 있고 result_annotated_pdf_storage_path만 있음 -> 폴백 경로로 URL 생성]
-        job_id = "test-job-002"
-        job = _make_job(job_id)
-        job.annotated_pdf_files = []
-        job.annotate_status = "done"
-        job.result_annotated_pdf_storage_path = f"{job_id}/annotated.pdf"
-        mock_deps["signed_urls"][f"pdfs:pdfs/test.pdf"] = "https://signed.example.com/original.pdf"
-        mock_deps["signed_urls"][f"results:{job_id}/annotated.annotations.json"] = "https://signed.example.com/backward.json"
-
-        result = _source_files(job)
-
-        assert len(result) == 1
-        assert result[0]["annotations_json_url"] == "https://signed.example.com/backward.json"
-
     def test_no_annotations_does_not_set_url(self, mock_deps, monkeypatch):
         # [Flow: annotate_status가 done이 아님 -> annotations_json_url 미설정 확인]
         job_id = "test-job-003"
         job = _make_job(job_id)
         job.annotated_pdf_files = []
         job.annotate_status = ""
-        job.result_annotated_pdf_storage_path = ""
         mock_deps["signed_urls"][f"pdfs:pdfs/test.pdf"] = "https://signed.example.com/original.pdf"
 
         result = _source_files(job)
@@ -155,9 +137,9 @@ class TestSourceFilesAnnotationsJsonUrl:
             {
                 "index": 1,
                 "status": "done",
-                "storage_path": f"{job_id}/annotated.pdf",
+                "storage_path": f"{job_id}/searchable.pdf",
                 "annotations_json_storage_path": f"{job_id}/annotated.annotations.json",
-                "filename": "test_annotation1.pdf",
+                "filename": "test_searchable.pdf",
             }
         ]
         job.annotate_status = "done"

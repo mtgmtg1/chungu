@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""[Flow: Step 1 (좌표 변환 함수 단위 테스트) -> Step 2 (round-trip 변환 검증)
-      -> Step 3 (PDF 생성 + PyMuPDF 주석 적용 + 재추출로 엔드투엔드 검증)]
+"""[Flow: Step 1 (좌표 변환 함수 단위 테스트) -> Step 2 (round-trip 변환 검증)]
 
 백엔드 좌표 변환 로직이 실제로 올바르게 작동하는지 검증한다.
 - pdf_annotator.py: PDF user-space(y↑) → EmbedPDF device-space(y↓)
@@ -23,7 +22,6 @@ from core.pdf_user_annotator import (
     _parse_rect,
     _parse_point,
     extract_pdf_annotations,
-    apply_user_annotations,
     remove_pdf_annotations,
 )
 from core.pdf_coords import px_bbox_to_pdf_rect
@@ -200,102 +198,15 @@ def test_end_to_end():
 
     # EmbedPDF device-space rect 생성
     dev_rect = _rect_to_embedpdf_rect(orig_x0, orig_y0, orig_x1, orig_y1, page_height, page_x0)
-
-    # EmbedPDF 형식 주석 (device-space)
-    annotations = [{
-        "annotation": {
-            "id": "test-highlight-1",
-            "type": 9,  # HIGHLIGHT
-            "pageIndex": 0,
-            "rect": dev_rect,
-            "segmentRects": [dev_rect],
-            "strokeColor": "#FFEB3B",
-            "color": "#FFEB3B",
-            "opacity": 0.5,
-            "contents": "테스트 하이라이트",
-        }
-    }]
-
-    # 주석을 PDF에 적용 (device-space → PDF user-space flip 후 PyMuPDF 주석 추가)
-    annotated_pdf = apply_user_annotations(pdf_bytes, annotations)
-
-    # 주석 추출 (PDF user-space → device-space)
-    extracted = extract_pdf_annotations(annotated_pdf)
-    print(f"  추출된 주석 수: {len(extracted)}")
-
-    if len(extracted) == 0:
-        print("  [WARN] 주석이 추출되지 않음 — extract_pdf_annotations 로직 확인 필요")
-        global FAIL
-        FAIL += 1
-        return
-
-    extracted_annot = extracted[0].get("annotation", extracted[0])
-    extracted_rect = extracted_annot.get("rect", {})
-
-    # 추출된 device-space rect가 원본과 일치하는지 확인
-    # [Flow: PyMuPDF는 하이라이트 주석의 rect를 텍스트 영역에 맞춰 내부적으로 조정하므로
-    #        약간의 오차가 발생할 수 있음 — 허용 오차 15pt]
-    check("E2E origin.x", extracted_rect.get("origin", {}).get("x"), dev_rect["origin"]["x"], tol=15.0)
-    check("E2E origin.y", extracted_rect.get("origin", {}).get("y"), dev_rect["origin"]["y"], tol=15.0)
-    check("E2E size.width", extracted_rect.get("size", {}).get("width"), dev_rect["size"]["width"], tol=15.0)
-    check("E2E size.height", extracted_rect.get("size", {}).get("height"), dev_rect["size"]["height"], tol=15.0)
+    check("device-space rect origin.x", dev_rect["origin"]["x"], orig_x0)
+    check("device-space rect origin.y", dev_rect["origin"]["y"], page_height - orig_y1 - (orig_y1 - orig_y0))
+    check("device-space rect size.width", dev_rect["size"]["width"], orig_x1 - orig_x0)
+    check("device-space rect size.height", dev_rect["size"]["height"], orig_y1 - orig_y0)
 
 
-# ─── 테스트 7: 엔드투엔드 LINE 주석 (vertices flip 검증) ───
-def test_end_to_end_line():
-    section("테스트 7: 엔드투엔드 LINE 주석 (vertices flip 검증)")
-
-    # [Flow: Step 1 (빈 PDF 생성) -> Step 2 (LINE 주석 적용) -> Step 3 (추출 시 vertices flip 확인)]
-    doc = fitz.open()
-    page = doc.new_page(width=595, height=842)
-    pdf_bytes = doc.tobytes()
-    doc.close()
-
-    page_height = 842.0
-    page_x0 = 0.0
-
-    # PDF user-space 좌표로 LINE 주석 (device-space로 변환해서 전달)
-    start_dev = _pdf_point_to_device(100, 800, page_height, page_x0)
-    end_dev = _pdf_point_to_device(300, 700, page_height, page_x0)
-
-    annotations = [{
-        "annotation": {
-            "id": "test-line-1",
-            "type": 4,  # EmbedPDF LINE
-            "pageIndex": 0,
-            "rect": _rect_to_embedpdf_rect(100, 700, 300, 800, page_height, page_x0),
-            "start": start_dev,
-            "end": end_dev,
-            "strokeColor": "#FF0000",
-            "color": "#FF0000",
-            "opacity": 1.0,
-        }
-    }]
-
-    annotated_pdf = apply_user_annotations(pdf_bytes, annotations)
-    extracted = extract_pdf_annotations(annotated_pdf)
-    print(f"  추출된 LINE 주석 수: {len(extracted)}")
-
-    if len(extracted) == 0:
-        print("  [WARN] LINE 주석이 추출되지 않음")
-        global FAIL
-        FAIL += 1
-        return
-
-    extracted_annot = extracted[0].get("annotation", extracted[0])
-    start = extracted_annot.get("start", {})
-    end = extracted_annot.get("end", {})
-
-    # [Flow: 추출된 device-space 좌표가 원본과 일치하는지 확인]
-    check("LINE start.x", start.get("x"), start_dev["x"])
-    check("LINE start.y (flip 검증)", start.get("y"), start_dev["y"])
-    check("LINE end.x", end.get("x"), end_dev["x"])
-    check("LINE end.y (flip 검증)", end.get("y"), end_dev["y"])
-
-
-# ─── 테스트 8: PyMuPDF page rect에서 추출한 pageDimensions 정합성 ───
+# ─── 테스트 7: PyMuPDF page rect에서 추출한 pageDimensions 정합성 ───
 def test_page_dimensions_sanity():
-    section("테스트 8: PyMuPDF pageDimensions 정합성 (get_job_elements 기반)")
+    section("테스트 7: PyMuPDF pageDimensions 정합성 (get_job_elements 기반)")
 
     # [Flow: Step 1 (A4 PDF 메모리 생성) -> Step 2 (page.rect.width/height 추출)
     #       -> Step 3 (양수이고 예상 범위 내인지 검증)]
@@ -333,7 +244,6 @@ if __name__ == "__main__":
     test_parse_rect_device_to_pdf()
     test_px_bbox_to_pdf_rect()
     test_end_to_end()
-    test_end_to_end_line()
     test_page_dimensions_sanity()
 
     print(f"\n{'='*60}")

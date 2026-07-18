@@ -84,15 +84,15 @@ def _text_block_to_text(block: OcrTextBlock) -> str:
     return text
 
 
-def _annotation_display_name(job: Job, n: int) -> str:
-    """주석 PDF의 표시용 파일명을 생성한다.
+def _searchable_display_name(job: Job) -> str:
+    """searchable PDF의 표시용 파일명을 생성한다.
 
-    원본 파일명이 있으면 확장자를 제거하고 `_annotation{N}.pdf`를 붙이고,
-    없으면 `result_annotation{N}.pdf`를 반환한다.
+    원본 파일명이 있으면 확장자를 제거하고 `_searchable.pdf`를 붙이고,
+    없으면 `result_searchable.pdf`를 반환한다.
     """
     base = job.original_filename or "result"
     stem = Path(base).stem or base
-    return f"{stem}_annotation{n}.pdf"
+    return f"{stem}_searchable.pdf"
 
 
 def _annotation_id(item: dict) -> str:
@@ -1125,24 +1125,6 @@ def run(
     next_index = annotation_index
     shared_annotations_json_path = f"{job.id}/annotated.annotations.json"
 
-    # 하위 호환: 목록 컬럼 추가 전에 생성된 단일 주석 PDF를 목록으로 마이그레이션
-    # worker에 전달된 next_index와 일치하는 entry를 생성해야 후속 entry_found 검사를 통과한다.
-    if job.result_annotated_pdf_storage_path and not (job.annotated_pdf_files or []):
-        job.annotated_pdf_files = [
-            {
-                "index": next_index,
-                "status": "processing",
-                "storage_path": job.result_annotated_pdf_storage_path,
-                "annotations_json_storage_path": shared_annotations_json_path,
-                "filename": _annotation_display_name(job, 1),
-                "instruction": job.annotate_instruction,
-                "mode": job.annotate_mode,
-                "comment_mode": job.annotate_comment_mode,
-                "created_at": job.finished_at.isoformat() if job.finished_at else datetime.now(timezone.utc).isoformat(),
-            }
-        ]
-        db.commit()
-
     endpoint = job.endpoint or settings_store.get_setting(db, "llm_endpoint") or settings.default_llm_endpoint
     model = job.model or settings_store.get_setting(db, "llm_model") or settings.default_llm_model
     api_key = settings_store.get_setting(db, "llm_api_key") or ""
@@ -1156,6 +1138,9 @@ def run(
             pdf_bytes, elements, layout_by_page, _created = _ensure_searchable_pdf(
                 job, temp_dir, language=language
             )
+            if _created:
+                # searchable PDF 경로를 즉시 DB에 저장 (worker 중단 시 재사용)
+                db.commit()
 
             # [Flow: OCR layout 저장 — agent의 get_elements/search_text가 재사용할 수 있도록]
             if layout_by_page:
@@ -1218,26 +1203,15 @@ def run(
             # 화살표 리더 라인)로 생성한다. callout 텍스트 박스는 기존 요소를 피해 페이지 내 빈
             # 모서리/외곽 여백에 배치된다. 단일 진실원이자 사용자 편집 가능. flatten 다운로드는
             # 프론트의 embedpdf export plugin(saveAsCopy)이 처리한다.
-            # job당 하나의 공유 파일에 누적되며, run별로 고유 ID prefix를 가진다.
-            shared_storage_path = f"{job.id}/annotated.pdf"
-            display_name = _annotation_display_name(job, 1)
-
-            # [Flow: 기존 공유 PDF가 있으면 재사용하여 사용자 주석 보존]
-            # 사용자가 이미 AI 주석 PDF에 그린 주석을 덮어쓰지 않도록, Storage에
-            # 기존 PDF가 있으면 그것을 표시 기반으로 재사용한다. 텍스트 내용은
-            # 원본과 동일하므로 AI 주석 좌표 정렬에 영향을 주지 않는다.
-            client = supabase_client.get_service_client()
-            existing_pdf_bytes = None
-            should_upload_pdf = False
-            try:
-                existing_pdf_bytes = client.storage.from_("results").download(shared_storage_path)
-            except Exception:
-                existing_pdf_bytes = None
-            if existing_pdf_bytes:
-                pdf_bytes = existing_pdf_bytes
-                logger.info(f"[pdf_annotate] 기존 공유 PDF 재사용: {shared_storage_path}")
-            else:
-                should_upload_pdf = True
+            # job당 searchable PDF는 job.searchable_pdf_storage_path를 사용하며,
+            # annotations.json에만 주석을 누적한다.
+            shared_storage_path = job.searchable_pdf_storage_path
+            if not shared_storage_path:
+                # _ensure_searchable_pdf에서 업로드 실패한 경우 재업로드
+                from io import BytesIO
+                shared_storage_path = supabase_client.upload_input(BytesIO(pdf_bytes), "searchable.pdf", job.id)
+                job.searchable_pdf_storage_path = shared_storage_path
+            display_name = _searchable_display_name(job)
 
             # [Flow: callout 배치용 페이지 요소 bbox — 기존 텍스트 요소와 하이라이트 영역을 피해 텍스트 박스 배치]
             # elements의 bbox_px를 PDF user-space 좌표로 변환해 페이지별로 그룹화한다.
@@ -1271,12 +1245,7 @@ def run(
             merged_annotations = _merge_annotations_for_run(
                 shared_annotations_json_path, embedpdf_annotations, next_index
             )
-            if should_upload_pdf:
-                client.storage.from_("results").upload(
-                    shared_storage_path,
-                    pdf_bytes,
-                    {"content-type": "application/pdf", "upsert": "true"},
-                )
+            client = supabase_client.get_service_client()
             client.storage.from_("results").upload(
                 shared_annotations_json_path,
                 json.dumps(merged_annotations, ensure_ascii=False).encode("utf-8"),
@@ -1299,7 +1268,8 @@ def run(
                     break
             locked_job.annotated_pdf_files = files
             flag_modified(locked_job, "annotated_pdf_files")
-            locked_job.result_annotated_pdf_storage_path = shared_storage_path
+            if not locked_job.searchable_pdf_storage_path:
+                locked_job.searchable_pdf_storage_path = shared_storage_path
             # 병렬 run 중 processing이 남아 있으면 전체 상태를 processing으로 유지한다.
             has_processing = any(e.get("status") == "processing" for e in files)
             locked_job.annotate_status = "processing" if has_processing else "done"

@@ -77,7 +77,6 @@ def make_mock_storage(files: dict[str, bytes]):
 def make_job(
     job_id: str = "test-job-001",
     annotated_pdf_files: list | None = None,
-    result_annotated_pdf_storage_path: str = "",
     original_filename: str = "test.pdf",
 ) -> Job:
     """[Flow: Step 1 (Job 모델 인스턴스 생성) -> Step 2 (필수 필드 설정) -> Step 3 (반환)]
@@ -87,7 +86,6 @@ def make_job(
     job = Job()
     job.id = job_id
     job.annotated_pdf_files = annotated_pdf_files or []
-    job.result_annotated_pdf_storage_path = result_annotated_pdf_storage_path
     job.original_filename = original_filename
     return job
 
@@ -112,7 +110,7 @@ def _annot(annot_id: str, page_index: int, contents: str = "") -> dict:
 def test_no_annotations_returns_empty():
     section("테스트 1: 주석이 전혀 없으면 빈 리스트 반환 (404 아님)")
 
-    job = make_job(annotated_pdf_files=[], result_annotated_pdf_storage_path="")
+    job = make_job(annotated_pdf_files=[])
     mock_client = make_mock_storage({})
 
     with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
@@ -154,7 +152,7 @@ def test_user_annotations_only_no_ai_path():
     section("테스트 3: AI 주석 경로가 None이어도 사용자 주석 반환")
 
     user_annots = [_annot("user-1", 0, "사용자 하이라이트")]
-    job = make_job(annotated_pdf_files=[], result_annotated_pdf_storage_path="")
+    job = make_job(annotated_pdf_files=[])
     mock_client = make_mock_storage({
         "test-job-001/user_annotations_0.json": json.dumps(user_annots).encode("utf-8"),
     })
@@ -208,7 +206,7 @@ def test_fallback_to_shared_user_annotations():
     section("테스트 5: 파일별 주석이 없으면 공유 user_annotations.json으로 폴백")
 
     user_annots = [_annot("user-fallback", 0, "폴백 주석")]
-    job = make_job(annotated_pdf_files=[], result_annotated_pdf_storage_path="")
+    job = make_job(annotated_pdf_files=[])
     # user_annotations_0.json은 없고, user_annotations.json만 있음
     mock_client = make_mock_storage({
         "test-job-001/user_annotations.json": json.dumps(user_annots).encode("utf-8"),
@@ -261,8 +259,8 @@ def test_page_no_filtering():
 def test_resolve_returns_none_no_error():
     section("테스트 7: _resolve_annotations_json_path가 None이어도 에러 없음")
 
-    # annotated_pdf_files도 없고 result_annotated_pdf_storage_path도 없으면 None 반환
-    job = make_job(annotated_pdf_files=[], result_annotated_pdf_storage_path="")
+    # annotated_pdf_files가 없으면 None 반환
+    job = make_job(annotated_pdf_files=[])
     path = _resolve_annotations_json_path(job, source_index=0)
     check("_resolve_annotations_json_path → None", path, None)
 
@@ -279,7 +277,7 @@ def test_source_index_isolation():
 
     user_0 = [_annot("user-idx0", 0, "파일 0 주석")]
     user_1 = [_annot("user-idx1", 1, "파일 1 주석")]
-    job = make_job(annotated_pdf_files=[], result_annotated_pdf_storage_path="")
+    job = make_job(annotated_pdf_files=[])
     mock_client = make_mock_storage({
         "test-job-001/user_annotations_0.json": json.dumps(user_0).encode("utf-8"),
         "test-job-001/user_annotations_1.json": json.dumps(user_1).encode("utf-8"),

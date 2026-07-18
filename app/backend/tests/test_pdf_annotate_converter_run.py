@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """[Flow: Step 1 (pdf_annotate_converter.run 의존성 모킹)
-      -> Step 2 (하위 호환 job으로 실행) -> Step 3 (annotated.annotations.json 업로드 및 entry 상태 검증)]
+      -> Step 2 (searchable PDF가 설정된 job으로 실행) -> Step 3 (annotated.annotations.json 업로드 및 entry 상태 검증)]
 
-pdf_annotate_converter.run이 하위 호환 job(annotated_pdf_files가 비어 있고
-result_annotated_pdf_storage_path만 있는 경우)에서도 entry_found=true를 통과하고
-annotated.annotations.json을 Storage에 업로드하는지 검증한다.
+pdf_annotate_converter.run이 searchable PDF를 기반으로 동작하고,
+annotations.json에만 주석을 업로드하며 entry의 storage_path가 searchable PDF 경로가 되는지 검증한다.
 """
 import sys
 import os
@@ -79,16 +78,22 @@ def _make_mock_db(job: Job):
     return db
 
 
-class TestPdfAnnotateConverterRunBackwardCompat:
-    """하위 호환 job에서 pdf_annotate_converter.run이 정상 완료한다."""
+class TestPdfAnnotateConverterRunVisionPipeline:
+    """Vision LLM 파이프라인에서 pdf_annotate_converter.run이 정상 완료한다."""
 
     def test_run_uploads_annotations_json_and_marks_done(self, tmp_path, monkeypatch):
-        # [Flow: Job 인스턴스 생성 -> 하위 호환 상태 설정]
+        # [Flow: Job 인스턴스 생성 -> searchable PDF 및 processing entry 설정]
         job = Job()
         job.id = "test-job-abc"
-        job.searchable_pdf_storage_path = "searchable.pdf"
-        job.result_annotated_pdf_storage_path = f"{job.id}/annotated.pdf"
-        job.annotated_pdf_files = []
+        job.searchable_pdf_storage_path = f"{job.id}/searchable.pdf"
+        job.annotated_pdf_files = [
+            {
+                "index": 1,
+                "status": "processing",
+                "storage_path": "",
+                "annotations_json_storage_path": "",
+            }
+        ]
         job.annotate_instruction = "test instruction"
         job.annotate_mode = "highlight"
         job.annotate_comment_mode = "llm_summary"
@@ -173,7 +178,7 @@ class TestPdfAnnotateConverterRunBackwardCompat:
         entry = job.annotated_pdf_files[0]
         assert entry["index"] == 1
         assert entry["status"] == "done"
-        assert entry["storage_path"] == f"{job.id}/annotated.pdf"
+        assert entry["storage_path"] == job.searchable_pdf_storage_path
         assert entry["annotations_json_storage_path"] == json_path
 
 

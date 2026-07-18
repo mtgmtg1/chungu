@@ -324,21 +324,24 @@ def _normalize_bbox(
     page_width_px: float,
     page_height_px: float,
 ) -> list[float]:
-    """PaddleOCR-VL 좌표계 bbox를 0~1 normalized 좌표로 변환한다.
+    """AI Studio(PaddleOCR-VL) bbox를 0~1 top-left normalized 좌표로 변환한다.
 
     [Flow: Step 1 (x좌표를 페이지 너비로 나눔) -> Step 2 (y좌표를 페이지 높이로 나눔)
-          -> Step 3 ([x0, y0, x1, y1] normalized 좌표 반환)]
+          -> Step 3 (PDF user-space y↑를 top-left y↓로 뒤집음)
+          -> Step 4 ([x0, y0, x1, y1] normalized 좌표 반환)]
 
-    PaddleOCR-VL은 이미지 좌표계(top-left origin, y↓)를 사용한다.
+    AI Studio는 PDF를 직접 받을 때 bbox를 PDF user-space(bottom-left origin, y↑)로 반환한다.
+    이를 y=0이 상단인 top-left normalized 좌표로 변환해야
+    add_text_layer_from_ocr / build_embedpdf_annotations 등이 정확히 동작한다.
     """
     if not bbox or len(bbox) < 4:
         return list(bbox) if bbox else []
     x0, y0, x1, y1 = (float(v) for v in bbox[:4])
     return [
         x0 / page_width_px,
-        y0 / page_height_px,
+        1.0 - (y1 / page_height_px),
         x1 / page_width_px,
-        y1 / page_height_px,
+        1.0 - (y0 / page_height_px),
     ]
 
 
@@ -347,11 +350,12 @@ def _normalize_points(
     page_width_px: float,
     page_height_px: float,
 ) -> list[list[float]]:
-    """PaddleOCR-VL 좌표계 다각형 점들을 0~1 normalized 좌표로 변환한다.
+    """AI Studio(PaddleOCR-VL) 다각형 점들을 0~1 top-left normalized 좌표로 변환한다.
 
     [Flow: Step 1 (각 점의 x를 페이지 너비로 나눔)
           -> Step 2 (각 점의 y를 페이지 높이로 나눔)
-          -> Step 3 (변환된 점 목록 반환)]
+          -> Step 3 (PDF user-space y↑를 top-left y↓로 뒤집음)
+          -> Step 4 (변환된 점 목록 반환)]
     """
     if not points:
         return []
@@ -361,21 +365,21 @@ def _normalize_points(
             converted.append(list(pt) if pt else [])
             continue
         x, y = float(pt[0]), float(pt[1])
-        converted.append([x / page_width_px, y / page_height_px])
+        converted.append([x / page_width_px, 1.0 - (y / page_height_px)])
     return converted
 
 
 def _extract_layout_from_result(res: Any) -> dict:
-    """PaddleOCR 결과 객체에서 bbox를 0~1 normalized 좌표로 변환한 레이아웃을 반환한다.
+    """AI Studio(PaddleOCR-VL) 결과 객체에서 bbox를 0~1 top-left normalized 좌표로 변환한 레이아웃을 반환한다.
 
     [Flow: Step 1 (res.json 추출) -> Step 2 (페이지 픽셀 크기 확인)
           -> Step 3 (parsing_res_list / layout_det_res / overall_ocr_res의 bbox를 normalized 좌표로 변환)
           -> Step 4 (normalized 좌표계 기준 layout dict 반환)]
 
-    PaddleOCR-VL-1.6은 기본적으로 이미지 좌표계(top-left origin, y↓)를 사용한다.
-    DPI/해상도에 관계없이 bbox를 페이지 크기로 나누어 0~1 normalized 좌표로 변환하면
-    소비자(_collect_page_elements_*)가 원본 PDF 페이지 크기만 알면 정확한 PDF user-space
-    좌표를 계산할 수 있다.
+    AI Studio에 PDF를 직접 제출하면 반환 bbox는 PDF user-space(bottom-left origin, y↑)이다.
+    이를 0~1 top-left normalized(y=0 상단, y=1 하단)로 변환하면
+    소비자(_collect_page_elements_*, add_text_layer_from_ocr)가 원본 PDF 페이지 크기만 알면
+    정확한 PDF user-space 좌표를 계산할 수 있다.
     """
     try:
         if isinstance(res, dict):

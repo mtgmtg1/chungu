@@ -56,20 +56,23 @@ def make_a4_pdf(path):
 
 
 def test_extract_layout_normalized():
-    """[Flow: Step 1 (이미지 좌표계 mock res 생성) -> Step 2 (_extract_layout_from_result 호출)
-          -> Step 3 (bbox가 0~1 normalized 좌표인지 검증)]"""
+    """[Flow: Step 1 (PDF user-space mock res 생성) -> Step 2 (_extract_layout_from_result 호출)
+          -> Step 3 (bbox가 0~1 top-left normalized 좌표인지 검증)]"""
     print("\n=== _extract_layout_from_result normalized 좌표 반환 테스트 ===")
     page_width_px = 2479.0
     page_height_px = 3508.0
 
+    # AI Studio는 PDF user-space(bottom-left, y↑)로 bbox를 반환한다.
+    # page_height_px=3508 기준 상단 텍스트의 y0=3108, y1=3308
+    pdf_user_bbox = [100, 3108, 300, 3308]
     res_image = {
         "height": page_height_px,
         "width": page_width_px,
         "parsing_res_list": [
-            {"block_bbox": [100, 200, 300, 400], "block_content": "text", "block_label": "text"}
+            {"block_bbox": pdf_user_bbox, "block_content": "text", "block_label": "text"}
         ],
         "overall_ocr_res": {
-            "rec_boxes": [[100, 200, 300, 400]],
+            "rec_boxes": [pdf_user_bbox],
             "rec_texts": ["text"]
         }
     }

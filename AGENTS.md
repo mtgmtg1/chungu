@@ -1545,3 +1545,11 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 - 이렇게 하면 텍스트 레이어가 있는 PDF는 PaddleOCR 재변환 없이 원본의 정확한 텍스트 좌표를 그대로 사용하므로, 에이전트 하이라이트 y축 반전/오차가 해결됩니다.
 - `_insert_invisible_text`의 `baseline_y = y0 + font_size` 계산은 실제로 투명 텍스트 검색 bbox가 원래 bbox 안에 들어오므로 수정하지 않습니다.
 - 회귀 테스트: `tests/test_tasks_searchable_pdf_priority.py`, `tests/test_pdf_text_layer_baseline.py`
+
+## OCR Layout PDF user-space 감지
+
+- `app/backend/paddleocr_service/main.py`의 `_extract_layout_from_result`는 AI Studio에 원본 PDF를 직접 제출했을 때 반환 bbox가 PDF user-space(y↑)일 수 있으므로 동적으로 감지한다.
+- `page_height_px`가 `page_height_pt`와 비슷하고(0.8~1.2배), 상단 블록 샘플의 y 평균이 페이지 상반부에 있으면 PDF user-space로 판단해 y축을 뒤집는다.
+- `_normalize_bbox` / `_normalize_points`는 `flip_y` 플래그로 top-left normalized(y=0 상단)를 생성한다.
+- 이렇게 하면 OCR로 생성된 searchable PDF 텍스트 레이어 좌표가 원문과 상하 반전되는 문제를 방어할 수 있다.
+- 회귀 테스트: `tests/test_paddleocr_layout_pdf_user_space.py`

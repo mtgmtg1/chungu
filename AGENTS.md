@@ -1537,3 +1537,11 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
   - 예: `cd /path/to/repo/app/backend && PYTHONPATH=/path/to/repo/app python -m pytest tests/`
   - `PYTHONPATH=/app`를 지정하면 `backend.*` 모듈 임포트가 가능하고, 현재 디렉터리 `app/backend`가 `sys.path`에 포함되어 `core.*` 직접 임포트도 가능하다.
 - 프론트엔드: `cd app/frontend && npm run test` / `npm run build`
+
+## Searchable PDF 우선순위 — 텍스트 레이어가 있는 원본 PDF 사용
+
+- `app/backend/workers/tasks.py`에서 `_build_and_upload_searchable_pdf`보다 `_register_searchable_pdf_if_text_layer`를 먼저 호출해야 합니다.
+- `_build_and_upload_searchable_pdf` 내부 맨 앞에 `if job.searchable_pdf_storage_path: return` guard를 추가해, 이미 원본이 등록된 경우 OCR 재생성으로 덮어쓰지 않습니다.
+- 이렇게 하면 텍스트 레이어가 있는 PDF는 PaddleOCR 재변환 없이 원본의 정확한 텍스트 좌표를 그대로 사용하므로, 에이전트 하이라이트 y축 반전/오차가 해결됩니다.
+- `_insert_invisible_text`의 `baseline_y = y0 + font_size` 계산은 실제로 투명 텍스트 검색 bbox가 원래 bbox 안에 들어오므로 수정하지 않습니다.
+- 회귀 테스트: `tests/test_tasks_searchable_pdf_priority.py`, `tests/test_pdf_text_layer_baseline.py`

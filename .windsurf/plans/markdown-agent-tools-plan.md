@@ -16,7 +16,7 @@
 - [x] 4. `buildMarkdownTools` 리팩토링 (새 tool 정의)
 - [x] 5. `chat/route.ts` system prompt tool 목록 갱신
 - [x] 6. `npm run test` / `npm run build` 통과 검증
-- [ ] 7. AI 백엔드 빌드 및 a1 배포
+- [x] 7. AI 백엔드 빌드 및 a1 배포
 
 ---
 

@@ -237,6 +237,10 @@ def _build_and_upload_searchable_pdf(
     수평으로 정렬된 searchable PDF를 제공한다.
     동시에 OCR layout을 Storage에 저장해 AI agent의 get_elements/search_text가 재사용할 수 있게 한다.
     """
+    # [Flow: 이미 원본 텍스트 레이어가 searchable PDF로 등록되어 있으면 OCR 재생성을 건너뛴다]
+    if job.searchable_pdf_storage_path:
+        return
+
     from ..core.image_deskew import deskew_image
     from ..core.ocr_client import render_pdf
 
@@ -506,11 +510,12 @@ def run_job(job_id: str) -> dict:
                 page_tables = [(num, rewrite_inline_images_to_storage(table, job_id)) for num, table in page_tables]
                 fmt = "markdown"
 
-                # [Flow: PaddleOCR layout로 searchable PDF 생성]
-                _build_and_upload_searchable_pdf(db, job, input_path, layout_by_page, job.dpi or 300)
-                # [Flow: 원본 PDF가 텍스트 레이어를 가지면 searchable PDF로 등록 (premium 모드)]
+                # [Flow: 원본 PDF가 텍스트 레이어를 가지면 searchable PDF로 우선 등록]
                 # run_vision으로 OCR을 수행했더라도 원본에 텍스트 레이어가 있으면 원본을 주석 검색용으로 우선 등록한다.
                 _register_searchable_pdf_if_text_layer(db, job, input_path)
+                # [Flow: 원본 등록되지 않았을 경우에만 PaddleOCR layout로 searchable PDF 생성]
+                if not job.searchable_pdf_storage_path:
+                    _build_and_upload_searchable_pdf(db, job, input_path, layout_by_page, job.dpi or 300)
             else:
                 _set_status(db, job, "ocr")
                 page_tables = run_docling(

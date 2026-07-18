@@ -11,9 +11,11 @@ const DEV_SESSION_TIMEOUT_MS = 1000;
 const AuthContext = createContext(null);
 
 /** [Flow: 개발 환경에서 localStorage에 저장된 dev bypass session 복원]
-    새로고침 시에도 /api/dev/login을 다시 기다리지 않고 바로 세션을 복원한다. */
+    VITE_DEV_BYPASS_EMAIL/PASSWORD가 설정되어 있으면 실제 Supabase Auth를 사용하므로
+    저장된 dev bypass 토큰은 무시한다. */
 function _loadDevSession() {
   if (!import.meta.env.DEV) return null;
+  if (import.meta.env.VITE_DEV_BYPASS_EMAIL && import.meta.env.VITE_DEV_BYPASS_PASSWORD) return null;
   const token = localStorage.getItem("dev_access_token");
   if (!token) return null;
   try {

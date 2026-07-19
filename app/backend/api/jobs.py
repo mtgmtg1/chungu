@@ -3410,19 +3410,39 @@ def save_user_annotations(
                 if aid not in exported_ai_ids:
                     logger.info(f"[save_user_annotations] {job_id} AI 주석 삭제 감지: {aid}")
 
-            merged = ai_annotations + user_annotations
-            annotations_document = pdf_annotate_converter._build_canonical_annotations_document(
-                merged,
+            # [Flow: AI 주석과 사용자 주석을 분리 저장]
+            # AI 주석(편집된 AI 포함)은 공유 annotations JSON에, 사용자가 직접 추가한 주석은
+            # 파일별 user_annotations_{source_index}.json에 저장한다.
+            # _source_files / _load_all_annotations이 두 파일을 병합하기 때문에
+            # 한 곳에 모두 저장하면 중복/과거 데이터가 남는다.
+            ai_annotations = _deduplicate_annotations(ai_annotations)
+            user_annotations = _deduplicate_annotations(user_annotations)
+
+            ai_document = pdf_annotate_converter._build_canonical_annotations_document(
+                ai_annotations,
                 source_pdf_storage_path=source_pdf_path or f"{job_id}/annotated.annotations.json",
                 source_pdf_bucket="pdfs",
                 page_dimensions=page_dimensions,
             )
-
             client.storage.from_("results").upload(
                 annotations_json_storage_path,
-                json.dumps(annotations_document, ensure_ascii=False).encode("utf-8"),
+                json.dumps(ai_document, ensure_ascii=False).encode("utf-8"),
                 {"content-type": "application/json", "upsert": "true"},
             )
+
+            per_file_user_annotations_path = f"{job_id}/user_annotations_{source_index}.json"
+            user_document = pdf_annotate_converter._build_canonical_annotations_document(
+                user_annotations,
+                source_pdf_storage_path=source_pdf_path or job.pdf_storage_path or f"{job_id}/user_annotations_{source_index}.json",
+                source_pdf_bucket="pdfs",
+                page_dimensions=page_dimensions,
+            )
+            client.storage.from_("results").upload(
+                per_file_user_annotations_path,
+                json.dumps(user_document, ensure_ascii=False).encode("utf-8"),
+                {"content-type": "application/json", "upsert": "true"},
+            )
+
             if entry.get("annotations_json_storage_path") != annotations_json_storage_path:
                 entry["annotations_json_storage_path"] = annotations_json_storage_path
                 locked_job.annotated_pdf_files = entries

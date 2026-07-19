@@ -18,11 +18,14 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
   - AI/사용자 주석의 좌표계를 canonical 기준으로 통일한 뒤 `pdf_annotate_converter._build_canonical_annotations_document()`로 canonical document를 저장.
   - legacy list 형식도 device-space로 간주하여 canonical로 변환.
 - **영향 파일**: `app/backend/api/jobs.py`, `app/backend/core/pdf_annotate_converter.py`, `app/backend/core/pdf_user_annotator.py`, `app/frontend/src/components/SourcePanel.jsx`, `app/frontend/src/components/PdfViewer.jsx`.
+- **추가 수정 — 사용자 주석 분리 저장**:
+  - `save_user_annotations`에서 AI 주석(`annotated.annotations.json`)과 사용자 주석(`user_annotations_{source_index}.json`)을 한 파일에 뭉쳐 저장하고 있어, `_source_files`/`_load_all_annotations` 병합 시 중복/과거 데이터가 남는 문제를 수정.
+  - 이제 AI annotate가 있을 때: AI 주석은 공유 `annotated.annotations.json`에, 사용자 직접 추가 주석은 `user_annotations_{source_index}.json`에 분리 저장. `_merge_annotation_jsons`가 두 파일을 병합해 `merged_annotations.json` 생성.
 - **검증**:
   - `cd app/backend && .venv/bin/python -m pytest tests/ -q` → 237 passed.
   - Playwright로 worktree-c 프론트엔드에서 AI annotation 19개 import/export 좌표가 device-space로 정상 roundtrip됨을 확인.
-  - 수동 주석 추가 시 `save_user_annotations` → `merged_annotations.json` → `PdfViewer` 재로드 경로에서 좌표가 변형되지 않음을 확인.
-- **배포**: worktree-c backend를 a1 develop(`chungu-dev`)에 배포 완료. 프론트엔드 dev server는 Vite HMR.
+  - 수동 주석 추가 후 `merged_annotations.json`에 AI 주석 + 사용자 주석이 중복 없이 병합됨을 확인 (AI 26개 + 수동 1개 = 27개).
+- **배포**: worktree-c backend를 a1 develop(`chungu-dev`)에 재배포 완료. 프론트엔드 dev server는 Vite HMR.
 - **주의**: 기존에 이미 깨진 `merged_annotations.json`이나 `user_annotations_*.json`이 남아 있는 job은 한 번 삭제하거나 새로 annotate/하이라이트한 뒤 새로고침해야 정상 위치에 표시됨.
 
 ### AI Annotation Agent Tool Audit — text-only workflow 및 좌표 redaction

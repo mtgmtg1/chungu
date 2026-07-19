@@ -27,6 +27,10 @@ from . import cache, ocr_client, paddleocr_client, supabase_client
 from .image_deskew import deskew_image
 from .ocr_layout import BBox, OcrRow, OcrTextBlock, parse_layout_result
 from .pdf_annotator import AnnotationTarget, build_embedpdf_annotations
+from .pdf_user_annotator import (
+    _build_coordinate_context,
+    _extract_page_dimensions_from_pdf_bytes,
+)
 from .pdf_coords import PDF_POINTS_PER_INCH
 from .pdf_text_layer import (
     TextLayerSearcher,
@@ -1225,9 +1229,18 @@ def run(
             for t in targets:
                 page_elements_bboxes.setdefault(t.page_no, []).append(t.bbox_pdf)
 
+            # [Flow: AI 생성 주석에 좌표계 컨텍스트 추가 — 뷰어가 searchable PDF를 렌더링하므로
+            #       기준 PDF는 searchable PDF의 Storage 경로와 페이지 크기를 기록한다.]
+            coordinate_context = _build_coordinate_context(
+                pdf_storage_path=shared_storage_path,
+                bucket="pdfs",
+                page_dimensions=_extract_page_dimensions_from_pdf_bytes(pdf_bytes),
+                input_space="device",
+            )
             embedpdf_annotations = build_embedpdf_annotations(
                 pdf_bytes, targets, mode, annotation_index=next_index,
                 page_elements_bboxes=page_elements_bboxes,
+                coordinate_context=coordinate_context,
             )
 
             # 동시 쓰기 안전성을 위해 SELECT FOR UPDATE로 행을 잠근다.

@@ -22,6 +22,7 @@ from .pdf_coordinate_transform import (
     pdf_user_rect_from_embedpdf,
     pdf_user_to_device_point,
 )
+from .pdf_user_annotator import COORDINATE_CONTEXT_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,7 @@ def build_embedpdf_annotations(
     mode: str,
     annotation_index: int = 0,
     page_elements_bboxes: dict[int, list[tuple[float, float, float, float]]] | None = None,
+    coordinate_context: dict | None = None,
 ) -> list[dict]:
     """[Flow: Step 1 (AnnotationTarget 목록과 PDF 수신) -> Step 2 (페이지별 시각적 크기 캡처)
           -> Step 3 (callout 텍스트 박스를 기존 요소를 피해 빈 영역에 배치)
@@ -126,6 +128,7 @@ def build_embedpdf_annotations(
         page_elements_bboxes: 페이지별 기존 텍스트 요소 bbox 목록 (1-based page_no →
             [(x0, y0, x1, y1), ...] in PDF user-space). callout 배치 시 충돌 회피에 사용.
             None이면 충돌 검사 없이 모서리에 배치.
+        coordinate_context: 주석에 첨부할 _coordinate_context 메타데이터. None이면 첨부하지 않는다.
 
     Returns:
         EmbedPDF importAnnotations()가 기대하는 AnnotationTransferItem[] 형식
@@ -171,10 +174,10 @@ def build_embedpdf_annotations(
             #       -> Step 2 (하이라이트 주석 생성) -> Step 3 (callout 주석 생성)]
             segment_bboxes_pdf = t.search_rects_pdf if t.search_rects_pdf else [(x0, y0, x1, y1)]
             segment_rects_ep = [
-                _rect_to_embedpdf_rect(sx0, sy0, sx1, sy1, page_height, page_x0, page_y0)
+                _rect_to_embedpdf_rect(sx0, sy0, sx1, sy1, page_height, page_x0, page_y0, page_width)
                 for sx0, sy0, sx1, sy1 in segment_bboxes_pdf
             ]
-            bounding_rect_ep = _rect_to_embedpdf_rect(x0, y0, x1, y1, page_height, page_x0, page_y0)
+            bounding_rect_ep = _rect_to_embedpdf_rect(x0, y0, x1, y1, page_height, page_x0, page_y0, page_width)
 
             # 하이라이트 주석 생성 (enable_highlight일 때)
             if enable_highlight:
@@ -229,7 +232,12 @@ def build_embedpdf_annotations(
                             "height": rect_dev["size"]["height"] - rd["top"] - rd["bottom"],
                         },
                     }
-                    placed_callout_bboxes.append(_device_rect_to_pdf(tb_dev, page_height, page_x0, page_y0))
+                    placed_callout_bboxes.append(_device_rect_to_pdf(tb_dev, page_height, page_x0, page_y0, page_width))
+
+    if coordinate_context:
+        for item in annotations:
+            if isinstance(item, dict):
+                item[COORDINATE_CONTEXT_KEY] = coordinate_context
 
     return annotations
 
@@ -251,7 +259,7 @@ def _build_callout_annotation(
           -> Step 3 (calloutLine 3점 계산) -> Step 4 (overallRect + RD 계산)
           -> Step 5 (FreeTextCallout AnnotationTransferItem 반환)]
 
-    페이지 내 기존 요소를 피해 callout 텍스트 박스를 배치하고, 대상 요소에서
+    페이지 내 기존 텍스트 요소를 피해 callout 텍스트 박스를 배치하고, 대상 요소에서
     텍스트 박스로 이어지는 화살표 리더 라인을 계산한다.
 
     모든 좌표는 PDF user-space(원점 좌하단, y↑)로 계산한 뒤 마지막에 device-space로 변환한다.
@@ -281,9 +289,9 @@ def _build_callout_annotation(
     callout_line_pdf = _compute_callout_line(target_bbox, textbox_pdf)
 
     # PDF user-space → device-space 변환 (원점 좌하단 → 좌상단, y축 flip)
-    textbox_dev = _pdf_rect_to_device(textbox_pdf, page_height, page_x0, page_y0)
+    textbox_dev = _pdf_rect_to_device(textbox_pdf, page_height, page_x0, page_y0, page_width)
     callout_line_dev = [
-        _pdf_point_to_device(p[0], p[1], page_height, page_x0, page_y0)
+        _pdf_point_to_device(p[0], p[1], page_height, page_x0, page_y0, page_width)
         for p in callout_line_pdf
     ]
 
@@ -438,7 +446,7 @@ def _compute_callout_line(
         # 수평 방향 우선: arrowTip에서 수평으로 나간 뒤 텍스트 박스 높이로 꺾임
         knee = (box_cx, arrow_tip[1])
     else:
-        # 수직 방향 우선: arrowTip에서 수직으로 나간 뒤 텍스트 박스 너비로 꺽임
+        # 수직 방향 우선: arrowTip에서 수직으로 나간 뒤 텍스트 박스 너비로 꽅임
         knee = (arrow_tip[0], box_cy)
 
     # knee가 텍스트 박스 내부에 있으면 2점 callout으로 폴백 (직선)
@@ -556,8 +564,9 @@ def _pdf_point_to_device(
     px: float,
     py: float,
     page_height: float,
-    page_x0: float = 0.0,
+    page_x0: float,
     page_y0: float = 0.0,
+    page_width: float | None = None,
 ) -> dict:
     """[Flow: Step 1 (PDF user-space 좌표 수신) -> Step 2 (page rect 생성)
           -> Step 3 (pdf_user_to_device_point로 변환) -> Step 4 (EmbedPDF Position {x, y} 반환)]
@@ -565,7 +574,9 @@ def _pdf_point_to_device(
     PDF user-space(원점 좌하단, y↑)를 embedpdf device-space(원점 좌상단, y↓)로 변환.
     좌표 변환은 pdf_coordinate_transform에서 matrix로 일원화 처리한다.
     """
-    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    if page_width is None:
+        page_width = page_height
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_width, page_y0 + page_height)
     device_point = pdf_user_to_device_point((px, py), page_rect)
     return {"x": device_point.x, "y": device_point.y}
 
@@ -573,8 +584,9 @@ def _pdf_point_to_device(
 def _pdf_rect_to_device(
     rect: tuple[float, float, float, float],
     page_height: float,
-    page_x0: float = 0.0,
+    page_x0: float,
     page_y0: float = 0.0,
+    page_width: float | None = None,
 ) -> dict:
     """[Flow: Step 1 (PDF user-space rect 수신) -> Step 2 (page rect 생성)
           -> Step 3 (embedpdf_rect_from_pdf_user로 변환) -> Step 4 (EmbedPDF Rect {origin, size} 반환)]
@@ -582,15 +594,18 @@ def _pdf_rect_to_device(
     PDF user-space rect를 embedpdf device-space Rect로 변환.
     _rect_to_embedpdf_rect와 동일한 중앙 변환 함수를 사용한다.
     """
-    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    if page_width is None:
+        page_width = page_height
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_width, page_y0 + page_height)
     return embedpdf_rect_from_pdf_user(rect, page_rect)
 
 
 def _device_rect_to_pdf(
     rect_dev: dict,
     page_height: float,
-    page_x0: float = 0.0,
+    page_x0: float,
     page_y0: float = 0.0,
+    page_width: float | None = None,
 ) -> tuple[float, float, float, float]:
     """[Flow: Step 1 (device-space Rect 수신) -> Step 2 (page rect 생성)
           -> Step 3 (pdf_user_rect_from_embedpdf로 변환) -> Step 4 (PDF user-space tuple 반환)]
@@ -598,7 +613,9 @@ def _device_rect_to_pdf(
     embedpdf device-space Rect를 PDF user-space tuple로 역변환.
     같은 페이지의 후속 callout 배치 시 장애물 좌표계를 맞추기 위해 사용.
     """
-    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    if page_width is None:
+        page_width = page_height
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_width, page_y0 + page_height)
     pdf_rect = pdf_user_rect_from_embedpdf(rect_dev, page_rect)
     return (pdf_rect.x0, pdf_rect.y0, pdf_rect.x1, pdf_rect.y1)
 
@@ -618,6 +635,7 @@ def _rect_to_embedpdf_rect(
     page_height: float,
     page_x0: float = 0.0,
     page_y0: float = 0.0,
+    page_width: float | None = None,
 ) -> dict:
     """[Flow: Step 1 (PDF user-space fitz.Rect와 page rect 생성)
           -> Step 2 (embedpdf_rect_from_pdf_user로 device-space 변환)
@@ -628,6 +646,8 @@ def _rect_to_embedpdf_rect(
     직접 렌더링한다. pdf_coordinate_transform.embedpdf_rect_from_pdf_user에서
     matrix로 y축 flip과 CropBox offset을 한 번에 처리한다.
     """
+    if page_width is None:
+        page_width = page_height
     pdf_rect = fitz.Rect(x0, y0, x1, y1)
-    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_width, page_y0 + page_height)
     return embedpdf_rect_from_pdf_user(pdf_rect, page_rect)

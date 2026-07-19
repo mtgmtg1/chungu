@@ -36,6 +36,9 @@ STRIKEOUT = 12
 STAMP = 13
 INK = 15
 
+# 주석 JSON에 좌표계 기준을 기록하는 메타데이터 키
+COORDINATE_CONTEXT_KEY = "_coordinate_context"
+
 
 def _extract_annotation(item: Any) -> dict | None:
     """[Flow: Step 1 (item이 dict인지 확인) -> Step 2 (annotation 필드가 있으면 추출)
@@ -64,7 +67,181 @@ def _hex_to_rgb(hex_color: str | None) -> tuple[float, float, float]:
         return (0.0, 0.0, 0.0)
 
 
-def _parse_rect(rect: Any, page_height: float | None = None, page_x0: float = 0.0, page_y0: float = 0.0) -> fitz.Rect | None:
+def _extract_page_dimensions_from_pdf_bytes(pdf_bytes: bytes) -> dict[str, dict]:
+    """[Flow: Step 1 (PDF bytes를 fitz 문서로 열기)
+          -> Step 2 (페이지별 rect 추출)
+          -> Step 3 (width/height/x0/y0/rotation dict로 반환)]
+
+    주석 좌표 변환에 사용할 page rect 메타데이터를 1-based page_no 문자열 키로 반환한다.
+    """
+    page_dimensions: dict[str, dict] = {}
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        for page in doc:
+            rect = page.rect
+            page_dimensions[str(page.number + 1)] = {
+                "width": float(rect.width),
+                "height": float(rect.height),
+                "x0": float(rect.x0),
+                "y0": float(rect.y0),
+                "rotation": int(page.rotation),
+            }
+    finally:
+        doc.close()
+    return page_dimensions
+
+
+def _build_coordinate_context(
+    pdf_storage_path: str,
+    bucket: str,
+    page_dimensions: dict[str, dict],
+    input_space: str,
+) -> dict:
+    """[Flow: Step 1 (좌표 기준 PDF 경로/버킷/페이지 크기/좌표계 수신)
+          -> Step 2 (_coordinate_context dict 조립)
+          -> Step 3 (반환)]
+
+    AnnotationTransferItem에 첨부될 좌표계 컨텍스트 메타데이터를 생성한다.
+    """
+    return {
+        "pdf_storage_path": pdf_storage_path,
+        "bucket": bucket,
+        "page_dimensions": page_dimensions,
+        "input_space": input_space,
+    }
+
+
+def _attach_coordinate_context(
+    annotations: list[dict],
+    context: dict,
+    overwrite: bool = True,
+) -> list[dict]:
+    """[Flow: Step 1 (주석 목록 수신) -> Step 2 (각 항목 루트에 _coordinate_context 설정)
+          -> Step 3 (목록 반환)]
+
+    각 AnnotationTransferItem 루트 dict에 좌표계 컨텍스트를 추가한다.
+    overwrite=False이면 기존 _coordinate_context가 있는 항목은 덮어쓰지 않는다.
+    """
+    for item in annotations:
+        if not isinstance(item, dict):
+            continue
+        if not overwrite and COORDINATE_CONTEXT_KEY in item:
+            continue
+        item[COORDINATE_CONTEXT_KEY] = context
+    return annotations
+
+
+def _get_coordinate_context(item: Any) -> dict | None:
+    """[Flow: Step 1 (AnnotationTransferItem 수신) -> Step 2 (루트의 _coordinate_context 추출)
+          -> Step 3 (dict 또는 None 반환)]"""
+    if not isinstance(item, dict):
+        return None
+    context = item.get(COORDINATE_CONTEXT_KEY)
+    if isinstance(context, dict):
+        return context
+    return None
+
+
+def _get_pdf_bytes_for_context(
+    context: dict,
+    cache: dict[tuple[str, str], bytes] | None = None,
+) -> bytes | None:
+    """[Flow: Step 1 (컨텍스트에서 pdf_storage_path/bucket 추출)
+          -> Step 2 (cache 확인) -> Step 3 (Supabase Storage 다운로드)
+          -> Step 4 (실패 시 반대 bucket 폴백) -> Step 5 (cache 저장 및 bytes 반환)]
+
+    _coordinate_context에 기록된 PDF Storage 경로로부터 bytes를 다운로드한다.
+    """
+    pdf_storage_path = context.get("pdf_storage_path")
+    if not pdf_storage_path:
+        return None
+    bucket = context.get("bucket") or "pdfs"
+    cache_key = (bucket, pdf_storage_path)
+    if cache is not None and cache_key in cache:
+        return cache[cache_key]
+
+    # lazy import: core 모듈을 단독으로 임포트하는 테스트에서 top-level circular import를 피한다.
+    try:
+        from . import supabase_client
+    except ImportError:
+        from backend.core import supabase_client
+
+    client = supabase_client.get_service_client()
+    data: bytes | None = None
+    for try_bucket in (bucket, "results" if bucket != "results" else "pdfs"):
+        try:
+            data = client.storage.from_(try_bucket).download(pdf_storage_path)
+            if data:
+                break
+        except Exception:
+            continue
+    if data is None:
+        logger.warning(f"[_get_pdf_bytes_for_context] PDF 다운로드 실패: {bucket}/{pdf_storage_path}")
+        return None
+    if cache is not None:
+        cache[cache_key] = data
+    return data
+
+
+def _get_page_rect_from_context(context: dict, page_no: int) -> fitz.Rect | None:
+    """[Flow: Step 1 (컨텍스트의 page_dimensions 확인)
+          -> Step 2 (해당 page_no의 width/height/x0/y0로 fitz.Rect 생성)
+          -> Step 3 (fitz.Rect 또는 None 반환)]"""
+    page_dimensions = context.get("page_dimensions")
+    if not isinstance(page_dimensions, dict):
+        return None
+    dims = page_dimensions.get(str(page_no))
+    if not isinstance(dims, dict):
+        return None
+    width = dims.get("width")
+    height = dims.get("height")
+    if width is None or height is None:
+        return None
+    x0 = dims.get("x0", 0.0)
+    y0 = dims.get("y0", 0.0)
+    return fitz.Rect(float(x0), float(y0), float(x0) + float(width), float(y0) + float(height))
+
+
+def _get_page_rect_for_annotation(
+    item: Any,
+    fallback_dimensions: dict[int, dict] | None = None,
+) -> fitz.Rect | None:
+    """[Flow: Step 1 (annotation의 pageIndex 확인)
+          -> Step 2 (item의 _coordinate_context에서 page rect 조회)
+          -> Step 3 (없으면 fallback_dimensions에서 조회)
+          -> Step 4 (fitz.Rect 또는 None 반환)]"""
+    a = _extract_annotation(item)
+    if not a:
+        return None
+    page_index = a.get("pageIndex")
+    if not isinstance(page_index, int) or page_index < 0:
+        return None
+    page_no = page_index + 1
+
+    context = _get_coordinate_context(item)
+    if context:
+        rect = _get_page_rect_from_context(context, page_no)
+        if rect is not None:
+            return rect
+
+    if fallback_dimensions and page_no in fallback_dimensions:
+        dims = fallback_dimensions[page_no]
+        width = dims.get("width")
+        height = dims.get("height")
+        if width is not None and height is not None:
+            x0 = dims.get("x0", 0.0)
+            y0 = dims.get("y0", 0.0)
+            return fitz.Rect(float(x0), float(y0), float(x0) + float(width), float(y0) + float(height))
+    return None
+
+
+def _parse_rect(
+    rect: Any,
+    page_height: float | None = None,
+    page_x0: float = 0.0,
+    page_y0: float = 0.0,
+    page_width: float | None = None,
+) -> fitz.Rect | None:
     """[Flow: Step 1 (EmbedPDF rect 형태 확인) -> Step 2 (origin/size 또는 x/y/width/height 추출)
           -> Step 3 (pdf_user_rect_from_embedpdf로 device-space → PDF user-space 변환)
           -> Step 4 (fitz.Rect 반환)]
@@ -73,6 +250,7 @@ def _parse_rect(rect: Any, page_height: float | None = None, page_x0: float = 0.
     PyMuPDF는 PDF user-space(원점 좌하단, y↑)를 사용하므로 Y축 flip이 필요하다.
     좌표 변환은 pdf_coordinate_transform에서 matrix로 일원화 처리한다.
     page_height가 None이면 flip 없이 원래 좌표를 그대로 사용한다 (PyMuPDF vertex 등 PDF 좌표계 입력용).
+    page_width가 주어지지 않으면 page_height를 사용한다 (하위 호환).
     """
     if not isinstance(rect, dict):
         return None
@@ -85,6 +263,9 @@ def _parse_rect(rect: Any, page_height: float | None = None, page_x0: float = 0.
         if w <= 0 or h <= 0:
             return None
         return fitz.Rect(x, y, x + w, y + h)
+
+    if page_width is None:
+        page_width = page_height
 
     origin = rect.get("origin")
     size = rect.get("size")
@@ -100,20 +281,32 @@ def _parse_rect(rect: Any, page_height: float | None = None, page_x0: float = 0.
             return None
         device_rect = {"origin": {"x": x, "y": y}, "size": {"width": w, "height": h}}
 
-    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_width, page_y0 + page_height)
     return pdf_user_rect_from_embedpdf(device_rect, page_rect)
 
 
-def _segment_rects_to_rect(segment_rects: Any, page_height: float | None = None, page_x0: float = 0.0, page_y0: float = 0.0) -> fitz.Rect | None:
+def _segment_rects_to_rect(
+    segment_rects: Any,
+    page_height: float | None = None,
+    page_x0: float = 0.0,
+    page_y0: float = 0.0,
+    page_width: float | None = None,
+) -> fitz.Rect | None:
     """[Flow: Step 1 (segmentRects 배열 확인) -> Step 2 (첫 번째 rect를 fitz.Rect로 변환)
           -> Step 3 (하나라도 실패하면 None 반환)]"""
     if not isinstance(segment_rects, list) or not segment_rects:
         return None
     first = segment_rects[0]
-    return _parse_rect(first, page_height, page_x0, page_y0)
+    return _parse_rect(first, page_height, page_x0, page_y0, page_width)
 
 
-def _parse_point(point: Any, page_height: float | None = None, page_x0: float = 0.0, page_y0: float = 0.0) -> fitz.Point | None:
+def _parse_point(
+    point: Any,
+    page_height: float | None = None,
+    page_x0: float = 0.0,
+    page_y0: float = 0.0,
+    page_width: float | None = None,
+) -> fitz.Point | None:
     """[Flow: Step 1 (dict 형태 확인) -> Step 2 (x/y 추출)
           -> Step 3 (device_to_pdf_user_point로 device-space → PDF user-space 변환)
           -> Step 4 (fitz.Point 반환)]
@@ -128,11 +321,19 @@ def _parse_point(point: Any, page_height: float | None = None, page_x0: float = 
     y = point.get("y", 0)
     if page_height is None:
         return fitz.Point(x, y)
-    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    if page_width is None:
+        page_width = page_height
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_width, page_y0 + page_height)
     return device_to_pdf_user_point((x, y), page_rect)
 
 
-def _parse_paths(paths: Any, page_height: float | None = None, page_x0: float = 0.0, page_y0: float = 0.0) -> list[list[fitz.Point]] | None:
+def _parse_paths(
+    paths: Any,
+    page_height: float | None = None,
+    page_x0: float = 0.0,
+    page_y0: float = 0.0,
+    page_width: float | None = None,
+) -> list[list[fitz.Point]] | None:
     """[Flow: Step 1 (list 형태 확인) -> Step 2 (stroke별 point 변환) -> Step 3 (2점 이상 stroke만 반환)]"""
     if not isinstance(paths, list):
         return None
@@ -140,14 +341,20 @@ def _parse_paths(paths: Any, page_height: float | None = None, page_x0: float = 
     for stroke in paths:
         if not isinstance(stroke, list):
             continue
-        points = [_parse_point(p, page_height, page_x0, page_y0) for p in stroke]
+        points = [_parse_point(p, page_height, page_x0, page_y0, page_width) for p in stroke]
         points = [p for p in points if p]
         if len(points) >= 2:
             strokes.append(points)
     return strokes if strokes else None
 
 
-def _parse_ink_list(ink_list: Any, page_height: float | None = None, page_x0: float = 0.0, page_y0: float = 0.0) -> list[list[fitz.Point]] | None:
+def _parse_ink_list(
+    ink_list: Any,
+    page_height: float | None = None,
+    page_x0: float = 0.0,
+    page_y0: float = 0.0,
+    page_width: float | None = None,
+) -> list[list[fitz.Point]] | None:
     """[Flow: Step 1 (inkList 형태 확인) -> Step 2 (ink 항목별 points 변환)
           -> Step 3 (2점 이상 stroke만 반환)]"""
     if not isinstance(ink_list, list):
@@ -156,7 +363,7 @@ def _parse_ink_list(ink_list: Any, page_height: float | None = None, page_x0: fl
     for ink in ink_list:
         if not isinstance(ink, dict):
             continue
-        points = [_parse_point(p, page_height, page_x0, page_y0) for p in ink.get("points", [])]
+        points = [_parse_point(p, page_height, page_x0, page_y0, page_width) for p in ink.get("points", [])]
         points = [p for p in points if p]
         if len(points) >= 2:
             strokes.append(points)
@@ -168,6 +375,7 @@ def _convert_annotation_to_device_space(
     page_height: float,
     page_x0: float = 0.0,
     page_y0: float = 0.0,
+    page_width: float | None = None,
 ) -> dict:
     """[Flow: Step 1 (PDF user-space annotation 수신) -> Step 2 (page rect 생성)
           -> Step 3 (embedpdf_rect_from_pdf_user / pdf_user_to_device_point로 변환)
@@ -177,7 +385,9 @@ def _convert_annotation_to_device_space(
     모든 좌표 변환은 pdf_coordinate_transform에서 matrix로 일원화 처리한다.
     """
     a = dict(raw)
-    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    if page_width is None:
+        page_width = page_height
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_width, page_y0 + page_height)
 
     def _pdf_rect_to_device(rect: Any) -> dict | None:
         if not rect:
@@ -257,6 +467,7 @@ def _convert_annotation_to_pdf_user(
     page_height: float,
     page_x0: float = 0.0,
     page_y0: float = 0.0,
+    page_width: float | None = None,
 ) -> dict:
     """[Flow: Step 1 (embedpdf device-space annotation dict 추출) -> Step 2 (page rect 생성)
           -> Step 3 (pdf_user_rect_from_embedpdf / device_to_pdf_user_point으로 PDF user-space 변환)
@@ -269,7 +480,9 @@ def _convert_annotation_to_pdf_user(
     if not a:
         return raw
 
-    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    if page_width is None:
+        page_width = page_height
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_width, page_y0 + page_height)
 
     def _device_rect_to_pdf_user(rect: dict) -> dict:
         pdf_rect = pdf_user_rect_from_embedpdf(rect, page_rect)
@@ -293,27 +506,22 @@ def _convert_annotation_to_pdf_user(
 
 def _convert_annotations_to_pdf_user(
     annotations: list[dict],
-    pdf_bytes: bytes,
+    pdf_bytes: bytes | None,
 ) -> list[dict]:
-    """[Flow: Step 1 (PDF 열기) -> Step 2 (페이지별 높이/오프셋 캐시)
-          -> Step 3 (각 annotation의 pageIndex로 해당 페이지 높이/오프셋 조회)
-          -> Step 4 (device-space → PDF user-space 변환) -> Step 5 (변환된 목록 반환)]
+    """[Flow: Step 1 (fallback PDF bytes에서 페이지 크기 캐시)
+          -> Step 2 (각 annotation의 _coordinate_context 또는 fallback에서 page rect 확보)
+          -> Step 3 (device-space → PDF user-space 변환) -> Step 4 (변환된 목록 반환)]
 
     저장된 embedpdf device-space 좌표를 AI 백엔드가 생성하는 PDF user-space 좌표계로 일괄 역변환한다.
-    get_job_annotations API에서 AI 백엔드가 save_annotations를 호출할 때 좌표계가 일관되도록 사용한다.
+    각 주석의 _coordinate_context가 있으면 해당 PDF 기준, 없으면 fallback pdf_bytes 기준으로 변환한다.
     """
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    try:
-        page_heights: dict[int, float] = {}
-        page_x0s: dict[int, float] = {}
-        page_y0s: dict[int, float] = {}
-        for page in doc:
-            page_no = page.number + 1
-            page_heights[page_no] = page.rect.height
-            page_x0s[page_no] = page.rect.x0
-            page_y0s[page_no] = page.rect.y0
-    finally:
-        doc.close()
+    fallback_dimensions: dict[int, dict] = {}
+    if pdf_bytes:
+        for page_no_str, dims in _extract_page_dimensions_from_pdf_bytes(pdf_bytes).items():
+            try:
+                fallback_dimensions[int(page_no_str)] = dims
+            except ValueError:
+                continue
 
     converted: list[dict] = []
     for raw in annotations:
@@ -325,13 +533,17 @@ def _convert_annotations_to_pdf_user(
         if not isinstance(page_index, int) or page_index < 0:
             converted.append(raw)
             continue
-        page_no = page_index + 1
-        page_height = page_heights.get(page_no)
-        if page_height is None:
+
+        page_rect = _get_page_rect_for_annotation(raw, fallback_dimensions)
+        if page_rect is None:
             converted.append(raw)
             continue
         _convert_annotation_to_pdf_user(
-            raw, page_height, page_x0s.get(page_no, 0.0), page_y0s.get(page_no, 0.0)
+            raw,
+            page_rect.height,
+            page_rect.x0,
+            page_rect.y0,
+            page_rect.width,
         )
         converted.append(raw)
     return converted
@@ -339,27 +551,22 @@ def _convert_annotations_to_pdf_user(
 
 def _convert_annotations_to_device_space(
     annotations: list[dict],
-    pdf_bytes: bytes,
+    pdf_bytes: bytes | None,
 ) -> list[dict]:
-    """[Flow: Step 1 (PDF 열기) -> Step 2 (페이지별 높이/오프셋 캐시)
-          -> Step 3 (각 annotation의 pageIndex로 해당 페이지 높이/오프셋 조회)
-          -> Step 4 (PDF user-space → device-space 변환) -> Step 5 (변환된 목록 반환)]
+    """[Flow: Step 1 (fallback PDF bytes에서 페이지 크기 캐시)
+          -> Step 2 (각 annotation의 _coordinate_context 또는 fallback에서 page rect 확보)
+          -> Step 3 (PDF user-space → device-space 변환) -> Step 4 (변환된 목록 반환)]
 
     AI 백엔드가 보내는 PDF user-space 좌표를 embedpdf device-space로 일괄 변환한다.
-    source_index < 0로 JSON만 저장할 때도 뷰어가 올바른 좌표계로 해석할 수 있도록 사용한다.
+    각 주석의 _coordinate_context가 있으면 해당 PDF 기준, 없으면 fallback pdf_bytes 기준으로 변환한다.
     """
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    try:
-        page_heights: dict[int, float] = {}
-        page_x0s: dict[int, float] = {}
-        page_y0s: dict[int, float] = {}
-        for page in doc:
-            page_no = page.number + 1
-            page_heights[page_no] = page.rect.height
-            page_x0s[page_no] = page.rect.x0
-            page_y0s[page_no] = page.rect.y0
-    finally:
-        doc.close()
+    fallback_dimensions: dict[int, dict] = {}
+    if pdf_bytes:
+        for page_no_str, dims in _extract_page_dimensions_from_pdf_bytes(pdf_bytes).items():
+            try:
+                fallback_dimensions[int(page_no_str)] = dims
+            except ValueError:
+                continue
 
     converted: list[dict] = []
     for raw in annotations:
@@ -371,15 +578,17 @@ def _convert_annotations_to_device_space(
         if not isinstance(page_index, int) or page_index < 0:
             converted.append(raw)
             continue
-        page_no = page_index + 1
-        page_height = page_heights.get(page_no)
-        if page_height is None:
+
+        page_rect = _get_page_rect_for_annotation(raw, fallback_dimensions)
+        if page_rect is None:
             converted.append(raw)
             continue
-        # AnnotationTransferItem 형식({annotation: {...}})이면 그대로 유지하고,
-        # 평면 dict면 평면 dict를 반환한다.
         converted_a = _convert_annotation_to_device_space(
-            a, page_height, page_x0s.get(page_no, 0.0), page_y0s.get(page_no, 0.0)
+            a,
+            page_rect.height,
+            page_rect.x0,
+            page_rect.y0,
+            page_rect.width,
         )
         if "annotation" in raw and isinstance(raw["annotation"], dict):
             raw["annotation"] = converted_a
@@ -417,7 +626,13 @@ def _fitz_color_to_hex(color: Any) -> str | None:
         return None
 
 
-def _fitz_rect_to_embedpdf_rect(rect: fitz.Rect, page_height: float, page_x0: float = 0.0, page_y0: float = 0.0) -> dict:
+def _fitz_rect_to_embedpdf_rect(
+    rect: fitz.Rect,
+    page_height: float,
+    page_x0: float = 0.0,
+    page_y0: float = 0.0,
+    page_width: float | None = None,
+) -> dict:
     """[Flow: Step 1 (PyMuPDF Rect 수신) -> Step 2 (page rect 생성)
           -> Step 3 (embedpdf_rect_from_pdf_user로 y-flip/offset 변환)
           -> Step 4 (origin/size 형태 반환)]
@@ -426,7 +641,9 @@ def _fitz_rect_to_embedpdf_rect(rect: fitz.Rect, page_height: float, page_x0: fl
     EmbedPDF는 origin이 좌상단, y가 아래로 증가하는 device-space 좌표계를 사용하므로
     pdf_coordinate_transform에서 matrix로 y-flip과 CropBox offset을 한 번에 처리한다.
     """
-    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    if page_width is None:
+        page_width = page_height
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_width, page_y0 + page_height)
     return embedpdf_rect_from_pdf_user(rect, page_rect)
 
 
@@ -448,6 +665,7 @@ def extract_pdf_annotations(pdf_bytes: bytes) -> list[dict]:
     annotations: list[dict] = []
     for page in doc:
         page_height = page.rect.height
+        page_width = page.rect.width
         page_y0 = page.rect.y0
         page_y1 = page_height + page_y0
         for idx, annot in enumerate(page.annots()):
@@ -456,7 +674,7 @@ def extract_pdf_annotations(pdf_bytes: bytes) -> list[dict]:
                 embed_type = EMBEDPDF_TYPE_MAP.get(annot_type)
                 if embed_type is None:
                     continue
-                rect = _fitz_rect_to_embedpdf_rect(annot.rect, page_height, page.rect.x0, page_y0)
+                rect = _fitz_rect_to_embedpdf_rect(annot.rect, page_height, page.rect.x0, page_y0, page_width)
                 colors = annot.colors or {}
                 stroke_color = _fitz_color_to_hex(colors.get("stroke")) if colors.get("stroke") else None
                 fill_color = _fitz_color_to_hex(colors.get("fill")) if colors.get("fill") else None

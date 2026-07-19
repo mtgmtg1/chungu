@@ -13,7 +13,6 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd() + '/..', '')
   const devBackendUrl = env.VITE_DEV_BACKEND_URL || 'http://192.168.1.50:28181'
   const devAiBackendUrl = env.VITE_DEV_AI_BACKEND_URL || 'http://localhost:3001'
-  const devSupabaseUrl = env.VITE_DEV_SUPABASE_URL || devBackendUrl
 
   return {
     plugins: [react()],
@@ -29,10 +28,16 @@ export default defineConfig(({ mode }) => {
           target: devBackendUrl,
           changeOrigin: true,
         },
-        '/supabase': {
-          target: 'http://localhost:9999',
-          changeOrigin: true,
-        },
+        '/supabase': env.VITE_DEV_SUPABASE_URL
+          ? {
+              target: env.VITE_DEV_SUPABASE_URL,
+              changeOrigin: true,
+              rewrite: (path) => path.replace(/^\/supabase/, ''),
+            }
+          : {
+              target: devBackendUrl,
+              changeOrigin: true,
+            },
       },
     },
     build: {

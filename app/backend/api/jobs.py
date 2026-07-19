@@ -3229,14 +3229,16 @@ def save_user_annotations(
         return {"ok": True, "annotations_json_storage_path": None}
 
     # source_index >= 0: AI 주석이 있는 searchable PDF용, AI 주석 JSON과 병합
-    # source_index < 0: 원본 PDF용, 사용자 주석만 저장
+    # source_index < 0: 원본/뷰어 PDF용, 사용자 주석만 저장
     if source_index >= 0:
         locked_job = db.execute(
             select(Job).where(Job.id == job_id).with_for_update()
         ).scalar_one()
         entries = list(locked_job.annotated_pdf_files or [])
-        # AI annotate는 현재 단일 entry(index=1)를 사용한다.
-        entry = next((e for e in entries if e.get("index") == 1), None)
+        # source_index에 해당하는 entry를 찾고, 없으면 하위 호환으로 index=1 entry를 사용한다.
+        entry = next((e for e in entries if e.get("index") == source_index), None)
+        if entry is None:
+            entry = next((e for e in entries if e.get("index") == 1), None)
         if entry is None:
             raise HTTPException(status_code=404, detail="Annotation file not found")
         annotations_json_storage_path = entry.get("annotations_json_storage_path") or f"{job_id}/annotated.annotations.json"
@@ -3246,18 +3248,47 @@ def save_user_annotations(
     try:
         client = supabase_client.get_service_client()
 
+        # [Flow: source_index에 따라 좌표 변환 기준 PDF 결정]
+        # 뷰어는 searchable PDF를 렌더링하므로, source_index>=0이면 AI annotated_pdf_files의
+        # storage_path를 우선 사용하고, source_index<0이면 searchable PDF를 우선 사용한다.
+        if source_index >= 0:
+            source_pdf_path = entry.get("storage_path") or job.searchable_pdf_storage_path or job.pdf_storage_path
+            source_pdf_bucket = entry.get("bucket", "pdfs")
+        else:
+            source_pdf_path = job.searchable_pdf_storage_path or job.pdf_storage_path
+            source_pdf_bucket = "pdfs"
+
+        source_pdf_bytes: bytes | None = None
+        if source_pdf_path:
+            try:
+                source_pdf_bytes = client.storage.from_(source_pdf_bucket).download(source_pdf_path)
+            except Exception:
+                # 반대 bucket 폴백 (results/pdfs)
+                other_bucket = "results" if source_pdf_bucket != "results" else "pdfs"
+                try:
+                    source_pdf_bytes = client.storage.from_(other_bucket).download(source_pdf_path)
+                except Exception as e:
+                    logger.warning(f"[save_user_annotations] {job_id} 기준 PDF 다운로드 실패 ({source_pdf_bucket}/{source_pdf_path}): {e}")
+
         # [Flow: AI 백엔드가 보내는 PDF user-space 좌표를 device-space로 변환]
         # 뷰어는 항상 device-space를 기대하므로, JSON 저장 전에 좌표계를 맞춘다.
-        if input_space == "pdf_user" and valid_annotations:
-            original_path = job.pdf_storage_path
-            if original_path:
-                try:
-                    pdf_bytes = client.storage.from_("pdfs").download(original_path)
-                    valid_annotations = pdf_user_annotator._convert_annotations_to_device_space(
-                        valid_annotations, pdf_bytes
-                    )
-                except Exception as e:
-                    logger.warning(f"[save_user_annotations] {job_id} PDF user-space 변환 실패: {e}")
+        if input_space == "pdf_user" and valid_annotations and source_pdf_bytes:
+            valid_annotations = pdf_user_annotator._convert_annotations_to_device_space(
+                valid_annotations, source_pdf_bytes
+            )
+
+        # [Flow: 좌표계 컨텍스트 메타데이터 추가]
+        # 저장되는 좌표가 어떤 PDF, 어떤 page rect 기준 device-space인지 자기 기술한다.
+        coordinate_context = None
+        if source_pdf_bytes and source_pdf_path:
+            coordinate_context = pdf_user_annotator._build_coordinate_context(
+                pdf_storage_path=source_pdf_path,
+                bucket=source_pdf_bucket,
+                page_dimensions=pdf_user_annotator._extract_page_dimensions_from_pdf_bytes(source_pdf_bytes),
+                input_space="device",
+            )
+        if coordinate_context:
+            pdf_user_annotator._attach_coordinate_context(valid_annotations, coordinate_context, overwrite=False)
 
         valid_annotations = _deduplicate_annotations(valid_annotations)
 
@@ -3303,6 +3334,9 @@ def save_user_annotations(
                     logger.info(f"[save_user_annotations] {job_id} AI 주석 삭제 감지: {aid}")
 
             merged = ai_annotations + user_annotations
+            # 병합 후에도 _coordinate_context가 없는 항목(하위 호환 JSON)에만 컨텍스트 추가
+            if coordinate_context:
+                pdf_user_annotator._attach_coordinate_context(merged, coordinate_context, overwrite=False)
 
             client.storage.from_("results").upload(
                 annotations_json_storage_path,
@@ -3879,10 +3913,16 @@ def get_job_annotations(
     _require_job_not_expired(job)
 
     all_annotations = _load_all_annotations(job, source_index, page_no)
-    if all_annotations and job.pdf_storage_path:
+    if all_annotations:
+        # [Flow: 각 주석의 _coordinate_context를 우선 사용하고, 없는 경우에만 원본 PDF로 폴백]
         try:
             client = supabase_client.get_service_client()
-            pdf_bytes = client.storage.from_("pdfs").download(job.pdf_storage_path)
+            pdf_bytes = None
+            if job.pdf_storage_path:
+                try:
+                    pdf_bytes = client.storage.from_("pdfs").download(job.pdf_storage_path)
+                except Exception as e:
+                    logger.warning(f"[get_job_annotations] {job_id} 원본 PDF 다운로드 실패: {e}")
             all_annotations = pdf_user_annotator._convert_annotations_to_pdf_user(
                 all_annotations, pdf_bytes
             )
@@ -4241,10 +4281,16 @@ def get_job_result_json(
         all_annotations = _load_all_annotations(job, source_index, page_no)
         # [Flow: read_job_json도 get_annotations과 동일하게 AI 백엔드가 사용하는 PDF user-space 좌표계로 반환
         #       -> save_annotations 등에서 read_job_json 결과를 그대로 재사용할 때 좌표계 불일치 방지]
-        if all_annotations and job.pdf_storage_path:
+        # 각 주석의 _coordinate_context를 우선 사용하고, 없는 경우에만 원본 PDF로 폴백한다.
+        if all_annotations:
             try:
                 client = supabase_client.get_service_client()
-                pdf_bytes = client.storage.from_("pdfs").download(job.pdf_storage_path)
+                pdf_bytes = None
+                if job.pdf_storage_path:
+                    try:
+                        pdf_bytes = client.storage.from_("pdfs").download(job.pdf_storage_path)
+                    except Exception as e:
+                        logger.warning(f"[get_job_result_json] {job.id} 원본 PDF 다운로드 실패: {e}")
                 all_annotations = pdf_user_annotator._convert_annotations_to_pdf_user(
                     all_annotations, pdf_bytes
                 )

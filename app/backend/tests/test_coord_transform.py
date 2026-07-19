@@ -80,21 +80,22 @@ def test_rect_to_embedpdf():
     # [Flow: Step 1 (A4 페이지 기준 좌표 설정) -> Step 2 (변환 수행) -> Step 3 (device-space 좌표 검증)]
     # A4: 595 x 842 pt, page_x0 = 0
     page_height = 842.0
+    page_width = 595.0
     page_x0 = 0.0
 
     # 페이지 상단 (PDF user-space y1=800, y0=780) → device-space top = 842-800 = 42
-    rect = _rect_to_embedpdf_rect(100, 780, 200, 800, page_height, page_x0)
+    rect = _rect_to_embedpdf_rect(100, 780, 200, 800, page_height, page_x0, page_width=page_width)
     check("상단 영역 origin.y = page_height - y1", rect["origin"]["y"], 42.0)
     check("상단 영역 origin.x = x0 - page_x0", rect["origin"]["x"], 100.0)
     check("상단 영역 size.width = x1 - x0", rect["size"]["width"], 100.0)
     check("상단 영역 size.height = y1 - y0", rect["size"]["height"], 20.0)
 
     # 페이지 하단 (PDF user-space y1=50, y0=30) → device-space top = 842-50 = 792
-    rect2 = _rect_to_embedpdf_rect(100, 30, 200, 50, page_height, page_x0)
+    rect2 = _rect_to_embedpdf_rect(100, 30, 200, 50, page_height, page_x0, page_width=page_width)
     check("하단 영역 origin.y = page_height - y1", rect2["origin"]["y"], 792.0)
 
     # page_x0 오프셋 (CropBox)
-    rect3 = _rect_to_embedpdf_rect(150, 780, 250, 800, page_height, page_x0=50.0)
+    rect3 = _rect_to_embedpdf_rect(150, 780, 250, 800, page_height, page_x0=50.0, page_width=page_width)
     check("CropBox 오프셋 origin.x = x0 - page_x0", rect3["origin"]["x"], 100.0)
 
 
@@ -103,15 +104,16 @@ def test_pdf_point_to_device():
     section("테스트 2: _pdf_point_to_device (PDF point → device-space)")
 
     page_height = 842.0
+    page_width = 595.0
     page_x0 = 0.0
 
     # PDF user-space (100, 800) → device-space (100, 42)
-    pt = _pdf_point_to_device(100, 800, page_height, page_x0)
+    pt = _pdf_point_to_device(100, 800, page_height, page_x0, page_width=page_width)
     check("point x = px - page_x0", pt["x"], 100.0)
     check("point y = page_height - py", pt["y"], 42.0)
 
     # PDF user-space (100, 42) → device-space (100, 800)
-    pt2 = _pdf_point_to_device(100, 42, page_height, page_x0)
+    pt2 = _pdf_point_to_device(100, 42, page_height, page_x0, page_width=page_width)
     check("point y (하단) = page_height - py", pt2["y"], 800.0)
 
 
@@ -120,14 +122,15 @@ def test_round_trip_rect():
     section("테스트 3: round-trip rect 변환 (user-space → device → user-space)")
 
     page_height = 842.0
+    page_width = 595.0
     page_x0 = 0.0
 
     # 원본 PDF user-space 좌표
     orig_x0, orig_y0, orig_x1, orig_y1 = 100, 780, 200, 800
 
     # [Flow: Step 1 (PDF user-space → device-space) -> Step 2 (device-space → PDF user-space) -> Step 3 (원래 좌표로 복원 확인)]
-    dev = _rect_to_embedpdf_rect(orig_x0, orig_y0, orig_x1, orig_y1, page_height, page_x0)
-    restored = _device_rect_to_pdf(dev, page_height, page_x0)
+    dev = _rect_to_embedpdf_rect(orig_x0, orig_y0, orig_x1, orig_y1, page_height, page_x0, page_width=page_width)
+    restored = _device_rect_to_pdf(dev, page_height, page_x0, page_width=page_width)
 
     check("round-trip x0", restored[0], orig_x0)
     check("round-trip y0", restored[1], orig_y0)
@@ -140,12 +143,13 @@ def test_parse_rect_device_to_pdf():
     section("테스트 4: _parse_rect (device-space → PDF user-space)")
 
     page_height = 842.0
+    page_width = 595.0
     page_x0 = 0.0
 
     # device-space rect: origin=(100, 42), size=(100, 20)
     # → PDF user-space: x0=100, y0=842-42-20=780, x1=200, y1=842-42=800
     dev_rect = {"origin": {"x": 100, "y": 42}, "size": {"width": 100, "height": 20}}
-    pdf_rect = _parse_rect(dev_rect, page_height, page_x0)
+    pdf_rect = _parse_rect(dev_rect, page_height, page_x0, page_width=page_width)
 
     check("_parse_rect x0", pdf_rect.x0, 100.0)
     check("_parse_rect y0 (page_height - origin.y - height)", pdf_rect.y0, 780.0)
@@ -154,7 +158,7 @@ def test_parse_rect_device_to_pdf():
 
     # {x, y, width, height} 레거시 형식
     legacy_rect = {"x": 100, "y": 42, "width": 100, "height": 20}
-    pdf_rect2 = _parse_rect(legacy_rect, page_height, page_x0)
+    pdf_rect2 = _parse_rect(legacy_rect, page_height, page_x0, page_width=page_width)
     check("legacy _parse_rect y0", pdf_rect2.y0, 780.0)
     check("legacy _parse_rect y1", pdf_rect2.y1, 800.0)
 
@@ -191,13 +195,14 @@ def test_end_to_end():
     doc.close()
 
     page_height = 842.0
+    page_width = 595.0
     page_x0 = 0.0
 
     # PDF user-space 좌표 (페이지 상단 영역)
     orig_x0, orig_y0, orig_x1, orig_y1 = 100, 780, 200, 800
 
     # EmbedPDF device-space rect 생성
-    dev_rect = _rect_to_embedpdf_rect(orig_x0, orig_y0, orig_x1, orig_y1, page_height, page_x0)
+    dev_rect = _rect_to_embedpdf_rect(orig_x0, orig_y0, orig_x1, orig_y1, page_height, page_x0, page_width=page_width)
     check("device-space rect origin.x", dev_rect["origin"]["x"], orig_x0)
     check("device-space rect origin.y", dev_rect["origin"]["y"], page_height - orig_y1 - (orig_y1 - orig_y0))
     check("device-space rect size.width", dev_rect["size"]["width"], orig_x1 - orig_x0)

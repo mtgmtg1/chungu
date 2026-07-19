@@ -1769,37 +1769,108 @@ def _merge_annotation_jsons(
     ai_annotations_path: str | None,
     user_annotations_path: str,
 ) -> str | None:
-    """[Flow: Step 1 (AI 주석 JSON 다운로드) -> Step 2 (사용자 주석 JSON 다운로드)
-          -> Step 3 (위치 기반 중복 제거 후 병합) -> Step 4 (merged_annotations.json 업로드)
-          -> Step 5 (signed URL 반환)]
+    """[Flow: Step 1 (AI/사용자 주석 JSON 다운로드) -> Step 2 (list 또는 canonical document 파싱)
+          -> Step 3 (좌표계 통일: canonical document가 있으면 canonical 기준, 없으면 device list)
+          -> Step 4 (위치 기반 중복 제거) -> Step 5 (merged_annotations.json 업로드)
+          -> Step 6 (signed URL 반환)]
 
     AI 주석 JSON과 사용자 주석 JSON을 병합하여 원본 PDF 탭에서 한 번에 표시한다.
+    canonical document 형식(JSON object with annotations/page_dimensions/source_pdf_storage_path)과
+    legacy list 형식을 모두 지원한다.
     동일한 pageIndex/rect/type/contents를 가진 주석은 _deduplicate_annotations로
     하나만 남겨 색이 진해지는 중복 렌더링을 방지한다.
     """
     client = supabase_client.get_service_client()
-    merged: list[dict] = []
-    if ai_annotations_path:
+
+    def _load_annotations(path: str | None) -> tuple[str | None, dict[str, dict] | None, str | None, str | None, list[dict]]:
+        """[Flow: Step 1 (Storage에서 JSON 다운로드)
+              -> Step 2 (list이면 device-space 목록, dict이면 canonical header 추출)
+              -> Step 3 (coordinate_system/page_dimensions/source_pdf/annotations 반환)]"""
+        if not path:
+            return (None, None, None, None, [])
         try:
-            ai_bytes = client.storage.from_("results").download(ai_annotations_path)
-            ai_list = json.loads(ai_bytes.decode("utf-8"))
-            if isinstance(ai_list, list):
-                merged.extend(ai_list)
+            raw_bytes = client.storage.from_("results").download(path)
+            data = json.loads(raw_bytes.decode("utf-8"))
         except Exception:
-            pass
-    try:
-        user_bytes = client.storage.from_("results").download(user_annotations_path)
-        user_list = json.loads(user_bytes.decode("utf-8"))
-        if isinstance(user_list, list):
-            merged.extend(user_list)
-    except Exception:
-        pass
+            return (None, None, None, None, [])
+        if isinstance(data, list):
+            return ("device", None, None, None, data)
+        if isinstance(data, dict):
+            _, page_dimensions, annotations = pdf_annotate_converter._extract_annotations_from_document(data)
+            return (
+                data.get("coordinate_system") or "device",
+                page_dimensions,
+                data.get("source_pdf_storage_path"),
+                data.get("source_pdf_bucket", "pdfs"),
+                annotations,
+            )
+        return (None, None, None, None, [])
+
+    def _page_rect_for_annotation(annotation: dict, page_dimensions: dict[str, dict]) -> fitz.Rect | None:
+        """[Flow: Step 1 (annotation의 pageIndex/page_no 추출)
+              -> Step 2 (page_dimensions에서 해당 페이지 크기 조회)
+              -> Step 3 (fitz.Rect(x0, y0, x0+width, y0+height) 반환)]"""
+        if not page_dimensions:
+            return None
+        inner = _annotation_inner(annotation) or annotation
+        page_index = inner.get("pageIndex") if isinstance(inner, dict) else None
+        if not isinstance(page_index, int):
+            return None
+        page_no = page_index + 1
+        dims = page_dimensions.get(str(page_no)) or page_dimensions.get(page_no)
+        if not isinstance(dims, dict):
+            return None
+        width = float(dims.get("width_pt", 0) or 0)
+        height = float(dims.get("height_pt", 0) or 0)
+        x0 = float(dims.get("x0", 0) or 0)
+        y0 = float(dims.get("y0", 0) or 0)
+        if width <= 0 or height <= 0:
+            return None
+        return fitz.Rect(x0, y0, x0 + width, y0 + height)
+
+    ai_space, ai_dims, ai_source, ai_bucket, ai_annotations = _load_annotations(ai_annotations_path)
+    user_space, user_dims, user_source, user_bucket, user_annotations = _load_annotations(user_annotations_path)
+
+    # [Flow: canonical 기준선 선택 — AI canonical document를 우선, 없으면 사용자 canonical document 사용]
+    reference_dimensions = ai_dims or user_dims
+    reference_source = ai_source or user_source
+    reference_bucket = ai_bucket or user_bucket or "pdfs"
+    output_space = ai_space if ai_space == "canonical" else (user_space if user_space == "canonical" else "device")
+
+    merged: list[dict] = []
+    for space, annotations in ((ai_space, ai_annotations), (user_space, user_annotations)):
+        if not annotations:
+            continue
+        if space == output_space:
+            merged.extend(annotations)
+            continue
+        for a in annotations:
+            page_rect = _page_rect_for_annotation(a, reference_dimensions or {})
+            if not page_rect:
+                merged.append(a)
+                continue
+            try:
+                merged.append(pdf_user_annotator._convert_annotation_item(a, page_rect, space, output_space))
+            except Exception as e:
+                logger.warning(f"[_merge_annotation_jsons] {job_id} 주석 좌표 변환 실패: {e}")
+                merged.append(a)
+
     merged = _deduplicate_annotations(merged)
     merged_path = f"{job_id}/merged_annotations.json"
     try:
+        if output_space == "canonical" and reference_dimensions and reference_source:
+            merged_document = pdf_annotate_converter._build_canonical_annotations_document(
+                merged,
+                source_pdf_storage_path=reference_source,
+                source_pdf_bucket=reference_bucket,
+                page_dimensions=reference_dimensions,
+            )
+            upload_payload = json.dumps(merged_document, ensure_ascii=False).encode("utf-8")
+        else:
+            upload_payload = json.dumps(merged, ensure_ascii=False).encode("utf-8")
         client.storage.from_("results").upload(
             merged_path,
-            json.dumps(merged, ensure_ascii=False).encode("utf-8"),
+            upload_payload,
             {"content-type": "application/json", "upsert": "true"},
         )
         return supabase_client.get_signed_download_url(

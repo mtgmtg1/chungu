@@ -1,6 +1,6 @@
-// [Flow: Step 1 (Supabase 세션 토큰 획득) -> Step 2 (TUS Upload 인스턴스 생성) -> Step 3 (청크 업로드 진행) -> Step 4 (완료 시 resolve)]
+// [Flow: Step 1 (access token 획득: dev bypass 또는 Supabase session) -> Step 2 (TUS Upload 인스턴스 생성) -> Step 3 (청크 업로드 진행) -> Step 4 (완료 시 resolve)]
 import * as tus from 'tus-js-client'
-import { supabase } from './supabase.js'
+import { getToken } from './api.js'
 
 /**
  * 단일 파일을 Supabase Storage의 pdfs 버킷에 TUS 프로토콜로 업로드한다.
@@ -13,8 +13,8 @@ import { supabase } from './supabase.js'
  */
 export function uploadFileTUS(file, storagePath, onProgress) {
   return new Promise(async (resolve, reject) => {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session?.access_token) {
+    const token = await getToken()
+    if (!token) {
       reject(new Error('인증 세션이 없습니다'))
       return
     }
@@ -35,7 +35,7 @@ export function uploadFileTUS(file, storagePath, onProgress) {
       endpoint,
       retryDelays: [0, 3000, 5000, 10000, 20000],
       headers: {
-        authorization: `Bearer ${session.access_token}`,
+        authorization: `Bearer ${token}`,
         'x-upsert': 'true',
       },
       uploadDataDuringCreation: true,

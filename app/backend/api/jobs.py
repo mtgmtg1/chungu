@@ -3248,8 +3248,10 @@ def save_user_annotations(
     if valid_count == 0:
         return {"ok": True, "annotations_json_storage_path": None}
 
-    # source_index >= 0: AI 주석이 있는 searchable PDF용, AI 주석 JSON과 병합
-    # source_index < 0: 원본 PDF용, 사용자 주석만 저장
+    # source_index >= 0: 파일별 사용자 주석 JSON(user_annotations_{source_index}.json)에 저장
+    #                  AI 주석 entry가 있으면 병합 대상 경로로 함께 사용
+    # source_index < 0: 하위 호환 — 공유 user_annotations.json에 저장
+    entry = None
     if source_index >= 0:
         locked_job = db.execute(
             select(Job).where(Job.id == job_id).with_for_update()
@@ -3257,9 +3259,10 @@ def save_user_annotations(
         entries = list(locked_job.annotated_pdf_files or [])
         # AI annotate는 현재 단일 entry(index=1)를 사용한다.
         entry = next((e for e in entries if e.get("index") == 1), None)
-        if entry is None:
-            raise HTTPException(status_code=404, detail="Annotation file not found")
-        annotations_json_storage_path = entry.get("annotations_json_storage_path") or f"{job_id}/annotated.annotations.json"
+        if entry is not None:
+            annotations_json_storage_path = entry.get("annotations_json_storage_path") or f"{job_id}/annotated.annotations.json"
+        else:
+            annotations_json_storage_path = f"{job_id}/user_annotations_{source_index}.json"
     else:
         annotations_json_storage_path = f"{job_id}/user_annotations.json"
 
@@ -3271,7 +3274,7 @@ def save_user_annotations(
         # - device/canonical 입력: source_index >= 0이면 searchable(annotated entry), 아니면 원본 PDF
         if input_space == "pdf_user":
             source_pdf_path = job.searchable_pdf_storage_path or job.pdf_storage_path
-        elif source_index >= 0:
+        elif source_index >= 0 and entry is not None:
             source_pdf_path = entry.get("storage_path") or job.searchable_pdf_storage_path or job.pdf_storage_path
         else:
             source_pdf_path = job.pdf_storage_path
@@ -3296,7 +3299,7 @@ def save_user_annotations(
 
         page_dimensions = pdf_annotate_converter._page_dimensions(pdf_bytes) if pdf_bytes else {}
 
-        if source_index >= 0:
+        if source_index >= 0 and entry is not None:
             # [Flow: 기존 AI 주석 JSON과 병합]
             # 사용자가 AI 주석을 편집/삭제한 경우를 감지해 보존한다.
             try:

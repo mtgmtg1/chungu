@@ -106,9 +106,16 @@ def _annot(annot_id: str, page_index: int, contents: str = "") -> dict:
     }
 
 
-# ─── 테스트 1: AI 주석도 사용자 주석도 없으면 빈 리스트 ───
+def _annotations(result):
+    """[Flow: _load_all_annotations의 dict 응답에서 annotations 배열 추출]"""
+    if isinstance(result, dict) and "annotations" in result:
+        return result["annotations"]
+    return result
+
+
+# ─── 테스트 1: AI 주석도 사용자 주석도 없으면 빈 annotations 배열 ───
 def test_no_annotations_returns_empty():
-    section("테스트 1: 주석이 전혀 없으면 빈 리스트 반환 (404 아님)")
+    section("테스트 1: 주석이 전혀 없으면 빈 annotations 배열 반환 (404 아님)")
 
     job = make_job(annotated_pdf_files=[])
     mock_client = make_mock_storage({})
@@ -116,7 +123,7 @@ def test_no_annotations_returns_empty():
     with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
         result = _load_all_annotations(job, source_index=0)
 
-    check("빈 리스트 반환", result, [])
+    check("빈 annotations 배열 반환", _annotations(result), [])
 
 
 # ─── 테스트 2: AI 주석만 있으면 AI 주석 반환 ───
@@ -142,9 +149,9 @@ def test_ai_annotations_only():
     with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
         result = _load_all_annotations(job, source_index=0)
 
-    check("AI 주석 2개 반환", len(result), 2)
-    check("첫 번째 주석 ID", result[0]["annotation"]["id"], "ai-1")
-    check("두 번째 주석 ID", result[1]["annotation"]["id"], "ai-2")
+    check("AI 주석 2개 반환", len(_annotations(result)), 2)
+    check("첫 번째 주석 ID", _annotations(result)[0]["annotation"]["id"], "ai-1")
+    check("두 번째 주석 ID", _annotations(result)[1]["annotation"]["id"], "ai-2")
 
 
 # ─── 테스트 3: 사용자 주석만 있으면 사용자 주석 반환 (AI 경로 None) ───
@@ -160,8 +167,8 @@ def test_user_annotations_only_no_ai_path():
     with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
         result = _load_all_annotations(job, source_index=0)
 
-    check("사용자 주석 1개 반환", len(result), 1)
-    check("주석 ID", result[0]["annotation"]["id"], "user-1")
+    check("사용자 주석 1개 반환", len(_annotations(result)), 1)
+    check("주석 ID", _annotations(result)[0]["annotation"]["id"], "user-1")
 
 
 # ─── 테스트 4: AI 주석 + 사용자 주석 병합 (ID 중복 제거) ───
@@ -191,13 +198,13 @@ def test_merge_ai_and_user_with_dedup():
         result = _load_all_annotations(job, source_index=0)
 
     # shared-id는 AI 주석이 먼저 들어가고 사용자 주석은 중복 제거되어야 함
-    ids = [a["annotation"]["id"] for a in result]
-    check("병합 후 3개 (중복 제거)", len(result), 3)
+    ids = [a["annotation"]["id"] for a in _annotations(result)]
+    check("병합 후 3개 (중복 제거)", len(_annotations(result)), 3)
     check("shared-id 1개만", ids.count("shared-id"), 1)
     check("ai-only 포함", "ai-only" in ids, True)
     check("user-only 포함", "user-only" in ids, True)
     # AI 주석이 먼저 로드되므로 shared-id의 contents는 AI 것
-    shared = next(a for a in result if a["annotation"]["id"] == "shared-id")
+    shared = next(a for a in _annotations(result) if a["annotation"]["id"] == "shared-id")
     check("shared-id는 AI 주석 우선", shared["annotation"]["contents"], "AI 주석")
 
 
@@ -215,8 +222,8 @@ def test_fallback_to_shared_user_annotations():
     with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
         result = _load_all_annotations(job, source_index=0)
 
-    check("폴백 주석 1개 반환", len(result), 1)
-    check("주석 ID", result[0]["annotation"]["id"], "user-fallback")
+    check("폴백 주석 1개 반환", len(_annotations(result)), 1)
+    check("주석 ID", _annotations(result)[0]["annotation"]["id"], "user-fallback")
 
 
 # ─── 테스트 6: page_no 필터링 (0-based pageIndex 매칭) ───
@@ -249,10 +256,10 @@ def test_page_no_filtering():
         # page_no=1 → pageIndex=0만 반환
         result_page1 = _load_all_annotations(job, source_index=0, page_no=1)
 
-    check("page_no=2 → 1개", len(result_page2), 1)
-    check("page_no=2 → pageIndex=1 주석", result_page2[0]["annotation"]["id"], "ai-page2")
-    check("page_no=1 → 1개", len(result_page1), 1)
-    check("page_no=1 → pageIndex=0 주석", result_page1[0]["annotation"]["id"], "ai-page1")
+    check("page_no=2 → 1개", len(_annotations(result_page2)), 1)
+    check("page_no=2 → pageIndex=1 주석", _annotations(result_page2)[0]["annotation"]["id"], "ai-page2")
+    check("page_no=1 → 1개", len(_annotations(result_page1)), 1)
+    check("page_no=1 → pageIndex=0 주석", _annotations(result_page1)[0]["annotation"]["id"], "ai-page1")
 
 
 # ─── 테스트 7: _resolve_annotations_json_path가 None을 반환하는 job ───
@@ -268,7 +275,7 @@ def test_resolve_returns_none_no_error():
     mock_client = make_mock_storage({})
     with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
         result = _load_all_annotations(job, source_index=0)
-    check("None 경로 시 빈 리스트", result, [])
+    check("None 경로 시 빈 annotations 배열", _annotations(result), [])
 
 
 # ─── 테스트 8: source_index별 다른 파일 로드 ───
@@ -287,8 +294,8 @@ def test_source_index_isolation():
         result_0 = _load_all_annotations(job, source_index=0)
         result_1 = _load_all_annotations(job, source_index=1)
 
-    check("source_index=0 → idx0 주석", result_0[0]["annotation"]["id"], "user-idx0")
-    check("source_index=1 → idx1 주석", result_1[0]["annotation"]["id"], "user-idx1")
+    check("source_index=0 → idx0 주석", _annotations(result_0)[0]["annotation"]["id"], "user-idx0")
+    check("source_index=1 → idx1 주석", _annotations(result_1)[0]["annotation"]["id"], "user-idx1")
 
 
 # ─── 메인 ─────────────────────────────────────────────────────

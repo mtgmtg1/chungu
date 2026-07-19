@@ -247,6 +247,128 @@ function ImageList({ urls, t }) {
 }
 
 /**
+ * [Flow: Step 1 (page_dimensions에서 1-based page_no 또는 0-based pageIndex로 크기 조회)
+ *       -> Step 2 (width_pt/height_pt 반환, 없으면 null)]
+ */
+function getAnnotationPageDimensions(pageDimensions, pageIndex) {
+  if (!pageDimensions || typeof pageDimensions !== "object") return null;
+  const dims = pageDimensions[String(pageIndex + 1)] ?? pageDimensions[pageIndex + 1];
+  if (!dims || typeof dims !== "object") return null;
+  const width = Number(dims.width_pt);
+  const height = Number(dims.height_pt);
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) return null;
+  return { width, height };
+}
+
+/**
+ * [Flow: Step 1 (canonical rect origin/size 또는 x/y/width/height 수신)
+ *       -> Step 2 (page_width/height를 곱해 device-space points로 변환)
+ *       -> Step 3 ({origin, size} dict 반환)]
+ */
+function canonicalToDeviceRect(rect, pageWidth, pageHeight) {
+  if (!rect || typeof rect !== "object") return rect;
+  const hasOrigin = rect.origin && typeof rect.origin.x === "number" && typeof rect.origin.y === "number";
+  const hasXY = typeof rect.x === "number" && typeof rect.y === "number";
+  if (hasOrigin) {
+    return {
+      origin: { x: rect.origin.x * pageWidth, y: rect.origin.y * pageHeight },
+      size: { width: rect.size.width * pageWidth, height: rect.size.height * pageHeight },
+    };
+  }
+  if (hasXY) {
+    return {
+      origin: { x: rect.x * pageWidth, y: rect.y * pageHeight },
+      size: { width: rect.width * pageWidth, height: rect.height * pageHeight },
+    };
+  }
+  return rect;
+}
+
+/**
+ * [Flow: Step 1 (canonical point {x, y} 수신)
+ *       -> Step 2 (page_width/height를 곱해 device-space point로 변환)]
+ */
+function canonicalToDevicePoint(point, pageWidth, pageHeight) {
+  if (!point || typeof point !== "object") return point;
+  return { x: point.x * pageWidth, y: point.y * pageHeight };
+}
+
+/**
+ * [Flow: Step 1 (주석 객체 추출) -> Step 2 (pageIndex에 해당하는 page_dimensions 획득)
+ *       -> Step 3 (rect/segmentRects/calloutLine/start/end/rectangleDifferences/inkList/paths를 device-space로 변환)
+ *       -> Step 4 (annotation wrapper를 보존한 채 반환)]
+ */
+function canonicalToDeviceAnnotation(item, pageDimensions) {
+  if (!item || typeof item !== "object") return item;
+  const ann = item.annotation || item;
+  const pageIndex = typeof ann.pageIndex === "number" ? ann.pageIndex : (ann.page_index ?? 0);
+  const dims = getAnnotationPageDimensions(pageDimensions, pageIndex);
+  if (!dims) return item;
+  const { width, height } = dims;
+  const newAnn = { ...ann };
+  if (ann.rect) newAnn.rect = canonicalToDeviceRect(ann.rect, width, height);
+  if (Array.isArray(ann.segmentRects)) {
+    newAnn.segmentRects = ann.segmentRects.map((r) => canonicalToDeviceRect(r, width, height));
+  }
+  if (Array.isArray(ann.calloutLine)) {
+    newAnn.calloutLine = ann.calloutLine.map((p) => canonicalToDevicePoint(p, width, height));
+  }
+  if (ann.start && typeof ann.start === "object") {
+    newAnn.start = canonicalToDevicePoint(ann.start, width, height);
+  }
+  if (ann.end && typeof ann.end === "object") {
+    newAnn.end = canonicalToDevicePoint(ann.end, width, height);
+  }
+  if (ann.rectangleDifferences && typeof ann.rectangleDifferences === "object") {
+    const rd = ann.rectangleDifferences;
+    newAnn.rectangleDifferences = {
+      left: (rd.left ?? 0) * width,
+      right: (rd.right ?? 0) * width,
+      top: (rd.top ?? 0) * height,
+      bottom: (rd.bottom ?? 0) * height,
+    };
+  }
+  if (Array.isArray(ann.inkList)) {
+    newAnn.inkList = ann.inkList.map((ink) => {
+      if (!ink || typeof ink !== "object") return ink;
+      return {
+        ...ink,
+        points: Array.isArray(ink.points)
+          ? ink.points.map((p) => canonicalToDevicePoint(p, width, height))
+          : ink.points,
+      };
+    });
+  }
+  if (Array.isArray(ann.paths)) {
+    newAnn.paths = ann.paths.map((stroke) =>
+      Array.isArray(stroke)
+        ? stroke.map((p) => canonicalToDevicePoint(p, width, height))
+        : stroke
+    );
+  }
+  if (item.annotation) return { ...item, annotation: newAnn };
+  return newAnn;
+}
+
+/**
+ * [Flow: Step 1 (Storage의 annotations JSON을 수신 — array 또는 canonical object)
+ *       -> Step 2 (canonical object이면 annotations 추출 및 device-space로 변환)
+ *       -> Step 3 (legacy array는 그대로 반환)]
+ */
+function normalizeAnnotationsJson(data) {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object" && Array.isArray(data.annotations)) {
+    const coordinateSystem = data.coordinate_system || "device";
+    const pageDimensions = data.page_dimensions;
+    if (coordinateSystem === "canonical" && pageDimensions) {
+      return data.annotations.map((a) => canonicalToDeviceAnnotation(a, pageDimensions));
+    }
+    return data.annotations;
+  }
+  return null;
+}
+
+/**
  * [Flow: Step 1 (annotationRuns에서 processing/error 항목만 필터링)
  *       -> Step 2 (processing이 있으면 스피너 + "N개 생성 중" 헤더 표시)
  *       -> Step 3 (각 run의 상태 아이콘 + instruction + 취소 버튼 렌더링)]
@@ -713,9 +835,10 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
         return r.json();
       })
       .then((data) => {
-        console.log("[SourcePanel] annotations json fetched:", Array.isArray(data) ? data.length : "invalid", "first item:", Array.isArray(data) ? data[0] : null);
+        const annotations = normalizeAnnotationsJson(data);
+        console.log("[SourcePanel] annotations json fetched:", Array.isArray(annotations) ? annotations.length : "invalid", "first item:", Array.isArray(annotations) ? annotations[0] : null);
         if (!cancelled) {
-          setSelectedAnnotationsJson(Array.isArray(data) ? data : null);
+          setSelectedAnnotationsJson(annotations);
         }
       })
       .catch((e) => {

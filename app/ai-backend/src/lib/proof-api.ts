@@ -397,14 +397,14 @@ export async function updateAnnotation(
  * @param jobId Job ID
  * @param sourceIndex source_files 인덱스
  * @param annotations EmbedPDF AnnotationTransferItem[]
- * @param inputSpace 입력 좌표계: "device"(embedpdf device-space, 프론트엔드) 또는 "pdf_user"(PDF user-space, AI 백엔드)
+ * @param inputSpace 입력 좌표계: "device"(embedpdf device-space, 프론트엔드), "pdf_user"(PDF user-space, AI 백엔드) 또는 "canonical"(normalized 0-1)
  * @param authHeaders 인증 헤더
  */
 export async function saveAnnotations(
   jobId: string,
   sourceIndex: number,
   annotations: Array<Record<string, unknown>>,
-  inputSpace: 'device' | 'pdf_user' = 'device',
+  inputSpace: 'device' | 'pdf_user' | 'canonical' = 'device',
   authHeaders?: AuthHeaders,
 ): Promise<Record<string, unknown>> {
   return request<Record<string, unknown>>(

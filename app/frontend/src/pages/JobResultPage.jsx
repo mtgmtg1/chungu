@@ -534,10 +534,22 @@ export default function JobResultPage() {
       // 기존에는 항상 source_index: -1로 전송하여 모든 주석이 user_annotations.json에 합쳐졌으나,
       // 파일 추가 시 주석이 섞이는 문제를 해결하기 위해 source_index를 파일별로 분리.
       const fileSourceIndex = selected.source_index ?? -1;
-      await api.saveUserAnnotations(jobId, {
+      const result = await api.saveUserAnnotations(jobId, {
         source_index: fileSourceIndex,
         annotations,
       });
+      // [Flow: 백엔드가 재생성한 merged_annotations.json의 새 signed URL로 sourceFiles 갱신]
+      // 자동 저장 후 파일 전환/복귀 시 이전 병합본을 로드해 기존 사용자 주석이 유실되는 버그를 방지.
+      // loadJob 없이 annotations_json_url만 갱신하면 SourcePanel이 최신 병합본을 fetch한다.
+      if (result?.merged_annotations_url) {
+        setSourceFiles((prev) =>
+          prev.map((file, idx) =>
+            idx === selectedFileIndex
+              ? { ...file, annotations_json_url: result.merged_annotations_url }
+              : file,
+          ),
+        );
+      }
     } catch (e) {
       // 자동 저장 실패는 콘솔에만 기록하고 사용자에게 노출하지 않는다.
       console.error("[auto-save annotations] failed:", e);

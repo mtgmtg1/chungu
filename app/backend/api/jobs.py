@@ -3338,6 +3338,8 @@ def save_user_annotations(
     #                  AI 주석 entry가 있으면 병합 대상 경로로 함께 사용
     # source_index < 0: 하위 호환 — 공유 user_annotations.json에 저장
     entry = None
+    # [Flow: 병합 재생성용 AI 주석 경로 — entry가 있으면 공유 annotations JSON 경로, 없으면 None]
+    ai_annotations_path_for_merge: str | None = None
     if source_index >= 0:
         locked_job = db.execute(
             select(Job).where(Job.id == job_id).with_for_update()
@@ -3347,6 +3349,7 @@ def save_user_annotations(
         entry = next((e for e in entries if e.get("index") == 1), None)
         if entry is not None:
             annotations_json_storage_path = entry.get("annotations_json_storage_path") or f"{job_id}/annotated.annotations.json"
+            ai_annotations_path_for_merge = annotations_json_storage_path
         else:
             annotations_json_storage_path = f"{job_id}/user_annotations_{source_index}.json"
     else:
@@ -3477,10 +3480,27 @@ def save_user_annotations(
                 {"content-type": "application/json", "upsert": "true"},
             )
 
+        # [Flow: merged_annotations.json 재생성]
+        # 자동 저장 후 파일 전환/복귀 시 이전 병합본을 로드해 기존 사용자 주석이 유실되는 버그를 방지.
+        # 저장 직후 병합을 수행해 merged_annotations.json을 최신 상태로 갱신하고,
+        # 응답에 새 signed URL을 반환해 프론트엔드가 즉시 최신 병합본을 fetch할 수 있도록 한다.
+        if source_index >= 0 and entry is not None:
+            user_annotations_path_for_merge = per_file_user_annotations_path
+        else:
+            user_annotations_path_for_merge = annotations_json_storage_path
+        merged_url: str | None = None
+        try:
+            merged_url = _merge_annotation_jsons(
+                job_id, ai_annotations_path_for_merge, user_annotations_path_for_merge
+            )
+        except Exception as e:
+            logger.warning(f"[save_user_annotations] {job_id} merged_annotations 재생성 실패: {e}")
+
         cache.invalidate_pattern(f"preview:{job_id}:*")
         return {
             "ok": True,
             "annotations_json_storage_path": annotations_json_storage_path,
+            "merged_annotations_url": merged_url,
         }
     except Exception as e:
         logger.exception(f"[save_user_annotations] {job_id} source_index={source_index} 실패: {e}")

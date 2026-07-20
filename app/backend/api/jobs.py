@@ -2312,9 +2312,12 @@ def preview_job(
     if job.pdf_storage_path:
         try:
             source_type = _detect_source_type(job)
-            # [Flow: PDF는 원본 서명 URL, docx/hwp/pptx는 _source_files 이후 변환된 PDF preview URL 사용]
+            # [Flow: PDF는 searchable PDF가 있으면 우선 사용, 없으면 원본 서명 URL 사용]
+            # searchable PDF가 텍스트 레이어를 포함하므로 뷰어에서 텍스트 검색/선택이 가능하다.
+            # docx/hwp/pptx는 _source_files 이후 변환된 PDF preview URL을 사용한다.
             if source_type == "pdf":
-                source_url = supabase_client.get_signed_download_url(job.pdf_storage_path, bucket="pdfs", expires_in=3600)
+                pdf_path_for_preview = job.searchable_pdf_storage_path or job.pdf_storage_path
+                source_url = supabase_client.get_signed_download_url(pdf_path_for_preview, bucket="pdfs", expires_in=3600)
         except Exception:
             pass
 

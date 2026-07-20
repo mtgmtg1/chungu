@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import logging
+import re
+from html import unescape
 from typing import Any
 
 import fitz  # PyMuPDF
@@ -49,6 +51,20 @@ def _normalize_rec_text(text: Any) -> str:
     if not isinstance(text, str):
         text = str(text) if text is not None else ""
     return text.strip()
+
+
+def _strip_html_tags(content: str) -> str:
+    """table 블록의 HTML 태그를 제거하고 순수 텍스트만 남긴다.
+
+    Args:
+        content: OCR이 반환한 table 블록의 HTML 문자열
+
+    Returns:
+        HTML 태그와 HTML 엔티티를 제거하고 연속 공백을 정리한 문자열
+    """
+    text = re.sub(r"<[^>]+>", " ", content)
+    text = unescape(text)
+    return " ".join(text.split())
 
 
 def _pick_font_name(language: str | None) -> str:
@@ -265,6 +281,7 @@ def add_text_layer_from_ocr(
 # image/figure 등 텍스트가 없는 블록은 searchable PDF 텍스트 레이어에서도 제외한다.
 _TEXT_BLOCK_LABELS_FOR_TEXT_LAYER = {
     "text", "title", "figure_title", "seal", "header", "footer", "reference", "formula",
+    "paragraph_title", "table",
 }
 
 
@@ -305,7 +322,7 @@ def _extract_items_from_parsing_res_list(layout: dict) -> list[tuple[str, BBox]]
 
     AI Studio API가 overall_ocr_res를 더 이상 반환하지 않는 경우, parsing_res_list의
     텍스트 블록(block_content + block_bbox)을 사용해 텍스트 레이어를 생성한다.
-    표(table) 블록은 block_content가 HTML이므로 제외한다.
+    표(table) 블록은 HTML 태그를 제거한 순수 텍스트를 추가한다.
     """
     blocks = layout.get("parsing_res_list") or []
     if not isinstance(blocks, list):
@@ -324,6 +341,9 @@ def _extract_items_from_parsing_res_list(layout: dict) -> list[tuple[str, BBox]]
         content = block.get("block_content", "")
         if not isinstance(content, str):
             content = str(content) if content else ""
+        # table 블록은 HTML 태그를 벗겨 순수 텍스트만 텍스트 레이어에 추가한다.
+        if block_label == "table":
+            content = _strip_html_tags(content)
         text = content.strip()
         if not text:
             continue

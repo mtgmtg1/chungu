@@ -172,7 +172,8 @@ class TestPdfAnnotateConverterRunVisionPipeline:
         assert len(annotations) == 1
         ann = annotations[0]["annotation"]
         assert ann["type"] == 9
-        assert ann["contents"] == "AI 주석"
+        assert ann["contents"] == ""
+        assert ann["custom"]["comment"] == "AI 주석"
 
         # [Flow: DB entry 상태 검증 -> index=1인 entry가 done이고 annotations_json_storage_path 설정]
         assert job.annotated_pdf_files is not None
@@ -290,7 +291,7 @@ class TestPdfAnnotateConverterSearchableTextPipeline:
         # 같은 텍스트가 한 페이지에 2회 있으므로 segmentRects가 2개여야 한다.
         assert "segmentRects" in ann
         assert len(ann["segmentRects"]) == 2
-        assert ann["custom"] == {"searchText": "CONFIDENTIAL"}
+        assert ann["custom"] == {"searchText": "CONFIDENTIAL", "comment": "secret"}
         # bounding rect는 두 세그먼트를 모두 감싸므로, 세그먼트 하나보다 높이가 커야 한다.
         assert ann["rect"]["size"]["height"] > ann["segmentRects"][0]["size"]["height"]
 

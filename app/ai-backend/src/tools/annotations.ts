@@ -265,7 +265,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
                   type: inner.type,
                   page_no: (inner.pageIndex ?? 0) + 1,
                   color: inner.color,
-                  comment: inner.contents,
+                  comment: inner.custom?.comment || inner.contents || '',
                 };
               }),
               total,
@@ -604,8 +604,11 @@ function _buildAnnotationItem(p: PendingAnnotation): Record<string, unknown> {
         strokeColor: hexColor,
         color: hexColor,
         opacity: p.target.opacity,
-        contents: p.target.comment,
-        custom: p.target.search_text ? { searchText: p.target.search_text } : undefined,
+        contents: '', // 뷰어 상의 텍스트 겹침 방지를 위해 contents 필드는 비워둔다.
+        custom: {
+          ...(p.target.search_text ? { searchText: p.target.search_text } : {}),
+          comment: p.target.comment,
+        },
       },
     };
   }

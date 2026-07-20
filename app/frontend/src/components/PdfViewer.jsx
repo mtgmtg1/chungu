@@ -27,10 +27,30 @@ const PDFViewer = lazy(() =>
  */
 function sanitizeAnnotationsJson(items) {
   if (!Array.isArray(items)) return [];
-  return items.filter((item) => {
-    if (!item || typeof item !== "object") return false;
-    // annotation 객체에 rect 가 있으면 origin/size 검증
+  const sanitized = [];
+  for (const originalItem of items) {
+    if (!originalItem || typeof originalItem !== "object") continue;
+
+    // annotation 객체를 안전하게 복사
+    const item = { ...originalItem };
+    if (item.annotation && typeof item.annotation === "object") {
+      item.annotation = { ...item.annotation };
+    }
+    const ann = item.annotation || item;
+
+    // 하이라이트 주석 텍스트 겹침 버그 방지를 위해 contents 필드 값을 custom.comment 로 이관하고 contents는 비워줌
+    const rawType = ann.type;
+    const isHighlight = rawType === 9 || (typeof rawType === "string" && rawType.toLowerCase() === "highlight");
+    if (isHighlight && ann.contents) {
+      const custom = ann.custom || {};
+      if (!custom.comment) {
+        ann.custom = { ...custom, comment: ann.contents };
+      }
+      ann.contents = "";
+    }
+
     const rect = item.rect ?? item.annotation?.rect;
+    let rectValid = true;
     if (rect) {
       if (rect.origin && typeof rect.origin.x === "number" && rect.size) {
         // 정상 포맷: {origin: {x, y}, size: {width, height}}
@@ -39,13 +59,10 @@ function sanitizeAnnotationsJson(items) {
         rect.origin = { x: rect.x, y: rect.y };
         rect.size = { width: rect.width, height: rect.height || 0 };
       } else {
-        return false;
+        rectValid = false;
       }
 
-      // [Flow: 좌표계 혼동 가능성 경고 — origin.y가 일반적인 device-space 범위를 벗어나면 로깅]
-      // PDF 뷰어는 rect.origin.y를 페이지 상단에서 아래로 떨어진 device-space 픽셀로 해석한다.
-      // AI가 PDF user-space 좌표를 그대로 넘기면 origin.y가 페이지 높이에 가까워 하단에 렌더링된다.
-      if (typeof rect.origin.y === "number" && rect.origin.y > 2000) {
+      if (rectValid && typeof rect.origin.y === "number" && rect.origin.y > 2000) {
         console.warn(
           "[PdfViewer] 의심스러운 annotation rect.origin.y 감지:",
           rect,
@@ -55,10 +72,13 @@ function sanitizeAnnotationsJson(items) {
         );
       }
     }
-    // page 인덱스가 음수면 제거
-    if (typeof item.pageIndex === "number" && item.pageIndex < 0) return false;
-    return true;
-  });
+
+    if (!rectValid) continue;
+    if (typeof item.pageIndex === "number" && item.pageIndex < 0) continue;
+
+    sanitized.push(item);
+  }
+  return sanitized;
 }
 
 /**

@@ -190,12 +190,15 @@ def build_embedpdf_annotations(
                         "strokeColor": _rgb_to_hex(t.color),
                         "color": _rgb_to_hex(t.color),
                         "opacity": t.opacity if t.opacity is not None else DEFAULT_OPACITY,
-                        "contents": t.comment,
+                        "contents": "",  # 뷰어 상의 텍스트 겹침 방지를 위해 contents 필드는 비워둔다.
+                        "custom": {
+                            "comment": t.comment
+                        }
                     }
                 }
                 # [Flow: 검색에 사용된 원본 텍스트가 있으면 custom 메타데이터로 보존]
                 if t.search_text:
-                    highlight_annotation["annotation"]["custom"] = {"searchText": t.search_text}
+                    highlight_annotation["annotation"]["custom"]["searchText"] = t.search_text
                 annotations.append(highlight_annotation)
 
             # callout 주석 생성 (needs_callout일 때)

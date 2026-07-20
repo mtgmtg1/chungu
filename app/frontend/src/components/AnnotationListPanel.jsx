@@ -59,9 +59,18 @@ export default function AnnotationListPanel({ annotationsJson, viewerRef, onAnno
   /**
    * [Flow: Step 1 (코멘트 변경) -> Step 2 (viewerRef.updateAnnotation 호출) -> Step 3 (자동 저장 트리거)]
    */
-  const handleCommentChange = (pageIndex, id, contents) => {
+  const handleCommentChange = (pageIndex, id, contents, ann) => {
     if (viewerRef?.current?.updateAnnotation) {
-      viewerRef.current.updateAnnotation(pageIndex, id, { contents });
+      const type = ann.type;
+      const isHighlight = type === 9 || (typeof type === "string" && type.toLowerCase() === "highlight");
+      if (isHighlight) {
+        viewerRef.current.updateAnnotation(pageIndex, id, {
+          contents: "",
+          custom: { ...ann.custom, comment: contents }
+        });
+      } else {
+        viewerRef.current.updateAnnotation(pageIndex, id, { contents });
+      }
       if (onAnnotationChanged) onAnnotationChanged();
     }
   };
@@ -107,7 +116,7 @@ export default function AnnotationListPanel({ annotationsJson, viewerRef, onAnno
 
   // 미리보기 텍스트 — 코멘트가 있으면 코멘트, 없으면 하이라이트된 텍스트
   const previewText = (ann) => {
-    const text = ann.contents || ann.content || "";
+    const text = ann.custom?.comment || ann.contents || ann.content || "";
     if (text) return text.length > 40 ? text.slice(0, 40) + "…" : text;
     return t("page:result.annotationNoText");
   };
@@ -202,8 +211,8 @@ export default function AnnotationListPanel({ annotationsJson, viewerRef, onAnno
                           {t("page:result.annotationEditComment")}
                         </label>
                         <textarea
-                          value={ann.contents || ann.content || ""}
-                          onChange={(e) => handleCommentChange(pageIndex, id, e.target.value)}
+                          value={ann.custom?.comment || ann.contents || ann.content || ""}
+                          onChange={(e) => handleCommentChange(pageIndex, id, e.target.value, ann)}
                           onClick={(e) => e.stopPropagation()}
                           rows={2}
                           className="w-full px-2 py-1 border border-outline-variant rounded text-xs resize-none focus:outline-none focus:ring-1 focus:ring-primary/40"

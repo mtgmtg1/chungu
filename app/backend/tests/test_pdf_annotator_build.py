@@ -62,9 +62,8 @@ class TestBuildEmbedpdfAnnotations:
         item = result[0]
         assert "annotation" in item
         ann = item["annotation"]
-        assert ann["type"] == HIGHLIGHT_TYPE
-        assert ann["pageIndex"] == 0
-        assert ann["contents"] == "test"
+        assert ann["contents"] == ""
+        assert ann["custom"]["comment"] == "test"
         assert ann["opacity"] == DEFAULT_OPACITY
         # build_embedpdf_annotations는 canonical normalized (0-1, 좌상단 원점) 좌표를 반환한다.
         # A4 842pt 기준 PDF user-space (100,700,200,720) -> canonical
@@ -169,8 +168,10 @@ class TestBuildEmbedpdfAnnotations:
 
         assert len(result) == 2
         # y0 기준 오름차순(PDF user-space)이므로 lower(500) 먼저, upper(700) 다음
-        assert result[0]["annotation"]["contents"] == "lower"
-        assert result[1]["annotation"]["contents"] == "upper"
+        assert result[0]["annotation"]["contents"] == ""
+        assert result[0]["annotation"]["custom"]["comment"] == "lower"
+        assert result[1]["annotation"]["contents"] == ""
+        assert result[1]["annotation"]["custom"]["comment"] == "upper"
 
     def test_search_rects_pdf_creates_multiple_segment_rects(self):
         # [Flow: 한 대상에 여러 검색 결과 rects가 있을 때 -> segmentRects가 모두 포함되고 custom에 searchText가 남는지 확인]
@@ -190,4 +191,4 @@ class TestBuildEmbedpdfAnnotations:
         assert ann["type"] == HIGHLIGHT_TYPE
         assert "segmentRects" in ann
         assert len(ann["segmentRects"]) == 2
-        assert ann["custom"] == {"searchText": "hello"}
+        assert ann["custom"] == {"searchText": "hello", "comment": "multiple"}

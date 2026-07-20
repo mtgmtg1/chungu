@@ -189,6 +189,9 @@ export default function PaymentPage() {
                         ? t("page:payment.totalKrw", { amount: (numAmount * limits.krw_unit_price).toLocaleString() })
                         : t("page:payment.totalUsd", { amount: numAmount })}
                     </p>
+                    <p className="text-sm text-emerald-600 font-semibold mt-1" data-oid="credits-preview">
+                      {t("page:payment.willReceiveCredits", { credits: (numAmount * 1000).toLocaleString() })}
+                    </p>
                   </div>
                   <button
                     onClick={payWithPaddle}
@@ -201,7 +204,7 @@ export default function PaymentPage() {
                     ) : (
                       <>
                         <CreditCard size={18} data-oid="pay-card-icon" />
-                        {t("page:payment.chargeButton", { amount: numAmount })}
+                        {t("page:payment.chargeButton", { amount: (numAmount * 1000).toLocaleString() })}
                       </>
                     )}
                   </button>

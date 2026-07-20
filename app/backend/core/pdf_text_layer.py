@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import logging
+import re
+from html import unescape
 from typing import Any
 
 import fitz  # PyMuPDF
@@ -30,11 +32,36 @@ DEFAULT_FONT_NAME = "korea"
 # 투명 텍스트를 위한 render_mode: 3 = neither fill nor stroke (보이지 않음)
 INVISIBLE_RENDER_MODE = 3
 
-# bbox 높이 대비 폰트 크기 비율. 너무 크면 가로 폭을 초과해 잘릴 수 있다.
-FONT_SIZE_RATIO = 0.85
-# 문자 폭 추정 비율 (폰트 크기 대비). CJK 문자 기준으로 대략 1.0, 영문은 0.6 정도.
-CHAR_WIDTH_RATIO = 0.85
-# baseline 조정: insert_text의 point y는 baseline이며, 텍스트 상단이 bbox 상단에 맞도록 baseline = y0 + font_size
+# bbox 높이 대비 폰트 크기 비율. 폰트의 ascender/descender 여유를 고려해 0.95를 사용.
+# 실제 폰트 크기는 ascender - descender로 나누어 정확히 계산하므로 이 값은 safety margin.
+FONT_SIZE_RATIO = 0.95
+
+# 폰트 메트릭 캐시: font_name -> (ascender, descender) 비율.
+# fitz.Font로부터 폰트의 ascender/descender를 측정하여 텍스트가 bbox에 정확히 맞도록 한다.
+_FONT_METRICS_CACHE: dict[str, tuple[float, float]] = {}
+
+
+def _get_font_metrics(font_name: str) -> tuple[float, float]:
+    """PyMuPDF built-in 폰트의 ascender/descender 비율을 반환한다.
+
+    [Flow: Step 1 (캐시 확인) -> Step 2 (miss면 fitz.Font로 측정) -> Step 3 (캐시에 저장 후 반환)]
+
+    Args:
+        font_name: PyMuPDF 폰트 이름 (helv, korea, japan, china-ss 등)
+
+    Returns:
+        (ascender, descender) 튜플. descender는 음수.
+        폰트 측정 실패 시 Helvetica 기본값 (1.075, -0.299) 반환.
+    """
+    if font_name in _FONT_METRICS_CACHE:
+        return _FONT_METRICS_CACHE[font_name]
+    try:
+        font = fitz.Font(fontname=font_name)
+        metrics = (float(font.ascender), float(font.descender))
+    except Exception:
+        metrics = (1.075, -0.299)
+    _FONT_METRICS_CACHE[font_name] = metrics
+    return metrics
 
 
 def _normalize_rec_text(text: Any) -> str:
@@ -49,6 +76,69 @@ def _normalize_rec_text(text: Any) -> str:
     if not isinstance(text, str):
         text = str(text) if text is not None else ""
     return text.strip()
+
+
+def _strip_html_tags(content: str) -> str:
+    """table 블록의 HTML 태그를 제거하고 순수 텍스트만 남긴다.
+
+    Args:
+        content: OCR이 반환한 table 블록의 HTML 문자열
+
+    Returns:
+        HTML 태그와 HTML 엔티티를 제거하고 연속 공백을 정리한 문자열
+    """
+    text = re.sub(r"<[^>]+>", " ", content)
+    text = unescape(text)
+    return " ".join(text.split())
+
+
+def _extract_table_row_items(content: str, bbox: BBox) -> list[tuple[str, BBox]]:
+    """table 블록의 HTML을 행(<tr>) 단위로 파싱하여 (text, row_bbox) 목록을 반환한다.
+
+    [Flow: Step 1 (<tr> 태그로 행 분할) -> Step 2 (각 행의 <td>/<th> 셀 텍스트 추출)
+          -> Step 3 (표 bbox를 행 수만큼 y축으로 균등 분할) -> Step 4 (각 행의 텍스트와 분할된 bbox 반환)]
+
+    표 전체 텍스트를 하나의 bbox에 몰아넣으면 폰트가 너무 작아져 텍스트 선택이 불가능하다.
+    행 단위로 분할하면 각 행의 텍스트가 해당 행 영역에 들어가 폰트 크기가 합리적으로 유지되고,
+    사용자가 표의 특정 행을 드래그하여 텍스트를 선택할 수 있다.
+
+    Args:
+        content: table 블록의 HTML 문자열
+        bbox: 표 전체 bbox (x0, y0, x1, y1)
+
+    Returns:
+        [(행 텍스트, 행 bbox), ...]. <tr>이 없으면 통째로 하나의 텍스트로 반환.
+    """
+    rows = re.findall(r"<tr[^>]*>(.*?)</tr>", content, re.DOTALL | re.IGNORECASE)
+    if not rows:
+        text = _strip_html_tags(content)
+        if text:
+            return [(text, bbox)]
+        return []
+
+    row_texts: list[str] = []
+    for row_html in rows:
+        cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row_html, re.DOTALL | re.IGNORECASE)
+        cell_texts = [_strip_html_tags(c) for c in cells]
+        cell_texts = [c for c in cell_texts if c]
+        if cell_texts:
+            row_texts.append(" | ".join(cell_texts))
+
+    if not row_texts:
+        text = _strip_html_tags(content)
+        if text:
+            return [(text, bbox)]
+        return []
+
+    # 표 bbox를 행 수만큼 y축으로 균등 분할한다.
+    x0, y0, x1, y1 = bbox[:4]
+    row_height = (y1 - y0) / len(row_texts)
+    items: list[tuple[str, BBox]] = []
+    for i, text in enumerate(row_texts):
+        row_y0 = y0 + i * row_height
+        row_y1 = y0 + (i + 1) * row_height
+        items.append((text, (x0, row_y0, x1, row_y1)))
+    return items
 
 
 def _pick_font_name(language: str | None) -> str:
@@ -74,10 +164,16 @@ def _insert_invisible_text(
 ) -> None:
     """주어진 bbox 안에 투명 텍스트를 삽입한다.
 
+    [Flow: Step 1 (bbox 크기 확인) -> Step 2 (폰트 메트릭 획득: ascender/descender)
+          -> Step 3 (폰트 크기 산정: bbox 높이를 ascender-descender로 나누어 정확히 맞춤)
+          -> Step 4 (fitz.get_text_length로 정확한 텍스트 폭 측정 후 필요시 축소)
+          -> Step 5 (baseline 산정: bbox 중앙에 텍스트가 오도록 ascender/descender 보정)
+          -> Step 6 (insert_text로 render_mode=3 투명 삽입)]
+
     Args:
         page: PyMuPDF Page 객체
         text: 삽입할 텍스트
-        rect: (x0, y0, x1, y1) PDF 포인트 좌표
+        rect: (x0, y0, x1, y1) PDF 포인트 좌표 (PDF user-space, y↑)
         font_name: PyMuPDF 폰트 이름
     """
     x0, y0, x1, y1 = rect
@@ -86,19 +182,38 @@ def _insert_invisible_text(
     if width <= 0 or height <= 0:
         return
 
-    # bbox 높이에 맞춰 기본 폰트 크기를 결정한다.
-    font_size = max(1.0, height * FONT_SIZE_RATIO)
+    # 폰트 메트릭을 통해 bbox 높이에 정확히 맞는 폰트 크기를 계산한다.
+    # 폰트의 전체 높이 = (ascender - descender) * font_size 이므로,
+    # font_size = height / (ascender - descender) 로 설정하면 텍스트가 bbox에 꽉 찬다.
+    ascender, descender = _get_font_metrics(font_name)
+    font_total_height_ratio = ascender - descender
+    if font_total_height_ratio <= 0:
+        font_total_height_ratio = 1.374  # 안전 폴백
 
-    # 텍스트가 bbox 가로 폭을 넘지 않도록 폰트 크기를 축소한다.
-    estimated_width = max(1, len(text)) * font_size * CHAR_WIDTH_RATIO
-    if estimated_width > width:
-        font_size = max(1.0, width / (max(1, len(text)) * CHAR_WIDTH_RATIO))
+    font_size = max(1.0, height * FONT_SIZE_RATIO / font_total_height_ratio)
 
-    # insert_text: point가 텍스트 baseline의 왼쪽 끝이다.
-    # 텍스트 상단이 bbox 상단(y0)에 맞도록 baseline = y0 + font_size
-    baseline_y = y0 + font_size
+    # fitz.get_text_length로 정확한 텍스트 폭을 측정하여 폰트 크기를 조정한다.
+    # CHAR_WIDTH_RATIO 추정 대신 실제 폰트 메트릭스를 사용하므로 CJK/영문 모두 정확.
+    try:
+        text_width = fitz.get_text_length(text, fontname=font_name, fontsize=font_size)
+    except Exception:
+        text_width = max(1, len(text)) * font_size * 0.6
 
-    # render_mode=3으로 보이지 않게 만든다. overlay=True로 이미지 위에 삽입하면 선택/검색이 잘 된다.
+    # 텍스트가 bbox 가로 폭을 넘으면 폰트 크기를 비례 축소한다.
+    safe_width = width * 0.95
+    if text_width > safe_width and text_width > 0:
+        font_size = max(1.0, font_size * safe_width / text_width)
+
+    # baseline을 bbox 중앙에 텍스트가 오도록 계산한다.
+    # insert_text의 point.y는 baseline이며, search_for 결과는:
+    #   search_for bottom = baseline - ascender * font_size
+    #   search_for top    = baseline - descender * font_size (descender < 0 이므로 위로 확장)
+    # search_for 중앙 = baseline - (ascender + descender) / 2 * font_size
+    # bbox 중앙 = (y0 + y1) / 2
+    # 따라서 baseline = bbox_center + (ascender + descender) / 2 * font_size
+    bbox_center = (y0 + y1) / 2.0
+    baseline_y = bbox_center + (ascender + descender) / 2.0 * font_size
+
     try:
         page.insert_text(
             fitz.Point(x0, baseline_y),
@@ -265,6 +380,7 @@ def add_text_layer_from_ocr(
 # image/figure 등 텍스트가 없는 블록은 searchable PDF 텍스트 레이어에서도 제외한다.
 _TEXT_BLOCK_LABELS_FOR_TEXT_LAYER = {
     "text", "title", "figure_title", "seal", "header", "footer", "reference", "formula",
+    "paragraph_title", "table",
 }
 
 
@@ -305,7 +421,8 @@ def _extract_items_from_parsing_res_list(layout: dict) -> list[tuple[str, BBox]]
 
     AI Studio API가 overall_ocr_res를 더 이상 반환하지 않는 경우, parsing_res_list의
     텍스트 블록(block_content + block_bbox)을 사용해 텍스트 레이어를 생성한다.
-    표(table) 블록은 block_content가 HTML이므로 제외한다.
+    표(table) 블록은 HTML을 행(<tr>) 단위로 파싱하여 각 행의 텍스트를 표 bbox를
+    행 수만큼 분할한 영역에 각각 삽입한다.
     """
     blocks = layout.get("parsing_res_list") or []
     if not isinstance(blocks, list):
@@ -324,12 +441,17 @@ def _extract_items_from_parsing_res_list(layout: dict) -> list[tuple[str, BBox]]
         content = block.get("block_content", "")
         if not isinstance(content, str):
             content = str(content) if content else ""
-        text = content.strip()
-        if not text:
-            continue
         try:
             bbox_px: BBox = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
         except (ValueError, TypeError):
+            continue
+        # table 블록은 HTML을 행 단위로 파싱하여 각 행의 텍스트를 분할된 bbox에 삽입한다.
+        if block_label == "table":
+            table_items = _extract_table_row_items(content, bbox_px)
+            items.extend(table_items)
+            continue
+        text = content.strip()
+        if not text:
             continue
         items.append((text, bbox_px))
     return items

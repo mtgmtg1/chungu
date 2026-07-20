@@ -8,6 +8,67 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 주석 추가 시 이전 주석 유실 버그 수정 (merged_annotations.json 자동 재생성) — 2026-07-21
+
+- **원인**: `save_user_annotations`가 `user_annotations_{source_index}.json`을 덮어쓰기한 후 `merged_annotations.json`을 재생성하지 않았음. 자동 저장 후 파일 전환/복귀 시 프론트엔드가 이전 `merged_annotations.json`(기존 사용자 주석 누락)을 로드하고, 그 상태에서 새 주석을 추가하면 `exportAnnotations()`에 기존 주석이 빠져 영구 유실되는 악순환 발생.
+- **수정 (백엔드)** (`app/backend/api/jobs.py`):
+  - `save_user_annotations`에 `ai_annotations_path_for_merge` 변수 추가 — entry가 있으면 공유 annotations JSON 경로, 없으면 None.
+  - 두 분기(if/else) 후 공통으로 `_merge_annotation_jsons` 호출해 `merged_annotations.json`을 즉시 재생성.
+  - 응답에 `merged_annotations_url`(새 signed URL) 추가.
+- **수정 (프론트엔드)** (`app/frontend/src/pages/JobResultPage.jsx`):
+  - `handleSaveAnnotations`에서 응답의 `merged_annotations_url`로 `sourceFiles[selectedFileIndex].annotations_json_url` 갱신. `loadJob` 없이도 `SourcePanel`이 최신 병합본을 fetch하도록 함.
+- **검증**: `cd app/backend && .venv/bin/python -m pytest tests/ -q` → 255 passed (신규 2건 포함). `cd app/frontend && npm run build` → 성공. `cd app/ai-backend && npm run build` → 성공.
+- **핵심 파일**: `app/backend/api/jobs.py`, `app/frontend/src/pages/JobResultPage.jsx`, `app/backend/tests/test_save_user_annotations_merge.py`.
+
+### 스캔 PDF searchable PDF 프리뷰 미적용 및 표 텍스트 레이어 행 분할 — 2026-07-21
+
+- **원인**: `app/frontend/src/components/SourcePanel.jsx`에서 PDF 파일 선택 시 `selectedFile.url`(원본 스캔 PDF)을 뷰어에 전달하고, `selectedFile.preview_url`(searchable PDF)은 무시. docx/hwp/pptx 분기는 `preview_url || url`을 올바르게 쓰고 있었으나 PDF 분기만 누락. `app/backend/api/jobs.py`의 `preview_job`도 `source_url`을 항상 원본 `pdf_storage_path`로 설정하고 `searchable_pdf_storage_path`를 무시.
+- **수정 (프리뷰 URL)**:
+  - `SourcePanel.jsx` PDF 분기: `url={selectedFile.preview_url || selectedFile.url}` 및 `key={selectedFile.preview_url || selectedFile.url}`로 변경. docx/hwp/pptx 분기와 일치.
+  - `jobs.py` `preview_job`: `source_type == "pdf"`일 때 `job.searchable_pdf_storage_path or job.pdf_storage_path`를 사용.
+- **표(table) 블록 텍스트 레이어 행 분할 삽입** (`app/backend/core/pdf_text_layer.py`):
+  - `_TEXT_BLOCK_LABELS_FOR_TEXT_LAYER`에 `paragraph_title`, `table` 추가.
+  - `_strip_html_tags` 헬퍼 추가: table 블록의 HTML 태그/엔티티 제거.
+  - `_extract_table_row_items` 헬퍼 추가: table HTML을 `<tr>` 단위로 파싱하여 각 행의 `<td>` 텍스트를 추출하고, 표 bbox를 행 수만큼 y축으로 균등 분할하여 각 행의 텍스트를 분할된 bbox에 삽입. 표 전체 텍스트를 하나의 bbox에 몰아넣으면 폰트가 너무 작아져 텍스트 선택이 불가능해지는 문제를 해결.
+  - `_insert_invisible_text` 개선: 텍스트가 bbox 가로 폭을 넘을 때 폰트 크기를 width의 90% 안전 여유를 두고 축소. 축소 후에도 넘으면 단어 단위 줄바꿈으로 여러 줄 삽입.
+- **검증**: `cd app/backend && .venv/bin/python -m pytest tests/ -q` → 249 passed. `cd app/frontend && npm run build` → 성공. a1 develop 배포 후 8c8bef99 작업의 searchable PDF 재생성 및 Storage 업로드 완료 — 수원구치소, 응우옌안뚜안, 2026노118, 003904, 변호인 접견예약 확인증 모두 검색 매칭 확인.
+- **핵심 파일**: `app/frontend/src/components/SourcePanel.jsx`, `app/backend/api/jobs.py`, `app/backend/core/pdf_text_layer.py`.
+
+### 텍스트 하이라이트(add_text_highlight)와 라인 하이라이트(add_line_highlight) 분리 및 목록 일괄 생성 지원 — 2026-07-21
+
+- **하이라이트 도구 영역 분리 및 선형 보간/라인 확장 구현**:
+  - `add_text_highlight`는 매칭된 텍스트 자체만을 칠하도록 구현. 스캔된 PDF 등 OCR 폴백 시 텍스트 문자열의 비율을 계산하여 선형 보간으로 정확히 해당 텍스트 영역만을 하이라이트.
+  - `add_line_highlight` 신규 도구를 추가하여 텍스트가 속한 줄(Row/Line) 전체를 하이라이트할 수 있도록 분리. PyMuPDF의 line dict 겹침 및 OCR 라인 요소 bbox를 활용.
+  - 두 도구 모두 단일 문자열 및 문자열 배열(목록) 입력을 지원하여 한 번의 에이전트 도구 호출로 복수의 주석을 처리할 수 있도록 보장.
+- **검증**:
+  - `app/backend/tests/test_search_text_modes.py` 신규 작성 및 전체 242개 단위 테스트 통과.
+  - `app/ai-backend/src/tools/__tests__/annotations.test.ts` 테스트 추가 및 `npm run test` (67개 통과), `npm run build` (tsc 빌드 성공) 검증 완료.
+- **핵심 파일**: `app/backend/api/jobs.py`, `app/ai-backend/src/lib/proof-api.ts`, `app/ai-backend/src/tools/annotations.ts`, `app/ai-backend/src/chat/route.ts`, `app/backend/tests/test_search_text_modes.py`.
+
+### AI 주석 도구 다중 매개변수 목록(Batch) 지원 및 Zod 스키마 확장 — 2026-07-21
+
+- **다중 매개변수(page_no, color, opacity) 목록 입력 지원** (`app/ai-backend/src/tools/annotations.ts`):
+  - `add_text_highlight` 및 `add_text_callout` 도구에서 기존에 단일 값만 받았던 `page_no`, `color`, `opacity` 매개변수들을 텍스트(text) 배열의 크기와 일치하는 배열 목록으로 전달할 수 있도록 확장.
+  - 이를 위해 `_normalizeTextList` 헬퍼 함수를 모든 매개변수 대응이 가능한 `_normalizeParams`로 개편하여 각 요소별 파라미터 값 매핑 및 길이 불일치 검증을 수행하도록 구조화.
+  - Zod의 `z.union([z.X, z.array(z.X)])`를 통해 단일 값과 배열 타입을 모두 유연하게 처리할 수 있도록 스키마 보강.
+- **검증**:
+  - `app/ai-backend/src/tools/__tests__/annotations.test.ts`에 목록 매개변수의 정상 전달 및 길이 불일치 시 에러 제어에 관한 단위 테스트 추가 완료.
+  - `cd app/ai-backend && npm run test` -> 66개 테스트 전체 통과.
+  - `npm run build` -> tsc 빌드 성공.
+  - **핵심 파일**: `app/ai-backend/src/tools/annotations.ts`, `app/ai-backend/src/tools/__tests__/annotations.test.ts`.
+
+### 프로 요금제 크레딧 혜택 상향 및 충전 크레딧 일치화 — 2026-07-21
+
+- **프로 요금제 월간 혜택 크레딧 인상**:
+  - `app/backend/core/subscription_service.py` 및 `app/frontend/src/pages/PricePage.jsx`에서 프로 요금제의 제공 크레딧을 기존 20,000pt에서 30,000pt(1.5배)로 인상.
+  - `app/backend/tests/test_subscription_credits.py` 테스트 코드를 30,000pt에 맞도록 수정 및 검증 완료.
+- **프로 요금제 사용 가이드 추가 및 UI 단위 통일**:
+  - `app/frontend/src/components/PlanCard.jsx` 카드 하단에 30,000 크레딧에 대한 대략적 예상 사용 가이드(예: 일반 분석 최대 30,000페이지, 고급 비전 분석 최대 6,000페이지)를 다국어로 노출.
+  - 기존에 하드코딩 노출되던 `pt` 단위 접미사를 다국어 리소스 `t("common:points.point")`를 사용하여 `크레딧`(Ko), `credits`(En), `クレジット`(Ja)으로 일괄 대응 및 통일.
+- **충전 금액 및 크레딧 비율 일치**:
+  - `app/frontend/src/pages/PaymentPage.jsx`의 충전 입력창 및 예상 획득 크레딧 정보를 1달러 = 1,000크레딧(1milli-USD = 1크레딧)과 일치하게 수정하여 "20,000 크레딧 충전하기" 와 같이 표시되도록 변경.
+- **핵심 파일**: `app/backend/core/subscription_service.py`, `app/backend/tests/test_subscription_credits.py`, `app/frontend/src/pages/PricePage.jsx`, `app/frontend/src/components/PlanCard.jsx`, `app/frontend/src/pages/PaymentPage.jsx`, `app/frontend/src/locales/{ko,en,ja}/page.json`.
+
 ### AI Annotation 일괄(Batch) 생성 지원 및 좌표계 식별자 Refactoring — 2026-07-21
 
 - **AI 주석 일괄(Batch) 생성 지원** (`app/ai-backend/src/tools/annotations.ts`):
@@ -187,7 +248,7 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 - **목표**: 기존 개별 사용량 제한(기본/프리미엄 페이지, 오디오/비디오 초)을 하나의 `points_balance` 크레딧 잔액으로 통합. 페이지/오디오/비디오/AI 에이전트 스텝 모두 포인트에서 차감되며, 월간 구독으로 크레딧을 지급한다.
 - **크레딧 비율**: 기본 모델 페이지 1pt, 프리미엄 모델 페이지 5pt, 오디오 1pt/초, 비디오 10pt/초, Docling 후처리 페이지 3pt, AI 에이전트 스텝 1pt/스텝.
-- **월간 구독 크레딧**: Free 1,000pt, Pro 20,000pt, Max 100,000pt.
+- **월간 구독 크레딧**: Free 1,000pt, Pro 30,000pt, Max 100,000pt.
 - **Phase 1: DB 마이그레이션 & 백엔드 코어** (`app/backend/db/migrations/036_credit_system_subscription.sql` 신규):
   - `users` 테이블에 `subscription_credits_granted_at` 컬럼 추가 (중복 지급 방지).
   - `jobs` 테이블에 `cost_points`, `xlsx_advanced_cost_points`, `annotate_cost_points`, `ediscovery_cost_points` 컬럼 추가.
@@ -207,7 +268,7 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
   - `PricePage.jsx` + `PlanCard.jsx`: 요금제 카드를 월간 크레딧 기준으로 표시.
   - `JobConfirmPage.jsx`: 잔여 포인트, 예상 비용, 차감 후 잔액 표시. 기존 페이지/미디어 잔여량 UI 제거.
   - `DashboardPage.jsx` + `SettingsPage.jsx`: 포인트 잔액 표시.
-  - `ko/en/ja/page.json` 및 `common.json`: 포인트 단위 `$` → `pt` 변경, 크레딧 관련 문구 갱신.
+  - `ko/en/ja/page.json` 및 `common.json`: 포인트 단위 `$` → `pt` 변경 후 최종 크레딧(credits/クレジット)으로 통일.
 - **검증**: `pytest tests/` 134 passed, AI 백엔드 `npm run build` 성공, 프론트엔드 `npm run test` + `npm run build` 성공. `test_points_service.py`, `test_subscription_credits.py`, `test_agent_steps.py` 추가.
 - **배포 시 주의**: DB 마이그레이션 `036_credit_system_subscription.sql`을 `supabase-chungu-db` 컨테이너에 수동 적용. AI 백엔드(`.env`)에 `AI_BACKEND_SECRET` 추가, 백엔드 `config`에 동일값 설정. `deploy_a1.sh`로 a1 서버 배포.
 - **핵심 파일**: `app/backend/db/migrations/036_credit_system_subscription.sql`, `app/backend/core/points_service.py`, `app/backend/core/subscription_service.py`, `app/backend/api/v1/agent.py`, `app/backend/api/jobs.py`, `app/backend/api/v1/jobs.py`, `app/ai-backend/src/chat/route.ts`, `app/ai-backend/src/lib/proof-api.ts`, `app/frontend/src/pages/JobConfirmPage.jsx`, `app/frontend/src/pages/PricePage.jsx`, `app/frontend/src/components/PlanCard.jsx`.

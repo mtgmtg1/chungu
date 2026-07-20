@@ -95,12 +95,12 @@ export default function EdiscoveryDetailCard({ node, sourceFiles, onClose, onVie
   }, [sourceFile]);
 
   /**
-   * [Flow: Step 1 (sourceFile.result_markdown 또는 node.summary 수신)
+   * [Flow: Step 1 (sourceFile.result_markdown 수신)
    *       -> Step 2 (페이지 마커 제거)
    *       -> Step 3 (marked로 HTML 변환, 실패 시 plain text 폴백)]
    */
   const markdownHtml = useMemo(() => {
-    const raw = sourceFile?.result_markdown || summary || "";
+    const raw = sourceFile?.result_markdown || "";
     const cleaned = stripPageMarkers(raw);
     if (!cleaned) return "";
     try {
@@ -108,7 +108,7 @@ export default function EdiscoveryDetailCard({ node, sourceFiles, onClose, onVie
     } catch {
       return cleaned;
     }
-  }, [sourceFile?.result_markdown, summary]);
+  }, [sourceFile?.result_markdown]);
 
   /**
    * [Flow: Step 1 (드래그 시작) -> Step 2 (전역 mousemove/mouseup 이벤트 등록)
@@ -260,9 +260,11 @@ export default function EdiscoveryDetailCard({ node, sourceFiles, onClose, onVie
                   data-oid="ediscovery-detail-markdown"
                 />
               ) : (
-                <p className="text-sm text-on-surface-variant italic">
-                  {t("page:result.ediscoveryNoPreview")}
-                </p>
+                !summary && (
+                  <p className="text-sm text-on-surface-variant italic">
+                    {t("page:result.ediscoveryNoPreview")}
+                  </p>
+                )
               )}
             </div>
           </div>

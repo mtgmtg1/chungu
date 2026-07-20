@@ -267,19 +267,19 @@ export default function JobConfirmPage() {
             <div className="flex justify-between text-body-md">
               <span className="text-on-surface-variant">{t("page:confirm.pointsBalance")}</span>
               <span className="font-medium text-on-surface">
-                {isUnlimited ? t("page:confirm.unlimited") : `${pointsBalance.toLocaleString()}pt`}
+                {isUnlimited ? t("page:confirm.unlimited") : `${pointsBalance.toLocaleString()}${t("common:points.point")}`}
               </span>
             </div>
             <div className="flex justify-between text-body-md">
               <span className="text-on-surface-variant">{t("page:confirm.estimatedCost")}</span>
               <span className="font-medium text-on-surface">
-                {estimatedCost.points.toLocaleString()}pt
+                {estimatedCost.points.toLocaleString()}{t("common:points.point")}
               </span>
             </div>
             <div className="flex justify-between text-body-md">
               <span className="text-on-surface-variant">{t("page:confirm.pointsRemaining")}</span>
               <span className="font-medium text-on-surface">
-                {isUnlimited ? t("page:confirm.unlimited") : `${Math.max(0, pointsBalance - estimatedCost.points).toLocaleString()}pt`}
+                {isUnlimited ? t("page:confirm.unlimited") : `${Math.max(0, pointsBalance - estimatedCost.points).toLocaleString()}${t("common:points.point")}`}
               </span>
             </div>
           </div>

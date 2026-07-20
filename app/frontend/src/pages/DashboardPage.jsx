@@ -133,7 +133,7 @@ export default function DashboardPage() {
             </div>
           </div>
           <p className="text-3xl font-bold text-on-surface" data-oid="7z.7l1t">
-            {(profile?.points_balance ?? 0).toLocaleString()}pt
+            {(profile?.points_balance ?? 0).toLocaleString()}{t("common:points.point")}
           </p>
           <Link
             to="/price"

@@ -210,15 +210,21 @@ function SingleFilePreview({ file, filename, annotationsJson, pdfViewerRef, onAn
   } else if (file.type === "docx" || file.type === "hwp" || file.type === "pptx") {
     content = file.preview_url ? <PdfViewer ref={pdfViewerRef} url={file.preview_url} annotationsJson={annotationsJson} onAnnotationChanged={onAnnotationChanged} /> : null;
   } else if (file.type === "image") {
-    content = (
-      <div className="flex-1 overflow-auto custom-scrollbar p-4 flex items-center justify-center">
-        <img
-          src={file.url}
-          alt={displayName}
-          className="max-w-full max-h-full object-contain shadow-lg rounded border border-outline-variant bg-white"
-        />
-      </div>
-    );
+    // [Flow: preview_url이 PDF 변환 URL이면 embedpdf 뷰어로 표시, 아니면 <img> 폴백]
+    // 백엔드에서 이미지를 PDF로 변환한 경우 preview_url이 원본 url과 다른 PDF URL이 됨
+    if (file.preview_url && file.preview_url !== file.url) {
+      content = <PdfViewer ref={pdfViewerRef} url={file.preview_url} annotationsJson={annotationsJson} onAnnotationChanged={onAnnotationChanged} />;
+    } else {
+      content = (
+        <div className="flex-1 overflow-auto custom-scrollbar p-4 flex items-center justify-center">
+          <img
+            src={file.url}
+            alt={displayName}
+            className="max-w-full max-h-full object-contain shadow-lg rounded border border-outline-variant bg-white"
+          />
+        </div>
+      );
+    }
   } else if (file.type === "audio" || file.type === "video") {
     content = <MediaPlayer sourceType={file.type} url={file.url} filename={displayName} />;
   }
@@ -1113,9 +1119,9 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
     if (selectedFile.type === "pdf") {
       return (
         <PdfViewerWithFab
-          key={selectedFile.url}
+          key={selectedFile.preview_url || selectedFile.url}
           viewerRef={pdfViewerRef}
-          url={selectedFile.url}
+          url={selectedFile.preview_url || selectedFile.url}
           page={currentPage}
           annotationsJson={selectedAnnotationsJson}
           onAnnotationChanged={handleAnnotationChanged}

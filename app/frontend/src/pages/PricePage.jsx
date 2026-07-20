@@ -23,7 +23,7 @@ const STATIC_PLANS = [
     name: "Pro",
     monthly_usd: 20,
     yearly_usd: 200,
-    monthly_credits: 20000,
+    monthly_credits: 30000,
   },
   {
     key: "max",

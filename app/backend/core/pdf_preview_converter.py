@@ -28,6 +28,9 @@ _LOWRES_THRESHOLD_BYTES = 10 * 1024 * 1024  # 10MB
 _LOWRES_THRESHOLD_PAGES = 50
 _LOWRES_DPI = 100
 
+# PyMuPDF로 직접 PDF로 변환할 수 있는 이미지 확장자 (Unoserver/LibreOffice 불필요)
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".tif"}
+
 
 def _libreoffice_env() -> dict[str, str]:
     """LibreOffice headless 변환에 필요한 locale 및 사용자 프로필 경로를 설정한다."""
@@ -131,9 +134,47 @@ def _run_hwp5odt(input_path: Path, output_dir: Path) -> Path | None:
     return odt_path
 
 
+def _convert_image_to_pdf(input_path: Path, output_dir: Path) -> Path:
+    """PyMuPDF를 사용해 이미지를 단일 페이지 PDF로 변환한다.
+
+    매개변수:
+        input_path: 변환할 이미지 파일 경로 (.png/.jpg/.jpeg/.gif/.bmp/.webp/.tiff)
+        output_dir: 변환된 PDF를 저장할 디렉터리
+
+    반환값:
+        생성된 PDF 파일 경로
+
+    이미지 픽셀 크기를 PDF points(72 DPI)로 1:1 매핑하여 원본 비율을 보존한다.
+    Unoserver/LibreOffice를 거치지 않으므로 빠르고 경량이다.
+    """
+    output_path = output_dir / f"{input_path.stem}.pdf"
+    doc = fitz.open()
+    try:
+        # [Flow: Pixmap으로 이미지 픽셀 크기 획득 -> 동일 크기의 PDF 페이지 생성 -> 이미지 삽입]
+        pix = fitz.Pixmap(str(input_path))
+        page = doc.new_page(width=pix.width, height=pix.height)
+        page.insert_image(page.rect, filename=str(input_path))
+        try:
+            doc.save(str(output_path), garbage=4, deflate=True)
+        except Exception as e:
+            if "Linearisation" in str(e) or "linear" in str(e).lower():
+                doc.save(str(output_path), garbage=4, deflate=False)
+            else:
+                raise
+    finally:
+        doc.close()
+    if not output_path.exists():
+        raise FileNotFoundError(f"Image to PDF output not found: {output_path}")
+    return output_path
+
+
 def _convert_to_pdf(input_path: Path, output_dir: Path) -> Path:
-    """확장자에 따라 Unoserver, hwp5odt, LibreOffice를 이용해 PDF로 변환한다."""
+    """확장자에 따라 Unoserver, hwp5odt, LibreOffice, PyMuPDF(이미지)를 이용해 PDF로 변환한다."""
     ext = input_path.suffix.lower()
+
+    # [Flow: 이미지 확장자는 PyMuPDF로 직접 PDF 생성 (Unoserver/LibreOffice 불필요)]
+    if ext in _IMAGE_EXTENSIONS:
+        return _convert_image_to_pdf(input_path, output_dir)
 
     # [Flow: .hwp는 pyhwp hwp5odt로 ODT 변환 후 PDF로 변환. 실패하면 원본 .hwp를 Unoserver/LibreOffice에 직접 맡긴다.]
     if ext == ".hwp":

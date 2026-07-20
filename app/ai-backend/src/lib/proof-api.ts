@@ -239,12 +239,14 @@ export async function searchText(
   query: string,
   pageNo?: number,
   authHeaders?: AuthHeaders,
+  mode?: 'text' | 'line',
 ): Promise<{
   matches: Array<Record<string, unknown>>;
   pageDimensions: Record<number, { width: number; height: number }>;
 }> {
   const params = new URLSearchParams({ query });
   if (pageNo !== undefined) params.set('page_no', String(pageNo));
+  if (mode !== undefined) params.set('mode', mode);
   try {
     const res = await request<{
       matches: Array<Record<string, unknown>>;

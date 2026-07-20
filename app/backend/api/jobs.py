@@ -1556,6 +1556,7 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
         }
         # 이미지에 searchable PDF가 있으면 preview_url을 대체 (텍스트 검색/선택 가능)
         if ftype == "image":
+            searchable_applied = False
             searchable_path = info.get("searchable_pdf_storage_path")
             if searchable_path:
                 try:
@@ -1564,8 +1565,19 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
                     )
                     if searchable_url:
                         item["preview_url"] = searchable_url
+                        searchable_applied = True
                 except Exception as e:
                     logger.warning(f"[source_files] 이미지 searchable PDF URL 생성 실패: {e}")
+            # [Flow: searchable PDF가 없으면 이미지를 PDF로 변환하여 embedpdf 뷰어로 표시]
+            if not searchable_applied:
+                try:
+                    preview_pdf_url = pdf_preview_converter.get_preview_pdf_url(
+                        storage_path, source_bucket=bucket, expires_in=3600
+                    )
+                    if preview_pdf_url:
+                        item["preview_url"] = preview_pdf_url
+                except Exception as e:
+                    logger.warning(f"[source_files] 이미지 PDF 변환 실패 ({storage_path}): {e}")
         return item
     except Exception:
         return None
@@ -2312,9 +2324,12 @@ def preview_job(
     if job.pdf_storage_path:
         try:
             source_type = _detect_source_type(job)
-            # [Flow: PDF는 원본 서명 URL, docx/hwp/pptx는 _source_files 이후 변환된 PDF preview URL 사용]
+            # [Flow: PDF는 searchable PDF가 있으면 우선 사용, 없으면 원본 서명 URL 사용]
+            # searchable PDF가 텍스트 레이어를 포함하므로 뷰어에서 텍스트 검색/선택이 가능하다.
+            # docx/hwp/pptx는 _source_files 이후 변환된 PDF preview URL을 사용한다.
             if source_type == "pdf":
-                source_url = supabase_client.get_signed_download_url(job.pdf_storage_path, bucket="pdfs", expires_in=3600)
+                pdf_path_for_preview = job.searchable_pdf_storage_path or job.pdf_storage_path
+                source_url = supabase_client.get_signed_download_url(pdf_path_for_preview, bucket="pdfs", expires_in=3600)
         except Exception:
             pass
 
@@ -3323,6 +3338,8 @@ def save_user_annotations(
     #                  AI 주석 entry가 있으면 병합 대상 경로로 함께 사용
     # source_index < 0: 하위 호환 — 공유 user_annotations.json에 저장
     entry = None
+    # [Flow: 병합 재생성용 AI 주석 경로 — entry가 있으면 공유 annotations JSON 경로, 없으면 None]
+    ai_annotations_path_for_merge: str | None = None
     if source_index >= 0:
         locked_job = db.execute(
             select(Job).where(Job.id == job_id).with_for_update()
@@ -3332,6 +3349,7 @@ def save_user_annotations(
         entry = next((e for e in entries if e.get("index") == 1), None)
         if entry is not None:
             annotations_json_storage_path = entry.get("annotations_json_storage_path") or f"{job_id}/annotated.annotations.json"
+            ai_annotations_path_for_merge = annotations_json_storage_path
         else:
             annotations_json_storage_path = f"{job_id}/user_annotations_{source_index}.json"
     else:
@@ -3462,10 +3480,27 @@ def save_user_annotations(
                 {"content-type": "application/json", "upsert": "true"},
             )
 
+        # [Flow: merged_annotations.json 재생성]
+        # 자동 저장 후 파일 전환/복귀 시 이전 병합본을 로드해 기존 사용자 주석이 유실되는 버그를 방지.
+        # 저장 직후 병합을 수행해 merged_annotations.json을 최신 상태로 갱신하고,
+        # 응답에 새 signed URL을 반환해 프론트엔드가 즉시 최신 병합본을 fetch할 수 있도록 한다.
+        if source_index >= 0 and entry is not None:
+            user_annotations_path_for_merge = per_file_user_annotations_path
+        else:
+            user_annotations_path_for_merge = annotations_json_storage_path
+        merged_url: str | None = None
+        try:
+            merged_url = _merge_annotation_jsons(
+                job_id, ai_annotations_path_for_merge, user_annotations_path_for_merge
+            )
+        except Exception as e:
+            logger.warning(f"[save_user_annotations] {job_id} merged_annotations 재생성 실패: {e}")
+
         cache.invalidate_pattern(f"preview:{job_id}:*")
         return {
             "ok": True,
             "annotations_json_storage_path": annotations_json_storage_path,
+            "merged_annotations_url": merged_url,
         }
     except Exception as e:
         logger.exception(f"[save_user_annotations] {job_id} source_index={source_index} 실패: {e}")
@@ -3759,11 +3794,12 @@ def search_job_text(
     job_id: str,
     query: str = Query(..., description="검색어 또는 정규식"),
     page_no: int | None = None,
+    mode: str = Query("text", description="검색 모드: text(해당 텍스트만) 또는 line(해당 줄 전체)"),
     user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """[Flow: Step 1 (job 조회) -> Step 2 (searchable PDF 확보) -> Step 3 (PyMuPDF search)
-          -> Step 4 (page_no 필터링) -> Step 5 (매치 목록 반환)]
+    """[Flow: Step 1 (job 조회) -> Step 2 (searchable PDF 확보) -> Step 3 (PyMuPDF search & mode별 bbox 조정)
+          -> Step 4 (page_no 필터링 및 OCR 폴백 시 선형 보간/라인 적용) -> Step 5 (매치 목록 반환)]
 
     PDF 텍스트 레이어에서 키워드/정규식 검색을 수행한다.
     """
@@ -3807,22 +3843,58 @@ def search_job_text(
             current_page_no = page.number + 1
             if page_no is not None and current_page_no != page_no:
                 continue
+
+            lines_bboxes: list[list[float]] = []
+            if mode == "line":
+                try:
+                    text_dict = page.get_text("dict")
+                    for block in text_dict.get("blocks", []):
+                        for line in block.get("lines", []):
+                            lines_bboxes.append(line.get("bbox"))
+                except Exception:
+                    pass
+
             # 정규식 검색과 일반 텍스트 검색 모두 지원
             try:
                 rects = page.search_for(query)
             except Exception:
                 # 정규식이 유효하지 않으면 일반 텍스트로 폴백
                 rects = page.search_for(query.replace("\\", ""))
+
             for rect in rects:
                 if not _is_rect_plausible_for_page(rect, page.rect):
                     logger.warning(
                         f"[search_job_text] {job_id} page={current_page_no} 비정상 bbox 스킵: {rect}"
                     )
                     continue
+
+                bbox_pdf = [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
+                if mode == "line" and lines_bboxes:
+                    best_bbox = None
+                    max_overlap = 0.0
+                    ry0, ry1 = rect.y0, rect.y1
+                    r_height = ry1 - ry0
+                    if r_height > 0:
+                        for lb in lines_bboxes:
+                            if not lb or len(lb) < 4:
+                                continue
+                            lx0, ly0, lx1, ly1 = (float(v) for v in lb[:4])
+                            overlap_y0 = max(ry0, ly0)
+                            overlap_y1 = min(ry1, ly1)
+                            overlap_h = overlap_y1 - overlap_y0
+                            if overlap_h > 0:
+                                ratio = overlap_h / r_height
+                                if ratio > max_overlap:
+                                    max_overlap = ratio
+                                    best_bbox = [lx0, ly0, lx1, ly1]
+                    if best_bbox and max_overlap > 0.5:
+                        bbox_pdf = best_bbox
+
+                matched_text = page.get_textbox(rect).strip() if mode == "text" else page.get_textbox(fitz.Rect(bbox_pdf)).strip()
                 matches.append({
                     "page_no": current_page_no,
-                    "bbox_pdf": [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)],
-                    "text": page.get_textbox(rect).strip(),
+                    "bbox_pdf": bbox_pdf,
+                    "text": matched_text,
                 })
     finally:
         doc.close()
@@ -3866,15 +3938,32 @@ def search_job_text(
             pattern = _re.compile(query, _re.IGNORECASE)
         except _re.error:
             pattern = _re.compile(_re.escape(query), _re.IGNORECASE)
+
         for el in ocr_elements:
             text = el.get("text") or ""
-            if not pattern.search(text):
+            found_matches = list(pattern.finditer(text))
+            if not found_matches:
                 continue
-            matches.append({
-                "page_no": el["page_no"],
-                "bbox_pdf": list(el["bbox_pdf"]),
-                "text": text.strip(),
-            })
+            text_len = len(text)
+            for m in found_matches:
+                if mode == "text" and text_len > 0 and len(el.get("bbox_pdf", [])) == 4:
+                    x0, y0, x1, y1 = (float(v) for v in el["bbox_pdf"])
+                    width = x1 - x0
+                    start = m.start()
+                    end = m.end()
+                    x0_new = x0 + (start / text_len) * width
+                    x1_new = x0 + (end / text_len) * width
+                    bbox_pdf = [x0_new, y0, x1_new, y1]
+                    matched_text = m.group().strip()
+                else:
+                    bbox_pdf = list(el["bbox_pdf"])
+                    matched_text = text.strip()
+
+                matches.append({
+                    "page_no": el["page_no"],
+                    "bbox_pdf": bbox_pdf,
+                    "text": matched_text,
+                })
 
     import time as _time
     total_elapsed = _time.monotonic() - start_time

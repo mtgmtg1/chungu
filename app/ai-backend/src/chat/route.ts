@@ -63,7 +63,7 @@ ${intentHint}Current context:
 
 Available tool categories:
 1. PDF annotation (only when source_type is pdf or docx/hwp preview):
-   - search_text, get_elements, get_annotations, read_job_json, view_page, add_text_highlight, add_text_callout, update_annotation, remove_annotation, compare_elements, apply_annotations
+   - search_text, get_elements, get_annotations, read_job_json, view_page, add_text_highlight, add_line_highlight, add_text_callout, update_annotation, remove_annotation, compare_elements, apply_annotations
 2. Markdown editor / report & document editor (when active_editor is markdown):
    - Users may describe this as: 보고서, 문서, 글쓰기, 메모, 메모장, 보고서 작성, 문서 정리, 요약, 마크다운, 에디터.
    - Tools: get_markdown, get_page, get_headings, get_section, get_table, read_first_chunk, read_next_chunk, read_previous_chunk, replace_text, insert_text, apply_edits
@@ -119,10 +119,10 @@ Rules:
 - To inspect a PDF page visually, call view_page to get a vision analysis. The output is text-only and does NOT contain coordinates or bounding boxes. Pass an explicit dpi between 150 and 300 only when needed.
 - To read existing annotation JSON, call read_job_json with kind="annotations" or get_annotations. Coordinate fields (rect, segmentRects, calloutLine, bbox_pdf) are REDACTED. Use the returned id, type, page_no, color, and comment only for editing or deleting.
 - To read other job result JSON, call read_job_json with kind="ocr_layout" | "extracted_files" | "annotated_pdf_files" | "job_meta".
-- To create highlight/callout annotations, use add_text_highlight/add_text_callout with the exact text string(s) you want to highlight or point to. You may pass an array of texts to apply multiple annotations in a single call; this is more efficient than calling the tool repeatedly. The backend searches the PDF text layer and resolves the bounding box/segmentRects automatically. You MUST NOT compute or pass rect/bbox manually.
+- To create highlight/callout annotations, use add_text_highlight (highlights exact matched text only), add_line_highlight (highlights full line/row containing the text), or add_text_callout with the exact text string(s) you want to highlight or point to. You may pass an array of texts to apply multiple annotations in a single call; this is more efficient than calling the tool repeatedly. The backend searches the PDF text layer and resolves the bounding box/segmentRects automatically. You MUST NOT compute or pass rect/bbox manually.
 - If you are unsure of the exact text, call search_text first to verify the wording. search_text, get_elements, and compare_elements return text for verification only; their coordinates are intentionally hidden, so do not try to construct annotations from them.
 - For PDF text elements, use get_elements with an explicit page_no whenever possible. Without page_no, the backend may OCR the entire PDF which is very slow for large/image-based PDFs.
-- When calling add_text_highlight or add_text_callout, you may pass the same page_no to limit the search and avoid a full-document scan.
+- When calling add_text_highlight, add_line_highlight, or add_text_callout, you may pass the same page_no to limit the search and avoid a full-document scan.
 - To modify existing annotations, first call get_annotations or read_job_json(kind="annotations") to list them, then call update_annotation with the annotation id.
 - update_annotation immediately persists changes to storage; you do not need to call apply_annotations after it.
 - For markdown edits, only call apply_edits when you are done with all replacements/insertions.

@@ -8,6 +8,18 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### AI Annotation 일괄(Batch) 생성 지원 및 좌표계 식별자 Refactoring — 2026-07-21
+
+- **AI 주석 일괄(Batch) 생성 지원** (`app/ai-backend/src/tools/annotations.ts`):
+  - AI 백엔드 도구의 `add_text_highlight` 및 `add_text_callout` 도구가 문자열(string) 외에도 문자열 배열(array) 입력을 지원하여 여러 개의 주석을 한 번의 호출로 일괄 생성(pending 버퍼에 누적)할 수 있도록 강화.
+  - `_normalizeTextList` 헬퍼 함수를 추가하여 `text`와 `comment` 파라미터가 단일 값 혹은 배열인 경우를 일관성 있게 매핑하며, 수량이 불일치할 경우 에러를 반환.
+- **주석 저장 API 호출 시 좌표계 식별자 수정** (`app/ai-backend/src/tools/annotations.ts`):
+  - AI 백엔드 도구가 변경 사항을 저장(apply_annotations)하기 위해 `proofApi.saveAnnotations`를 호출할 때, `source_type` 매개변수 값을 기존 `pdf_user`에서 `device`로 변경.
+  - AI 백엔드 도구와 백엔드 서버 간 주석 처리 시 좌표계 식별 방식을 `device`로 통일.
+- **검증**:
+  - `cd app/ai-backend && npm run build` → tsc 빌드 성공.
+- **핵심 파일**: `app/ai-backend/src/tools/annotations.ts`.
+
 ### PDF 뷰어 주석 좌표계 roundtrip 수정 (merged_annotations.json canonical document)
 
 - **목표**: 원본 PDF 뷰어에서 AI/사용자 주석이 좌상단 (0,0)에 몰려 보이거나, 추가한 주석이 위치가 어긋나 보이는 문제를 해결.
@@ -64,26 +76,6 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **배포 시 주의**: `ai-backend` 재배포 필요. 프론트엔드/DB 변경 없음.
 - **핵심 파일**: `app/ai-backend/src/tools/annotations.ts`, `app/ai-backend/src/chat/route.ts`.
 
-### AI Annotation 좌표계 통일 — read_job_json 및 도구 설명/시스템 프롬프트 일관성 확보 (legacy, superseded by text-only audit above)
-
-- **목표**: AI 백엔드가 주석을 조회할 때 `get_annotations`은 PDF user-space를 반환하지만 `read_job_json`은 device-space를 반환해, 모델이 `read_job_json` 결과를 `save_annotations`에 그대로 재사용하면 상하 반전되는 버그를 수정. 또한 AI 시스템 프롬프트가 구식 `pdf_user_space` 파라미터와 device-space 기준으로 안내하던 문제를 함께 바로잡음.
-- **Phase 1: 백엔드 변환 추가** (`app/backend/api/jobs.py`):
-  - `get_job_result_json()`의 `kind="annotations"` 분기에서 `_load_all_annotations` 이후 `pdf_user_annotator._convert_annotations_to_pdf_user()`를 호출해 `get_annotations`과 동일하게 PDF user-space 반환.
-- **Phase 2: 회귀 테스트** (`app/backend/tests/test_jobs_result_json_annotations.py`):
-  - device-space 입력이 `get_job_result_json`을 통해 PDF user-space로 반환되는지 검증.
-- **Phase 3: AI 도구 설명 일관성** (`app/ai-backend/src/tools/annotations.ts`):
-  - `read_job_json`: annotations이 PDF user-space임을 명시.
-  - `get_annotations`: rect/segmentRects/calloutLine이 PDF user-space임을 명시.
-  - `get_elements`: `bbox_pdf`가 PDF user-space임을 명시.
-  - `search_text`: 반환되는 `matches`의 `bbox_pdf`가 PDF user-space임을 명시.
-  - `save_annotations`: PDF user-space `rect`를 기대하며, `get_elements`/`get_annotations`/`read_job_json`의 좌표를 그대로 사용 가능함을 명시.
-- **Phase 4: AI 시스템 프롬프트 정정** (`app/ai-backend/src/chat/route.ts`):
-  - `read_job_json`/`get_annotations`이 PDF user-space를 반환한다고 수정.
-  - `save_annotations`는 PDF user-space를 기대한다고 수정.
-  - 존재하지 않는 `pdf_user_space=false` 파라미터와 device-space 관련 오래된 경고 제거.
-- **검증**: `cd app/backend && .venv/bin/python -m pytest tests/ -q` → 221 passed. `cd app/ai-backend && npm run build` → tsc 성공.
-- **배포 시 주의**: 프론트엔드/DB 변경 없음. AI 백엔드 재배포 필요.
-- **핵심 파일**: `app/backend/api/jobs.py`, `app/backend/tests/test_jobs_result_json_annotations.py`, `app/ai-backend/src/tools/annotations.ts`, `app/ai-backend/src/chat/route.ts`.
 
 ### AI Annotation Text-Only + Searchable PDF Guarantee — 모든 PDF를 PaddleOCR로 searchable 변환 및 LLM 위치값 제거
 

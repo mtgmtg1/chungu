@@ -8,6 +8,18 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 주석 추가 시 이전 주석 유실 버그 수정 (merged_annotations.json 자동 재생성) — 2026-07-21
+
+- **원인**: `save_user_annotations`가 `user_annotations_{source_index}.json`을 덮어쓰기한 후 `merged_annotations.json`을 재생성하지 않았음. 자동 저장 후 파일 전환/복귀 시 프론트엔드가 이전 `merged_annotations.json`(기존 사용자 주석 누락)을 로드하고, 그 상태에서 새 주석을 추가하면 `exportAnnotations()`에 기존 주석이 빠져 영구 유실되는 악순환 발생.
+- **수정 (백엔드)** (`app/backend/api/jobs.py`):
+  - `save_user_annotations`에 `ai_annotations_path_for_merge` 변수 추가 — entry가 있으면 공유 annotations JSON 경로, 없으면 None.
+  - 두 분기(if/else) 후 공통으로 `_merge_annotation_jsons` 호출해 `merged_annotations.json`을 즉시 재생성.
+  - 응답에 `merged_annotations_url`(새 signed URL) 추가.
+- **수정 (프론트엔드)** (`app/frontend/src/pages/JobResultPage.jsx`):
+  - `handleSaveAnnotations`에서 응답의 `merged_annotations_url`로 `sourceFiles[selectedFileIndex].annotations_json_url` 갱신. `loadJob` 없이도 `SourcePanel`이 최신 병합본을 fetch하도록 함.
+- **검증**: `cd app/backend && .venv/bin/python -m pytest tests/ -q` → 255 passed (신규 2건 포함). `cd app/frontend && npm run build` → 성공. `cd app/ai-backend && npm run build` → 성공.
+- **핵심 파일**: `app/backend/api/jobs.py`, `app/frontend/src/pages/JobResultPage.jsx`, `app/backend/tests/test_save_user_annotations_merge.py`.
+
 ### 스캔 PDF searchable PDF 프리뷰 미적용 및 표 텍스트 레이어 행 분할 — 2026-07-21
 
 - **원인**: `app/frontend/src/components/SourcePanel.jsx`에서 PDF 파일 선택 시 `selectedFile.url`(원본 스캔 PDF)을 뷰어에 전달하고, `selectedFile.preview_url`(searchable PDF)은 무시. docx/hwp/pptx 분기는 `preview_url || url`을 올바르게 쓰고 있었으나 PDF 분기만 누락. `app/backend/api/jobs.py`의 `preview_job`도 `source_url`을 항상 원본 `pdf_storage_path`로 설정하고 `searchable_pdf_storage_path`를 무시.

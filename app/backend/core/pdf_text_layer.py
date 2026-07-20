@@ -13,6 +13,8 @@ import fitz  # PyMuPDF
 from .ocr_layout import BBox
 from .pdf_coordinate_transform import normalized_top_left_to_pdf_user
 
+PDF_POINTS_PER_INCH = 72.0
+
 logger = logging.getLogger(__name__)
 
 # PyMuPDF built-in CJK 폰트 매핑. 별도 폰트 파일 없이 한/중/일 문자를 지원한다.
@@ -110,16 +112,87 @@ def _insert_invisible_text(
         logger.warning(f"[pdf_text_layer] 텍스트 레이어 삽입 실패 '{text[:20]}': {e}")
 
 
+def _convert_bbox_to_pdf_user(
+    bbox: BBox,
+    page_rect: fitz.Rect,
+    layout: dict[str, Any],
+    dpi: float,
+) -> fitz.Rect | None:
+    """[Flow: Step 1 (bbox가 이미 PDF user-space인지 확인)
+          -> Step 2 (0~1 normalized면 PDF user-space로 변환)
+          -> Step 3 (픽셀/points top-left면 source 크기로 정규화 후 PDF user-space로 변환)
+          -> Step 4 (PDF user-space fitz.Rect 반환)]
+
+    OCR 레이아웃의 bbox는 normalized(0~1, y=0 상단), points top-left, 또는
+    픽셀 top-left 좌표계로 들어올 수 있다. coordinate_system 메타데이터가 없어도
+    layout의 width/height를 이용해 안전하게 PDF user-space(y=0 하단, y↑)로 변환한다.
+    """
+    if not bbox or len(bbox) < 4:
+        return None
+
+    try:
+        x0, y0, x1, y1 = (float(v) for v in bbox[:4])
+    except (ValueError, TypeError):
+        return None
+
+    coordinate_system = layout.get("_coordinate_system")
+
+    # 이미 PDF user-space면 그대로 사용한다.
+    if coordinate_system == "pdf_user_space":
+        return fitz.Rect(x0, y0, x1, y1)
+
+    # 명시적으로 normalized이거나 모든 값이 0~1 범위면 normalized로 간주한다.
+    is_normalized = (
+        coordinate_system == "normalized"
+        or all(0.0 <= v <= 1.01 for v in (x0, y0, x1, y1))
+    )
+
+    if is_normalized:
+        try:
+            return normalized_top_left_to_pdf_user((x0, y0, x1, y1), page_rect)
+        except Exception as e:
+            logger.warning(f"[pdf_text_layer] normalized bbox 변환 실패: {e}")
+            return None
+
+    # normalized가 아니면 top-left points/pixel 좌표로 취급한다.
+    # layout에 source 크기가 있으면 우선 사용하고, 없으면 PDF 페이지 크기 + dpi로 추정한다.
+    source_width = layout.get("width") or layout.get("_page_width_px")
+    source_height = layout.get("height") or layout.get("_page_height_px")
+    if not source_width or not source_height:
+        source_width = page_rect.width * dpi / PDF_POINTS_PER_INCH
+        source_height = page_rect.height * dpi / PDF_POINTS_PER_INCH
+
+    try:
+        source_width = float(source_width)
+        source_height = float(source_height)
+    except (ValueError, TypeError):
+        return None
+
+    if source_width <= 0 or source_height <= 0:
+        return None
+
+    # top-left 좌표를 0~1 normalized로 변환한 뒤 PDF user-space로 변환한다.
+    nx0 = x0 / source_width
+    ny0 = y0 / source_height
+    nx1 = x1 / source_width
+    ny1 = y1 / source_height
+    try:
+        return normalized_top_left_to_pdf_user((nx0, ny0, nx1, ny1), page_rect)
+    except Exception as e:
+        logger.warning(f"[pdf_text_layer] pixel/points bbox 변환 실패: {e}")
+        return None
+
+
 def _insert_text_layer_into_doc(
     doc: fitz.Document,
     page_ocr_results: dict[int, list[tuple[str, BBox]]],
     layout_by_page: dict[int, dict] | None,
     language: str | None,
+    dpi: float = 300.0,
 ) -> None:
     """[Flow: Step 1 (문서의 각 페이지 순회)
-          -> Step 2 (layout coordinate_system 확인)
-          -> Step 3 (normalized_top_left_to_pdf_user로 PDF user-space 변환)
-          -> Step 4 (페이지 경계 내로 clamp) -> Step 5 (투명 텍스트 삽입)]"""
+          -> Step 2 (_convert_bbox_to_pdf_user로 bbox를 PDF user-space로 변환)
+          -> Step 3 (페이지 경계 내로 clamp) -> Step 4 (투명 텍스트 삽입)]"""
     font_name = _pick_font_name(language)
 
     for page in doc:
@@ -130,10 +203,6 @@ def _insert_text_layer_into_doc(
 
         page_rect = page.rect
         layout = (layout_by_page or {}).get(page_no, {})
-        coordinate_system = layout.get("_coordinate_system")
-        page_width_px = layout.get("_page_width_px")
-        page_height_px = layout.get("_page_height_px")
-        is_normalized = coordinate_system == "normalized" and page_width_px and page_height_px
 
         for text, bbox_pdf in items:
             text = _normalize_rec_text(text)
@@ -142,13 +211,8 @@ def _insert_text_layer_into_doc(
             if not bbox_pdf or len(bbox_pdf) < 4:
                 continue
 
-            try:
-                if is_normalized:
-                    ocr_rect = normalized_top_left_to_pdf_user(bbox_pdf, page_rect)
-                else:
-                    ocr_rect = fitz.Rect(float(bbox_pdf[0]), float(bbox_pdf[1]), float(bbox_pdf[2]), float(bbox_pdf[3]))
-            except Exception as e:
-                logger.warning(f"[pdf_text_layer] bbox 변환 실패 '{text[:20]}': {e}")
+            ocr_rect = _convert_bbox_to_pdf_user(bbox_pdf, page_rect, layout, dpi)
+            if not ocr_rect:
                 continue
 
             # 페이지 경계 내로 clamp. CropBox/MediaBox offset도 자동 처리.
@@ -176,13 +240,12 @@ def add_text_layer_from_ocr(
     Args:
         pdf_bytes: 이미지 기반 PDF bytes
         page_ocr_results: page_no(1-based) -> [(text, bbox_pdf), ...]
-            paddleocr_service에서 normalized(0~1, y=0 상단) 좌표로 정규화된 bbox를 반환한다.
-        dpi: 이미지 렌더링 DPI (기본 300). 현재는 좌표계 변환에 사용하지 않지만
-            하위 호환을 위해 시그니처를 유지한다.
+            좌표계는 normalized(0~1, y=0 상단) 또는 points/pixel top-left(y=0 상단)일 수 있다.
+            layout_by_page에 width/height가 있으면 이를 이용해 PDF user-space로 변환한다.
+        dpi: 이미지 렌더링 DPI (기본 300). pixel 좌표 변환 시 page 크기 추정에 사용한다.
         language: 언어 코드 (ko/ja/zh/zht/en). None이면 기본 CJK 폰트 사용.
         layout_by_page: page_no -> PaddleOCR layout dict.
-            coordinate_system="normalized"이면 page_width_px/height_px를 참조해
-            PDF user-space로 변환한다.
+            coordinate_system="normalized" 또는 width/height를 참조해 PDF user-space로 변환한다.
 
     Returns:
         텍스트 레이어가 추가된 PDF bytes
@@ -192,7 +255,7 @@ def add_text_layer_from_ocr(
 
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
-        _insert_text_layer_into_doc(doc, page_ocr_results, layout_by_page, language)
+        _insert_text_layer_into_doc(doc, page_ocr_results, layout_by_page, language, dpi=dpi)
         return doc.tobytes()
     finally:
         doc.close()

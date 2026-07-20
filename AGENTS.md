@@ -8,6 +8,22 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### Develop branch fixes — 2026-07-20
+
+- **검색 가능 PDF 텍스트 레이어 y축 반전 수정** (`app/backend/core/pdf_text_layer.py`):
+  - `add_text_layer_from_ocr()`이 OCR bbox를 PDF user-space로 변환할 때 points/pixel top-left 좌표계를 지원하지 않아 발생하던 y축 반전 버그를 수정.
+  - `_convert_bbox_to_pdf_user()`를 추가해 `normalized`/`points`/`pixel`/`pdf_user_space` 좌표계를 자동 감지하고, `layout`의 `width`/`height` 또는 `dpi`를 이용해 PDF user-space로 변환.
+  - `app/backend/tests/test_pdf_text_layer_baseline.py`에 points top-left 회귀 테스트를 추가.
+- **사용자 주석 저장 fallback 보강** (`app/backend/api/jobs.py`):
+  - `save_user_annotations()`에서 `annotated_pdf_files` entry가 없어도 404를 반환하지 않고 `user_annotations_{source_index}.json` 경로로 fallback, AI/사용자 주석 병합 조건도 entry 존재 여부로 판단.
+- **개발 환경 TUS 업로드/프록시 수정** (`app/frontend/src/tusUpload.js`, `app/frontend/vite.config.js`):
+  - `tusUpload.js`에서 Supabase 세션 대신 `getToken()`을 사용해 개발 환경 dev bypass 토큰을 우선 사용.
+  - `vite.config.js`에서 `/supabase` 프록시 대상을 `VITE_DEV_SUPABASE_URL` 환경변수 기반으로 설정, `VITE_DEV_SUPABASE_URL`이 없으면 백엔드 서버로 fallback.
+- **검증**:
+  - `cd app/backend && .venv/bin/python -m pytest tests/ -q` → 232 passed.
+  - `cd app/frontend && npm run build` → 성공.
+- **배포 시 주의**: 백엔드 Docker 컨테이너 재배포 필요. 기존 `searchable.pdf`는 반전된 채 남아 있을 수 있으므로 필요시 재생성.
+
 ### AI Annotation Agent Tool Audit — text-only workflow 및 좌표 redaction
 
 - **목표**: AI 채팅 에이전트가 여전히 `get_elements`/`search_text`의 `bbox_pdf`나 `add_highlight`/`save_annotations` 같은 구식 tool로 rect를 조립하려는 문제를 완전히 차단. LLM은 "강조할 텍스트 내용"만 식별하고, 모든 bbox/segmentRects 결정은 백엔드가 검색해서 수행.
@@ -74,9 +90,13 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
     - `TestScannedPdfTextSearchPipeline`: searchable PDF가 없는 스캔 PDF에서 LLM이 `text`만 반환하면 backend가 검색해 highlight.
     - `test_run_advanced_vision_returns_text_only`: `advanced=True` Vision LLM이 `text`만 반환하면 backend가 검색.
   - `app/backend/test_annotate_compare.py`: text-only prompt와 OCR bbox 검색 방식으로 갱신.
-- **검증**: `cd app/backend && .venv/bin/python -m pytest tests/ -q` → 227 passed.
-- **배포 시 주의**: 프론트엔드/DB 변경 없음. `advanced` 모드는 여전히 Vision LLM을 호출하지만 위치값 대신 텍스트 내용만 반환. PaddleOCR 장애 시 `run_vision` 및 searchable PDF 생성이 실패할 수 있음.
-- **핵심 파일**: `app/backend/core/prompts.py`, `app/backend/core/pdf_annotate_converter.py`, `app/backend/core/pipeline_vision.py`, `app/backend/core/paddleocr_client.py`, `app/backend/workers/tasks.py`, `app/backend/tests/test_pdf_annotate_converter_run.py`, `app/backend/test_annotate_compare.py`.
+- **Phase 7: searchable PDF 텍스트 레이어 y축 반전 버그 수정** (`app/backend/core/pdf_text_layer.py`):
+  - `add_text_layer_from_ocr()`에서 OCR bbox 좌표계를 PDF user-space로 변환할 때 normalized 외 points/pixel top-left 좌표계를 지원하지 않아, 텍스트 레이어가 페이지 상하로 반전되어 삽입되던 문제 수정.
+  - `_convert_bbox_to_pdf_user()` 헬퍼 추가: `_coordinate_system` 메타데이터와 `layout`의 `width`/`height`를 이용해 normalized, points, pixel, pdf_user_space 좌표계를 자동 감지/변환. `dpi` 파라미터도 `_insert_text_layer_into_doc()`에 전달.
+  - `app/backend/tests/test_pdf_text_layer_baseline.py`에 points top-left 회귀 테스트 추가.
+- **검증**: `cd app/backend && .venv/bin/python -m pytest tests/ -q` → 232 passed.
+- **배포 시 주의**: 백엔드 Docker 재배포 필요. 이전 코드로 생성된 `searchable.pdf`는 여전히 상하 반전된 채 남아 있으므로, 새로 생성하거나 `searchable_pdf_storage_path`를 삭제 후 재생성해야 화면에서 바르게 보임. 프론트엔드/DB 변경 없음. `advanced` 모드는 여전히 Vision LLM을 호출하지만 위치값 대신 텍스트 내용만 반환. PaddleOCR 장애 시 `run_vision` 및 searchable PDF 생성이 실패할 수 있음.
+- **핵심 파일**: `app/backend/core/prompts.py`, `app/backend/core/pdf_annotate_converter.py`, `app/backend/core/pdf_text_layer.py`, `app/backend/core/pipeline_vision.py`, `app/backend/core/paddleocr_client.py`, `app/backend/workers/tasks.py`, `app/backend/tests/test_pdf_annotate_converter_run.py`, `app/backend/test_annotate_compare.py`, `app/backend/tests/test_pdf_text_layer_baseline.py`.
 
 ### IRAC Argument Map — 쟁점/주장/근거 3단계 행렬 + 원문 스크롤 연동 뷰 모드
 

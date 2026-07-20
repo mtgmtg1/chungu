@@ -166,9 +166,11 @@ class TestPdfAnnotateConverterRunVisionPipeline:
         json_path = f"{job.id}/annotated.annotations.json"
         assert json_path in mock_storage.uploaded, f"{json_path} not uploaded. uploaded keys: {list(mock_storage.uploaded.keys())}"
         uploaded_json = json.loads(mock_storage.uploaded[json_path])
-        assert isinstance(uploaded_json, list)
-        assert len(uploaded_json) == 1
-        ann = uploaded_json[0]["annotation"]
+        assert uploaded_json.get("coordinate_system") == "canonical"
+        annotations = uploaded_json.get("annotations", [])
+        assert isinstance(annotations, list)
+        assert len(annotations) == 1
+        ann = annotations[0]["annotation"]
         assert ann["type"] == 9
         assert ann["contents"] == "AI 주석"
 
@@ -279,9 +281,11 @@ class TestPdfAnnotateConverterSearchableTextPipeline:
         json_path = f"{job.id}/annotated.annotations.json"
         assert json_path in mock_storage.uploaded
         uploaded_json = json.loads(mock_storage.uploaded[json_path])
-        assert isinstance(uploaded_json, list)
-        assert len(uploaded_json) == 1
-        ann = uploaded_json[0]["annotation"]
+        assert uploaded_json.get("coordinate_system") == "canonical"
+        annotations = uploaded_json.get("annotations", [])
+        assert isinstance(annotations, list)
+        assert len(annotations) == 1
+        ann = annotations[0]["annotation"]
         assert ann["type"] == 9
         # 같은 텍스트가 한 페이지에 2회 있으므로 segmentRects가 2개여야 한다.
         assert "segmentRects" in ann
@@ -404,8 +408,10 @@ class TestScannedPdfTextSearchPipeline:
         json_path = f"{job.id}/annotated.annotations.json"
         assert json_path in mock_storage.uploaded
         uploaded_json = json.loads(mock_storage.uploaded[json_path])
-        assert len(uploaded_json) == 1
-        ann = uploaded_json[0]["annotation"]
+        assert uploaded_json.get("coordinate_system") == "canonical"
+        annotations = uploaded_json.get("annotations", [])
+        assert len(annotations) == 1
+        ann = annotations[0]["annotation"]
         assert ann["type"] == 9
         assert ann["segmentRects"][0]["size"]["width"] > 0
 
@@ -498,4 +504,6 @@ class TestScannedPdfTextSearchPipeline:
         json_path = f"{job.id}/annotated.annotations.json"
         assert json_path in mock_storage.uploaded
         uploaded_json = json.loads(mock_storage.uploaded[json_path])
-        assert len(uploaded_json) == 1
+        assert uploaded_json.get("coordinate_system") == "canonical"
+        annotations = uploaded_json.get("annotations", [])
+        assert len(annotations) == 1

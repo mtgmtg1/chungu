@@ -8,6 +8,26 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### PDF 뷰어 주석 좌표계 roundtrip 수정 (merged_annotations.json canonical document)
+
+- **목표**: 원본 PDF 뷰어에서 AI/사용자 주석이 좌상단 (0,0)에 몰려 보이거나, 추가한 주석이 위치가 어긋나 보이는 문제를 해결.
+- **원인**: `app/backend/api/jobs.py`의 `_merge_annotation_jsons`가 `page_dimensions`를 페이지 번호별 dict로 다루지 않고 단일 페이지 dimension 객체처럼 사용해, canonical document를 생성하지 못하고 좌표값 그대로의 flat list를 `merged_annotations.json`에 저장. 프론트엔드 `SourcePanel.jsx`는 이 flat list를 device-space로 오인해 `(0,0)` 근처에 그렸고, 뷰어가 내보낸 값도 동일하게 canonical로 잘못 해석되어 악순환이 반복됨.
+- **수정** (`app/backend/api/jobs.py`):
+  - `_merge_annotation_jsons`에서 AI/사용자 주석 JSON이 list든 canonical document(dict)든 파싱.
+  - `page_dimensions`를 `{page_no: {width_pt, height_pt, x0, y0, rotation}}` 형태로 취급하고, annotation의 `pageIndex+1`로 해당 페이지 크기를 조회.
+  - AI/사용자 주석의 좌표계를 canonical 기준으로 통일한 뒤 `pdf_annotate_converter._build_canonical_annotations_document()`로 canonical document를 저장.
+  - legacy list 형식도 device-space로 간주하여 canonical로 변환.
+- **영향 파일**: `app/backend/api/jobs.py`, `app/backend/core/pdf_annotate_converter.py`, `app/backend/core/pdf_user_annotator.py`, `app/frontend/src/components/SourcePanel.jsx`, `app/frontend/src/components/PdfViewer.jsx`.
+- **추가 수정 — 사용자 주석 분리 저장**:
+  - `save_user_annotations`에서 AI 주석(`annotated.annotations.json`)과 사용자 주석(`user_annotations_{source_index}.json`)을 한 파일에 뭉쳐 저장하고 있어, `_source_files`/`_load_all_annotations` 병합 시 중복/과거 데이터가 남는 문제를 수정.
+  - 이제 AI annotate가 있을 때: AI 주석은 공유 `annotated.annotations.json`에, 사용자 직접 추가 주석은 `user_annotations_{source_index}.json`에 분리 저장. `_merge_annotation_jsons`가 두 파일을 병합해 `merged_annotations.json` 생성.
+- **검증**:
+  - `cd app/backend && .venv/bin/python -m pytest tests/ -q` → 237 passed.
+  - Playwright로 worktree-c 프론트엔드에서 AI annotation 19개 import/export 좌표가 device-space로 정상 roundtrip됨을 확인.
+  - 수동 주석 추가 후 `merged_annotations.json`에 AI 주석 + 사용자 주석이 중복 없이 병합됨을 확인 (AI 26개 + 수동 1개 = 27개).
+- **배포**: worktree-c backend를 a1 develop(`chungu-dev`)에 재배포 완료. 프론트엔드 dev server는 Vite HMR.
+- **주의**: 기존에 이미 깨진 `merged_annotations.json`이나 `user_annotations_*.json`이 남아 있는 job은 한 번 삭제하거나 새로 annotate/하이라이트한 뒤 새로고침해야 정상 위치에 표시됨.
+
 ### Develop branch fixes — 2026-07-20
 
 - **검색 가능 PDF 텍스트 레이어 y축 반전 수정** (`app/backend/core/pdf_text_layer.py`):

@@ -12,6 +12,7 @@ from typing import Any
 
 import fitz  # PyMuPDF
 
+from . import canonical_annotation_coords as cac
 from .pdf_coordinate_transform import (
     device_to_pdf_user,
     device_to_pdf_user_point,
@@ -163,6 +164,245 @@ def _parse_ink_list(ink_list: Any, page_height: float | None = None, page_x0: fl
     return strokes if strokes else None
 
 
+def _page_rect_from_dimensions(page_dimensions: dict | None, page_no: int) -> fitz.Rect | None:
+    """[Flow: Step 1 (page_dimensions dict에서 페이지 번호 조회)
+          -> Step 2 (width/height/x0/y0로 fitz.Rect 생성) -> Step 3 (없으면 None)]"""
+    if not page_dimensions:
+        return None
+    dims = page_dimensions.get(str(page_no)) or page_dimensions.get(page_no)
+    if not isinstance(dims, dict):
+        return None
+    width = float(dims.get("width_pt", 0))
+    height = float(dims.get("height_pt", 0))
+    x0 = float(dims.get("x0", 0))
+    y0 = float(dims.get("y0", 0))
+    if width <= 0 or height <= 0:
+        return None
+    return fitz.Rect(x0, y0, x0 + width, y0 + height)
+
+
+def _rect_to_canonical(rect: dict, page_rect: fitz.Rect, source_space: str) -> dict:
+    """[Flow: Step 1 (source_space에 따라 canonical rect로 변환)]"""
+    if source_space == "canonical":
+        return dict(rect)
+    if source_space == "device":
+        return cac.device_rect_to_canonical(rect, page_rect.width, page_rect.height)
+    if source_space == "pdf_user":
+        return cac.pdf_user_rect_to_canonical(rect, page_rect)
+    return dict(rect)
+
+
+def _rect_from_canonical(rect: dict, page_rect: fitz.Rect, target_space: str) -> dict:
+    """[Flow: Step 1 (canonical rect를 target_space로 변환)]"""
+    if target_space == "canonical":
+        return dict(rect)
+    if target_space == "device":
+        return cac.canonical_rect_to_device(rect, page_rect.width, page_rect.height)
+    if target_space == "pdf_user":
+        pdf_rect = cac.canonical_rect_to_pdf_user(rect, page_rect)
+        return {
+            "origin": {"x": pdf_rect.x0, "y": pdf_rect.y0},
+            "size": {"width": pdf_rect.x1 - pdf_rect.x0, "height": pdf_rect.y1 - pdf_rect.y0},
+        }
+    return dict(rect)
+
+
+def _point_to_canonical(point: dict, page_rect: fitz.Rect, source_space: str) -> dict:
+    """[Flow: Step 1 (source_space point를 canonical point로 변환)]"""
+    if source_space == "canonical":
+        return dict(point)
+    if source_space == "device":
+        return cac.device_point_to_canonical(point, page_rect.width, page_rect.height)
+    if source_space == "pdf_user":
+        return cac.pdf_user_point_to_canonical(point, page_rect)
+    return dict(point)
+
+
+def _point_from_canonical(point: dict, page_rect: fitz.Rect, target_space: str) -> dict:
+    """[Flow: Step 1 (canonical point를 target_space point로 변환)]"""
+    if target_space == "canonical":
+        return dict(point)
+    if target_space == "device":
+        return cac.canonical_point_to_device(point, page_rect.width, page_rect.height)
+    if target_space == "pdf_user":
+        pdf_point = cac.canonical_point_to_pdf_user(point, page_rect)
+        return {"x": pdf_point.x, "y": pdf_point.y}
+    return dict(point)
+
+
+def _rd_to_canonical(rd: dict, page_rect: fitz.Rect, source_space: str) -> dict:
+    """[Flow: Step 1 (rectangleDifferences를 canonical normalized inset으로 변환)]
+
+    left/right는 page_width로, top/bottom은 page_height로 나눈다.
+    """
+    if source_space == "canonical":
+        return dict(rd)
+    left = float(rd.get("left", 0))
+    right = float(rd.get("right", 0))
+    top = float(rd.get("top", 0))
+    bottom = float(rd.get("bottom", 0))
+    if source_space in ("device", "pdf_user"):
+        return {
+            "left": left / page_rect.width,
+            "right": right / page_rect.width,
+            "top": top / page_rect.height,
+            "bottom": bottom / page_rect.height,
+        }
+    return dict(rd)
+
+
+def _rd_from_canonical(rd: dict, page_rect: fitz.Rect, target_space: str) -> dict:
+    """[Flow: Step 1 (canonical rectangleDifferences를 target_space points로 변환)]"""
+    if target_space == "canonical":
+        return dict(rd)
+    left = float(rd.get("left", 0))
+    right = float(rd.get("right", 0))
+    top = float(rd.get("top", 0))
+    bottom = float(rd.get("bottom", 0))
+    if target_space in ("device", "pdf_user"):
+        return {
+            "left": left * page_rect.width,
+            "right": right * page_rect.width,
+            "top": top * page_rect.height,
+            "bottom": bottom * page_rect.height,
+        }
+    return dict(rd)
+
+
+def _convert_annotation_item(
+    raw: dict,
+    page_rect: fitz.Rect,
+    input_space: str,
+    output_space: str,
+) -> dict:
+    """[Flow: Step 1 (annotation 객체 추출)
+          -> Step 2 (rect/segmentRects/calloutLine/points/rectangleDifferences를 source_space에서 canonical로 변환)
+          -> Step 3 (canonical에서 output_space로 변환)
+          -> Step 4 (갱신된 annotation dict 반환)]
+
+    device / pdf_user / canonical 간 모든 주석 좌표를 변환한다.
+    """
+    if input_space == output_space:
+        return raw
+
+    item = dict(raw)
+    a = _extract_annotation(item) or item
+
+    def _rect(r):
+        if not isinstance(r, dict):
+            return r
+        canonical = _rect_to_canonical(r, page_rect, input_space)
+        return _rect_from_canonical(canonical, page_rect, output_space)
+
+    def _point(p):
+        if not isinstance(p, dict):
+            return p
+        canonical = _point_to_canonical(p, page_rect, input_space)
+        return _point_from_canonical(canonical, page_rect, output_space)
+
+    def _rd(rd):
+        if not isinstance(rd, dict):
+            return rd
+        canonical = _rd_to_canonical(rd, page_rect, input_space)
+        return _rd_from_canonical(canonical, page_rect, output_space)
+
+    if "rect" in a and isinstance(a["rect"], dict):
+        a["rect"] = _rect(a["rect"])
+    if "segmentRects" in a and isinstance(a["segmentRects"], list):
+        a["segmentRects"] = [_rect(r) for r in a["segmentRects"] if isinstance(r, dict)]
+    if "calloutLine" in a and isinstance(a["calloutLine"], list):
+        a["calloutLine"] = [_point(p) for p in a["calloutLine"] if isinstance(p, dict)]
+    if "start" in a and isinstance(a["start"], dict):
+        a["start"] = _point(a["start"])
+    if "end" in a and isinstance(a["end"], dict):
+        a["end"] = _point(a["end"])
+    if "rectangleDifferences" in a and isinstance(a["rectangleDifferences"], dict):
+        a["rectangleDifferences"] = _rd(a["rectangleDifferences"])
+    if "inkList" in a and isinstance(a["inkList"], list):
+        a["inkList"] = [
+            {
+                **ink,
+                "points": [_point(p) for p in ink.get("points", []) if isinstance(p, dict)],
+            }
+            for ink in a["inkList"]
+            if isinstance(ink, dict)
+        ]
+    if "paths" in a and isinstance(a["paths"], list):
+        a["paths"] = [
+            [_point(p) for p in stroke if isinstance(p, dict)]
+            for stroke in a["paths"]
+            if isinstance(stroke, list)
+        ]
+
+    return item
+
+
+def _convert_annotations_to_canonical(
+    annotations: list[dict],
+    pdf_bytes: bytes,
+    input_space: str = "device",
+) -> list[dict]:
+    """[Flow: Step 1 (PDF 열기) -> Step 2 (페이지별 page_rect 캐시)
+          -> Step 3 (각 annotation을 canonical로 변환) -> Step 4 (목록 반환)]"""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        page_rects = {page.number + 1: page.rect for page in doc}
+    finally:
+        doc.close()
+
+    converted: list[dict] = []
+    for raw in annotations:
+        a = _extract_annotation(raw)
+        if not a:
+            converted.append(raw)
+            continue
+        page_index = a.get("pageIndex")
+        if not isinstance(page_index, int) or page_index < 0:
+            converted.append(raw)
+            continue
+        page_no = page_index + 1
+        page_rect = page_rects.get(page_no)
+        if page_rect is None:
+            converted.append(raw)
+            continue
+        converted.append(_convert_annotation_item(raw, page_rect, input_space, "canonical"))
+    return converted
+
+
+def _convert_annotations(
+    annotations: list[dict],
+    pdf_bytes: bytes,
+    input_space: str,
+    output_space: str,
+) -> list[dict]:
+    """[Flow: Step 1 (PDF 열기) -> Step 2 (페이지별 page_rect 캐시)
+          -> Step 3 (annotation item을 input_space에서 output_space로 변환)
+          -> Step 4 (목록 반환)]"""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        page_rects = {page.number + 1: page.rect for page in doc}
+    finally:
+        doc.close()
+
+    converted: list[dict] = []
+    for raw in annotations:
+        a = _extract_annotation(raw)
+        if not a:
+            converted.append(raw)
+            continue
+        page_index = a.get("pageIndex")
+        if not isinstance(page_index, int) or page_index < 0:
+            converted.append(raw)
+            continue
+        page_no = page_index + 1
+        page_rect = page_rects.get(page_no)
+        if page_rect is None:
+            converted.append(raw)
+            continue
+        converted.append(_convert_annotation_item(raw, page_rect, input_space, output_space))
+    return converted
+
+
 def _convert_annotation_to_device_space(
     raw: dict,
     page_height: float,
@@ -294,99 +534,29 @@ def _convert_annotation_to_pdf_user(
 def _convert_annotations_to_pdf_user(
     annotations: list[dict],
     pdf_bytes: bytes,
+    input_space: str = "device",
 ) -> list[dict]:
-    """[Flow: Step 1 (PDF 열기) -> Step 2 (페이지별 높이/오프셋 캐시)
-          -> Step 3 (각 annotation의 pageIndex로 해당 페이지 높이/오프셋 조회)
-          -> Step 4 (device-space → PDF user-space 변환) -> Step 5 (변환된 목록 반환)]
+    """[Flow: Step 1 (PDF 열기) -> Step 2 (페이지별 page_rect 캐시)
+          -> Step 3 (주석을 PDF user-space로 변환) -> Step 4 (목록 반환)]
 
-    저장된 embedpdf device-space 좌표를 AI 백엔드가 생성하는 PDF user-space 좌표계로 일괄 역변환한다.
-    get_job_annotations API에서 AI 백엔드가 save_annotations를 호출할 때 좌표계가 일관되도록 사용한다.
+    저장된 device-space 또는 canonical 좌표를 AI 백엔드가 사용하는 PDF user-space로 변환한다.
+    input_space가 "device"면 기존 embedpdf device-space, "canonical"이면 canonical normalized를,
+    "pdf_user"면 아무 변환 없이 그대로 반환한다.
     """
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    try:
-        page_heights: dict[int, float] = {}
-        page_x0s: dict[int, float] = {}
-        page_y0s: dict[int, float] = {}
-        for page in doc:
-            page_no = page.number + 1
-            page_heights[page_no] = page.rect.height
-            page_x0s[page_no] = page.rect.x0
-            page_y0s[page_no] = page.rect.y0
-    finally:
-        doc.close()
-
-    converted: list[dict] = []
-    for raw in annotations:
-        a = _extract_annotation(raw)
-        if not a:
-            converted.append(raw)
-            continue
-        page_index = a.get("pageIndex")
-        if not isinstance(page_index, int) or page_index < 0:
-            converted.append(raw)
-            continue
-        page_no = page_index + 1
-        page_height = page_heights.get(page_no)
-        if page_height is None:
-            converted.append(raw)
-            continue
-        _convert_annotation_to_pdf_user(
-            raw, page_height, page_x0s.get(page_no, 0.0), page_y0s.get(page_no, 0.0)
-        )
-        converted.append(raw)
-    return converted
+    return _convert_annotations(annotations, pdf_bytes, input_space, "pdf_user")
 
 
 def _convert_annotations_to_device_space(
     annotations: list[dict],
     pdf_bytes: bytes,
+    input_space: str = "pdf_user",
 ) -> list[dict]:
-    """[Flow: Step 1 (PDF 열기) -> Step 2 (페이지별 높이/오프셋 캐시)
-          -> Step 3 (각 annotation의 pageIndex로 해당 페이지 높이/오프셋 조회)
-          -> Step 4 (PDF user-space → device-space 변환) -> Step 5 (변환된 목록 반환)]
+    """[Flow: Step 1 (PDF 열기) -> Step 2 (페이지별 page_rect 캐시)
+          -> Step 3 (주석을 embedpdf device-space로 변환) -> Step 4 (목록 반환)]
 
-    AI 백엔드가 보내는 PDF user-space 좌표를 embedpdf device-space로 일괄 변환한다.
-    source_index < 0로 JSON만 저장할 때도 뷰어가 올바른 좌표계로 해석할 수 있도록 사용한다.
+    AI 백엔드가 보내는 PDF user-space 또는 canonical 좌표를 embedpdf device-space로 변환한다.
     """
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    try:
-        page_heights: dict[int, float] = {}
-        page_x0s: dict[int, float] = {}
-        page_y0s: dict[int, float] = {}
-        for page in doc:
-            page_no = page.number + 1
-            page_heights[page_no] = page.rect.height
-            page_x0s[page_no] = page.rect.x0
-            page_y0s[page_no] = page.rect.y0
-    finally:
-        doc.close()
-
-    converted: list[dict] = []
-    for raw in annotations:
-        a = _extract_annotation(raw)
-        if not a:
-            converted.append(raw)
-            continue
-        page_index = a.get("pageIndex")
-        if not isinstance(page_index, int) or page_index < 0:
-            converted.append(raw)
-            continue
-        page_no = page_index + 1
-        page_height = page_heights.get(page_no)
-        if page_height is None:
-            converted.append(raw)
-            continue
-        # AnnotationTransferItem 형식({annotation: {...}})이면 그대로 유지하고,
-        # 평면 dict면 평면 dict를 반환한다.
-        converted_a = _convert_annotation_to_device_space(
-            a, page_height, page_x0s.get(page_no, 0.0), page_y0s.get(page_no, 0.0)
-        )
-        if "annotation" in raw and isinstance(raw["annotation"], dict):
-            raw["annotation"] = converted_a
-            converted.append(raw)
-        else:
-            converted.append(converted_a)
-    return converted
+    return _convert_annotations(annotations, pdf_bytes, input_space, "device")
 
 
 # [Flow: Step 1 (PyMuPDF 색상 튜플 수신) -> Step 2 (0-255 변환) -> Step 3 (hex 문자열 반환)]
@@ -456,7 +626,7 @@ def extract_pdf_annotations(pdf_bytes: bytes) -> list[dict]:
                 embed_type = EMBEDPDF_TYPE_MAP.get(annot_type)
                 if embed_type is None:
                     continue
-                rect = _fitz_rect_to_embedpdf_rect(annot.rect, page_height, page.rect.x0, page_y0)
+                rect = cac.pdf_user_rect_to_canonical(annot.rect, page.rect)
                 colors = annot.colors or {}
                 stroke_color = _fitz_color_to_hex(colors.get("stroke")) if colors.get("stroke") else None
                 fill_color = _fitz_color_to_hex(colors.get("fill")) if colors.get("fill") else None
@@ -493,8 +663,8 @@ def extract_pdf_annotations(pdf_bytes: bytes) -> list[dict]:
                         # PyMuPDF 버전에 따라 tuple 또는 fitz.Point 반환
                         v0x, v0y = (float(v0[0]), float(v0[1])) if isinstance(v0, (tuple, list)) else (float(v0.x), float(v0.y))
                         v1x, v1y = (float(v1[0]), float(v1[1])) if isinstance(v1, (tuple, list)) else (float(v1.x), float(v1.y))
-                        annotation["start"] = {"x": v0x - page.rect.x0, "y": page_y1 - v0y}
-                        annotation["end"] = {"x": v1x - page.rect.x0, "y": page_y1 - v1y}
+                        annotation["start"] = cac.pdf_user_point_to_canonical(fitz.Point(v0x, v0y), page.rect)
+                        annotation["end"] = cac.pdf_user_point_to_canonical(fitz.Point(v1x, v1y), page.rect)
                 elif embed_type == FREETEXT:
                     annotation["fontFamily"] = 4  # Helvetica
                     annotation["fontSize"] = info.get("fontsize", 12) or 12

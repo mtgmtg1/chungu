@@ -22,6 +22,7 @@ from .pdf_coordinate_transform import (
     pdf_user_rect_from_embedpdf,
     pdf_user_to_device_point,
 )
+from . import canonical_annotation_coords as cac
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +160,7 @@ def build_embedpdf_annotations(
         page_height = visual.height
         page_x0 = visual.x0
         page_y0 = visual.y0
+        page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_width, page_y0 + page_height)
         element_bboxes = (page_elements_bboxes or {}).get(page_no, [])
         # 같은 페이지에서 이미 배치한 callout 텍스트 박스 — 후속 callout이 겹치지 않도록 장애물에 추가
         placed_callout_bboxes: list[tuple[float, float, float, float]] = []
@@ -168,13 +170,13 @@ def build_embedpdf_annotations(
             x0, y0, x1, y1 = t.bbox_pdf
 
             # [Flow: Step 1 (segmentRects 구성 — 검색 결과 rects가 있으면 모두 사용, 없으면 bbox_pdf 단일 rect)
-            #       -> Step 2 (하이라이트 주석 생성) -> Step 3 (callout 주석 생성)]
+            #       -> Step 2 (하이라이트 주석을 canonical rect로 생성) -> Step 3 (callout 주석 생성)]
             segment_bboxes_pdf = t.search_rects_pdf if t.search_rects_pdf else [(x0, y0, x1, y1)]
             segment_rects_ep = [
-                _rect_to_embedpdf_rect(sx0, sy0, sx1, sy1, page_height, page_x0, page_y0)
+                _rect_to_canonical_rect(sx0, sy0, sx1, sy1, page_rect)
                 for sx0, sy0, sx1, sy1 in segment_bboxes_pdf
             ]
-            bounding_rect_ep = _rect_to_embedpdf_rect(x0, y0, x1, y1, page_height, page_x0, page_y0)
+            bounding_rect_ep = _rect_to_canonical_rect(x0, y0, x1, y1, page_rect)
 
             # 하이라이트 주석 생성 (enable_highlight일 때)
             if enable_highlight:
@@ -214,8 +216,7 @@ def build_embedpdf_annotations(
                     page_index=page_no - 1,
                 )
                 if callout_anno:
-                    annotations.append(callout_anno)
-                    # 배치된 텍스트 박스 영역(overall rect가 아닌 실제 텍스트 박스)을 장애물에 추가
+                    # callout은 device-space로 계산되므로, 장애물 추적용 textbox 추출 후 canonical로 변환한다.
                     ann = callout_anno["annotation"]
                     rect_dev = ann["rect"]
                     rd = ann["rectangleDifferences"]
@@ -230,6 +231,10 @@ def build_embedpdf_annotations(
                         },
                     }
                     placed_callout_bboxes.append(_device_rect_to_pdf(tb_dev, page_height, page_x0, page_y0))
+                    callout_anno["annotation"] = _device_annotation_to_canonical(
+                        ann, page_width, page_height
+                    )
+                    annotations.append(callout_anno)
 
     return annotations
 
@@ -629,5 +634,72 @@ def _rect_to_embedpdf_rect(
     matrix로 y축 flip과 CropBox offset을 한 번에 처리한다.
     """
     pdf_rect = fitz.Rect(x0, y0, x1, y1)
+    # 하위 호환용 helper: width/height를 page_height로 잘못 사용하지만,
+    # PDF user-space <-> device-space matrix는 x1을 사용하지 않으므로 기존 테스트에 영향 없음.
     page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
     return embedpdf_rect_from_pdf_user(pdf_rect, page_rect)
+
+
+def _rect_to_canonical_rect(
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    page_rect: fitz.Rect,
+) -> dict:
+    """[Flow: Step 1 (PDF user-space fitz.Rect 생성)
+          -> Step 2 (pdf_user_rect_to_canonical로 [0,1] canonical rect 변환)
+          -> Step 3 (canonical {origin, size} dict 반환)]
+
+    page_rect의 x0, y0, width, height를 모두 올바르게 사용한다.
+    """
+    return cac.pdf_user_rect_to_canonical(fitz.Rect(x0, y0, x1, y1), page_rect)
+
+
+def _pdf_point_to_canonical(
+    px: float,
+    py: float,
+    page_rect: fitz.Rect,
+) -> dict:
+    """[Flow: Step 1 (PDF user-space point 수신)
+          -> Step 2 (pdf_user_point_to_canonical로 [0,1] canonical point 변환)
+          -> Step 3 ({x, y} dict 반환)]"""
+    return cac.pdf_user_point_to_canonical(fitz.Point(px, py), page_rect)
+
+
+def _device_annotation_to_canonical(
+    annotation: dict,
+    page_width: float,
+    page_height: float,
+) -> dict:
+    """[Flow: Step 1 (device-space annotation dict 수신)
+          -> Step 2 (rect/segmentRects/calloutLine/rectangleDifferences를 canonical로 변환)
+          -> Step 3 (갱신된 annotation dict 반환)]
+
+    callout 등 EmbedPDF 형식의 좌표를 canonical normalized 공간으로 변환한다.
+    rectangleDifferences는 페이지 크기로 나누어 normalized inset으로 변환한다.
+    """
+    ann = dict(annotation)
+    if "rect" in ann and isinstance(ann["rect"], dict):
+        ann["rect"] = cac.device_rect_to_canonical(ann["rect"], page_width, page_height)
+    if "segmentRects" in ann and isinstance(ann["segmentRects"], list):
+        ann["segmentRects"] = [
+            cac.device_rect_to_canonical(r, page_width, page_height)
+            for r in ann["segmentRects"]
+            if isinstance(r, dict)
+        ]
+    if "calloutLine" in ann and isinstance(ann["calloutLine"], list):
+        ann["calloutLine"] = [
+            cac.device_point_to_canonical(p, page_width, page_height)
+            for p in ann["calloutLine"]
+            if isinstance(p, dict)
+        ]
+    if "rectangleDifferences" in ann and isinstance(ann["rectangleDifferences"], dict):
+        rd = ann["rectangleDifferences"]
+        ann["rectangleDifferences"] = {
+            "left": float(rd.get("left", 0)) / page_width,
+            "top": float(rd.get("top", 0)) / page_height,
+            "right": float(rd.get("right", 0)) / page_width,
+            "bottom": float(rd.get("bottom", 0)) / page_height,
+        }
+    return ann

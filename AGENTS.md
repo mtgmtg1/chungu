@@ -8,6 +8,29 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 텍스트 하이라이트(add_text_highlight)와 라인 하이라이트(add_line_highlight) 분리 및 목록 일괄 생성 지원 — 2026-07-21
+
+- **하이라이트 도구 영역 분리 및 선형 보간/라인 확장 구현**:
+  - `add_text_highlight`는 매칭된 텍스트 자체만을 칠하도록 구현. 스캔된 PDF 등 OCR 폴백 시 텍스트 문자열의 비율을 계산하여 선형 보간으로 정확히 해당 텍스트 영역만을 하이라이트.
+  - `add_line_highlight` 신규 도구를 추가하여 텍스트가 속한 줄(Row/Line) 전체를 하이라이트할 수 있도록 분리. PyMuPDF의 line dict 겹침 및 OCR 라인 요소 bbox를 활용.
+  - 두 도구 모두 단일 문자열 및 문자열 배열(목록) 입력을 지원하여 한 번의 에이전트 도구 호출로 복수의 주석을 처리할 수 있도록 보장.
+- **검증**:
+  - `app/backend/tests/test_search_text_modes.py` 신규 작성 및 전체 242개 단위 테스트 통과.
+  - `app/ai-backend/src/tools/__tests__/annotations.test.ts` 테스트 추가 및 `npm run test` (67개 통과), `npm run build` (tsc 빌드 성공) 검증 완료.
+- **핵심 파일**: `app/backend/api/jobs.py`, `app/ai-backend/src/lib/proof-api.ts`, `app/ai-backend/src/tools/annotations.ts`, `app/ai-backend/src/chat/route.ts`, `app/backend/tests/test_search_text_modes.py`.
+
+### AI 주석 도구 다중 매개변수 목록(Batch) 지원 및 Zod 스키마 확장 — 2026-07-21
+
+- **다중 매개변수(page_no, color, opacity) 목록 입력 지원** (`app/ai-backend/src/tools/annotations.ts`):
+  - `add_text_highlight` 및 `add_text_callout` 도구에서 기존에 단일 값만 받았던 `page_no`, `color`, `opacity` 매개변수들을 텍스트(text) 배열의 크기와 일치하는 배열 목록으로 전달할 수 있도록 확장.
+  - 이를 위해 `_normalizeTextList` 헬퍼 함수를 모든 매개변수 대응이 가능한 `_normalizeParams`로 개편하여 각 요소별 파라미터 값 매핑 및 길이 불일치 검증을 수행하도록 구조화.
+  - Zod의 `z.union([z.X, z.array(z.X)])`를 통해 단일 값과 배열 타입을 모두 유연하게 처리할 수 있도록 스키마 보강.
+- **검증**:
+  - `app/ai-backend/src/tools/__tests__/annotations.test.ts`에 목록 매개변수의 정상 전달 및 길이 불일치 시 에러 제어에 관한 단위 테스트 추가 완료.
+  - `cd app/ai-backend && npm run test` -> 66개 테스트 전체 통과.
+  - `npm run build` -> tsc 빌드 성공.
+  - **핵심 파일**: `app/ai-backend/src/tools/annotations.ts`, `app/ai-backend/src/tools/__tests__/annotations.test.ts`.
+
 ### 프로 요금제 크레딧 혜택 상향 및 충전 크레딧 일치화 — 2026-07-21
 
 - **프로 요금제 월간 혜택 크레딧 인상**:

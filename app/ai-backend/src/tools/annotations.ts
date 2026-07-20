@@ -25,37 +25,92 @@ const DEFAULT_CALLOUT_COLOR: [number, number, number] = [0.65, 0.35, 0.95];
 const DEFAULT_OPACITY = 0.5;
 
 /**
- * [Flow: Step 1 (text/comment 단일 또는 배열 수신) -> Step 2 (text를 문자열 배열로 normalize)
- *       -> Step 3 (comment를 동일 길이 문자열 배열로 normalize) -> Step 4 (검증) -> Step 5 (반환)]
+ * [Flow: Step 1 (각 매개변수를 배열 또는 단일 값으로 수신) -> Step 2 (text를 기준 배열로 설정)
+ *       -> Step 3 (comment, page_no, color, opacity 각각을 text 배열 길이에 맞춰 확장 및 검증)
+ *       -> Step 4 (불일치 시 에러 반환) -> Step 5 (정규화된 리스트 객체 반환)]
  *
- * add_text_highlight/add_text_callout이 단일 문자열과 문자열 목록 모두 받을 수 있도록
- * 입력값을 정규화한다. comment 배열 길이가 text 배열 길이와 다르면 에러를 반환한다.
+ * add_text_highlight/add_text_callout의 모든 주요 매개변수를
+ * text 목록의 길이에 맞게 배열로 정규화한다.
  *
  * @param text 단일 문자열 또는 문자열 배열
  * @param comment 단일 문자열, 문자열 배열, 또는 undefined
- * @returns 정규화된 { texts, comments } 또는 { error }
+ * @param pageNo 단일 숫자, 숫자 배열, 또는 undefined
+ * @param color 단일 색상, 색상 배열, 또는 undefined
+ * @param opacity 단일 불투명도, 불투명도 배열, 또는 undefined
+ * @param defaultColor 기본 색상명
+ * @returns 정규화된 매개변수 세트 객체 또는 { error }
  */
-function _normalizeTextList(
+function _normalizeParams(
   text: string | string[],
   comment?: string | string[],
-): { texts: string[]; comments: string[] } | { error: string } {
+  pageNo?: number | number[],
+  color?: string | string[],
+  opacity?: number | number[],
+  defaultColor = 'yellow'
+): {
+  texts: string[];
+  comments: string[];
+  pageNos: (number | undefined)[];
+  colors: string[];
+  opacities: (number | undefined)[];
+} | { error: string } {
   const texts = Array.isArray(text) ? text : [text];
-  if (texts.length === 0) return { error: 'At least one text is required.' };
+  const len = texts.length;
+  if (len === 0) return { error: 'At least one text is required.' };
 
+  // 1. comment 정규화
   let comments: string[];
   if (comment === undefined) {
-    comments = new Array(texts.length).fill('');
+    comments = new Array(len).fill('');
   } else if (Array.isArray(comment)) {
-    if (comment.length !== texts.length) {
-      return {
-        error: `comment array length (${comment.length}) must match text array length (${texts.length}).`,
-      };
+    if (comment.length !== len) {
+      return { error: `comment array length (${comment.length}) must match text array length (${len}).` };
     }
     comments = comment;
   } else {
-    comments = new Array(texts.length).fill(comment);
+    comments = new Array(len).fill(comment);
   }
-  return { texts, comments };
+
+  // 2. page_no 정규화
+  let pageNos: (number | undefined)[];
+  if (pageNo === undefined) {
+    pageNos = new Array(len).fill(undefined);
+  } else if (Array.isArray(pageNo)) {
+    if (pageNo.length !== len) {
+      return { error: `page_no array length (${pageNo.length}) must match text array length (${len}).` };
+    }
+    pageNos = pageNo;
+  } else {
+    pageNos = new Array(len).fill(pageNo);
+  }
+
+  // 3. color 정규화
+  let colors: string[];
+  if (color === undefined) {
+    colors = new Array(len).fill(defaultColor);
+  } else if (Array.isArray(color)) {
+    if (color.length !== len) {
+      return { error: `color array length (${color.length}) must match text array length (${len}).` };
+    }
+    colors = color;
+  } else {
+    colors = new Array(len).fill(color);
+  }
+
+  // 4. opacity 정규화
+  let opacities: (number | undefined)[];
+  if (opacity === undefined) {
+    opacities = new Array(len).fill(undefined);
+  } else if (Array.isArray(opacity)) {
+    if (opacity.length !== len) {
+      return { error: `opacity array length (${opacity.length}) must match text array length (${len}).` };
+    }
+    opacities = opacity;
+  } else {
+    opacities = new Array(len).fill(opacity);
+  }
+
+  return { texts, comments, pageNos, colors, opacities };
 }
 
 /**
@@ -357,31 +412,36 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     add_text_highlight: tool({
-      description: 'Add one or more highlight annotations by specifying exact text string(s). The backend searches the PDF text layer for each text and highlights all matching occurrences. To apply multiple highlights at once, pass an array of texts. Use search_text first if you are unsure of exact wording.',
+      description: 'Add one or more highlight annotations for the exact text segment(s) only by specifying text string(s). The backend searches the PDF text layer and highlights only the matched text bounding box. To apply multiple highlights at once, pass an array of texts. Use search_text first if you are unsure of exact wording.',
       inputSchema: z.object({
         text: z.union([z.string(), z.array(z.string())]).describe('Exact text string or list of strings to highlight'),
-        page_no: z.number().optional().describe('1-based page number to limit the search. Searches all pages if omitted'),
+        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
         comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment(s). Provide one string to use for all highlights, or an array matching the number of texts. If omitted, an empty comment is used.'),
-        color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])
-          .default('yellow')
-          .describe('Color name'),
-        opacity: z.number().min(0).max(1).optional().describe('Highlight opacity (0.0~1.0)'),
+        color: z.union([
+          z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),
+          z.array(z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']))
+        ]).optional().describe('Color name or list of color names matching the texts. Defaults to yellow'),
+        opacity: z.union([z.number().min(0).max(1), z.array(z.number().min(0).max(1))]).optional().describe('Highlight opacity or list of opacities (0.0~1.0)'),
       }),
       execute: async ({ text, page_no, comment, color, opacity }) => {
-        // [Flow: Step 1 (text/comment를 문자열 배열로 normalize) -> Step 2 (normalize 실패 시 에러 반환)
-        //       -> Step 3 (각 text별로 searchText 수행) -> Step 4 (매칭된 bbox를 pending에 누적)
+        // [Flow: Step 1 (모든 매개변수를 _normalizeParams로 정규화) -> Step 2 (실패 시 에러 반환)
+        //       -> Step 3 (각 text별로 searchText(mode="text") 수행) -> Step 4 (매칭된 bbox를 pending에 누적)
         //       -> Step 5 (각 항목의 성공/실패 결과 집계 반환)]
-        const normalized = _normalizeTextList(text, comment);
+        const normalized = _normalizeParams(text, comment, page_no, color, opacity, 'yellow');
         if ('error' in normalized) {
           return { error: normalized.error };
         }
-        const { texts, comments } = normalized;
+        const { texts, comments, pageNos, colors, opacities } = normalized;
 
         const results: Array<Record<string, unknown>> = [];
         for (let i = 0; i < texts.length; i++) {
           const t = texts[i];
           const c = comments[i];
-          const { matches } = await proofApi.searchText(jobId, t, page_no, authHeaders);
+          const p = pageNos[i];
+          const col = colors[i];
+          const op = opacities[i];
+
+          const { matches } = await proofApi.searchText(jobId, t, p, authHeaders, 'text');
           const validMatches = (matches || []).filter(
             (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
           );
@@ -393,20 +453,81 @@ export function buildAnnotationTools(context: AnnotationContext) {
             continue;
           }
           const bboxes = validMatches.map((m) => (m as any).bbox_pdf as [number, number, number, number]);
-          const pageNos = validMatches.map((m) => Number((m as any).page_no || page_no || 1));
-          const pageNo = pageNos[0];
+          const resolvedPageNos = validMatches.map((m) => Number((m as any).page_no || p || 1));
+          const resolvedPageNo = resolvedPageNos[0];
           const target: AnnotationTarget = {
-            page_no: pageNo,
+            page_no: resolvedPageNo,
             bbox_pdf: _unionRects(bboxes),
             search_rects_pdf: bboxes,
             search_text: t,
             comment: c,
-            color: COLOR_PALETTE[color] || DEFAULT_HIGHLIGHT_COLOR,
-            opacity: opacity ?? DEFAULT_OPACITY,
+            color: COLOR_PALETTE[col] || DEFAULT_HIGHLIGHT_COLOR,
+            opacity: op ?? DEFAULT_OPACITY,
           };
           const id = `ai-${Date.now()}-${pending.length}`;
           pending.push({ id, target, type: 'highlight' });
-          results.push({ ok: true, id, text: t, match_count: validMatches.length, page_no: pageNo });
+          results.push({ ok: true, id, text: t, match_count: validMatches.length, page_no: resolvedPageNo });
+        }
+        return { highlights: results, total: results.length };
+      },
+    }),
+
+    add_line_highlight: tool({
+      description: 'Add one or more highlight annotations covering the entire text line(s)/row(s) containing the specified text string(s). The backend searches the PDF text layer and expands the highlight to cover the full line box. To apply multiple line highlights at once, pass an array of texts. Use search_text first if you are unsure of exact wording.',
+      inputSchema: z.object({
+        text: z.union([z.string(), z.array(z.string())]).describe('Exact text string or list of strings to highlight the full line for'),
+        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
+        comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment(s). Provide one string to use for all highlights, or an array matching the number of texts. If omitted, an empty comment is used.'),
+        color: z.union([
+          z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),
+          z.array(z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']))
+        ]).optional().describe('Color name or list of color names matching the texts. Defaults to yellow'),
+        opacity: z.union([z.number().min(0).max(1), z.array(z.number().min(0).max(1))]).optional().describe('Highlight opacity or list of opacities (0.0~1.0)'),
+      }),
+      execute: async ({ text, page_no, comment, color, opacity }) => {
+        // [Flow: Step 1 (모든 매개변수를 _normalizeParams로 정규화) -> Step 2 (실패 시 에러 반환)
+        //       -> Step 3 (각 text별로 searchText(mode="line") 수행) -> Step 4 (라인 bbox를 pending에 누적)
+        //       -> Step 5 (각 항목의 성공/실패 결과 집계 반환)]
+        const normalized = _normalizeParams(text, comment, page_no, color, opacity, 'yellow');
+        if ('error' in normalized) {
+          return { error: normalized.error };
+        }
+        const { texts, comments, pageNos, colors, opacities } = normalized;
+
+        const results: Array<Record<string, unknown>> = [];
+        for (let i = 0; i < texts.length; i++) {
+          const t = texts[i];
+          const c = comments[i];
+          const p = pageNos[i];
+          const col = colors[i];
+          const op = opacities[i];
+
+          const { matches } = await proofApi.searchText(jobId, t, p, authHeaders, 'line');
+          const validMatches = (matches || []).filter(
+            (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
+          );
+          if (validMatches.length === 0) {
+            results.push({
+              text: t,
+              error: `Text not found for line highlight: '${t}'. Call search_text first to verify exact wording.`,
+            });
+            continue;
+          }
+          const bboxes = validMatches.map((m) => (m as any).bbox_pdf as [number, number, number, number]);
+          const resolvedPageNos = validMatches.map((m) => Number((m as any).page_no || p || 1));
+          const resolvedPageNo = resolvedPageNos[0];
+          const target: AnnotationTarget = {
+            page_no: resolvedPageNo,
+            bbox_pdf: _unionRects(bboxes),
+            search_rects_pdf: bboxes,
+            search_text: t,
+            comment: c,
+            color: COLOR_PALETTE[col] || DEFAULT_HIGHLIGHT_COLOR,
+            opacity: op ?? DEFAULT_OPACITY,
+          };
+          const id = `ai-${Date.now()}-${pending.length}`;
+          pending.push({ id, target, type: 'highlight' });
+          results.push({ ok: true, id, text: t, match_count: validMatches.length, page_no: resolvedPageNo });
         }
         return { highlights: results, total: results.length };
       },
@@ -416,28 +537,33 @@ export function buildAnnotationTools(context: AnnotationContext) {
       description: 'Add one or more callout (text box + arrow) annotations by specifying exact text string(s) to point to. The backend searches the PDF text layer and places each callout at the matching text. To apply multiple callouts at once, pass an array of texts. Use search_text first if you are unsure of the exact wording.',
       inputSchema: z.object({
         text: z.union([z.string(), z.array(z.string())]).describe('Exact text string or list of strings to point the callouts to'),
-        page_no: z.number().optional().describe('1-based page number to limit the search. Searches all pages if omitted'),
+        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
         comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment(s). Provide one string to use for all callouts, or an array matching the number of texts. If omitted, an empty comment is used.'),
-        color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])
-          .default('purple')
-          .describe('Color name'),
-        opacity: z.number().min(0).max(1).optional().describe('Callout opacity (0.0~1.0)'),
+        color: z.union([
+          z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),
+          z.array(z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']))
+        ]).optional().describe('Color name or list of color names matching the texts. Defaults to purple'),
+        opacity: z.union([z.number().min(0).max(1), z.array(z.number().min(0).max(1))]).optional().describe('Callout opacity or list of opacities (0.0~1.0)'),
       }),
       execute: async ({ text, page_no, comment, color, opacity }) => {
-        // [Flow: Step 1 (text/comment를 문자열 배열로 normalize) -> Step 2 (normalize 실패 시 에러 반환)
+        // [Flow: Step 1 (모든 매개변수를 _normalizeParams로 정규화) -> Step 2 (실패 시 에러 반환)
         //       -> Step 3 (각 text별로 searchText 수행) -> Step 4 (첫 매치를 callout으로 pending에 누적)
         //       -> Step 5 (각 항목의 성공/실패 결과 집계 반환)]
-        const normalized = _normalizeTextList(text, comment);
+        const normalized = _normalizeParams(text, comment, page_no, color, opacity, 'purple');
         if ('error' in normalized) {
           return { error: normalized.error };
         }
-        const { texts, comments } = normalized;
+        const { texts, comments, pageNos, colors, opacities } = normalized;
 
         const results: Array<Record<string, unknown>> = [];
         for (let i = 0; i < texts.length; i++) {
           const t = texts[i];
           const c = comments[i];
-          const { matches } = await proofApi.searchText(jobId, t, page_no, authHeaders);
+          const p = pageNos[i];
+          const col = colors[i];
+          const op = opacities[i];
+
+          const { matches } = await proofApi.searchText(jobId, t, p, authHeaders);
           const first = (matches || []).find(
             (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
           );
@@ -449,18 +575,18 @@ export function buildAnnotationTools(context: AnnotationContext) {
             continue;
           }
           const bbox = (first as any).bbox_pdf as [number, number, number, number];
-          const pageNo = Number((first as any).page_no || page_no || 1);
+          const resolvedPageNo = Number((first as any).page_no || p || 1);
           const target: AnnotationTarget = {
-            page_no: pageNo,
+            page_no: resolvedPageNo,
             bbox_pdf: bbox,
             search_text: t,
             comment: c,
-            color: COLOR_PALETTE[color] || DEFAULT_CALLOUT_COLOR,
-            opacity: opacity ?? DEFAULT_OPACITY,
+            color: COLOR_PALETTE[col] || DEFAULT_CALLOUT_COLOR,
+            opacity: op ?? DEFAULT_OPACITY,
           };
           const id = `ai-${Date.now()}-${pending.length}`;
           pending.push({ id, target, type: 'callout' });
-          results.push({ ok: true, id, text: t, page_no: pageNo });
+          results.push({ ok: true, id, text: t, page_no: resolvedPageNo });
         }
         return { callouts: results, total: results.length };
       },

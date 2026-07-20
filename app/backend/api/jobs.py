@@ -3759,11 +3759,12 @@ def search_job_text(
     job_id: str,
     query: str = Query(..., description="검색어 또는 정규식"),
     page_no: int | None = None,
+    mode: str = Query("text", description="검색 모드: text(해당 텍스트만) 또는 line(해당 줄 전체)"),
     user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """[Flow: Step 1 (job 조회) -> Step 2 (searchable PDF 확보) -> Step 3 (PyMuPDF search)
-          -> Step 4 (page_no 필터링) -> Step 5 (매치 목록 반환)]
+    """[Flow: Step 1 (job 조회) -> Step 2 (searchable PDF 확보) -> Step 3 (PyMuPDF search & mode별 bbox 조정)
+          -> Step 4 (page_no 필터링 및 OCR 폴백 시 선형 보간/라인 적용) -> Step 5 (매치 목록 반환)]
 
     PDF 텍스트 레이어에서 키워드/정규식 검색을 수행한다.
     """
@@ -3807,22 +3808,58 @@ def search_job_text(
             current_page_no = page.number + 1
             if page_no is not None and current_page_no != page_no:
                 continue
+
+            lines_bboxes: list[list[float]] = []
+            if mode == "line":
+                try:
+                    text_dict = page.get_text("dict")
+                    for block in text_dict.get("blocks", []):
+                        for line in block.get("lines", []):
+                            lines_bboxes.append(line.get("bbox"))
+                except Exception:
+                    pass
+
             # 정규식 검색과 일반 텍스트 검색 모두 지원
             try:
                 rects = page.search_for(query)
             except Exception:
                 # 정규식이 유효하지 않으면 일반 텍스트로 폴백
                 rects = page.search_for(query.replace("\\", ""))
+
             for rect in rects:
                 if not _is_rect_plausible_for_page(rect, page.rect):
                     logger.warning(
                         f"[search_job_text] {job_id} page={current_page_no} 비정상 bbox 스킵: {rect}"
                     )
                     continue
+
+                bbox_pdf = [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
+                if mode == "line" and lines_bboxes:
+                    best_bbox = None
+                    max_overlap = 0.0
+                    ry0, ry1 = rect.y0, rect.y1
+                    r_height = ry1 - ry0
+                    if r_height > 0:
+                        for lb in lines_bboxes:
+                            if not lb or len(lb) < 4:
+                                continue
+                            lx0, ly0, lx1, ly1 = (float(v) for v in lb[:4])
+                            overlap_y0 = max(ry0, ly0)
+                            overlap_y1 = min(ry1, ly1)
+                            overlap_h = overlap_y1 - overlap_y0
+                            if overlap_h > 0:
+                                ratio = overlap_h / r_height
+                                if ratio > max_overlap:
+                                    max_overlap = ratio
+                                    best_bbox = [lx0, ly0, lx1, ly1]
+                    if best_bbox and max_overlap > 0.5:
+                        bbox_pdf = best_bbox
+
+                matched_text = page.get_textbox(rect).strip() if mode == "text" else page.get_textbox(fitz.Rect(bbox_pdf)).strip()
                 matches.append({
                     "page_no": current_page_no,
-                    "bbox_pdf": [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)],
-                    "text": page.get_textbox(rect).strip(),
+                    "bbox_pdf": bbox_pdf,
+                    "text": matched_text,
                 })
     finally:
         doc.close()
@@ -3866,15 +3903,32 @@ def search_job_text(
             pattern = _re.compile(query, _re.IGNORECASE)
         except _re.error:
             pattern = _re.compile(_re.escape(query), _re.IGNORECASE)
+
         for el in ocr_elements:
             text = el.get("text") or ""
-            if not pattern.search(text):
+            found_matches = list(pattern.finditer(text))
+            if not found_matches:
                 continue
-            matches.append({
-                "page_no": el["page_no"],
-                "bbox_pdf": list(el["bbox_pdf"]),
-                "text": text.strip(),
-            })
+            text_len = len(text)
+            for m in found_matches:
+                if mode == "text" and text_len > 0 and len(el.get("bbox_pdf", [])) == 4:
+                    x0, y0, x1, y1 = (float(v) for v in el["bbox_pdf"])
+                    width = x1 - x0
+                    start = m.start()
+                    end = m.end()
+                    x0_new = x0 + (start / text_len) * width
+                    x1_new = x0 + (end / text_len) * width
+                    bbox_pdf = [x0_new, y0, x1_new, y1]
+                    matched_text = m.group().strip()
+                else:
+                    bbox_pdf = list(el["bbox_pdf"])
+                    matched_text = text.strip()
+
+                matches.append({
+                    "page_no": el["page_no"],
+                    "bbox_pdf": bbox_pdf,
+                    "text": matched_text,
+                })
 
     import time as _time
     total_elapsed = _time.monotonic() - start_time

@@ -1113,9 +1113,9 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
     if (selectedFile.type === "pdf") {
       return (
         <PdfViewerWithFab
-          key={selectedFile.url}
+          key={selectedFile.preview_url || selectedFile.url}
           viewerRef={pdfViewerRef}
-          url={selectedFile.url}
+          url={selectedFile.preview_url || selectedFile.url}
           page={currentPage}
           annotationsJson={selectedAnnotationsJson}
           onAnnotationChanged={handleAnnotationChanged}

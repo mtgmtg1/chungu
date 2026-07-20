@@ -32,11 +32,36 @@ DEFAULT_FONT_NAME = "korea"
 # 투명 텍스트를 위한 render_mode: 3 = neither fill nor stroke (보이지 않음)
 INVISIBLE_RENDER_MODE = 3
 
-# bbox 높이 대비 폰트 크기 비율. 너무 크면 가로 폭을 초과해 잘릴 수 있다.
-FONT_SIZE_RATIO = 0.85
-# 문자 폭 추정 비율 (폰트 크기 대비). CJK 문자 기준으로 대략 1.0, 영문은 0.6 정도.
-CHAR_WIDTH_RATIO = 0.85
-# baseline 조정: insert_text의 point y는 baseline이며, 텍스트 상단이 bbox 상단에 맞도록 baseline = y0 + font_size
+# bbox 높이 대비 폰트 크기 비율. 폰트의 ascender/descender 여유를 고려해 0.95를 사용.
+# 실제 폰트 크기는 ascender - descender로 나누어 정확히 계산하므로 이 값은 safety margin.
+FONT_SIZE_RATIO = 0.95
+
+# 폰트 메트릭 캐시: font_name -> (ascender, descender) 비율.
+# fitz.Font로부터 폰트의 ascender/descender를 측정하여 텍스트가 bbox에 정확히 맞도록 한다.
+_FONT_METRICS_CACHE: dict[str, tuple[float, float]] = {}
+
+
+def _get_font_metrics(font_name: str) -> tuple[float, float]:
+    """PyMuPDF built-in 폰트의 ascender/descender 비율을 반환한다.
+
+    [Flow: Step 1 (캐시 확인) -> Step 2 (miss면 fitz.Font로 측정) -> Step 3 (캐시에 저장 후 반환)]
+
+    Args:
+        font_name: PyMuPDF 폰트 이름 (helv, korea, japan, china-ss 등)
+
+    Returns:
+        (ascender, descender) 튜플. descender는 음수.
+        폰트 측정 실패 시 Helvetica 기본값 (1.075, -0.299) 반환.
+    """
+    if font_name in _FONT_METRICS_CACHE:
+        return _FONT_METRICS_CACHE[font_name]
+    try:
+        font = fitz.Font(fontname=font_name)
+        metrics = (float(font.ascender), float(font.descender))
+    except Exception:
+        metrics = (1.075, -0.299)
+    _FONT_METRICS_CACHE[font_name] = metrics
+    return metrics
 
 
 def _normalize_rec_text(text: Any) -> str:
@@ -139,14 +164,16 @@ def _insert_invisible_text(
 ) -> None:
     """주어진 bbox 안에 투명 텍스트를 삽입한다.
 
-    [Flow: Step 1 (bbox 크기 확인) -> Step 2 (폰트 크기 산정: bbox 높이와 가로 폭 모두 고려)
-          -> Step 3 (텍스트가 가로 폭을 넘으면 폰트 축소, 그래도 넘으면 단어 단위 줄바꿈)
-          -> Step 4 (각 줄을 insert_text로 render_mode=3 투명 삽입)]
+    [Flow: Step 1 (bbox 크기 확인) -> Step 2 (폰트 메트릭 획득: ascender/descender)
+          -> Step 3 (폰트 크기 산정: bbox 높이를 ascender-descender로 나누어 정확히 맞춤)
+          -> Step 4 (fitz.get_text_length로 정확한 텍스트 폭 측정 후 필요시 축소)
+          -> Step 5 (baseline 산정: bbox 중앙에 텍스트가 오도록 ascender/descender 보정)
+          -> Step 6 (insert_text로 render_mode=3 투명 삽입)]
 
     Args:
         page: PyMuPDF Page 객체
         text: 삽입할 텍스트
-        rect: (x0, y0, x1, y1) PDF 포인트 좌표
+        rect: (x0, y0, x1, y1) PDF 포인트 좌표 (PDF user-space, y↑)
         font_name: PyMuPDF 폰트 이름
     """
     x0, y0, x1, y1 = rect
@@ -155,57 +182,38 @@ def _insert_invisible_text(
     if width <= 0 or height <= 0:
         return
 
-    # bbox 높이에 맞춰 기본 폰트 크기를 결정한다.
-    font_size = max(1.0, height * FONT_SIZE_RATIO)
+    # 폰트 메트릭을 통해 bbox 높이에 정확히 맞는 폰트 크기를 계산한다.
+    # 폰트의 전체 높이 = (ascender - descender) * font_size 이므로,
+    # font_size = height / (ascender - descender) 로 설정하면 텍스트가 bbox에 꽉 찬다.
+    ascender, descender = _get_font_metrics(font_name)
+    font_total_height_ratio = ascender - descender
+    if font_total_height_ratio <= 0:
+        font_total_height_ratio = 1.374  # 안전 폴백
 
-    # 텍스트가 bbox 가로 폭을 넘지 않도록 폰트 크기를 축소한다.
-    # width의 90%만 사용하여 CJK/영문 혼용 시의 폭 추정 오차 여유를 둔다.
-    safe_width = width * 0.9
-    estimated_width = max(1, len(text)) * font_size * CHAR_WIDTH_RATIO
-    if estimated_width > safe_width:
-        font_size = max(1.0, safe_width / (max(1, len(text)) * CHAR_WIDTH_RATIO))
+    font_size = max(1.0, height * FONT_SIZE_RATIO / font_total_height_ratio)
 
-    # 축소 후에도 텍스트가 가로 폭을 넘으면 단어 단위로 줄바꿈하여 여러 줄로 삽입한다.
-    estimated_width = max(1, len(text)) * font_size * CHAR_WIDTH_RATIO
-    if estimated_width > width:
-        words = text.split()
-        if not words:
-            return
-        lines: list[str] = []
-        current_line: list[str] = []
-        current_width = 0.0
-        for word in words:
-            word_width = max(1, len(word)) * font_size * CHAR_WIDTH_RATIO
-            if current_width + word_width > width and current_line:
-                lines.append(" ".join(current_line))
-                current_line = [word]
-                current_width = word_width
-            else:
-                current_line.append(word)
-                current_width += word_width
-        if current_line:
-            lines.append(" ".join(current_line))
-        try:
-            for i, line in enumerate(lines):
-                baseline_y = y0 + (i + 1) * font_size
-                if baseline_y > y1:
-                    break
-                page.insert_text(
-                    fitz.Point(x0, baseline_y),
-                    line,
-                    fontsize=font_size,
-                    fontname=font_name,
-                    render_mode=INVISIBLE_RENDER_MODE,
-                    overlay=True,
-                )
-        except Exception as e:
-            logger.warning(f"[pdf_text_layer] 줄바꿈 텍스트 삽입 실패 '{text[:20]}': {e}")
-        return
+    # fitz.get_text_length로 정확한 텍스트 폭을 측정하여 폰트 크기를 조정한다.
+    # CHAR_WIDTH_RATIO 추정 대신 실제 폰트 메트릭스를 사용하므로 CJK/영문 모두 정확.
+    try:
+        text_width = fitz.get_text_length(text, fontname=font_name, fontsize=font_size)
+    except Exception:
+        text_width = max(1, len(text)) * font_size * 0.6
 
-    # 단줄 텍스트: insert_text로 효율적으로 삽입.
-    # insert_text: point가 텍스트 baseline의 왼쪽 끝이다.
-    # 텍스트 상단이 bbox 상단(y0)에 맞도록 baseline = y0 + font_size
-    baseline_y = y0 + font_size
+    # 텍스트가 bbox 가로 폭을 넘으면 폰트 크기를 비례 축소한다.
+    safe_width = width * 0.95
+    if text_width > safe_width and text_width > 0:
+        font_size = max(1.0, font_size * safe_width / text_width)
+
+    # baseline을 bbox 중앙에 텍스트가 오도록 계산한다.
+    # insert_text의 point.y는 baseline이며, search_for 결과는:
+    #   search_for bottom = baseline - ascender * font_size
+    #   search_for top    = baseline - descender * font_size (descender < 0 이므로 위로 확장)
+    # search_for 중앙 = baseline - (ascender + descender) / 2 * font_size
+    # bbox 중앙 = (y0 + y1) / 2
+    # 따라서 baseline = bbox_center + (ascender + descender) / 2 * font_size
+    bbox_center = (y0 + y1) / 2.0
+    baseline_y = bbox_center + (ascender + descender) / 2.0 * font_size
+
     try:
         page.insert_text(
             fitz.Point(x0, baseline_y),

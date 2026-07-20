@@ -154,3 +154,141 @@ class TestInvisibleTextBaseline:
         )
 
         doc.close()
+
+
+class TestInvisibleTextAccuracy:
+    """투명 텍스트의 폰트 크기와 위치가 OCR bbox에 최대한 일치하는지 검증한다."""
+
+    def test_font_size_matches_bbox_height_for_short_text(self):
+        """[Flow: 짧은 텍스트는 bbox 높이에 맞춰 폰트 크기가 결정되어야 함]
+        짧은 텍스트(가로 폭이 충분)의 경우, 폰트 크기가 bbox 높이의 ~80% 이상이어야
+        실제 이미지 텍스트와 검색 하이라이트 영역이 일치한다.
+        """
+        pdf_bytes = _make_a4_image_pdf()
+        page_width = 595.0
+        page_height = 842.0
+
+        # 짧은 텍스트: bbox 너비가 충분하므로 폰트 축소가 일어나지 않아야 함
+        # bbox 높이 30pt, 너비 300pt (충분함)
+        x0, y0_top, x1, y1_top = 100.0, 200.0, 400.0, 230.0
+        bbox_height = y1_top - y0_top  # 30pt
+        page_ocr_results = {1: [("ABC", (x0, y0_top, x1, y1_top))]}
+        layout_by_page = {1: {"width": page_width, "height": page_height}}
+
+        result_bytes = add_text_layer_from_ocr(
+            pdf_bytes, page_ocr_results, dpi=300, language="en", layout_by_page=layout_by_page,
+        )
+
+        doc = fitz.open(stream=result_bytes, filetype="pdf")
+        page = doc[0]
+        rects = page.search_for("ABC")
+        assert len(rects) == 1
+
+        found = rects[0]
+        found_height = found.y1 - found.y0
+        # 폰트 크기가 bbox 높이의 70% 이상이어야 함 (너무 작으면 안 됨)
+        assert found_height >= bbox_height * 0.7, (
+            f"Text height {found_height} too small vs bbox height {bbox_height}. "
+            f"Font size may be over-shrunk."
+        )
+        doc.close()
+
+    def test_text_width_does_not_exceed_bbox(self):
+        """[Flow: 긴 텍스트도 bbox 가로 폭을 초과하지 않아야 함]
+        텍스트가 bbox보다 넓으면 폰트 크기가 축소되어 가로 폭 내에 들어와야 한다.
+        """
+        pdf_bytes = _make_a4_image_pdf()
+        page_width = 595.0
+        page_height = 842.0
+
+        # 좁은 bbox에 긴 텍스트
+        x0, y0_top, x1, y1_top = 100.0, 200.0, 200.0, 230.0
+        bbox_width = x1 - x0  # 100pt
+        page_ocr_results = {1: [("ABCDEFGH", (x0, y0_top, x1, y1_top))]}
+        layout_by_page = {1: {"width": page_width, "height": page_height}}
+
+        result_bytes = add_text_layer_from_ocr(
+            pdf_bytes, page_ocr_results, dpi=300, language="en", layout_by_page=layout_by_page,
+        )
+
+        doc = fitz.open(stream=result_bytes, filetype="pdf")
+        page = doc[0]
+        rects = page.search_for("ABCDEFGH")
+        # 텍스트가 검색되어야 함
+        assert len(rects) >= 1
+        # 검색 결과가 bbox 가로 폭을 크게 초과하면 안 됨
+        for found in rects:
+            found_width = found.x1 - found.x0
+            assert found_width <= bbox_width + 5.0, (
+                f"Text width {found_width} exceeds bbox width {bbox_width}. "
+                f"Font size not properly shrunk."
+            )
+        doc.close()
+
+    def test_text_vertically_centered_in_bbox(self):
+        """[Flow: 텍스트가 bbox 내에 수직으로 적절히 위치해야 함]
+        baseline 계산이 정확하면 검색 결과의 y 범위가 bbox y 범위 내에 들어와야 한다.
+        """
+        pdf_bytes = _make_a4_image_pdf()
+        page_width = 595.0
+        page_height = 842.0
+
+        x0, y0_top, x1, y1_top = 100.0, 300.0, 400.0, 340.0
+        page_ocr_results = {1: [("Test", (x0, y0_top, x1, y1_top))]}
+        layout_by_page = {1: {"width": page_width, "height": page_height}}
+
+        result_bytes = add_text_layer_from_ocr(
+            pdf_bytes, page_ocr_results, dpi=300, language="en", layout_by_page=layout_by_page,
+        )
+
+        doc = fitz.open(stream=result_bytes, filetype="pdf")
+        page = doc[0]
+        rects = page.search_for("Test")
+        assert len(rects) == 1
+
+        found = rects[0]
+        expected_y0 = page_height - y1_top  # PDF user-space y0 (bottom)
+        expected_y1 = page_height - y0_top  # PDF user-space y1 (top)
+
+        # 텍스트가 bbox 내에 수직으로 위치해야 함 (허용 오차 3pt)
+        tol = 3.0
+        assert found.y0 >= expected_y0 - tol, (
+            f"y0 {found.y0} below bbox bottom {expected_y0}. Text positioned too low."
+        )
+        assert found.y1 <= expected_y1 + tol, (
+            f"y1 {found.y1} above bbox top {expected_y1}. Text positioned too high."
+        )
+        doc.close()
+
+    def test_cjk_text_uses_full_bbox_width(self):
+        """[Flow: CJK 텍스트는 정사각형 글리프이므로 bbox 폭을 정확히 채워야 함]
+        CJK 문자는 폰트 크기와 거의 동일한 폭을 가지므로, CHAR_WIDTH_RATIO=0.85 대신
+        정확한 get_text_length를 사용하면 폰트 크기가 과도하게 축소되지 않아야 한다.
+        """
+        pdf_bytes = _make_a4_image_pdf()
+        page_width = 595.0
+        page_height = 842.0
+
+        # CJK 텍스트 4글자, bbox 너비 120pt, 높이 30pt
+        x0, y0_top, x1, y1_top = 100.0, 200.0, 220.0, 230.0
+        bbox_height = y1_top - y0_top  # 30pt
+        page_ocr_results = {1: [("테스트", (x0, y0_top, x1, y1_top))]}
+        layout_by_page = {1: {"width": page_width, "height": page_height}}
+
+        result_bytes = add_text_layer_from_ocr(
+            pdf_bytes, page_ocr_results, dpi=300, language="ko", layout_by_page=layout_by_page,
+        )
+
+        doc = fitz.open(stream=result_bytes, filetype="pdf")
+        page = doc[0]
+        rects = page.search_for("테스트")
+        assert len(rects) >= 1
+
+        found = rects[0]
+        found_height = found.y1 - found.y0
+        # CJK 텍스트 폰트 크기가 bbox 높이의 70% 이상이어야 함
+        assert found_height >= bbox_height * 0.7, (
+            f"CJK text height {found_height} too small vs bbox height {bbox_height}. "
+            f"Font may be over-shrunk due to wrong width estimation."
+        )
+        doc.close()

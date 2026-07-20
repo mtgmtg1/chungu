@@ -1054,6 +1054,16 @@ export default function JobResultPage() {
             </>
           }
         </div>
+        <Link
+          to="/settings?tab=account"
+          className="w-8 h-8 rounded-full bg-primary-fixed-dim border border-primary/20 flex items-center justify-center overflow-hidden hover:border-primary/50 transition-colors shrink-0"
+          data-oid="account-icon-btn">
+          <span
+            className="material-symbols-outlined text-primary text-sm"
+            data-oid="account-icon-symbol">
+            person
+          </span>
+        </Link>
         </div>
       </header>
 

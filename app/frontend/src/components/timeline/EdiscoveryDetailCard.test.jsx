@@ -84,6 +84,9 @@ describe("EdiscoveryDetailCard", () => {
 
     expect(container.textContent).toContain("쟁점 2");
     expect(container.textContent).toContain("요약만 있는 경우");
+    // 우측 상세 마크다운 영역에는 요약이 더 이상 중복 렌더링되지 않아야 합니다 (markdownHtml이 비어 있으므로 렌더링 안 됨).
+    const markdownContent = container.querySelector('[data-oid="ediscovery-detail-markdown"]');
+    expect(markdownContent).toBeNull();
   });
 
   it("닫기 버튼 클릭 시 onClose를 호출한다", () => {

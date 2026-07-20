@@ -765,9 +765,11 @@ function CardEditor({
             {draft.label || item.id}
           </div>
         </div>
-        {!isCompact && draft.summary && (
-          <div className={`text-on-surface-variant line-clamp-2 ${isCompact ? "text-xs" : "text-sm"}`}>
-            {draft.summary}
+        {draft.summary && (
+          <div className={`text-on-surface-variant ${isCompact ? "text-xs" : "text-sm line-clamp-2"}`}>
+            {isCompact
+              ? (draft.summary.length > 40 ? draft.summary.slice(0, 40) + "..." : draft.summary)
+              : draft.summary}
           </div>
         )}
         {!isCompact && (

@@ -8,6 +8,18 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 프로 요금제 크레딧 혜택 상향 및 충전 크레딧 일치화 — 2026-07-21
+
+- **프로 요금제 월간 혜택 크레딧 인상**:
+  - `app/backend/core/subscription_service.py` 및 `app/frontend/src/pages/PricePage.jsx`에서 프로 요금제의 제공 크레딧을 기존 20,000pt에서 30,000pt(1.5배)로 인상.
+  - `app/backend/tests/test_subscription_credits.py` 테스트 코드를 30,000pt에 맞도록 수정 및 검증 완료.
+- **프로 요금제 사용 가이드 추가 및 UI 단위 통일**:
+  - `app/frontend/src/components/PlanCard.jsx` 카드 하단에 30,000 크레딧에 대한 대략적 예상 사용 가이드(예: 일반 분석 최대 30,000페이지, 고급 비전 분석 최대 6,000페이지)를 다국어로 노출.
+  - 기존에 하드코딩 노출되던 `pt` 단위 접미사를 다국어 리소스 `t("common:points.point")`를 사용하여 `크레딧`(Ko), `credits`(En), `クレジット`(Ja)으로 일괄 대응 및 통일.
+- **충전 금액 및 크레딧 비율 일치**:
+  - `app/frontend/src/pages/PaymentPage.jsx`의 충전 입력창 및 예상 획득 크레딧 정보를 1달러 = 1,000크레딧(1milli-USD = 1크레딧)과 일치하게 수정하여 "20,000 크레딧 충전하기" 와 같이 표시되도록 변경.
+- **핵심 파일**: `app/backend/core/subscription_service.py`, `app/backend/tests/test_subscription_credits.py`, `app/frontend/src/pages/PricePage.jsx`, `app/frontend/src/components/PlanCard.jsx`, `app/frontend/src/pages/PaymentPage.jsx`, `app/frontend/src/locales/{ko,en,ja}/page.json`.
+
 ### AI Annotation 일괄(Batch) 생성 지원 및 좌표계 식별자 Refactoring — 2026-07-21
 
 - **AI 주석 일괄(Batch) 생성 지원** (`app/ai-backend/src/tools/annotations.ts`):
@@ -187,7 +199,7 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 - **목표**: 기존 개별 사용량 제한(기본/프리미엄 페이지, 오디오/비디오 초)을 하나의 `points_balance` 크레딧 잔액으로 통합. 페이지/오디오/비디오/AI 에이전트 스텝 모두 포인트에서 차감되며, 월간 구독으로 크레딧을 지급한다.
 - **크레딧 비율**: 기본 모델 페이지 1pt, 프리미엄 모델 페이지 5pt, 오디오 1pt/초, 비디오 10pt/초, Docling 후처리 페이지 3pt, AI 에이전트 스텝 1pt/스텝.
-- **월간 구독 크레딧**: Free 1,000pt, Pro 20,000pt, Max 100,000pt.
+- **월간 구독 크레딧**: Free 1,000pt, Pro 30,000pt, Max 100,000pt.
 - **Phase 1: DB 마이그레이션 & 백엔드 코어** (`app/backend/db/migrations/036_credit_system_subscription.sql` 신규):
   - `users` 테이블에 `subscription_credits_granted_at` 컬럼 추가 (중복 지급 방지).
   - `jobs` 테이블에 `cost_points`, `xlsx_advanced_cost_points`, `annotate_cost_points`, `ediscovery_cost_points` 컬럼 추가.
@@ -207,7 +219,7 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
   - `PricePage.jsx` + `PlanCard.jsx`: 요금제 카드를 월간 크레딧 기준으로 표시.
   - `JobConfirmPage.jsx`: 잔여 포인트, 예상 비용, 차감 후 잔액 표시. 기존 페이지/미디어 잔여량 UI 제거.
   - `DashboardPage.jsx` + `SettingsPage.jsx`: 포인트 잔액 표시.
-  - `ko/en/ja/page.json` 및 `common.json`: 포인트 단위 `$` → `pt` 변경, 크레딧 관련 문구 갱신.
+  - `ko/en/ja/page.json` 및 `common.json`: 포인트 단위 `$` → `pt` 변경 후 최종 크레딧(credits/クレジット)으로 통일.
 - **검증**: `pytest tests/` 134 passed, AI 백엔드 `npm run build` 성공, 프론트엔드 `npm run test` + `npm run build` 성공. `test_points_service.py`, `test_subscription_credits.py`, `test_agent_steps.py` 추가.
 - **배포 시 주의**: DB 마이그레이션 `036_credit_system_subscription.sql`을 `supabase-chungu-db` 컨테이너에 수동 적용. AI 백엔드(`.env`)에 `AI_BACKEND_SECRET` 추가, 백엔드 `config`에 동일값 설정. `deploy_a1.sh`로 a1 서버 배포.
 - **핵심 파일**: `app/backend/db/migrations/036_credit_system_subscription.sql`, `app/backend/core/points_service.py`, `app/backend/core/subscription_service.py`, `app/backend/api/v1/agent.py`, `app/backend/api/jobs.py`, `app/backend/api/v1/jobs.py`, `app/ai-backend/src/chat/route.ts`, `app/ai-backend/src/lib/proof-api.ts`, `app/frontend/src/pages/JobConfirmPage.jsx`, `app/frontend/src/pages/PricePage.jsx`, `app/frontend/src/components/PlanCard.jsx`.

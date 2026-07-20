@@ -86,7 +86,7 @@ class TestGrantMonthlyCredits:
         user = _make_user(db_session, plan="pro", points=100)
         granted = grant_monthly_credits(db_session, user)
         assert granted is True
-        assert user.points_balance == 100 + 20000
+        assert user.points_balance == 100 + 30000
 
     def test_skip_duplicate_same_month(self, db_session, mocker):
         _seed_rates(mocker)
@@ -107,7 +107,7 @@ class TestGrantMonthlyCredits:
         user = _make_user(db_session, plan="pro", points=0, granted_at=granted_at)
         granted = grant_monthly_credits(db_session, user)
         assert granted is True
-        assert user.points_balance == 20000
+        assert user.points_balance == 30000
 
 
 class TestCheckEnough:
@@ -193,5 +193,5 @@ class TestGetSubscriptionStatus:
         status = get_subscription_status(db_session, user)
         assert status["plan"] == "pro"
         assert status["points_balance"] == 1234
-        assert status["monthly_credits"] == 20000
+        assert status["monthly_credits"] == 30000
         assert status["remaining"] == 1234

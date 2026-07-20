@@ -63,6 +63,11 @@ export default function PlanCard({ plan, cycle, selected, recommended, onSelect,
           <Check size={16} className="text-emerald-500 mt-0.5 flex-shrink-0" />
           <span>{t("page:plans.monthlyCredits", { count: monthlyCredits.toLocaleString() })}</span>
         </li>
+        {plan.key === "pro" && (
+          <li className="flex items-start gap-2 text-xs text-slate-500 ml-6 list-none italic leading-relaxed">
+            <span>{t("page:plans.proUsageEstimate")}</span>
+          </li>
+        )}
       </ul>
 
       <button

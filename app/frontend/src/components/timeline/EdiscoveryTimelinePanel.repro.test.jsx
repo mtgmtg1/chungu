@@ -197,4 +197,42 @@ describe("EdiscoveryTimelinePanel reproduction", () => {
     expect(finalQueries.getByText("Event three")).toBeInTheDocument();
     expect(finalQueries.getByText("제3자")).toBeInTheDocument();
   });
+
+  it("페이지 기반 노드(date 없음)의 요약이 40자 이내로 잘려서 렌더링된다", async () => {
+    const jobWithPageNode = {
+      ...job,
+      ediscovery_graphs: {
+        ...job.ediscovery_graphs,
+        nodes: [
+          {
+            id: "node-page-only",
+            type: "event",
+            data: {
+              label: "Page Only Event",
+              summary: "이 요약문은 매우 길어서 40글자를 초과하게 작성되었습니다. 40글자가 넘어가면 뒤에는 중략 표시로 잘려서 나와야 합니다.",
+              page: 4,
+            },
+          },
+        ],
+      },
+    };
+
+    const { container } = render(
+      <EdiscoveryTimelinePanel
+        jobId="job-1"
+        job={jobWithPageNode}
+        sourceFiles={sourceFiles}
+        onNodeClick={() => {}}
+      />
+    );
+
+    // 우측 패널 렌더링 대기
+    const pageCard = await waitFor(() =>
+      container.querySelector('[data-oid="card-editor-read-node-page-only"]')
+    );
+    expect(pageCard).toBeInTheDocument();
+
+    const expectedSummary = "이 요약문은 매우 길어서 40글자를 초과하게 작성되었습니다. 40글자가 ...";
+    expect(pageCard.textContent).toContain(expectedSummary);
+  });
 });

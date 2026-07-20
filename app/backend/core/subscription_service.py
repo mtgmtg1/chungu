@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # 플랜별 월간 지급 크레딧 (points, milli-USD)
 PLAN_MONTHLY_CREDITS: dict[str, int] = {
     "free": 1000,
-    "pro": 20000,
+    "pro": 30000,
     "max": 100000,
 }
 

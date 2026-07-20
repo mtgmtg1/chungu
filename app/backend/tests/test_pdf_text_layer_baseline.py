@@ -91,3 +91,66 @@ class TestInvisibleTextBaseline:
         )
 
         doc.close()
+
+    def test_search_result_fits_inside_source_bbox_top_left_points(self):
+        """[Flow: Step 1 (A4 PDF 준비)
+              -> Step 2 (페이지 상단에 points top-left bbox 지정)
+              -> Step 3 (add_text_layer_from_ocr로 텍스트 레이어 추가)
+              -> Step 4 (search_for로 bbox 검색)
+              -> Step 5 (검색 결과가 원래 상단 bbox 범위 내인지 assert)]
+
+        OCR 서비스가 좌표계 메타데이터 없이 points top-left (y=0이 상단) bbox를
+        반환할 때도 텍스트 레이어가 PDF user-space로 올바르게 변환되어야 합니다.
+        """
+        pdf_bytes = _make_a4_image_pdf()
+
+        page_width = 595.0
+        page_height = 842.0
+        # 페이지 상단, 좌측에 위치한 텍스트 블록 (points, y=0이 상단)
+        x0, y0_top, x1, y1_top = 120.0, 100.0, 420.0, 130.0
+        page_ocr_results = {
+            1: [("hello", (x0, y0_top, x1, y1_top))],
+        }
+        # layout 자체에 width/height가 points 단위로 들어있다고 가정
+        layout_by_page = {
+            1: {
+                "width": page_width,
+                "height": page_height,
+            }
+        }
+
+        result_bytes = add_text_layer_from_ocr(
+            pdf_bytes,
+            page_ocr_results,
+            dpi=300,
+            language="en",
+            layout_by_page=layout_by_page,
+        )
+
+        doc = fitz.open(stream=result_bytes, filetype="pdf")
+        page = doc[0]
+        rects = page.search_for("hello")
+        assert len(rects) == 1, f"Expected 1 match, got {len(rects)}"
+
+        found = rects[0]
+        # points top-left -> PDF user-space (y=0 하단, y↑)
+        expected_x0 = x0
+        expected_x1 = x1
+        expected_y0 = page_height - y1_top
+        expected_y1 = page_height - y0_top
+
+        tol = 5.0
+        assert found.x0 >= expected_x0 - tol, f"x0 too small: {found.x0} < {expected_x0 - tol}"
+        assert found.x1 <= expected_x1 + tol, f"x1 too large: {found.x1} > {expected_x1 + tol}"
+
+        # 핵심: y축이 반전되지 않고 상단에 삽입되어야 함
+        assert found.y0 >= expected_y0 - tol, (
+            f"y0 (bottom) too small: {found.y0} < {expected_y0 - tol}. "
+            f"Text may be flipped vertically."
+        )
+        assert found.y1 <= expected_y1 + tol, (
+            f"y1 (top) too large: {found.y1} > {expected_y1 + tol}. "
+            f"Text may be flipped vertically."
+        )
+
+        doc.close()

@@ -8,14 +8,19 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
-### 스캔 PDF searchable PDF 프리뷰 미적용 수정 — 2026-07-21
+### 스캔 PDF searchable PDF 프리뷰 미적용 및 표 텍스트 레이어 행 분할 — 2026-07-21
 
 - **원인**: `app/frontend/src/components/SourcePanel.jsx`에서 PDF 파일 선택 시 `selectedFile.url`(원본 스캔 PDF)을 뷰어에 전달하고, `selectedFile.preview_url`(searchable PDF)은 무시. docx/hwp/pptx 분기는 `preview_url || url`을 올바르게 쓰고 있었으나 PDF 분기만 누락. `app/backend/api/jobs.py`의 `preview_job`도 `source_url`을 항상 원본 `pdf_storage_path`로 설정하고 `searchable_pdf_storage_path`를 무시.
-- **수정**:
+- **수정 (프리뷰 URL)**:
   - `SourcePanel.jsx` PDF 분기: `url={selectedFile.preview_url || selectedFile.url}` 및 `key={selectedFile.preview_url || selectedFile.url}`로 변경. docx/hwp/pptx 분기와 일치.
   - `jobs.py` `preview_job`: `source_type == "pdf"`일 때 `job.searchable_pdf_storage_path or job.pdf_storage_path`를 사용.
-- **검증**: `cd app/backend && .venv/bin/python -m pytest tests/ -q` → 242 passed. `cd app/frontend && npm run build` → 성공. a1 develop 배포 후 preview API가 `source_url`과 `source_files[0].preview_url` 모두 searchable.pdf 반환 확인.
-- **핵심 파일**: `app/frontend/src/components/SourcePanel.jsx`, `app/backend/api/jobs.py`.
+- **표(table) 블록 텍스트 레이어 행 분할 삽입** (`app/backend/core/pdf_text_layer.py`):
+  - `_TEXT_BLOCK_LABELS_FOR_TEXT_LAYER`에 `paragraph_title`, `table` 추가.
+  - `_strip_html_tags` 헬퍼 추가: table 블록의 HTML 태그/엔티티 제거.
+  - `_extract_table_row_items` 헬퍼 추가: table HTML을 `<tr>` 단위로 파싱하여 각 행의 `<td>` 텍스트를 추출하고, 표 bbox를 행 수만큼 y축으로 균등 분할하여 각 행의 텍스트를 분할된 bbox에 삽입. 표 전체 텍스트를 하나의 bbox에 몰아넣으면 폰트가 너무 작아져 텍스트 선택이 불가능해지는 문제를 해결.
+  - `_insert_invisible_text` 개선: 텍스트가 bbox 가로 폭을 넘을 때 폰트 크기를 width의 90% 안전 여유를 두고 축소. 축소 후에도 넘으면 단어 단위 줄바꿈으로 여러 줄 삽입.
+- **검증**: `cd app/backend && .venv/bin/python -m pytest tests/ -q` → 249 passed. `cd app/frontend && npm run build` → 성공. a1 develop 배포 후 8c8bef99 작업의 searchable PDF 재생성 및 Storage 업로드 완료 — 수원구치소, 응우옌안뚜안, 2026노118, 003904, 변호인 접견예약 확인증 모두 검색 매칭 확인.
+- **핵심 파일**: `app/frontend/src/components/SourcePanel.jsx`, `app/backend/api/jobs.py`, `app/backend/core/pdf_text_layer.py`.
 
 ### 텍스트 하이라이트(add_text_highlight)와 라인 하이라이트(add_line_highlight) 분리 및 목록 일괄 생성 지원 — 2026-07-21
 

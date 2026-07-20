@@ -67,6 +67,55 @@ def _strip_html_tags(content: str) -> str:
     return " ".join(text.split())
 
 
+def _extract_table_row_items(content: str, bbox: BBox) -> list[tuple[str, BBox]]:
+    """table 블록의 HTML을 행(<tr>) 단위로 파싱하여 (text, row_bbox) 목록을 반환한다.
+
+    [Flow: Step 1 (<tr> 태그로 행 분할) -> Step 2 (각 행의 <td>/<th> 셀 텍스트 추출)
+          -> Step 3 (표 bbox를 행 수만큼 y축으로 균등 분할) -> Step 4 (각 행의 텍스트와 분할된 bbox 반환)]
+
+    표 전체 텍스트를 하나의 bbox에 몰아넣으면 폰트가 너무 작아져 텍스트 선택이 불가능하다.
+    행 단위로 분할하면 각 행의 텍스트가 해당 행 영역에 들어가 폰트 크기가 합리적으로 유지되고,
+    사용자가 표의 특정 행을 드래그하여 텍스트를 선택할 수 있다.
+
+    Args:
+        content: table 블록의 HTML 문자열
+        bbox: 표 전체 bbox (x0, y0, x1, y1)
+
+    Returns:
+        [(행 텍스트, 행 bbox), ...]. <tr>이 없으면 통째로 하나의 텍스트로 반환.
+    """
+    rows = re.findall(r"<tr[^>]*>(.*?)</tr>", content, re.DOTALL | re.IGNORECASE)
+    if not rows:
+        text = _strip_html_tags(content)
+        if text:
+            return [(text, bbox)]
+        return []
+
+    row_texts: list[str] = []
+    for row_html in rows:
+        cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row_html, re.DOTALL | re.IGNORECASE)
+        cell_texts = [_strip_html_tags(c) for c in cells]
+        cell_texts = [c for c in cell_texts if c]
+        if cell_texts:
+            row_texts.append(" | ".join(cell_texts))
+
+    if not row_texts:
+        text = _strip_html_tags(content)
+        if text:
+            return [(text, bbox)]
+        return []
+
+    # 표 bbox를 행 수만큼 y축으로 균등 분할한다.
+    x0, y0, x1, y1 = bbox[:4]
+    row_height = (y1 - y0) / len(row_texts)
+    items: list[tuple[str, BBox]] = []
+    for i, text in enumerate(row_texts):
+        row_y0 = y0 + i * row_height
+        row_y1 = y0 + (i + 1) * row_height
+        items.append((text, (x0, row_y0, x1, row_y1)))
+    return items
+
+
 def _pick_font_name(language: str | None) -> str:
     """언어 코드에 맞는 PyMuPDF built-in 폰트 이름을 반환한다.
 
@@ -90,6 +139,10 @@ def _insert_invisible_text(
 ) -> None:
     """주어진 bbox 안에 투명 텍스트를 삽입한다.
 
+    [Flow: Step 1 (bbox 크기 확인) -> Step 2 (폰트 크기 산정: bbox 높이와 가로 폭 모두 고려)
+          -> Step 3 (텍스트가 가로 폭을 넘으면 폰트 축소, 그래도 넘으면 단어 단위 줄바꿈)
+          -> Step 4 (각 줄을 insert_text로 render_mode=3 투명 삽입)]
+
     Args:
         page: PyMuPDF Page 객체
         text: 삽입할 텍스트
@@ -106,15 +159,53 @@ def _insert_invisible_text(
     font_size = max(1.0, height * FONT_SIZE_RATIO)
 
     # 텍스트가 bbox 가로 폭을 넘지 않도록 폰트 크기를 축소한다.
+    # width의 90%만 사용하여 CJK/영문 혼용 시의 폭 추정 오차 여유를 둔다.
+    safe_width = width * 0.9
+    estimated_width = max(1, len(text)) * font_size * CHAR_WIDTH_RATIO
+    if estimated_width > safe_width:
+        font_size = max(1.0, safe_width / (max(1, len(text)) * CHAR_WIDTH_RATIO))
+
+    # 축소 후에도 텍스트가 가로 폭을 넘으면 단어 단위로 줄바꿈하여 여러 줄로 삽입한다.
     estimated_width = max(1, len(text)) * font_size * CHAR_WIDTH_RATIO
     if estimated_width > width:
-        font_size = max(1.0, width / (max(1, len(text)) * CHAR_WIDTH_RATIO))
+        words = text.split()
+        if not words:
+            return
+        lines: list[str] = []
+        current_line: list[str] = []
+        current_width = 0.0
+        for word in words:
+            word_width = max(1, len(word)) * font_size * CHAR_WIDTH_RATIO
+            if current_width + word_width > width and current_line:
+                lines.append(" ".join(current_line))
+                current_line = [word]
+                current_width = word_width
+            else:
+                current_line.append(word)
+                current_width += word_width
+        if current_line:
+            lines.append(" ".join(current_line))
+        try:
+            for i, line in enumerate(lines):
+                baseline_y = y0 + (i + 1) * font_size
+                if baseline_y > y1:
+                    break
+                page.insert_text(
+                    fitz.Point(x0, baseline_y),
+                    line,
+                    fontsize=font_size,
+                    fontname=font_name,
+                    render_mode=INVISIBLE_RENDER_MODE,
+                    overlay=True,
+                )
+        except Exception as e:
+            logger.warning(f"[pdf_text_layer] 줄바꿈 텍스트 삽입 실패 '{text[:20]}': {e}")
+        return
 
+    # 단줄 텍스트: insert_text로 효율적으로 삽입.
     # insert_text: point가 텍스트 baseline의 왼쪽 끝이다.
     # 텍스트 상단이 bbox 상단(y0)에 맞도록 baseline = y0 + font_size
     baseline_y = y0 + font_size
-
-    # render_mode=3으로 보이지 않게 만든다. overlay=True로 이미지 위에 삽입하면 선택/검색이 잘 된다.
     try:
         page.insert_text(
             fitz.Point(x0, baseline_y),
@@ -322,7 +413,8 @@ def _extract_items_from_parsing_res_list(layout: dict) -> list[tuple[str, BBox]]
 
     AI Studio API가 overall_ocr_res를 더 이상 반환하지 않는 경우, parsing_res_list의
     텍스트 블록(block_content + block_bbox)을 사용해 텍스트 레이어를 생성한다.
-    표(table) 블록은 HTML 태그를 제거한 순수 텍스트를 추가한다.
+    표(table) 블록은 HTML을 행(<tr>) 단위로 파싱하여 각 행의 텍스트를 표 bbox를
+    행 수만큼 분할한 영역에 각각 삽입한다.
     """
     blocks = layout.get("parsing_res_list") or []
     if not isinstance(blocks, list):
@@ -341,15 +433,17 @@ def _extract_items_from_parsing_res_list(layout: dict) -> list[tuple[str, BBox]]
         content = block.get("block_content", "")
         if not isinstance(content, str):
             content = str(content) if content else ""
-        # table 블록은 HTML 태그를 벗겨 순수 텍스트만 텍스트 레이어에 추가한다.
-        if block_label == "table":
-            content = _strip_html_tags(content)
-        text = content.strip()
-        if not text:
-            continue
         try:
             bbox_px: BBox = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
         except (ValueError, TypeError):
+            continue
+        # table 블록은 HTML을 행 단위로 파싱하여 각 행의 텍스트를 분할된 bbox에 삽입한다.
+        if block_label == "table":
+            table_items = _extract_table_row_items(content, bbox_px)
+            items.extend(table_items)
+            continue
+        text = content.strip()
+        if not text:
             continue
         items.append((text, bbox_px))
     return items

@@ -1556,6 +1556,7 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
         }
         # 이미지에 searchable PDF가 있으면 preview_url을 대체 (텍스트 검색/선택 가능)
         if ftype == "image":
+            searchable_applied = False
             searchable_path = info.get("searchable_pdf_storage_path")
             if searchable_path:
                 try:
@@ -1564,8 +1565,19 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
                     )
                     if searchable_url:
                         item["preview_url"] = searchable_url
+                        searchable_applied = True
                 except Exception as e:
                     logger.warning(f"[source_files] 이미지 searchable PDF URL 생성 실패: {e}")
+            # [Flow: searchable PDF가 없으면 이미지를 PDF로 변환하여 embedpdf 뷰어로 표시]
+            if not searchable_applied:
+                try:
+                    preview_pdf_url = pdf_preview_converter.get_preview_pdf_url(
+                        storage_path, source_bucket=bucket, expires_in=3600
+                    )
+                    if preview_pdf_url:
+                        item["preview_url"] = preview_pdf_url
+                except Exception as e:
+                    logger.warning(f"[source_files] 이미지 PDF 변환 실패 ({storage_path}): {e}")
         return item
     except Exception:
         return None

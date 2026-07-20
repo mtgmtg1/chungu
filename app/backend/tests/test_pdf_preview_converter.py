@@ -16,6 +16,12 @@ from backend.core.pdf_preview_converter import (
     get_preview_pdf_url,
 )
 
+# 이미지 → PDF 변환 경로 테스트에서 사용하는 더미 PNG 생성 헬퍼
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - 테스트 환경에 PIL이 없을 때
+    Image = None
+
 
 def _make_pdf_file(path: Path) -> Path:
     """테스트용 1페이지 PDF 파일을 생성한다."""
@@ -331,3 +337,132 @@ class TestConvertWithUnoserver:
             assert call_kwargs.get("convert_to") == "pdf"
             assert Path(call_kwargs.get("inpath")) == input_path
             assert Path(call_kwargs.get("outpath")) == expected_pdf
+
+
+# ---------------------------------------------------------------------------
+# 이미지 → PDF 변환: PyMuPDF 직접 삽입 경로
+# ---------------------------------------------------------------------------
+def _make_dummy_png(path: Path, width: int = 200, height: int = 150) -> None:
+    """[Flow: 단색 PNG 이미지 생성 -> 지정 경로 저장]"""
+    if Image is None:
+        pytest.skip("Pillow가 설치되어 있지 않아 이미지 변환 테스트를 건너뜁니다")
+    img = Image.new("RGB", (width, height), color="white")
+    img.save(path)
+
+
+class TestConvertImageToPdf:
+    """_convert_to_pdf가 이미지 확장자(.png/.jpg 등)를 PyMuPDF로 직접 PDF로 변환한다."""
+
+    def test_png_converts_to_pdf_without_unoserver_or_libreoffice(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ):
+        # [Flow: .png 입력 -> _convert_image_to_pdf 직접 호출 -> Unoserver/LibreOffice 미호출]
+        monkeypatch.setattr("backend.core.pdf_preview_converter.settings", _make_settings_mock(unoserver_enabled=True))
+        monkeypatch.setattr("backend.core.pdf_preview_converter._unoserver_ready", lambda h, p: True)
+
+        input_path = tmp_path / "input.png"
+        _make_dummy_png(input_path)
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        with patch("backend.core.pdf_preview_converter._convert_with_unoserver", create=True) as mock_uno, \
+             patch("backend.core.pdf_preview_converter._run_libreoffice") as mock_lo:
+            result = _convert_to_pdf(input_path, output_dir)
+
+            # 결과물이 PDF 파일이어야 함
+            assert result.exists()
+            assert result.suffix == ".pdf"
+            # PDF가 1페이지여야 함
+            doc = fitz.open(str(result))
+            try:
+                assert doc.page_count == 1
+            finally:
+                doc.close()
+            # 이미지는 Unoserver/LibreOffice를 거치지 않아야 함
+            mock_uno.assert_not_called()
+            mock_lo.assert_not_called()
+
+    def test_jpg_converts_to_pdf(self, tmp_path: Path, monkeypatch):
+        # [Flow: .jpg 입력 -> PyMuPDF 직접 PDF 변환]
+        monkeypatch.setattr("backend.core.pdf_preview_converter.settings", _make_settings_mock())
+
+        input_path = tmp_path / "photo.jpg"
+        _make_dummy_png(input_path, width=300, height=200)
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        result = _convert_to_pdf(input_path, output_dir)
+
+        assert result.exists()
+        assert result.suffix == ".pdf"
+        doc = fitz.open(str(result))
+        try:
+            assert doc.page_count == 1
+        finally:
+            doc.close()
+
+    def test_image_pdf_preserves_aspect_ratio(self, tmp_path: Path, monkeypatch):
+        # [Flow: 원본 이미지 200x150 -> PDF 페이지가 이미지 비율을 보존하는지 검증]
+        monkeypatch.setattr("backend.core.pdf_preview_converter.settings", _make_settings_mock())
+
+        input_path = tmp_path / "aspect.png"
+        _make_dummy_png(input_path, width=200, height=150)
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        result = _convert_to_pdf(input_path, output_dir)
+        doc = fitz.open(str(result))
+        try:
+            page = doc[0]
+            # PDF 페이지 크기가 이미지 픽셀 크기를 72 DPI 기준 points로 변환한 값과
+            # 동일한 비율을 가져야 함 (여유 margin이 없으면 정확히 일치)
+            page_w, page_h = page.rect.width, page.rect.height
+            assert page_w > 0
+            assert page_h > 0
+            # 비율이 원본 이미지와 동일한지 (허용 오차 1%)
+            ratio_orig = 200 / 150
+            ratio_pdf = page_w / page_h
+            assert abs(ratio_pdf - ratio_orig) < 0.01 * ratio_orig
+        finally:
+            doc.close()
+
+
+class TestGetPreviewPdfUrlForImage:
+    """get_preview_pdf_url가 이미지 원본에 대해 PDF 미리보기 URL을 반환한다."""
+
+    def test_image_downloads_and_converts_to_preview_pdf(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        mock_supabase_module: MagicMock,
+    ):
+        # [Flow: 원본 PNG 다운로드 -> _convert_to_pdf로 PDF 변환 -> preview_pdfs에 업로드 -> 서명 URL 반환]
+        monkeypatch.setattr("backend.core.pdf_preview_converter.settings", _make_settings_mock())
+        monkeypatch.setattr(
+            "backend.core.pdf_preview_converter._get_existing_preview_url",
+            lambda path, expires: None,
+        )
+
+        # 실제 PNG 바이트를 Storage 다운로드 결과로 반환
+        png_path = tmp_path / "src.png"
+        _make_dummy_png(png_path, width=100, height=80)
+        png_bytes = png_path.read_bytes()
+        mock_supabase_module.get_service_client.return_value.storage.from_.return_value.download.return_value = png_bytes
+
+        result = get_preview_pdf_url(
+            "pdfs/source/photo.png",
+            source_bucket="pdfs",
+            expires_in=3600,
+        )
+
+        assert result == "https://signed.example.com/preview.pdf"
+        # preview_pdfs 프리픽스로 업로드되었는지 확인
+        storage = mock_supabase_module.get_service_client.return_value.storage
+        storage.from_.assert_any_call("pdfs")
+        # 업로드 호출 확인
+        upload_calls = storage.from_("pdfs").upload.call_args_list
+        assert len(upload_calls) >= 1
+        uploaded_path = upload_calls[0].args[0] if upload_calls[0].args else upload_calls[0].kwargs.get("path")
+        assert uploaded_path.startswith("preview_pdfs/")

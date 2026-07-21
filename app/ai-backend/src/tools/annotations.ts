@@ -765,12 +765,12 @@ export function buildAnnotationTools(context: AnnotationContext) {
           let usedFallback = false;
 
           try {
-            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'device', authHeaders);
+            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'pdf_user', authHeaders);
           } catch (firstError) {
             if (saveSourceIndex < 0) throw firstError;
             saveSourceIndex = -1;
             usedFallback = true;
-            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'device', authHeaders);
+            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'pdf_user', authHeaders);
           }
 
           pending.length = 0;

@@ -238,6 +238,7 @@ describe('buildAnnotationTools - 목록 요청 기능 테스트', () => {
     assert.equal(savedAnnotationsPayload.annotations.length, 1);
 
     const anno = savedAnnotationsPayload.annotations[0].annotation;
+    assert.equal(savedAnnotationsPayload.input_space, 'pdf_user');
     assert.equal(anno.type, 3); // FreeTextCallout
     assert.equal(anno.intent, 'FreeTextCallout');
     assert.equal(anno.contents, 'Callout comment');

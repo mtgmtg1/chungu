@@ -63,7 +63,8 @@ ${intentHint}Current context:
 
 Available tool categories:
 1. PDF annotation (only when source_type is pdf or docx/hwp preview):
-   - search_text, get_elements, get_annotations, read_job_json, view_page, add_text_highlight, add_line_highlight, add_text_callout, update_annotation, remove_annotation, compare_elements, apply_annotations
+   - search_text, get_elements, get_annotations, read_job_json, view_page, add_text_highlight, add_line_highlight, add_text_callout, add_sticky_note, update_annotation, remove_annotation, compare_elements, apply_annotations
+
 2. Markdown editor / report & document editor (when active_editor is markdown):
    - Users may describe this as: 보고서, 문서, 글쓰기, 메모, 메모장, 보고서 작성, 문서 정리, 요약, 마크다운, 에디터.
    - Tools: get_markdown, get_page, get_headings, get_section, get_table, read_first_chunk, read_next_chunk, read_previous_chunk, replace_text, insert_text, apply_edits
@@ -119,7 +120,8 @@ Rules:
 - To inspect a PDF page visually, call view_page to get a vision analysis. The output is text-only and does NOT contain coordinates or bounding boxes. Pass an explicit dpi between 150 and 300 only when needed.
 - To read existing annotation JSON, call read_job_json with kind="annotations" or get_annotations. Coordinate fields (rect, segmentRects, calloutLine, bbox_pdf) are REDACTED. Use the returned id, type, page_no, color, and comment only for editing or deleting.
 - To read other job result JSON, call read_job_json with kind="ocr_layout" | "extracted_files" | "annotated_pdf_files" | "job_meta".
-- To create highlight/callout annotations, use add_text_highlight (highlights exact matched text only), add_line_highlight (highlights full line/row containing the text), or add_text_callout with the exact text string(s) you want to highlight or point to. The backend searches the PDF text layer and resolves the bounding box/segmentRects automatically. You MUST NOT compute or pass rect/bbox manually.
+- To create highlight/callout/note annotations, use add_text_highlight (highlights exact matched text only), add_line_highlight (highlights full line/row containing the text), add_text_callout (creates a callout text box + leader arrow), or add_sticky_note (creates a sticky note / memo icon at the top-right of the text). The backend searches the PDF text layer and resolves the bounding box/segmentRects automatically. You MUST NOT compute or pass rect/bbox manually.
+
 - BATCH MODE IS MANDATORY (NOT OPTIONAL): add_text_highlight, add_line_highlight, and add_text_callout ALL accept arrays for every parameter (text, page_no, comment, color, opacity). When the user asks for TWO OR MORE annotations, you MUST issue a SINGLE tool call with arrays — NEVER call the same tool repeatedly in a loop. Calling add_text_highlight 5 times in a row for 5 texts is a violation; pass text=[...] once. Per-item parameters (page_no, color, comment, opacity) must be arrays of the SAME length as text, or a single scalar that applies to all. Mismatched array lengths return an error.
 - BATCH EXAMPLE — three highlights on different pages with different colors:
   add_text_highlight({ text: ["표 1", "표 2", "결론"], page_no: [1, 2, 5], color: ["yellow", "yellow", "green"], comment: ["요약표", "요약표", "핵심 결론"] })

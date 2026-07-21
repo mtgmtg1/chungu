@@ -1732,36 +1732,41 @@ def _source_files(job: Job) -> list[dict]:
 
 
 def _deduplicate_annotations(annotations: list[dict]) -> list[dict]:
-    """[Flow: Step 1 (각 주석의 pageIndex/rect/type/contents 기준 키 생성)
+    """[Flow: Step 1 (각 주석의 id 또는 pageIndex/rect/type/contents 기준 키 생성)
           -> Step 2 (이미 본 키는 제거) -> Step 3 (중복 제거된 목록 반환)]
 
-    EmbedPDF 뷰어에서 exportAnnotations() 시 PDF 내장 주석이 반복 포함되면서
-    동일한 pageIndex/rect/type/contents를 가진 주석이 누적되는 경우가 있다.
-    이런 중복을 제거해 user_annotations.json이 계속 불어나는 것을 막는다.
+    EmbedPDF 뷰어에서 exportAnnotations() 시 PDF 내장 주석이 반복 포함되거나
+    동일한 id 또는 pageIndex/rect/type/contents를 가진 주석이 누적되는 것을 방지한다.
     """
     seen: set[str] = set()
     result: list[dict] = []
-    for item in annotations:
+    for item in reversed(annotations):
         if not isinstance(item, dict):
             continue
         a = item.get("annotation") if "annotation" in item else item
         if not isinstance(a, dict):
             continue
-        key = json.dumps(
-            {
-                "pageIndex": a.get("pageIndex"),
-                "rect": a.get("rect"),
-                "type": a.get("type"),
-                "contents": a.get("contents", ""),
-            },
-            sort_keys=True,
-            ensure_ascii=False,
-        )
+        aid = _annotation_id(item)
+        if aid:
+            key = f"id:{aid}"
+        else:
+            key = json.dumps(
+                {
+                    "pageIndex": a.get("pageIndex"),
+                    "rect": a.get("rect"),
+                    "type": a.get("type"),
+                    "contents": a.get("contents", ""),
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+            )
         if key in seen:
             continue
         seen.add(key)
         result.append(item)
+    result.reverse()
     return result
+
 
 
 def _annotation_id(item: dict) -> str:
@@ -3448,6 +3453,15 @@ def save_user_annotations(
             )
 
             per_file_user_annotations_path = f"{job_id}/user_annotations_{source_index}.json"
+            try:
+                existing_user_bytes = client.storage.from_("results").download(per_file_user_annotations_path)
+                existing_user_doc = json.loads(existing_user_bytes.decode("utf-8"))
+                _, __, existing_user_annos = pdf_annotate_converter._extract_annotations_from_document(existing_user_doc)
+            except Exception:
+                existing_user_annos = []
+
+            user_annotations = _deduplicate_annotations(existing_user_annos + user_annotations)
+
             user_document = pdf_annotate_converter._build_canonical_annotations_document(
                 user_annotations,
                 source_pdf_storage_path=source_pdf_path or job.pdf_storage_path or f"{job_id}/user_annotations_{source_index}.json",
@@ -3459,6 +3473,7 @@ def save_user_annotations(
                 json.dumps(user_document, ensure_ascii=False).encode("utf-8"),
                 {"content-type": "application/json", "upsert": "true"},
             )
+
 
             if entry.get("annotations_json_storage_path") != annotations_json_storage_path:
                 entry["annotations_json_storage_path"] = annotations_json_storage_path

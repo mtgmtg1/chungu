@@ -3364,16 +3364,30 @@ def save_user_annotations(
         client = supabase_client.get_service_client()
 
         # [Flow: 주석 좌표 기준 PDF 결정]
-        # - pdf_user 입력: searchable PDF 우선, 없으면 원본 PDF
-        # - device/canonical 입력: source_index >= 0이면 searchable(annotated entry), 아니면 searchable PDF 우선
-        # searchable PDF가 좌표 기준으로 더 적합하며(텍스트 레이어 포함), 원본 pdf_storage_path가
-        # zip 등 PDF가 아닌 컨테이너일 수 있어 PyMuPDF open 실패를 방지하기 위해 searchable를 우선한다.
+        # 멀티파일 업로드 시 pdf_storage_path는 zip 컨테이너를 가리키므로, source_index에 해당하는
+        # extracted_files[source_index].storage_path(개별 PDF)를 우선 사용한다.
+        # job.searchable_pdf_storage_path는 첫 번째 원본 PDF에 대한 것이므로 source_index > 0에서는
+        # 개별 파일을 기준으로 해야 좌표 변환이 정확하다.
+        per_file_pdf_path: str | None = None
+        if source_index >= 0:
+            extracted = list(job.extracted_files or [])
+            if 0 <= source_index < len(extracted):
+                info = extracted[source_index]
+                if isinstance(info, dict) and info.get("type") == "pdf":
+                    per_file_pdf_path = info.get("storage_path")
+
         if input_space == "pdf_user":
-            source_pdf_path = job.searchable_pdf_storage_path or job.pdf_storage_path
+            # pdf_user 입력은 뷰어가 searchable PDF 기준으로 좌표를 보낸 경우.
+            # _source_files가 첫 번째 원본 PDF에만 job.searchable_pdf_storage_path를 적용하므로,
+            # source_index == 0일 때는 searchable PDF를 우선, 그 외는 개별 파일을 우선한다.
+            if source_index == 0:
+                source_pdf_path = job.searchable_pdf_storage_path or per_file_pdf_path or job.pdf_storage_path
+            else:
+                source_pdf_path = per_file_pdf_path or job.searchable_pdf_storage_path or job.pdf_storage_path
         elif source_index >= 0 and entry is not None:
             source_pdf_path = entry.get("storage_path") or job.searchable_pdf_storage_path or job.pdf_storage_path
         else:
-            source_pdf_path = job.searchable_pdf_storage_path or job.pdf_storage_path
+            source_pdf_path = per_file_pdf_path or job.searchable_pdf_storage_path or job.pdf_storage_path
 
         pdf_bytes: bytes | None = None
         if source_pdf_path:

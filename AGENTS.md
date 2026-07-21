@@ -10,11 +10,13 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 ### 주석 저장 500 (Failed to open stream) — 원본이 zip인 job의 좌표 기준 PDF 해석 수정 — 2026-07-21
 
-- **원인**: `save_user_annotations`에서 좌표 기준 PDF를 결정할 때 `input_space == "device"`이고 AI entry가 없는 분기가 `job.pdf_storage_path`를 그대로 사용. 원본 업로드가 zip(다중 PDF 컨테이너)인 job의 `pdf_storage_path`는 `.zip`을 가리키는데, 이를 다운로드해 `fitz.open(stream=zip_bytes, filetype="pdf")`를 호출하면 PyMuPDF가 `FileDataError: Failed to open stream`를 던짐. 게다가 `_page_dimensions(pdf_bytes)` 호출이 try/except 밖에 있어 예외가 그대로 500으로 전파되어 주석 저장이 전부 실패.
+- **원인**: 멀티파일 업로드 시 백엔드가 파일들을 zip으로 패키징해 `pdf_storage_path`에 저장(`original_filename` = `N_files.zip`). `save_user_annotations`에서 좌표 기준 PDF를 결정할 때 `input_space == "device"`이고 AI entry가 없는 분기가 `job.pdf_storage_path`(zip)를 그대로 사용. zip을 다운로드해 `fitz.open(stream=zip_bytes, filetype="pdf")`를 호출하면 PyMuPDF가 `FileDataError: Failed to open stream`를 던짐. 게다가 `_page_dimensions(pdf_bytes)` 호출이 try/except 밖에 있어 예외가 그대로 500으로 전파되어 주석 저장이 전부 실패.
 - **수정 (백엔드)** (`app/backend/api/jobs.py`):
-  - else 분기(`input_space`가 `device`/`canonical`이고 `entry is None`)의 `source_pdf_path`를 `job.searchable_pdf_storage_path or job.pdf_storage_path`로 변경. `pdf_user` 분기 및 `entry is not None` 분기와 일관되게 searchable PDF를 우선. searchable PDF가 좌표 기준으로 더 적합(텍스트 레이어 포함)하고 원본이 zip일 때 PyMuPDF open 실패를 방지.
+  - 좌표 기준 PDF 결정 로직 전면 정비: `source_index >= 0`일 때 `extracted_files[source_index].storage_path`(개별 PDF)를 우선 사용. 멀티파일에서 `job.searchable_pdf_storage_path`는 첫 번째 원본 PDF에 대한 것이므로, `source_index > 0`에서 이를 쓰면 좌표가 어긋나는 문제를 방지.
+  - `input_space == "pdf_user"` 분기: `source_index == 0`일 때만 `searchable_pdf_storage_path` 우선(뷰어가 searchable PDF 기준으로 좌표를 보냄), 그 외는 개별 파일 우선.
+  - else 분기도 `per_file_pdf_path or searchable_pdf_storage_path or pdf_storage_path` 순서로 폴백. zip 등 비-PDF 컨테이너일 때 PyMuPDF open 실패를 원천 방지.
   - `_page_dimensions(pdf_bytes)` 호출을 try/except로 감싸고 실패 시 빈 dict로 폴백. 비-PDF 파일이거나 PyMuPDF open이 실패해도 주석 저장이 500 없이 진행되도록 안전장치 추가.
-- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 258 passed (신규 회귀 테스트 1건 포함). 신규 테스트는 `pdf_storage_path`가 zip일 때 `searchable.pdf`가 다운로드되는지, `_page_dimensions`가 `FileDataError`를 던져도 500 없이 병합이 호출되는지 검증.
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 259 passed (신규 회귀 테스트 2건 포함). 신규 테스트는 (1) `pdf_storage_path`가 zip일 때 `searchable.pdf`가 다운로드되는지 + `_page_dimensions` 실패 시 500 없이 폴백, (2) 멀티파일에서 `source_index=1` 저장 시 `extracted_files[1].storage_path`가 다운로드되고 첫 번째 파일용 `searchable.pdf`는 사용되지 않는지 검증.
 - **핵심 파일**: `app/backend/api/jobs.py`, `app/backend/tests/test_save_user_annotations_merge.py`.
 
 ### 주석 추가 시 이전 주석 유실 버그 수정 (merged_annotations.json 자동 재생성) — 2026-07-21

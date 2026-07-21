@@ -307,3 +307,79 @@ class TestSaveUserAnnotationsMergedRegeneration:
             f"page_dimensions 실패 시에도 _merge_annotation_jsons가 호출되어야 함 (현재 {len(mock_env['merge_calls'])}회)"
         )
         assert result.get("merged_annotations_url") == mock_env["merged_url"]
+
+    def test_multi_file_source_index_uses_per_file_pdf(self, mock_env, monkeypatch):
+        """[Flow: extracted_files에 2개 PDF가 있고 source_index=1로 주석 저장 시
+        -> source_pdf_path가 extracted_files[1].storage_path(두 번째 파일)를 가리켜야 함
+        -> job.searchable_pdf_storage_path(첫 번째 파일용)는 사용되지 않아야 함]
+
+        회귀: 멀티파일 업로드 시 job.searchable_pdf_storage_path는 첫 번째 원본 PDF에 대한 것이므로,
+        두 번째 파일의 주석 좌표 변환에 이를 사용하면 페이지 크기가 달라 좌표가 어긋남.
+        """
+        # AI entry 제거
+        mock_env["job"].annotated_pdf_files = []
+        locked_job = MagicMock()
+        locked_job.annotated_pdf_files = []
+        locked_execute_result = MagicMock()
+        locked_execute_result.scalar_one.return_value = locked_job
+        mock_env["db"].execute.return_value = locked_execute_result
+
+        job_id = mock_env["job_id"]
+        # 멀티파일: pdf_storage_path는 zip, searchable은 첫 번째 파일용
+        mock_env["job"].pdf_storage_path = f"{job_id}/{job_id}.zip"
+        mock_env["job"].searchable_pdf_storage_path = f"{job_id}/searchable.pdf"
+        # extracted_files에 2개 PDF
+        first_pdf_path = f"{job_id}/file1.pdf"
+        second_pdf_path = f"{job_id}/file2.pdf"
+        mock_env["job"].extracted_files = [
+            {"path": "file1.pdf", "type": "pdf", "storage_path": first_pdf_path},
+            {"path": "file2.pdf", "type": "pdf", "storage_path": second_pdf_path},
+        ]
+
+        # 두 번째 파일 PDF를 FakeBucket에 추가
+        mock_env["fake_client"].storage._bucket.files[second_pdf_path] = b"dummy-file2-pdf"
+
+        # 다운로드 추적
+        downloaded_paths: list[str] = []
+        original_download = mock_env["fake_client"].storage._bucket.download
+
+        def _tracking_download(path: str) -> bytes:
+            downloaded_paths.append(path)
+            return original_download(path)
+
+        mock_env["fake_client"].storage._bucket.download = _tracking_download
+
+        user_annotation = {
+            "type": "highlight",
+            "pageIndex": 0,
+            "rect": [10, 20, 100, 40],
+            "contents": "두 번째 파일 주석",
+            "id": "user-annotation-file2-1",
+        }
+
+        result = jobs_module.save_user_annotations(
+            job_id=mock_env["job_id"],
+            payload={
+                "source_index": 1,
+                "annotations": [user_annotation],
+                "input_space": "device",
+            },
+            user=MagicMock(),
+            db=mock_env["db"],
+        )
+
+        # source_pdf_path가 두 번째 파일의 storage_path를 가리켜야 함
+        pdf_download_paths = [p for p in downloaded_paths if p.endswith(".pdf") or p.endswith(".zip")]
+        assert any(p == second_pdf_path for p in pdf_download_paths), (
+            f"extracted_files[1].storage_path가 다운로드되어야 함 (실제: {pdf_download_paths})"
+        )
+        # 첫 번째 파일용 searchable.pdf는 사용되지 않아야 함
+        assert not any(p == f"{job_id}/searchable.pdf" for p in pdf_download_paths), (
+            f"두 번째 파일 저장 시 searchable.pdf(첫 번째 파일용)는 다운로드되지 않아야 함 (실제: {pdf_download_paths})"
+        )
+        # zip도 다운로드되지 않아야 함
+        assert not any(p.endswith(".zip") for p in pdf_download_paths), (
+            f"zip은 다운로드되지 않아야 함 (실제: {pdf_download_paths})"
+        )
+
+        assert result.get("merged_annotations_url") == mock_env["merged_url"]

@@ -226,7 +226,9 @@ def _build_and_upload_searchable_pdf(
     input_path: Path,
     layout_by_page: dict[int, dict],
     dpi: int,
-) -> None:
+    force: bool = False,
+    upload_name: str = "searchable.pdf",
+) -> str | None:
     """[Flow: Step 1 (원본 PDF를 페이지별 이미지로 렌더링 + deskew 보정) -> Step 2 (보정된 이미지로 새 PDF 생성)
           -> Step 3 (layout_by_page에서 OCR 결과 추출) -> Step 4 (새 PDF에 투명 텍스트 레이어 추가)
           -> Step 5 (searchable PDF Storage 업로드) -> Step 6 (OCR layout Storage 업로드) -> Step 7 (Job DB 저장)]
@@ -236,10 +238,17 @@ def _build_and_upload_searchable_pdf(
     원본 PDF가 아닌 deskew 보정된 페이지 이미지로 새 PDF를 만들어 기울어진 스캔 문서도
     수평으로 정렬된 searchable PDF를 제공한다.
     동시에 OCR layout을 Storage에 저장해 AI agent의 get_elements/search_text가 재사용할 수 있게 한다.
+
+    매개변수:
+        force: True면 job.searchable_pdf_storage_path가 이미 설정되어 있어도 강제로 새로 생성.
+            멀티파일에서 각 PDF별로 개별 searchable PDF를 생성할 때 사용.
+        upload_name: Storage에 업로드할 파일명. 멀티파일에서 파일별 고유 이름이 필요할 때 사용.
+
+    반환값: 업로드된 Storage 경로 (실패 시 None). force=False일 때는 job.searchable_pdf_storage_path에도 저장.
     """
     # [Flow: 이미 원본 텍스트 레이어가 searchable PDF로 등록되어 있으면 OCR 재생성을 건너뛴다]
-    if job.searchable_pdf_storage_path:
-        return
+    if not force and job.searchable_pdf_storage_path:
+        return None
 
     from ..core.image_deskew import deskew_image
     from ..core.ocr_client import render_pdf
@@ -292,11 +301,12 @@ def _build_and_upload_searchable_pdf(
                 # 렌더링 실패 시 원본 PDF에 텍스트 레이어만 추가 (폴백)
                 pdf_bytes = input_path.read_bytes()
                 searchable_pdf_bytes = pdf_text_layer.add_text_layer_from_ocr(pdf_bytes, page_ocr_results, dpi=dpi, language="ko", layout_by_page=layout_by_page)
-                storage_path = supabase_client.upload_input(BytesIO(searchable_pdf_bytes), "searchable.pdf", job.id)
-                job.searchable_pdf_storage_path = storage_path
-                db.commit()
+                storage_path = supabase_client.upload_input(BytesIO(searchable_pdf_bytes), upload_name, job.id)
+                if not force:
+                    job.searchable_pdf_storage_path = storage_path
+                    db.commit()
                 logger.info(f"[run_job:{job.id}] searchable PDF 업로드 완료 (폴백 — deskew 미적용): {storage_path}")
-                return
+                return storage_path
 
             # Step 3: deskew 적용된 이미지로 새 PDF 생성
             doc = fitz.open()
@@ -313,34 +323,49 @@ def _build_and_upload_searchable_pdf(
             # Step 4: 새 PDF에 투명 텍스트 레이어 추가
             searchable_pdf_bytes = pdf_text_layer.add_text_layer_from_ocr(deskewed_pdf_bytes, page_ocr_results, dpi=dpi, language="ko", layout_by_page=layout_by_page)
 
-        storage_path = supabase_client.upload_input(BytesIO(searchable_pdf_bytes), "searchable.pdf", job.id)
-        job.searchable_pdf_storage_path = storage_path
-        db.commit()
+        storage_path = supabase_client.upload_input(BytesIO(searchable_pdf_bytes), upload_name, job.id)
+        if not force:
+            job.searchable_pdf_storage_path = storage_path
+            db.commit()
         logger.info(f"[run_job:{job.id}] searchable PDF 업로드 완료 (deskew 적용): {storage_path}")
+        return storage_path
     except Exception as e:
         logger.warning(f"[run_job:{job.id}] searchable PDF 생성/업로드 실패: {e}")
+        return None
 
 
-def _register_searchable_pdf_if_text_layer(db, job: Job, input_path: Path) -> None:
+def _register_searchable_pdf_if_text_layer(
+    db, job: Job, input_path: Path, force: bool = False, upload_name: str = "searchable.pdf"
+) -> str | None:
     """[Flow: Step 1 (PDF 텍스트 레이어 검사) -> Step 2 (있으면 원본을 searchable PDF로 등록)]
 
     원본 PDF에 텍스트 레이어가 있으면 별도 OCR 텍스트 레이어 생성 없이 원본 PDF를
     주석 검색용 searchable PDF로 그대로 등록한다. 디지털 텍스트 PDF의 정확한 좌표를
     주석에 직접 활용할 수 있다.
+
+    매개변수:
+        force: True면 job.searchable_pdf_storage_path가 이미 설정되어 있어도 강제로 등록.
+            멀티파일에서 각 PDF별로 개별 searchable PDF를 등록할 때 사용.
+        upload_name: Storage에 업로드할 파일명.
+
+    반환값: 업로드된 Storage 경로 (실패/스킵 시 None).
     """
-    if job.searchable_pdf_storage_path:
-        return  # 이미 등록되어 있으면 스킵
+    if not force and job.searchable_pdf_storage_path:
+        return None  # 이미 등록되어 있으면 스킵
     try:
         if not has_pdf_text_layer(str(input_path)):
-            return
-        # 원본 PDF를 Storage에 searchable.pdf로 업로드
+            return None
+        # 원본 PDF를 Storage에 searchable PDF로 업로드
         pdf_bytes = input_path.read_bytes()
-        storage_path = supabase_client.upload_input(BytesIO(pdf_bytes), "searchable.pdf", job.id)
-        job.searchable_pdf_storage_path = storage_path
-        db.commit()
+        storage_path = supabase_client.upload_input(BytesIO(pdf_bytes), upload_name, job.id)
+        if not force:
+            job.searchable_pdf_storage_path = storage_path
+            db.commit()
         logger.info(f"[run_job:{job.id}] 원본 PDF에 텍스트 레이어 있음 → searchable PDF로 등록: {storage_path}")
+        return storage_path
     except Exception as e:
         logger.warning(f"[run_job:{job.id}] 원본 PDF searchable 등록 실패: {e}")
+        return None
 
 
 def _image_to_searchable_pdf(
@@ -658,6 +683,14 @@ def run_job(job_id: str) -> dict:
                 _set_status(db, job, "ocr")
                 db.commit()
 
+                # [Flow: 멀티파일 PDF searchable PDF 추적]
+                # 멀티파일에서 각 PDF별로 개별 searchable PDF를 생성해 extracted_files[i].searchable_pdf_storage_path에 저장.
+                # 단일 PDF job에서는 기존대로 job.searchable_pdf_storage_path에 단일 경로 저장.
+                pdf_file_count = sum(1 for f in docling_files if f.suffix.lower() == ".pdf")
+                is_multi_pdf = pdf_file_count > 1
+                pdf_searchable_paths: dict[str, str] = {}
+                first_pdf_searchable: str | None = None
+
                 for fp in docling_files:
                     docling_errors: list[str] = []
                     # [Flow: Step 1 (페이지 크기 검사) -> Step 2 (전체 초과 시 스킵) -> Step 3 (텍스트 기반 PDF basic -> Docling / 이미지 기반 PDF 또는 premium -> run_vision / 비-PDF -> Docling)]
@@ -684,7 +717,18 @@ def run_job(job_id: str) -> dict:
                             on_error=lambda page, msg: docling_errors.append(f"p{page}: {msg}"),
                             ocr_engine=ocr_engine,
                         )
-                        _register_searchable_pdf_if_text_layer(db, job, fp)
+                        # [Flow: 멀티파일 PDF searchable PDF 등록]
+                        # 멀티파일이면 force=True로 각 PDF별 개별 searchable PDF 생성.
+                        # 단일 PDF면 기존대로 job.searchable_pdf_storage_path에 저장.
+                        if is_multi_pdf:
+                            per_upload_name = f"searchable_{fp.stem}.pdf"
+                            sp = _register_searchable_pdf_if_text_layer(db, job, fp, force=True, upload_name=per_upload_name)
+                            if sp:
+                                pdf_searchable_paths[fp.name] = sp
+                                if first_pdf_searchable is None:
+                                    first_pdf_searchable = sp
+                        else:
+                            _register_searchable_pdf_if_text_layer(db, job, fp)
                     elif fp.suffix.lower() == ".pdf":
                         fp_work_dir = work_dir / "vision" / fp.stem
                         fp_work_dir.mkdir(parents=True, exist_ok=True)
@@ -704,8 +748,19 @@ def run_job(job_id: str) -> dict:
                             on_progress=lambda done, total: None,
                             on_error=lambda page, msg: docling_errors.append(f"{fp.name} p{page}: {msg}"),
                         )
-                        _build_and_upload_searchable_pdf(db, job, fp, layout_by_page, job.dpi or 300)
-                        _register_searchable_pdf_if_text_layer(db, job, fp)
+                        # [Flow: 멀티파일 PDF searchable PDF 생성]
+                        if is_multi_pdf:
+                            per_upload_name = f"searchable_{fp.stem}.pdf"
+                            sp = _build_and_upload_searchable_pdf(db, job, fp, layout_by_page, job.dpi or 300, force=True, upload_name=per_upload_name)
+                            if not sp:
+                                sp = _register_searchable_pdf_if_text_layer(db, job, fp, force=True, upload_name=per_upload_name)
+                            if sp:
+                                pdf_searchable_paths[fp.name] = sp
+                                if first_pdf_searchable is None:
+                                    first_pdf_searchable = sp
+                        else:
+                            _build_and_upload_searchable_pdf(db, job, fp, layout_by_page, job.dpi or 300)
+                            _register_searchable_pdf_if_text_layer(db, job, fp)
                     else:
                         fp_tables = run_docling(
                             fp,
@@ -829,6 +884,13 @@ def run_job(job_id: str) -> dict:
                     except Exception as e:
                         logger.warning(f"[run_job:{job_id}] 이미지 searchable PDF 생성 실패: {fp.name}: {e}")
 
+                # [Flow: 멀티파일 PDF 첫 번째 searchable PDF를 job.searchable_pdf_storage_path에 설정 (하위 호환)]
+                # _source_files / save_user_annotations 등 기존 로직이 job.searchable_pdf_storage_path를 참조하므로,
+                # 첫 번째 PDF의 searchable PDF 경로를 job 레벨에도 저장한다.
+                if is_multi_pdf and first_pdf_searchable and not job.searchable_pdf_storage_path:
+                    job.searchable_pdf_storage_path = first_pdf_searchable
+                    db.commit()
+
                 # 추출 파일 정보 업데이트 (이미지는 Storage에 개별 업로드)
                 extracted_info = []
                 for p in extracted:
@@ -846,6 +908,13 @@ def run_job(job_id: str) -> dict:
                         except Exception as e:
                             errors.append(f"{p.name}: 이미지 업로드 실패 {e}")
                         info["searchable_pdf_storage_path"] = image_searchable_paths.get(p.name, "")
+                    elif ftype == "pdf":
+                        try:
+                            info["storage_path"] = supabase_client.upload_input(BytesIO(p.read_bytes()), p.name, job_id)
+                        except Exception as e:
+                            errors.append(f"{p.name}: PDF 업로드 실패 {e}")
+                        # [Flow: 멀티파일 PDF 개별 searchable PDF 경로 설정]
+                        info["searchable_pdf_storage_path"] = pdf_searchable_paths.get(p.name, "")
                     elif ftype in media_loader.DOCLING_TYPES or ftype in media_loader.HWP_TYPES:
                         try:
                             info["storage_path"] = supabase_client.upload_input(BytesIO(p.read_bytes()), p.name, job_id)

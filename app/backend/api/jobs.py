@@ -1618,13 +1618,22 @@ def _source_files(job: Job) -> list[dict]:
     # 원본 PDF에 내장된 주석이 있으면 clean PDF로 교체하고, 추출한 주석을 JSON 오버레이로
     # 초기화한다. 이렇게 하면 embedpdf가 PDF 내장 주석을 중복 렌더링/저장하는 문제를
     # 방지할 수 있다. docx/hwp는 여기서 PDF로 변환되지 않으므로 제외한다.
-    # [Flow: searchable PDF는 첫 번째 원본 PDF에만 적용 — job.searchable_pdf_storage_path는
-    # Job 레벨 단일 값이므로, 모든 PDF 항목에 덮어쓰면 새로 추가된 파일이 원본 PDF로 보이는 문제 발생]
+    # [Flow: 멀티파일 searchable PDF 적용 — 각 원본 PDF마다 extracted_files[i].searchable_pdf_storage_path 우선]
+    # 멀티파일 업로드 시 각 PDF별로 개별 searchable PDF가 생성되어 extracted_files에 저장된다.
+    # job.searchable_pdf_storage_path는 첫 번째 PDF에 대한 것이므로 폴백으로만 사용한다.
     first_original_pdf_index = next(
         (i for i, item in enumerate(source_files)
          if item.get("source_kind") == "original" and item.get("type") == "pdf"),
         None,
     )
+    # [Flow: extracted_files에서 파일별 searchable PDF 경로 조회]
+    extracted = list(job.extracted_files or [])
+    per_file_searchable: dict[int, str] = {}
+    for idx, info in enumerate(extracted):
+        if isinstance(info, dict) and info.get("type") == "pdf":
+            sp = info.get("searchable_pdf_storage_path")
+            if sp:
+                per_file_searchable[idx] = sp
     for i, item in enumerate(source_files):
         if item.get("source_kind") != "original" or item.get("type") != "pdf":
             continue
@@ -1638,14 +1647,25 @@ def _source_files(job: Job) -> list[dict]:
             # [Flow: 파일별 주석 분리 — source_index를 전달하여 해당 파일의 주석 JSON에 저장]
             _initialize_user_annotations_json(job.id, extracted_annotations, item.get("source_index", 0), source_pdf_storage_path=storage_path)
 
-        # [Flow: searchable PDF가 있으면 미리보기 URL을 대체 — 첫 번째 원본 PDF에만 적용]
+        # [Flow: 파일별 searchable PDF 적용 — extracted_files[i].searchable_pdf_storage_path 우선]
         # 다운로드용 url은 원본 clean PDF를 유지하고, preview_url만 searchable PDF로 변경.
         # 이렇게 하면 사용자는 뷰어에서 텍스트 검색/선택이 가능한 PDF를 보지만,
         # 다운로드는 원본 PDF를 받는다.
-        # job.searchable_pdf_storage_path는 단일 PDF Job의 원본에 대한 것이므로,
-        # 첫 번째 원본 PDF에만 적용한다. 추가로 업로드된 파일은 _build_source_file_item에서
-        # 개별 searchable_pdf_storage_path가 설정된 경우에만 searchable PDF를 사용한다.
-        if i == first_original_pdf_index and job.searchable_pdf_storage_path:
+        # 멀티파일에서는 각 PDF별로 개별 searchable PDF가 생성되므로 source_index로 조회.
+        # 단일 PDF job이나 과거 job(개별 경로가 없는 경우)은 job.searchable_pdf_storage_path로 폴백.
+        file_source_index = item.get("source_index", 0)
+        per_file_sp = per_file_searchable.get(file_source_index)
+        if per_file_sp:
+            try:
+                searchable_url = supabase_client.get_signed_download_url(
+                    per_file_sp, bucket="pdfs", expires_in=3600
+                )
+                if searchable_url:
+                    item["preview_url"] = searchable_url
+            except Exception as e:
+                logger.warning(f"[source_files:{job.id}] 파일별 searchable PDF URL 생성 실패: {e}")
+        elif i == first_original_pdf_index and job.searchable_pdf_storage_path:
+            # 폴백: 파일별 searchable PDF가 없고 첫 번째 PDF면 job.searchable_pdf_storage_path 사용
             try:
                 searchable_url = supabase_client.get_signed_download_url(
                     job.searchable_pdf_storage_path, bucket="pdfs", expires_in=3600
@@ -3365,29 +3385,29 @@ def save_user_annotations(
 
         # [Flow: 주석 좌표 기준 PDF 결정]
         # 멀티파일 업로드 시 pdf_storage_path는 zip 컨테이너를 가리키므로, source_index에 해당하는
-        # extracted_files[source_index].storage_path(개별 PDF)를 우선 사용한다.
-        # job.searchable_pdf_storage_path는 첫 번째 원본 PDF에 대한 것이므로 source_index > 0에서는
-        # 개별 파일을 기준으로 해야 좌표 변환이 정확하다.
+        # extracted_files[source_index]의 searchable_pdf_storage_path(개별 searchable PDF)를 우선 사용한다.
+        # searchable PDF가 없으면 원본 storage_path로 폴백.
+        # job.searchable_pdf_storage_path는 첫 번째 원본 PDF에 대한 것이므로 마지막 폴백.
+        per_file_searchable_path: str | None = None
         per_file_pdf_path: str | None = None
         if source_index >= 0:
             extracted = list(job.extracted_files or [])
             if 0 <= source_index < len(extracted):
                 info = extracted[source_index]
                 if isinstance(info, dict) and info.get("type") == "pdf":
+                    per_file_searchable_path = info.get("searchable_pdf_storage_path") or None
                     per_file_pdf_path = info.get("storage_path")
 
-        if input_space == "pdf_user":
-            # pdf_user 입력은 뷰어가 searchable PDF 기준으로 좌표를 보낸 경우.
-            # _source_files가 첫 번째 원본 PDF에만 job.searchable_pdf_storage_path를 적용하므로,
-            # source_index == 0일 때는 searchable PDF를 우선, 그 외는 개별 파일을 우선한다.
-            if source_index == 0:
-                source_pdf_path = job.searchable_pdf_storage_path or per_file_pdf_path or job.pdf_storage_path
-            else:
-                source_pdf_path = per_file_pdf_path or job.searchable_pdf_storage_path or job.pdf_storage_path
-        elif source_index >= 0 and entry is not None:
-            source_pdf_path = entry.get("storage_path") or job.searchable_pdf_storage_path or job.pdf_storage_path
+        # [Flow: 좌표 기준 PDF 우선순위]
+        # 1. extracted_files[source_index].searchable_pdf_storage_path (개별 searchable PDF)
+        # 2. extracted_files[source_index].storage_path (개별 원본 PDF)
+        # 3. job.searchable_pdf_storage_path (첫 번째 PDF의 searchable PDF, 하위 호환)
+        # 4. job.pdf_storage_path (단일 PDF job, 마지막 폴백)
+        if source_index >= 0 and entry is not None:
+            # AI annotate entry가 있으면 entry의 storage_path(searchable PDF)를 우선
+            source_pdf_path = entry.get("storage_path") or per_file_searchable_path or per_file_pdf_path or job.searchable_pdf_storage_path or job.pdf_storage_path
         else:
-            source_pdf_path = per_file_pdf_path or job.searchable_pdf_storage_path or job.pdf_storage_path
+            source_pdf_path = per_file_searchable_path or per_file_pdf_path or job.searchable_pdf_storage_path or job.pdf_storage_path
 
         pdf_bytes: bytes | None = None
         if source_pdf_path:

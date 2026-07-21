@@ -8,6 +8,22 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 멀티파일 PDF searchable PDF 개별 적용 — 2026-07-21
+
+- **원인**: 멀티파일 업로드 시 `_build_and_upload_searchable_pdf`/`_register_searchable_pdf_if_text_layer`가 `if job.searchable_pdf_storage_path: return`으로 스킵하여 첫 번째 PDF만 searchable PDF가 생성되고, 나머지 PDF는 생성되지 않음. 생성되더라도 `job.searchable_pdf_storage_path` 단일 값에 덮어쓰기 되어 마지막 PDF만 남음. `_source_files`도 첫 번째 원본 PDF에만 `job.searchable_pdf_storage_path`를 적용. 이미지 파일은 이미 `extracted_files[i].searchable_pdf_storage_path` 패턴을 사용 중이었으나 PDF 멀티파일은 누락.
+- **수정 (workers/tasks.py)**:
+  - `_build_and_upload_searchable_pdf`와 `_register_searchable_pdf_if_text_layer`에 `force: bool = False`, `upload_name: str = "searchable.pdf"` 파라미터 추가. `force=True`면 `job.searchable_pdf_storage_path` 체크를 스킵하고 항상 생성하며, `job.searchable_pdf_storage_path`에 저장하지 않고 반환값으로 Storage 경로 반환.
+  - 멀티파일 PDF 처리 시 `is_multi_pdf = pdf_file_count > 1`로 판별하여 각 PDF별로 `force=True`로 호출. `pdf_searchable_paths[fp.name]`에 추적하고, 첫 번째 PDF의 searchable PDF를 `job.searchable_pdf_storage_path`에도 설정(하위 호환).
+  - extracted_info 구성 시 PDF 파일에 `searchable_pdf_storage_path` 설정(이미지 파일 패턴과 일관).
+- **수정 (api/jobs.py `_source_files`)**:
+  - 각 원본 PDF 항목의 preview_url로 `extracted_files[source_index].searchable_pdf_storage_path`를 우선 사용. 없으면 첫 번째 PDF에만 `job.searchable_pdf_storage_path`로 폴백.
+- **수정 (api/jobs.py `save_user_annotations`)**:
+  - 좌표 기준 PDF 우선순위: `extracted_files[source_index].searchable_pdf_storage_path` → `extracted_files[source_index].storage_path` → `job.searchable_pdf_storage_path` → `job.pdf_storage_path`.
+  - `input_space` 분기 제거하고 통일: 어떤 input_space든 개별 searchable PDF를 우선 사용.
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 260 passed (신규 회귀 테스트 1건 포함: `extracted_files[1].searchable_pdf_storage_path`가 있을 때 그것이 다운로드되고 첫 번째 파일용 `searchable.pdf`는 사용되지 않는지 검증).
+- **핵심 파일**: `app/backend/workers/tasks.py`, `app/backend/api/jobs.py`, `app/backend/tests/test_save_user_annotations_merge.py`.
+- **주의**: 기존 멀티파일 job은 첫 번째 PDF만 searchable PDF가 있으므로, 두 번째 이후 파일의 searchable PDF를 보려면 해당 job을 다시 처리하거나 별도 재생성 스크립트가 필요.
+
 ### 주석 저장 500 (Failed to open stream) — 원본이 zip인 job의 좌표 기준 PDF 해석 수정 — 2026-07-21
 
 - **원인**: 멀티파일 업로드 시 백엔드가 파일들을 zip으로 패키징해 `pdf_storage_path`에 저장(`original_filename` = `N_files.zip`). `save_user_annotations`에서 좌표 기준 PDF를 결정할 때 `input_space == "device"`이고 AI entry가 없는 분기가 `job.pdf_storage_path`(zip)를 그대로 사용. zip을 다운로드해 `fitz.open(stream=zip_bytes, filetype="pdf")`를 호출하면 PyMuPDF가 `FileDataError: Failed to open stream`를 던짐. 게다가 `_page_dimensions(pdf_bytes)` 호출이 try/except 밖에 있어 예외가 그대로 500으로 전파되어 주석 저장이 전부 실패.

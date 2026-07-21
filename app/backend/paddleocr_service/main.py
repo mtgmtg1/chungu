@@ -260,9 +260,7 @@ def _run_paddleocr(
                     all_markdown_parts.append(f"<!-- Page {idx + 1} -->\n{page_md}")
                     total_pages += 1
                 if capture_layout:
-                    # 로컬 PaddleOCR pipeline은 이미지를 처리하므로 bbox가 top-left y↓(이미지 좌표계)이다.
-                    # AI Studio PDF 직접 제출 경로(bottom-left y↑)와 구분하기 위해 bbox_origin="top_left" 전달.
-                    layout_pages.append(_extract_layout_from_result(res, bbox_origin="top_left"))
+                    layout_pages.append(_extract_layout_from_result(res))
         except Exception as e:
             logger.error(f"[paddleocr] 페이지 {idx + 1} 추론 실패: {e}")
             all_markdown_parts.append(f"<!-- Page {idx + 1} (OCR 실패) -->\n")
@@ -325,39 +323,20 @@ def _normalize_bbox(
     bbox: list[float] | tuple[float, ...],
     page_width_px: float,
     page_height_px: float,
-    bbox_origin: str = "bottom_left",
 ) -> list[float]:
-    """PaddleOCR-VL bbox를 0~1 top-left normalized 좌표(y=0 상단, y=1 하단)로 변환한다.
+    """AI Studio(PaddleOCR-VL) bbox를 0~1 top-left normalized 좌표로 변환한다.
 
     [Flow: Step 1 (x좌표를 페이지 너비로 나눔) -> Step 2 (y좌표를 페이지 높이로 나눔)
-          -> Step 3 (bbox_origin이 bottom_left면 PDF user-space y↑를 top-left y↓로 뒤집음)
-          -> Step 4 ([x0, y0, x1, y1] top-left normalized 좌표 반환)]
+          -> Step 3 (PDF user-space y↑를 top-left y↓로 뒤집음)
+          -> Step 4 ([x0, y0, x1, y1] normalized 좌표 반환)]
 
-    Args:
-        bbox: [x0, y0, x1, y1] 원본 bbox.
-        page_width_px: 페이지 너비(픽셀 또는 points — bbox 단위와 동일해야 함).
-        page_height_px: 페이지 높이(픽셀 또는 points — bbox 단위와 동일해야 함).
-        bbox_origin: 입력 bbox의 y축 원점.
-            - "bottom_left": PDF user-space 기준(y=0 하단, y↑). AI Studio PDF 직접 제출 경로.
-              y flip을 수행하여 top-left normalized로 변환.
-            - "top_left": 이미지 좌표계 기준(y=0 상단, y↓). 로컬 PaddleOCR pipeline / 이미지 제출 경로.
-              y flip 없이 단순 정규화만 수행.
-            잘못 지정하면 y 좌표가 위아래로 뒤집혀 텍스트 레이어가 페이지 반대편에 그려진다.
+    AI Studio는 PDF를 직접 받을 때 bbox를 PDF user-space(bottom-left origin, y↑)로 반환한다.
+    이를 y=0이 상단인 top-left normalized 좌표로 변환해야
+    add_text_layer_from_ocr / build_embedpdf_annotations 등이 정확히 동작한다.
     """
     if not bbox or len(bbox) < 4:
         return list(bbox) if bbox else []
     x0, y0, x1, y1 = (float(v) for v in bbox[:4])
-    if bbox_origin == "top_left":
-        # 이미 top-left y↓ 좌표계이므로 단순 정규화만 수행.
-        # y flip을 추가하면 소비자(normalized_top_left_to_pdf_user)의 y flip과 중복 상쇄되어
-        # 원래 top-left y↓ 좌표가 PDF user-space에 그대로 들어가 y가 위아래로 뒤집힌다.
-        return [
-            x0 / page_width_px,
-            y0 / page_height_px,
-            x1 / page_width_px,
-            y1 / page_height_px,
-        ]
-    # bottom_left (PDF user-space, y↑): y flip으로 top-left y↓ normalized로 변환.
     return [
         x0 / page_width_px,
         1.0 - (y1 / page_height_px),
@@ -370,17 +349,13 @@ def _normalize_points(
     points: list[list[float]] | list[tuple[float, ...]],
     page_width_px: float,
     page_height_px: float,
-    bbox_origin: str = "bottom_left",
 ) -> list[list[float]]:
-    """PaddleOCR-VL 다각형 점들을 0~1 top-left normalized 좌표로 변환한다.
+    """AI Studio(PaddleOCR-VL) 다각형 점들을 0~1 top-left normalized 좌표로 변환한다.
 
     [Flow: Step 1 (각 점의 x를 페이지 너비로 나눔)
           -> Step 2 (각 점의 y를 페이지 높이로 나눔)
-          -> Step 3 (bbox_origin이 bottom_left면 PDF user-space y↑를 top-left y↓로 뒤집음)
+          -> Step 3 (PDF user-space y↑를 top-left y↓로 뒤집음)
           -> Step 4 (변환된 점 목록 반환)]
-
-    Args:
-        bbox_origin: 입력 점들의 y축 원점. _normalize_bbox와 동일한 의미.
     """
     if not points:
         return []
@@ -390,33 +365,21 @@ def _normalize_points(
             converted.append(list(pt) if pt else [])
             continue
         x, y = float(pt[0]), float(pt[1])
-        if bbox_origin == "top_left":
-            converted.append([x / page_width_px, y / page_height_px])
-        else:
-            converted.append([x / page_width_px, 1.0 - (y / page_height_px)])
+        converted.append([x / page_width_px, 1.0 - (y / page_height_px)])
     return converted
 
 
-def _extract_layout_from_result(res: Any, bbox_origin: str = "bottom_left") -> dict:
+def _extract_layout_from_result(res: Any) -> dict:
     """AI Studio(PaddleOCR-VL) 결과 객체에서 bbox를 0~1 top-left normalized 좌표로 변환한 레이아웃을 반환한다.
 
     [Flow: Step 1 (res.json 추출) -> Step 2 (페이지 픽셀 크기 확인)
           -> Step 3 (parsing_res_list / layout_det_res / overall_ocr_res의 bbox를 normalized 좌표로 변환)
           -> Step 4 (normalized 좌표계 기준 layout dict 반환)]
 
-    Args:
-        res: PaddleOCR-VL 추론 결과 객체.
-        bbox_origin: 입력 bbox의 y축 원점.
-            - "bottom_left": AI Studio가 PDF를 직접 받아 PDF user-space(y=0 하단, y↑)로 bbox를 반환하는 경로.
-            - "top_left": 로컬 PaddleOCR pipeline이 이미지를 받아 이미지 좌표계(y=0 상단, y↓)로 bbox를 반환하는 경로.
-            잘못 지정하면 y 좌표가 위아래로 뒤집혀 텍스트 레이어가 페이지 반대편에 그려진다.
-
     AI Studio에 PDF를 직접 제출하면 반환 bbox는 PDF user-space(bottom-left origin, y↑)이다.
     이를 0~1 top-left normalized(y=0 상단, y=1 하단)로 변환하면
     소비자(_collect_page_elements_*, add_text_layer_from_ocr)가 원본 PDF 페이지 크기만 알면
     정확한 PDF user-space 좌표를 계산할 수 있다.
-    로컬 PaddleOCR pipeline은 이미지를 처리하므로 bbox가 top-left y↓ 좌표계이며,
-    이 경우 y flip 없이 단순 정규화만 수행한다.
     """
     try:
         if isinstance(res, dict):
@@ -451,7 +414,6 @@ def _extract_layout_from_result(res: Any, bbox_origin: str = "bottom_left") -> d
     layout["_coordinate_system"] = "normalized"
     layout["_page_width_px"] = page_width_px
     layout["_page_height_px"] = page_height_px
-    layout["_bbox_origin"] = bbox_origin
 
     # parsing_res_list 블록 bbox 및 polygon_points 변환
     for block in layout.get("parsing_res_list", []):
@@ -459,10 +421,10 @@ def _extract_layout_from_result(res: Any, bbox_origin: str = "bottom_left") -> d
             continue
         bbox = block.get("block_bbox")
         if bbox:
-            block["block_bbox"] = _normalize_bbox(bbox, page_width_px, page_height_px, bbox_origin)
+            block["block_bbox"] = _normalize_bbox(bbox, page_width_px, page_height_px)
         points = block.get("block_polygon_points")
         if points:
-            block["block_polygon_points"] = _normalize_points(points, page_width_px, page_height_px, bbox_origin)
+            block["block_polygon_points"] = _normalize_points(points, page_width_px, page_height_px)
 
     # layout_det_res 내부 boxes 변환
     layout_det = layout.get("layout_det_res") or {}
@@ -472,10 +434,10 @@ def _extract_layout_from_result(res: Any, bbox_origin: str = "bottom_left") -> d
                 continue
             coord = box.get("coordinate")
             if coord:
-                box["coordinate"] = _normalize_bbox(coord, page_width_px, page_height_px, bbox_origin)
+                box["coordinate"] = _normalize_bbox(coord, page_width_px, page_height_px)
             points = box.get("polygon_points")
             if points:
-                box["polygon_points"] = _normalize_points(points, page_width_px, page_height_px, bbox_origin)
+                box["polygon_points"] = _normalize_points(points, page_width_px, page_height_px)
 
     # overall_ocr_res.rec_boxes 변환
     ocr_res = layout.get("overall_ocr_res") or {}
@@ -483,7 +445,7 @@ def _extract_layout_from_result(res: Any, bbox_origin: str = "bottom_left") -> d
         rec_boxes = ocr_res.get("rec_boxes")
         if isinstance(rec_boxes, list):
             ocr_res["rec_boxes"] = [
-                _normalize_bbox(b, page_width_px, page_height_px, bbox_origin)
+                _normalize_bbox(b, page_width_px, page_height_px)
                 if b and len(b) >= 4
                 else b
                 for b in rec_boxes
@@ -776,16 +738,14 @@ def _aistudio_submit_job(file_path: Path, params: dict[str, Any] | None = None) 
         raise RuntimeError("PADDLEOCR_API_TOKEN is not configured")
 
     headers = {"Authorization": f"bearer {AISTUDIO_API_TOKEN}"}
-    # [Flow: 기하 보정 비활성화 — bbox 좌표계를 원본 PDF/이미지와 일치시키기 위해]
-    # useDocOrientationClassify=False: 90° 단위 대회전 보정을 끈다. 보정이 켜 있으면 AI Studio가
-    # 보정된 이미지 기준으로 bbox를 반환하지만 보정된 이미지 자체는 반환하지 않아, 클라이언트가
-    # _build_and_upload_searchable_pdf에서 원본 PDF를 렌더링할 때 bbox 좌표계가 어긋나 텍스트 레이어가
-    # 완전히 틀린 위치에 그려지는 문제가 발생한다. 회전된 문서는 사용자가 뷰어에서 회전해 보더라도
-    # 텍스트 레이어 위치가 정확한 것이 우선이다.
-    # useDocUnwarping=False: 왜곡 보정은 변환 행렬을 응답에 노출하지 않아 bbox 역매핑이 불가하므로
-    # 주석 기능에 해로움 (기존과 동일).
+    # [Flow: 대회전(90/180/270°) 자동 보정 활성화]
+    # useDocOrientationClassify=True → AI Studio가 문서 방향을 0/1/2/3(0°/90°/180°/270°)으로
+    # 분류하고 보정한 이미지 기준으로 bbox를 반환. 보정된 페이지 이미지 자체는 반환하지 않으므로
+    # 클라이언트가 주석 PDF 생성 시 응답의 doc_preprocessor_res.angle을 참조해 90° 회전을 재현해야 한다.
+    # useDocUnwarping=False 유지: 왜곡 보정은 변환 행렬을 응답에 노출하지 않아 bbox 역매핑이 불가하므로
+    # 주석 기능에 해로움.
     optional_payload = {
-        "useDocOrientationClassify": False,
+        "useDocOrientationClassify": True,
         "useDocUnwarping": False,
         "useChartRecognition": False,
     }
@@ -903,9 +863,7 @@ def _aistudio_download_and_parse(
             # prunedResult == 로컬 파이프라인 res.json에서 input_path/page_index만 제거한 것과 동일 스키마.
             # PDF 하이라이트/여백 주석 기능의 bbox 소스로 그대로 사용한다 (core/ocr_layout.py에서 파싱).
             pruned = lpr.get("prunedResult", {}) or {}
-            # AI Studio PDF 직접 제출 경로: bbox가 PDF user-space(bottom-left, y↑)로 반환된다.
-            # 로컬 PaddleOCR pipeline(top-left y↓)과 구분하기 위해 bbox_origin="bottom_left" 명시.
-            layout_pages.append(_extract_layout_from_result(pruned, bbox_origin="bottom_left"))
+            layout_pages.append(_extract_layout_from_result(pruned))
             # doc_preprocessor_res.angle 추출 (0/1/2/3 = 0°/90°/180°/270°, -1 = 미적용)
             doc_pre = pruned.get("doc_preprocessor_res", {}) if isinstance(pruned, dict) else {}
             angle_code = doc_pre.get("angle", -1) if isinstance(doc_pre, dict) else -1

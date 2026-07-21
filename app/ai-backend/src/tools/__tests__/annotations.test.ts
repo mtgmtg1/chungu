@@ -337,12 +337,58 @@ describe('buildAnnotationTools - 목록 요청 기능 테스트', () => {
 
     const applyResult = await (tools.apply_annotations as any).execute({});
     assert.equal(applyResult.saved, true);
-    assert.ok(savedAnnotationsPayload);
+    assert.equal(savedAnnotationsPayload.input_space, 'pdf_user');
+
     // 기존 주석 1개 + 신규 주석 1개 = 총 2개
     assert.equal(savedAnnotationsPayload.annotations.length, 2);
     const ids = savedAnnotationsPayload.annotations.map((a: any) => a.annotation?.id || a.id);
     assert.ok(ids.includes('existing-1'));
+
+  });
+
+  it('add_text_callout에 page_no가 문자열 "1" 또는 문자열 배열 ["1", "1"]로 넘어와도 z.coerce.number로 정상 성공하는지 검증', async () => {
+    let savedAnnotationsPayload: any = null;
+    const baseMock = createMockFetch();
+    const saveFetch = mock.fn(async (url: string | URL, options?: RequestInit) => {
+      const urlString = url.toString();
+      if (urlString.includes('/user-annotations')) {
+        savedAnnotationsPayload = JSON.parse((options?.body as string) || '{}');
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return baseMock(url, options);
+    }) as unknown as typeof fetch;
+
+    globalThis.fetch = saveFetch;
+
+    const tools = buildAnnotationTools({
+      jobId: 'job-test',
+      sourceIndex: 0,
+      authHeaders: {},
+    });
+
+    const resSingle = await (tools.add_text_callout as any).execute({
+      text: 'CalloutTarget',
+      page_no: '1',
+      comment: 'Single string page_no',
+    });
+    assert.equal(resSingle.total, 1);
+
+    const resArray = await (tools.add_text_callout as any).execute({
+      text: ['CalloutTarget'],
+      page_no: ['1'],
+      comment: ['Array string page_no'],
+    });
+    assert.equal(resArray.total, 1);
+
+    const applyResult = await (tools.apply_annotations as any).execute({});
+    assert.equal(applyResult.saved, true);
+    assert.equal(savedAnnotationsPayload.input_space, 'pdf_user');
+
   });
 });
+
 
 

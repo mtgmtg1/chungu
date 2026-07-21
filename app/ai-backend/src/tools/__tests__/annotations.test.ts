@@ -343,6 +343,31 @@ describe('buildAnnotationTools - 목록 요청 기능 테스트', () => {
     const ids = savedAnnotationsPayload.annotations.map((a: any) => a.annotation?.id || a.id);
     assert.ok(ids.includes('existing-1'));
   });
+
+  it('page_no에 문자열 숫자("1") 또는 문자열 숫자 배열(["1"])이 전달되어도 z.coerce로 정상 파싱되는지 검증', async () => {
+    const tools = buildAnnotationTools({
+      jobId: 'job-test',
+      sourceIndex: 0,
+      authHeaders: {},
+    });
+
+    const resScalar = await (tools.add_text_callout as any).execute({
+      text: 'CalloutTarget',
+      page_no: '1',
+      comment: 'Comment 1',
+    });
+    assert.ok(resScalar.callouts);
+    assert.equal(resScalar.callouts[0].page_no, 1);
+
+    const resArray = await (tools.add_text_callout as any).execute({
+      text: ['CalloutTarget'],
+      page_no: ['1'],
+      comment: ['Comment 1'],
+    });
+    assert.ok(resArray.callouts);
+    assert.equal(resArray.callouts[0].page_no, 1);
+  });
 });
+
 
 

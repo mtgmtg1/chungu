@@ -73,16 +73,18 @@ function _normalizeParams(
 
   // 2. page_no 정규화
   let pageNos: (number | undefined)[];
-  if (pageNo === undefined) {
+  if (pageNo === undefined || pageNo === null) {
     pageNos = new Array(len).fill(undefined);
   } else if (Array.isArray(pageNo)) {
     if (pageNo.length !== len) {
       return { error: `page_no array length (${pageNo.length}) must match text array length (${len}).` };
     }
-    pageNos = pageNo;
+    pageNos = pageNo.map((p) => (p !== undefined && p !== null && !isNaN(Number(p)) ? Number(p) : undefined));
   } else {
-    pageNos = new Array(len).fill(pageNo);
+    const parsed = !isNaN(Number(pageNo)) ? Number(pageNo) : undefined;
+    pageNos = new Array(len).fill(parsed);
   }
+
 
   // 3. color 정규화
   let colors: string[];
@@ -423,7 +425,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
       description: 'Add one or more highlight annotations for the exact text segment(s) only by specifying text string(s). The backend searches the PDF text layer and highlights only the matched text bounding box. To apply multiple highlights at once, pass an array of texts. Use search_text first if you are unsure of exact wording.',
       inputSchema: z.object({
         text: z.union([z.string(), z.array(z.string())]).describe('Exact text string or list of strings to highlight'),
-        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
+        page_no: z.union([z.coerce.number(), z.array(z.coerce.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
         comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment(s). Provide one string to use for all highlights, or an array matching the number of texts. If omitted, an empty comment is used.'),
         color: z.union([
           z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),
@@ -490,7 +492,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
       description: 'Add one or more highlight annotations covering the entire text line(s)/row(s) containing the specified text string(s). The backend searches the PDF text layer and expands the highlight to cover the full line box. To apply multiple line highlights at once, pass an array of texts. Use search_text first if you are unsure of exact wording.',
       inputSchema: z.object({
         text: z.union([z.string(), z.array(z.string())]).describe('Exact text string or list of strings to highlight the full line for'),
-        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
+        page_no: z.union([z.coerce.number(), z.array(z.coerce.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
         comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment(s). Provide one string to use for all highlights, or an array matching the number of texts. If omitted, an empty comment is used.'),
         color: z.union([
           z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),
@@ -557,7 +559,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
       description: 'Add one or more callout (text box + arrow) annotations by specifying exact text string(s) to point to. The backend searches the PDF text layer and places each callout at the matching text. To apply multiple callouts at once, pass an array of texts. Use search_text first if you are unsure of the exact wording.',
       inputSchema: z.object({
         text: z.union([z.string(), z.array(z.string())]).describe('Exact text string or list of strings to point the callouts to'),
-        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
+        page_no: z.union([z.coerce.number(), z.array(z.coerce.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
         comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment(s). Provide one string to use for all callouts, or an array matching the number of texts. If omitted, an empty comment is used.'),
         color: z.union([
           z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),
@@ -623,7 +625,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
       description: 'Add one or more sticky note (note/memo icon) annotations by specifying exact text string(s) to point to. Placed at the top-right corner of the target text. Use when the user asks for sticky notes, notes, or memos.',
       inputSchema: z.object({
         text: z.union([z.string(), z.array(z.string())]).describe('Exact text string or list of strings to attach sticky notes to'),
-        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
+        page_no: z.union([z.coerce.number(), z.array(z.coerce.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
         comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment(s). Provide one string to use for all notes, or an array matching the number of texts.'),
         color: z.union([
           z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),

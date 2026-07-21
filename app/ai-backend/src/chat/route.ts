@@ -130,7 +130,8 @@ Rules:
 - SINGLE-call rule for one-shot user requests: if the user says "이 단어들 강조해줘: A, B, C, D" or lists multiple items, that is ONE add_text_highlight call with text=[A,B,C,D]. Do not split into multiple calls even if the texts are on different pages — pass page_no=[...] in parallel.
 - If you are unsure of the exact text, call search_text ONCE with a query that covers the candidates, then issue a single batched add_* call. search_text, get_elements, and compare_elements return text for verification only; their coordinates are intentionally hidden, so do not try to construct annotations from them.
 - For PDF text elements, use get_elements with an explicit page_no whenever possible. Without page_no, the backend may OCR the entire PDF which is very slow for large/image-based PDFs.
-- When calling add_text_highlight, add_line_highlight, or add_text_callout in batch mode, pass page_no as an array (one per text) to limit each search and avoid full-document scans. If all texts are on the same page, a single scalar page_no is acceptable.
+- When calling add_text_highlight, add_line_highlight, add_text_callout, or add_sticky_note in batch mode, pass page_no as numbers (e.g., page_no: 1 or page_no: [1, 2]). Do NOT pass page_no as quoted strings like "1". If all target texts are on the SAME page, passing a single scalar number page_no: 1 is recommended and applies to all items.
+
 - To modify existing annotations, first call get_annotations or read_job_json(kind="annotations") to list them, then call update_annotation with the annotation id.
 - update_annotation immediately persists changes to storage; you do not need to call apply_annotations after it.
 - For markdown edits, only call apply_edits when you are done with all replacements/insertions.

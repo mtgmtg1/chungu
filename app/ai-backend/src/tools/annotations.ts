@@ -73,16 +73,18 @@ function _normalizeParams(
 
   // 2. page_no 정규화
   let pageNos: (number | undefined)[];
-  if (pageNo === undefined) {
+  if (pageNo === undefined || pageNo === null) {
     pageNos = new Array(len).fill(undefined);
   } else if (Array.isArray(pageNo)) {
     if (pageNo.length !== len) {
       return { error: `page_no array length (${pageNo.length}) must match text array length (${len}).` };
     }
-    pageNos = pageNo;
+    pageNos = pageNo.map((p) => (p !== undefined && p !== null && !isNaN(Number(p)) ? Number(p) : undefined));
   } else {
-    pageNos = new Array(len).fill(pageNo);
+    const parsed = !isNaN(Number(pageNo)) ? Number(pageNo) : undefined;
+    pageNos = new Array(len).fill(parsed);
   }
+
 
   // 3. color 정규화
   let colors: string[];
@@ -177,8 +179,9 @@ interface AnnotationTarget {
 interface PendingAnnotation {
   id: string;
   target: AnnotationTarget;
-  type: 'highlight' | 'callout';
+  type: 'highlight' | 'callout' | 'sticky_note';
 }
+
 
 interface CachedElements {
   elements: Array<Record<string, unknown>>;
@@ -226,14 +229,21 @@ export function buildAnnotationTools(context: AnnotationContext) {
         page_no: z.number().optional().describe('1-based page number. Searches all pages if omitted'),
       }),
       execute: async ({ query, page_no }) => {
-        const { matches } = await proofApi.searchText(jobId, query, page_no, authHeaders);
-        // [Flow: 텍스트 기반 주석 생성을 유도 — 모델에 bbox_pdf 노출 금지]
-        const textOnly = matches.slice(0, 20).map((m) => ({
-          page_no: Number((m as any).page_no || 1),
-          text: String((m as any).text || ''),
-        }));
-        return { matches: textOnly };
+        try {
+          const { matches } = await proofApi.searchText(jobId, query, page_no, authHeaders);
+          // [Flow: 텍스트 기반 주석 생성을 유도 — 모델에 bbox_pdf 노출 금지]
+          const textOnly = matches.slice(0, 20).map((m) => ({
+            page_no: Number((m as any).page_no || 1),
+            text: String((m as any).text || ''),
+          }));
+          return { matches: textOnly };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[search_text] job=${jobId} query=${query} page=${page_no}: ${msg}`);
+          return { error: `search_text failed: ${msg}`, matches: [] };
+        }
       },
+
     }),
 
     get_elements: tool({
@@ -415,7 +425,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
       description: 'Add one or more highlight annotations for the exact text segment(s) only by specifying text string(s). The backend searches the PDF text layer and highlights only the matched text bounding box. To apply multiple highlights at once, pass an array of texts. Use search_text first if you are unsure of exact wording.',
       inputSchema: z.object({
         text: z.union([z.string(), z.array(z.string())]).describe('Exact text string or list of strings to highlight'),
-        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
+        page_no: z.union([z.coerce.number(), z.array(z.coerce.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
         comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment(s). Provide one string to use for all highlights, or an array matching the number of texts. If omitted, an empty comment is used.'),
         color: z.union([
           z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),
@@ -424,51 +434,57 @@ export function buildAnnotationTools(context: AnnotationContext) {
         opacity: z.union([z.number().min(0).max(1), z.array(z.number().min(0).max(1))]).optional().describe('Highlight opacity or list of opacities (0.0~1.0)'),
       }),
       execute: async ({ text, page_no, comment, color, opacity }) => {
-        // [Flow: Step 1 (모든 매개변수를 _normalizeParams로 정규화) -> Step 2 (실패 시 에러 반환)
-        //       -> Step 3 (각 text별로 searchText(mode="text") 수행) -> Step 4 (매칭된 bbox를 pending에 누적)
-        //       -> Step 5 (각 항목의 성공/실패 결과 집계 반환)]
-        const normalized = _normalizeParams(text, comment, page_no, color, opacity, 'yellow');
-        if ('error' in normalized) {
-          return { error: normalized.error };
-        }
-        const { texts, comments, pageNos, colors, opacities } = normalized;
-
-        const results: Array<Record<string, unknown>> = [];
-        for (let i = 0; i < texts.length; i++) {
-          const t = texts[i];
-          const c = comments[i];
-          const p = pageNos[i];
-          const col = colors[i];
-          const op = opacities[i];
-
-          const { matches } = await proofApi.searchText(jobId, t, p, authHeaders, 'text');
-          const validMatches = (matches || []).filter(
-            (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
-          );
-          if (validMatches.length === 0) {
-            results.push({
-              text: t,
-              error: `Text not found for highlight: '${t}'. Call search_text first to verify exact wording.`,
-            });
-            continue;
+        try {
+          // [Flow: Step 1 (모든 매개변수를 _normalizeParams로 정규화) -> Step 2 (실패 시 에러 반환)
+          //       -> Step 3 (각 text별로 searchText(mode="text") 수행) -> Step 4 (매칭된 bbox를 pending에 누적)
+          //       -> Step 5 (각 항목의 성공/실패 결과 집계 반환)]
+          const normalized = _normalizeParams(text, comment, page_no, color, opacity, 'yellow');
+          if ('error' in normalized) {
+            return { error: normalized.error };
           }
-          const bboxes = validMatches.map((m) => (m as any).bbox_pdf as [number, number, number, number]);
-          const resolvedPageNos = validMatches.map((m) => Number((m as any).page_no || p || 1));
-          const resolvedPageNo = resolvedPageNos[0];
-          const target: AnnotationTarget = {
-            page_no: resolvedPageNo,
-            bbox_pdf: _unionRects(bboxes),
-            search_rects_pdf: bboxes,
-            search_text: t,
-            comment: c,
-            color: COLOR_PALETTE[col] || DEFAULT_HIGHLIGHT_COLOR,
-            opacity: op ?? DEFAULT_OPACITY,
-          };
-          const id = `ai-${Date.now()}-${pending.length}`;
-          pending.push({ id, target, type: 'highlight' });
-          results.push({ ok: true, id, text: t, match_count: validMatches.length, page_no: resolvedPageNo });
+          const { texts, comments, pageNos, colors, opacities } = normalized;
+
+          const results: Array<Record<string, unknown>> = [];
+          for (let i = 0; i < texts.length; i++) {
+            const t = texts[i];
+            const c = comments[i];
+            const p = pageNos[i];
+            const col = colors[i];
+            const op = opacities[i];
+
+            const { matches } = await proofApi.searchText(jobId, t, p, authHeaders, 'text');
+            const validMatches = (matches || []).filter(
+              (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
+            );
+            if (validMatches.length === 0) {
+              results.push({
+                text: t,
+                error: `Text not found for highlight: '${t}'. Call search_text first to verify exact wording.`,
+              });
+              continue;
+            }
+            const bboxes = validMatches.map((m) => (m as any).bbox_pdf as [number, number, number, number]);
+            const resolvedPageNos = validMatches.map((m) => Number((m as any).page_no || p || 1));
+            const resolvedPageNo = resolvedPageNos[0];
+            const target: AnnotationTarget = {
+              page_no: resolvedPageNo,
+              bbox_pdf: _unionRects(bboxes),
+              search_rects_pdf: bboxes,
+              search_text: t,
+              comment: c,
+              color: COLOR_PALETTE[col] || DEFAULT_HIGHLIGHT_COLOR,
+              opacity: op ?? DEFAULT_OPACITY,
+            };
+            const id = `ai-${Date.now()}-${pending.length}`;
+            pending.push({ id, target, type: 'highlight' });
+            results.push({ ok: true, id, text: t, match_count: validMatches.length, page_no: resolvedPageNo });
+          }
+          return { highlights: results, total: results.length };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[add_text_highlight] job=${jobId}: ${msg}`);
+          return { error: `add_text_highlight failed: ${msg}`, highlights: [], total: 0 };
         }
-        return { highlights: results, total: results.length };
       },
     }),
 
@@ -476,7 +492,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
       description: 'Add one or more highlight annotations covering the entire text line(s)/row(s) containing the specified text string(s). The backend searches the PDF text layer and expands the highlight to cover the full line box. To apply multiple line highlights at once, pass an array of texts. Use search_text first if you are unsure of exact wording.',
       inputSchema: z.object({
         text: z.union([z.string(), z.array(z.string())]).describe('Exact text string or list of strings to highlight the full line for'),
-        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
+        page_no: z.union([z.coerce.number(), z.array(z.coerce.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
         comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment(s). Provide one string to use for all highlights, or an array matching the number of texts. If omitted, an empty comment is used.'),
         color: z.union([
           z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),
@@ -485,51 +501,57 @@ export function buildAnnotationTools(context: AnnotationContext) {
         opacity: z.union([z.number().min(0).max(1), z.array(z.number().min(0).max(1))]).optional().describe('Highlight opacity or list of opacities (0.0~1.0)'),
       }),
       execute: async ({ text, page_no, comment, color, opacity }) => {
-        // [Flow: Step 1 (모든 매개변수를 _normalizeParams로 정규화) -> Step 2 (실패 시 에러 반환)
-        //       -> Step 3 (각 text별로 searchText(mode="line") 수행) -> Step 4 (라인 bbox를 pending에 누적)
-        //       -> Step 5 (각 항목의 성공/실패 결과 집계 반환)]
-        const normalized = _normalizeParams(text, comment, page_no, color, opacity, 'yellow');
-        if ('error' in normalized) {
-          return { error: normalized.error };
-        }
-        const { texts, comments, pageNos, colors, opacities } = normalized;
-
-        const results: Array<Record<string, unknown>> = [];
-        for (let i = 0; i < texts.length; i++) {
-          const t = texts[i];
-          const c = comments[i];
-          const p = pageNos[i];
-          const col = colors[i];
-          const op = opacities[i];
-
-          const { matches } = await proofApi.searchText(jobId, t, p, authHeaders, 'line');
-          const validMatches = (matches || []).filter(
-            (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
-          );
-          if (validMatches.length === 0) {
-            results.push({
-              text: t,
-              error: `Text not found for line highlight: '${t}'. Call search_text first to verify exact wording.`,
-            });
-            continue;
+        try {
+          // [Flow: Step 1 (모든 매개변수를 _normalizeParams로 정규화) -> Step 2 (실패 시 에러 반환)
+          //       -> Step 3 (각 text별로 searchText(mode="line") 수행) -> Step 4 (라인 bbox를 pending에 누적)
+          //       -> Step 5 (각 항목의 성공/실패 결과 집계 반환)]
+          const normalized = _normalizeParams(text, comment, page_no, color, opacity, 'yellow');
+          if ('error' in normalized) {
+            return { error: normalized.error };
           }
-          const bboxes = validMatches.map((m) => (m as any).bbox_pdf as [number, number, number, number]);
-          const resolvedPageNos = validMatches.map((m) => Number((m as any).page_no || p || 1));
-          const resolvedPageNo = resolvedPageNos[0];
-          const target: AnnotationTarget = {
-            page_no: resolvedPageNo,
-            bbox_pdf: _unionRects(bboxes),
-            search_rects_pdf: bboxes,
-            search_text: t,
-            comment: c,
-            color: COLOR_PALETTE[col] || DEFAULT_HIGHLIGHT_COLOR,
-            opacity: op ?? DEFAULT_OPACITY,
-          };
-          const id = `ai-${Date.now()}-${pending.length}`;
-          pending.push({ id, target, type: 'highlight' });
-          results.push({ ok: true, id, text: t, match_count: validMatches.length, page_no: resolvedPageNo });
+          const { texts, comments, pageNos, colors, opacities } = normalized;
+
+          const results: Array<Record<string, unknown>> = [];
+          for (let i = 0; i < texts.length; i++) {
+            const t = texts[i];
+            const c = comments[i];
+            const p = pageNos[i];
+            const col = colors[i];
+            const op = opacities[i];
+
+            const { matches } = await proofApi.searchText(jobId, t, p, authHeaders, 'line');
+            const validMatches = (matches || []).filter(
+              (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
+            );
+            if (validMatches.length === 0) {
+              results.push({
+                text: t,
+                error: `Text not found for line highlight: '${t}'. Call search_text first to verify exact wording.`,
+              });
+              continue;
+            }
+            const bboxes = validMatches.map((m) => (m as any).bbox_pdf as [number, number, number, number]);
+            const resolvedPageNos = validMatches.map((m) => Number((m as any).page_no || p || 1));
+            const resolvedPageNo = resolvedPageNos[0];
+            const target: AnnotationTarget = {
+              page_no: resolvedPageNo,
+              bbox_pdf: _unionRects(bboxes),
+              search_rects_pdf: bboxes,
+              search_text: t,
+              comment: c,
+              color: COLOR_PALETTE[col] || DEFAULT_HIGHLIGHT_COLOR,
+              opacity: op ?? DEFAULT_OPACITY,
+            };
+            const id = `ai-${Date.now()}-${pending.length}`;
+            pending.push({ id, target, type: 'highlight' });
+            results.push({ ok: true, id, text: t, match_count: validMatches.length, page_no: resolvedPageNo });
+          }
+          return { highlights: results, total: results.length };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[add_line_highlight] job=${jobId}: ${msg}`);
+          return { error: `add_line_highlight failed: ${msg}`, highlights: [], total: 0 };
         }
-        return { highlights: results, total: results.length };
       },
     }),
 
@@ -537,7 +559,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
       description: 'Add one or more callout (text box + arrow) annotations by specifying exact text string(s) to point to. The backend searches the PDF text layer and places each callout at the matching text. To apply multiple callouts at once, pass an array of texts. Use search_text first if you are unsure of the exact wording.',
       inputSchema: z.object({
         text: z.union([z.string(), z.array(z.string())]).describe('Exact text string or list of strings to point the callouts to'),
-        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
+        page_no: z.union([z.coerce.number(), z.array(z.coerce.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
         comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment(s). Provide one string to use for all callouts, or an array matching the number of texts. If omitted, an empty comment is used.'),
         color: z.union([
           z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),
@@ -546,49 +568,118 @@ export function buildAnnotationTools(context: AnnotationContext) {
         opacity: z.union([z.number().min(0).max(1), z.array(z.number().min(0).max(1))]).optional().describe('Callout opacity or list of opacities (0.0~1.0)'),
       }),
       execute: async ({ text, page_no, comment, color, opacity }) => {
-        // [Flow: Step 1 (모든 매개변수를 _normalizeParams로 정규화) -> Step 2 (실패 시 에러 반환)
-        //       -> Step 3 (각 text별로 searchText 수행) -> Step 4 (첫 매치를 callout으로 pending에 누적)
-        //       -> Step 5 (각 항목의 성공/실패 결과 집계 반환)]
-        const normalized = _normalizeParams(text, comment, page_no, color, opacity, 'purple');
-        if ('error' in normalized) {
-          return { error: normalized.error };
-        }
-        const { texts, comments, pageNos, colors, opacities } = normalized;
-
-        const results: Array<Record<string, unknown>> = [];
-        for (let i = 0; i < texts.length; i++) {
-          const t = texts[i];
-          const c = comments[i];
-          const p = pageNos[i];
-          const col = colors[i];
-          const op = opacities[i];
-
-          const { matches } = await proofApi.searchText(jobId, t, p, authHeaders);
-          const first = (matches || []).find(
-            (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
-          );
-          if (!first) {
-            results.push({
-              text: t,
-              error: `Text not found for callout: '${t}'. Call search_text first to verify exact wording.`,
-            });
-            continue;
+        try {
+          // [Flow: Step 1 (모든 매개변수를 _normalizeParams로 정규화) -> Step 2 (실패 시 에러 반환)
+          //       -> Step 3 (각 text별로 searchText 수행) -> Step 4 (첫 매치를 callout으로 pending에 누적)
+          //       -> Step 5 (각 항목의 성공/실패 결과 집계 반환)]
+          const normalized = _normalizeParams(text, comment, page_no, color, opacity, 'purple');
+          if ('error' in normalized) {
+            return { error: normalized.error };
           }
-          const bbox = (first as any).bbox_pdf as [number, number, number, number];
-          const resolvedPageNo = Number((first as any).page_no || p || 1);
-          const target: AnnotationTarget = {
-            page_no: resolvedPageNo,
-            bbox_pdf: bbox,
-            search_text: t,
-            comment: c,
-            color: COLOR_PALETTE[col] || DEFAULT_CALLOUT_COLOR,
-            opacity: op ?? DEFAULT_OPACITY,
-          };
-          const id = `ai-${Date.now()}-${pending.length}`;
-          pending.push({ id, target, type: 'callout' });
-          results.push({ ok: true, id, text: t, page_no: resolvedPageNo });
+          const { texts, comments, pageNos, colors, opacities } = normalized;
+
+
+          const results: Array<Record<string, unknown>> = [];
+          for (let i = 0; i < texts.length; i++) {
+            const t = texts[i];
+            const c = comments[i];
+            const p = pageNos[i];
+            const col = colors[i];
+            const op = opacities[i];
+
+            const { matches } = await proofApi.searchText(jobId, t, p, authHeaders);
+            const first = (matches || []).find(
+              (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
+            );
+            if (!first) {
+              results.push({
+                text: t,
+                error: `Text not found for callout: '${t}'. Call search_text first to verify exact wording.`,
+              });
+              continue;
+            }
+            const bbox = (first as any).bbox_pdf as [number, number, number, number];
+            const resolvedPageNo = Number((first as any).page_no || p || 1);
+            const target: AnnotationTarget = {
+              page_no: resolvedPageNo,
+              bbox_pdf: bbox,
+              search_text: t,
+              comment: c,
+              color: COLOR_PALETTE[col] || DEFAULT_CALLOUT_COLOR,
+              opacity: op ?? DEFAULT_OPACITY,
+            };
+            const id = `ai-${Date.now()}-${pending.length}`;
+            pending.push({ id, target, type: 'callout' });
+            results.push({ ok: true, id, text: t, page_no: resolvedPageNo });
+          }
+          return { callouts: results, total: results.length };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[add_text_callout] job=${jobId}: ${msg}`);
+          return { error: `add_text_callout failed: ${msg}`, callouts: [], total: 0 };
         }
-        return { callouts: results, total: results.length };
+      },
+    }),
+
+    add_sticky_note: tool({
+      description: 'Add one or more sticky note (note/memo icon) annotations by specifying exact text string(s) to point to. Placed at the top-right corner of the target text. Use when the user asks for sticky notes, notes, or memos.',
+      inputSchema: z.object({
+        text: z.union([z.string(), z.array(z.string())]).describe('Exact text string or list of strings to attach sticky notes to'),
+        page_no: z.union([z.coerce.number(), z.array(z.coerce.number())]).optional().describe('1-based page number or list of page numbers matching the texts to limit the search. Searches all pages if omitted'),
+        comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment(s). Provide one string to use for all notes, or an array matching the number of texts.'),
+        color: z.union([
+          z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),
+          z.array(z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']))
+        ]).optional().describe('Color name or list of color names matching the texts. Defaults to yellow'),
+        opacity: z.union([z.number().min(0).max(1), z.array(z.number().min(0).max(1))]).optional().describe('Note opacity or list of opacities (0.0~1.0)'),
+      }),
+      execute: async ({ text, page_no, comment, color, opacity }) => {
+        try {
+          const normalized = _normalizeParams(text, comment, page_no, color, opacity, 'yellow');
+          if ('error' in normalized) {
+            return { error: normalized.error };
+          }
+          const { texts, comments, pageNos, colors, opacities } = normalized;
+
+          const results: Array<Record<string, unknown>> = [];
+          for (let i = 0; i < texts.length; i++) {
+            const t = texts[i];
+            const c = comments[i];
+            const p = pageNos[i];
+            const col = colors[i];
+            const op = opacities[i];
+
+            const { matches } = await proofApi.searchText(jobId, t, p, authHeaders);
+            const first = (matches || []).find(
+              (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
+            );
+            if (!first) {
+              results.push({
+                text: t,
+                error: `Text not found for sticky note: '${t}'. Call search_text first to verify exact wording.`,
+              });
+              continue;
+            }
+            const bbox = (first as any).bbox_pdf as [number, number, number, number];
+            const resolvedPageNo = Number((first as any).page_no || p || 1);
+            const target: AnnotationTarget = {
+              page_no: resolvedPageNo,
+              bbox_pdf: bbox,
+              search_text: t,
+              comment: c,
+              color: COLOR_PALETTE[col] || DEFAULT_CALLOUT_COLOR,
+              opacity: op ?? DEFAULT_OPACITY,
+            };
+            const id = `ai-${Date.now()}-${pending.length}`;
+            pending.push({ id, target, type: 'sticky_note' });
+            results.push({ ok: true, id, text: t, page_no: resolvedPageNo });
+          }
+          return { notes: results, total: results.length };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[add_sticky_note] job=${jobId}: ${msg}`);
+          return { error: `add_sticky_note failed: ${msg}`, notes: [], total: 0 };
+        }
       },
     }),
 
@@ -632,16 +723,11 @@ export function buildAnnotationTools(context: AnnotationContext) {
       description: 'Save the highlights/callouts added so far to Storage and reflect them in the viewer. Even if saving fails, the actual cause is returned in the result.',
       inputSchema: z.object({}),
       execute: async () => {
-        // [Flow: Step 1 (대기 중인 변경 확인) -> Step 2 (주석 JSON 생성)
-        //       -> Step 3 (원래 주석 파일 저장 시도) -> Step 4 (원본 JSON fallback)
-        //       -> Step 5 (구조화된 저장 결과 반환)]
         if (pending.length === 0 && removals.length === 0) {
           return { saved: false, reason: 'No annotation changes to save.' };
         }
 
         if (pending.length === 0) {
-          // 현재 remove_annotation은 승인 대기 상태만 기록하고 실제 삭제 API를 호출하지 않는다.
-          // 빈 배열을 저장 API에 보내면 백엔드가 400을 반환하므로 명시적인 결과를 반환한다.
           return {
             saved: false,
             removals: removals.length,
@@ -650,25 +736,43 @@ export function buildAnnotationTools(context: AnnotationContext) {
         }
 
         try {
-          // [Flow: AI 백엔드는 좌표 변환을 하지 않고 PDF user-space 그대로 전송
-          //       -> 변환은 FastAPI /jobs/{id}/user-annotations에서 JSON으로 저장하며 수행]
-          console.log(`[apply_annotations] job=${jobId} count=${pending.length} input_space=pdf_user`);
-          const annotations = pending.map((pendingAnnotation) => _buildAnnotationItem(pendingAnnotation));
+          // [Flow: Step 1 (기존 주석 목록을 먼저 조회하여 누적 저장(append) 처리)]
+          let existingAnnotations: Array<Record<string, unknown>> = [];
+          try {
+            const res = await proofApi.getAnnotations(jobId, sourceIndex, undefined, authHeaders);
+            if (res && Array.isArray(res.annotations)) {
+              existingAnnotations = res.annotations as Array<Record<string, unknown>>;
+            }
+          } catch (fetchErr) {
+            console.warn(`[apply_annotations] existing annotations fetch skipped: ${fetchErr}`);
+          }
+
+          const newItems = pending.map((pendingAnnotation) => _buildAnnotationItem(pendingAnnotation));
+
+          // removals 처리: 삭제 대상 ID 제거
+          const removalsSet = new Set(removals);
+          const filteredExisting = existingAnnotations.filter((a) => {
+            const inner = (a as any).annotation && typeof (a as any).annotation === 'object'
+              ? (a as any).annotation
+              : a;
+            return !removalsSet.has(inner.id);
+          });
+
+          const annotations = [...filteredExisting, ...newItems];
+
+          console.log(`[apply_annotations] job=${jobId} total=${annotations.length} new=${newItems.length} input_space=pdf_user`);
           let saveSourceIndex = sourceIndex;
           let usedFallback = false;
 
-          // [Flow: Step 1 (source_index로 주석 JSON 저장) -> Step 2 (404/실패 감지)
-          //       -> Step 3 (source_index=-1로 원본 PDF의 JSON 저장)]
           try {
-            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'device', authHeaders);
+            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'pdf_user', authHeaders);
           } catch (firstError) {
             if (saveSourceIndex < 0) throw firstError;
             saveSourceIndex = -1;
             usedFallback = true;
-            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'device', authHeaders);
+            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'pdf_user', authHeaders);
           }
 
-          // 같은 실행에서 모델이 apply_annotations를 반복 호출해도 중복 저장하지 않는다.
           pending.length = 0;
           removals.length = 0;
           return {
@@ -739,6 +843,25 @@ function _buildAnnotationItem(p: PendingAnnotation): Record<string, unknown> {
     };
   }
 
+  if (p.type === 'sticky_note') {
+    return {
+      annotation: {
+        id: p.id,
+        type: 1, // embedpdf TEXT (Sticky Note)
+        pageIndex: p.target.page_no - 1,
+        rect: { origin: { x: x1, y: y1 }, size: { width: 20, height: 20 } },
+        color: hexColor,
+        opacity: p.target.opacity ?? 1.0,
+        contents: p.target.comment,
+        icon: 'Comment',
+        custom: {
+          ...(p.target.search_text ? { searchText: p.target.search_text } : {}),
+          comment: p.target.comment,
+        },
+      },
+    };
+  }
+
   // callout (FreeTextCallout)
   return {
     annotation: {
@@ -749,7 +872,7 @@ function _buildAnnotationItem(p: PendingAnnotation): Record<string, unknown> {
       rect: { origin: { x: x0, y: y0 }, size: { width: Math.max(width, 80), height: Math.max(height, 24) } },
       strokeColor: hexColor,
       color: hexColor,
-      opacity: p.target.opacity,
+      opacity: p.target.opacity ?? 0.5,
       contents: p.target.comment,
       lineEnding: 4, // OpenArrow
       fontFamily: 4, // PdfStandardFont.Helvetica
@@ -759,7 +882,9 @@ function _buildAnnotationItem(p: PendingAnnotation): Record<string, unknown> {
       verticalAlign: 0, // PdfVerticalAlignment.Top
     },
   };
+
 }
+
 
 /**
  * [Flow: Step 1 (AnnotationTransferItem 수신) -> Step 2 (좌표 관련 필드 제거)

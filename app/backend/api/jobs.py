@@ -1618,13 +1618,22 @@ def _source_files(job: Job) -> list[dict]:
     # 원본 PDF에 내장된 주석이 있으면 clean PDF로 교체하고, 추출한 주석을 JSON 오버레이로
     # 초기화한다. 이렇게 하면 embedpdf가 PDF 내장 주석을 중복 렌더링/저장하는 문제를
     # 방지할 수 있다. docx/hwp는 여기서 PDF로 변환되지 않으므로 제외한다.
-    # [Flow: searchable PDF는 첫 번째 원본 PDF에만 적용 — job.searchable_pdf_storage_path는
-    # Job 레벨 단일 값이므로, 모든 PDF 항목에 덮어쓰면 새로 추가된 파일이 원본 PDF로 보이는 문제 발생]
+    # [Flow: 멀티파일 searchable PDF 적용 — 각 원본 PDF마다 extracted_files[i].searchable_pdf_storage_path 우선]
+    # 멀티파일 업로드 시 각 PDF별로 개별 searchable PDF가 생성되어 extracted_files에 저장된다.
+    # job.searchable_pdf_storage_path는 첫 번째 PDF에 대한 것이므로 폴백으로만 사용한다.
     first_original_pdf_index = next(
         (i for i, item in enumerate(source_files)
          if item.get("source_kind") == "original" and item.get("type") == "pdf"),
         None,
     )
+    # [Flow: extracted_files에서 파일별 searchable PDF 경로 조회]
+    extracted = list(job.extracted_files or [])
+    per_file_searchable: dict[int, str] = {}
+    for idx, info in enumerate(extracted):
+        if isinstance(info, dict) and info.get("type") == "pdf":
+            sp = info.get("searchable_pdf_storage_path")
+            if sp:
+                per_file_searchable[idx] = sp
     for i, item in enumerate(source_files):
         if item.get("source_kind") != "original" or item.get("type") != "pdf":
             continue
@@ -1638,14 +1647,25 @@ def _source_files(job: Job) -> list[dict]:
             # [Flow: 파일별 주석 분리 — source_index를 전달하여 해당 파일의 주석 JSON에 저장]
             _initialize_user_annotations_json(job.id, extracted_annotations, item.get("source_index", 0), source_pdf_storage_path=storage_path)
 
-        # [Flow: searchable PDF가 있으면 미리보기 URL을 대체 — 첫 번째 원본 PDF에만 적용]
+        # [Flow: 파일별 searchable PDF 적용 — extracted_files[i].searchable_pdf_storage_path 우선]
         # 다운로드용 url은 원본 clean PDF를 유지하고, preview_url만 searchable PDF로 변경.
         # 이렇게 하면 사용자는 뷰어에서 텍스트 검색/선택이 가능한 PDF를 보지만,
         # 다운로드는 원본 PDF를 받는다.
-        # job.searchable_pdf_storage_path는 단일 PDF Job의 원본에 대한 것이므로,
-        # 첫 번째 원본 PDF에만 적용한다. 추가로 업로드된 파일은 _build_source_file_item에서
-        # 개별 searchable_pdf_storage_path가 설정된 경우에만 searchable PDF를 사용한다.
-        if i == first_original_pdf_index and job.searchable_pdf_storage_path:
+        # 멀티파일에서는 각 PDF별로 개별 searchable PDF가 생성되므로 source_index로 조회.
+        # 단일 PDF job이나 과거 job(개별 경로가 없는 경우)은 job.searchable_pdf_storage_path로 폴백.
+        file_source_index = item.get("source_index", 0)
+        per_file_sp = per_file_searchable.get(file_source_index)
+        if per_file_sp:
+            try:
+                searchable_url = supabase_client.get_signed_download_url(
+                    per_file_sp, bucket="pdfs", expires_in=3600
+                )
+                if searchable_url:
+                    item["preview_url"] = searchable_url
+            except Exception as e:
+                logger.warning(f"[source_files:{job.id}] 파일별 searchable PDF URL 생성 실패: {e}")
+        elif i == first_original_pdf_index and job.searchable_pdf_storage_path:
+            # 폴백: 파일별 searchable PDF가 없고 첫 번째 PDF면 job.searchable_pdf_storage_path 사용
             try:
                 searchable_url = supabase_client.get_signed_download_url(
                     job.searchable_pdf_storage_path, bucket="pdfs", expires_in=3600
@@ -1732,36 +1752,41 @@ def _source_files(job: Job) -> list[dict]:
 
 
 def _deduplicate_annotations(annotations: list[dict]) -> list[dict]:
-    """[Flow: Step 1 (각 주석의 pageIndex/rect/type/contents 기준 키 생성)
+    """[Flow: Step 1 (각 주석의 id 또는 pageIndex/rect/type/contents 기준 키 생성)
           -> Step 2 (이미 본 키는 제거) -> Step 3 (중복 제거된 목록 반환)]
 
-    EmbedPDF 뷰어에서 exportAnnotations() 시 PDF 내장 주석이 반복 포함되면서
-    동일한 pageIndex/rect/type/contents를 가진 주석이 누적되는 경우가 있다.
-    이런 중복을 제거해 user_annotations.json이 계속 불어나는 것을 막는다.
+    EmbedPDF 뷰어에서 exportAnnotations() 시 PDF 내장 주석이 반복 포함되거나
+    동일한 id 또는 pageIndex/rect/type/contents를 가진 주석이 누적되는 것을 방지한다.
     """
     seen: set[str] = set()
     result: list[dict] = []
-    for item in annotations:
+    for item in reversed(annotations):
         if not isinstance(item, dict):
             continue
         a = item.get("annotation") if "annotation" in item else item
         if not isinstance(a, dict):
             continue
-        key = json.dumps(
-            {
-                "pageIndex": a.get("pageIndex"),
-                "rect": a.get("rect"),
-                "type": a.get("type"),
-                "contents": a.get("contents", ""),
-            },
-            sort_keys=True,
-            ensure_ascii=False,
-        )
+        aid = _annotation_id(item)
+        if aid:
+            key = f"id:{aid}"
+        else:
+            key = json.dumps(
+                {
+                    "pageIndex": a.get("pageIndex"),
+                    "rect": a.get("rect"),
+                    "type": a.get("type"),
+                    "contents": a.get("contents", ""),
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+            )
         if key in seen:
             continue
         seen.add(key)
         result.append(item)
+    result.reverse()
     return result
+
 
 
 def _annotation_id(item: dict) -> str:
@@ -3359,14 +3384,30 @@ def save_user_annotations(
         client = supabase_client.get_service_client()
 
         # [Flow: 주석 좌표 기준 PDF 결정]
-        # - pdf_user 입력: searchable PDF 우선, 없으면 원본 PDF
-        # - device/canonical 입력: source_index >= 0이면 searchable(annotated entry), 아니면 원본 PDF
-        if input_space == "pdf_user":
-            source_pdf_path = job.searchable_pdf_storage_path or job.pdf_storage_path
-        elif source_index >= 0 and entry is not None:
-            source_pdf_path = entry.get("storage_path") or job.searchable_pdf_storage_path or job.pdf_storage_path
+        # 멀티파일 업로드 시 pdf_storage_path는 zip 컨테이너를 가리키므로, source_index에 해당하는
+        # extracted_files[source_index]의 searchable_pdf_storage_path(개별 searchable PDF)를 우선 사용한다.
+        # searchable PDF가 없으면 원본 storage_path로 폴백.
+        # job.searchable_pdf_storage_path는 첫 번째 원본 PDF에 대한 것이므로 마지막 폴백.
+        per_file_searchable_path: str | None = None
+        per_file_pdf_path: str | None = None
+        if source_index >= 0:
+            extracted = list(job.extracted_files or [])
+            if 0 <= source_index < len(extracted):
+                info = extracted[source_index]
+                if isinstance(info, dict) and info.get("type") == "pdf":
+                    per_file_searchable_path = info.get("searchable_pdf_storage_path") or None
+                    per_file_pdf_path = info.get("storage_path")
+
+        # [Flow: 좌표 기준 PDF 우선순위]
+        # 1. extracted_files[source_index].searchable_pdf_storage_path (개별 searchable PDF)
+        # 2. extracted_files[source_index].storage_path (개별 원본 PDF)
+        # 3. job.searchable_pdf_storage_path (첫 번째 PDF의 searchable PDF, 하위 호환)
+        # 4. job.pdf_storage_path (단일 PDF job, 마지막 폴백)
+        if source_index >= 0 and entry is not None:
+            # AI annotate entry가 있으면 entry의 storage_path(searchable PDF)를 우선
+            source_pdf_path = entry.get("storage_path") or per_file_searchable_path or per_file_pdf_path or job.searchable_pdf_storage_path or job.pdf_storage_path
         else:
-            source_pdf_path = job.pdf_storage_path
+            source_pdf_path = per_file_searchable_path or per_file_pdf_path or job.searchable_pdf_storage_path or job.pdf_storage_path
 
         pdf_bytes: bytes | None = None
         if source_pdf_path:
@@ -3386,7 +3427,15 @@ def save_user_annotations(
 
         valid_annotations = _deduplicate_annotations(valid_annotations)
 
-        page_dimensions = pdf_annotate_converter._page_dimensions(pdf_bytes) if pdf_bytes else {}
+        # [Flow: page_dimensions 수집 — 비-PDF 파일이거나 PyMuPDF open 실패 시 빈 dict로 폴백]
+        # pdf_bytes가 zip 등 PDF가 아닌 컨테이너일 수 있으므로 FileDataError를 잡아 500을 방지한다.
+        page_dimensions: dict = {}
+        if pdf_bytes:
+            try:
+                page_dimensions = pdf_annotate_converter._page_dimensions(pdf_bytes)
+            except Exception as e:
+                logger.warning(f"[save_user_annotations] {job_id} page_dimensions 수집 실패: {e}")
+                page_dimensions = {}
         if source_index >= 0 and entry is not None:
             # [Flow: 기존 AI 주석 JSON과 병합]
             # 사용자가 AI 주석을 편집/삭제한 경우를 감지해 보존한다.
@@ -3448,6 +3497,15 @@ def save_user_annotations(
             )
 
             per_file_user_annotations_path = f"{job_id}/user_annotations_{source_index}.json"
+            try:
+                existing_user_bytes = client.storage.from_("results").download(per_file_user_annotations_path)
+                existing_user_doc = json.loads(existing_user_bytes.decode("utf-8"))
+                _, __, existing_user_annos = pdf_annotate_converter._extract_annotations_from_document(existing_user_doc)
+            except Exception:
+                existing_user_annos = []
+
+            user_annotations = _deduplicate_annotations(existing_user_annos + user_annotations)
+
             user_document = pdf_annotate_converter._build_canonical_annotations_document(
                 user_annotations,
                 source_pdf_storage_path=source_pdf_path or job.pdf_storage_path or f"{job_id}/user_annotations_{source_index}.json",
@@ -3459,6 +3517,7 @@ def save_user_annotations(
                 json.dumps(user_document, ensure_ascii=False).encode("utf-8"),
                 {"content-type": "application/json", "upsert": "true"},
             )
+
 
             if entry.get("annotations_json_storage_path") != annotations_json_storage_path:
                 entry["annotations_json_storage_path"] = annotations_json_storage_path

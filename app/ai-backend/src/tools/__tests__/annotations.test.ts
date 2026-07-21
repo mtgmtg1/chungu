@@ -202,4 +202,173 @@ describe('buildAnnotationTools - 목록 요청 기능 테스트', () => {
     assert.ok(result.error);
     assert.ok(result.error.includes('page_no array length'));
   });
+
+  it('add_text_callout 호출 시 type=3 (FreeTextCallout) 주석으로 생성되는지 검증', async () => {
+    let savedAnnotationsPayload: any = null;
+    const baseMock = createMockFetch();
+    const saveFetch = mock.fn(async (url: string | URL, options?: RequestInit) => {
+      const urlString = url.toString();
+      if (urlString.includes('/user-annotations')) {
+        savedAnnotationsPayload = JSON.parse((options?.body as string) || '{}');
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return baseMock(url, options);
+    }) as unknown as typeof fetch;
+
+    globalThis.fetch = saveFetch;
+
+    const tools = buildAnnotationTools({
+      jobId: 'job-test',
+      sourceIndex: 0,
+      authHeaders: {},
+    });
+
+    await (tools.add_text_callout as any).execute({
+      text: 'CalloutTarget',
+      page_no: 1,
+      comment: 'Callout comment',
+    });
+
+    const applyResult = await (tools.apply_annotations as any).execute({});
+    assert.equal(applyResult.saved, true);
+    assert.ok(savedAnnotationsPayload);
+    assert.equal(savedAnnotationsPayload.annotations.length, 1);
+
+    const anno = savedAnnotationsPayload.annotations[0].annotation;
+    assert.equal(savedAnnotationsPayload.input_space, 'pdf_user');
+    assert.equal(anno.type, 3); // FreeTextCallout
+    assert.equal(anno.intent, 'FreeTextCallout');
+    assert.equal(anno.contents, 'Callout comment');
+  });
+
+  it('add_sticky_note 호출 시 type=1 (Sticky Note / TEXT) 주석으로 생성되는지 검증', async () => {
+    let savedAnnotationsPayload: any = null;
+    const baseMock = createMockFetch();
+    const saveFetch = mock.fn(async (url: string | URL, options?: RequestInit) => {
+      const urlString = url.toString();
+      if (urlString.includes('/user-annotations')) {
+        savedAnnotationsPayload = JSON.parse((options?.body as string) || '{}');
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return baseMock(url, options);
+    }) as unknown as typeof fetch;
+
+    globalThis.fetch = saveFetch;
+
+    const tools = buildAnnotationTools({
+      jobId: 'job-test',
+      sourceIndex: 0,
+      authHeaders: {},
+    });
+
+    await (tools.add_sticky_note as any).execute({
+      text: 'StickyTarget',
+      page_no: 1,
+      comment: 'Sticky note comment',
+    });
+
+    const applyResult = await (tools.apply_annotations as any).execute({});
+    assert.equal(applyResult.saved, true);
+    assert.ok(savedAnnotationsPayload);
+    assert.equal(savedAnnotationsPayload.annotations.length, 1);
+
+    const anno = savedAnnotationsPayload.annotations[0].annotation;
+    assert.equal(anno.type, 1); // EmbedPDF TEXT (Sticky Note)
+    assert.equal(anno.icon, 'Comment');
+    assert.equal(anno.contents, 'Sticky note comment');
+    assert.deepEqual(anno.rect, {
+      origin: { x: 200, y: 200 },
+      size: { width: 20, height: 20 },
+    });
+  });
+
+  it('apply_annotations 호출 시 기존 스토리지에 존재하는 주석이 유지(누적)되는지 검증', async () => {
+    let savedAnnotationsPayload: any = null;
+    const baseMock = createMockFetch();
+    const saveFetch = mock.fn(async (url: string | URL, options?: RequestInit) => {
+      const urlString = url.toString();
+      if (urlString.includes('/annotations')) {
+        return new Response(
+          JSON.stringify({
+            annotations: [
+              {
+                annotation: {
+                  id: 'existing-1',
+                  type: 9,
+                  pageIndex: 0,
+                  rect: { origin: { x: 50, y: 50 }, size: { width: 40, height: 10 } },
+                  contents: 'Existing comment',
+                },
+              },
+            ],
+            total: 1,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (urlString.includes('/user-annotations')) {
+        savedAnnotationsPayload = JSON.parse((options?.body as string) || '{}');
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return baseMock(url, options);
+    }) as unknown as typeof fetch;
+
+    globalThis.fetch = saveFetch;
+
+    const tools = buildAnnotationTools({
+      jobId: 'job-test',
+      sourceIndex: 0,
+      authHeaders: {},
+    });
+
+    await (tools.add_sticky_note as any).execute({
+      text: 'NewText',
+      page_no: 1,
+      comment: 'New comment',
+    });
+
+    const applyResult = await (tools.apply_annotations as any).execute({});
+    assert.equal(applyResult.saved, true);
+    assert.ok(savedAnnotationsPayload);
+    // 기존 주석 1개 + 신규 주석 1개 = 총 2개
+    assert.equal(savedAnnotationsPayload.annotations.length, 2);
+    const ids = savedAnnotationsPayload.annotations.map((a: any) => a.annotation?.id || a.id);
+    assert.ok(ids.includes('existing-1'));
+  });
+
+  it('page_no에 문자열 숫자("1") 또는 문자열 숫자 배열(["1"])이 전달되어도 z.coerce로 정상 파싱되는지 검증', async () => {
+    const tools = buildAnnotationTools({
+      jobId: 'job-test',
+      sourceIndex: 0,
+      authHeaders: {},
+    });
+
+    const resScalar = await (tools.add_text_callout as any).execute({
+      text: 'CalloutTarget',
+      page_no: '1',
+      comment: 'Comment 1',
+    });
+    assert.ok(resScalar.callouts);
+    assert.equal(resScalar.callouts[0].page_no, 1);
+
+    const resArray = await (tools.add_text_callout as any).execute({
+      text: ['CalloutTarget'],
+      page_no: ['1'],
+      comment: ['Comment 1'],
+    });
+    assert.ok(resArray.callouts);
+    assert.equal(resArray.callouts[0].page_no, 1);
+  });
 });
+
+
+

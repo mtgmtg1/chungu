@@ -739,27 +739,26 @@ function _buildAnnotationItem(p: PendingAnnotation): Record<string, unknown> {
     };
   }
 
-  // callout (FreeTextCallout)
+  // callout (Sticky Note / TEXT 주석)
+  // 본문 텍스트가 겹치지 않도록 대상 텍스트 bbox_pdf(x0, y0, x1, y1) 우상단 바로 옆(x1, y1)에 20x20pt 아이콘 배치
   return {
     annotation: {
       id: p.id,
-      type: 3, // embedpdf FREETEXT
-      intent: 'FreeTextCallout',
+      type: 1, // embedpdf TEXT (Sticky Note)
       pageIndex: p.target.page_no - 1,
-      rect: { origin: { x: x0, y: y0 }, size: { width: Math.max(width, 80), height: Math.max(height, 24) } },
-      strokeColor: hexColor,
+      rect: { origin: { x: x1, y: y1 }, size: { width: 20, height: 20 } },
       color: hexColor,
-      opacity: p.target.opacity,
+      opacity: p.target.opacity ?? 1.0,
       contents: p.target.comment,
-      lineEnding: 4, // OpenArrow
-      fontFamily: 4, // PdfStandardFont.Helvetica
-      fontSize: 8,
-      fontColor: '#333333',
-      textAlign: 0, // PdfTextAlignment.Left
-      verticalAlign: 0, // PdfVerticalAlignment.Top
+      icon: 'Comment',
+      custom: {
+        ...(p.target.search_text ? { searchText: p.target.search_text } : {}),
+        comment: p.target.comment,
+      },
     },
   };
 }
+
 
 /**
  * [Flow: Step 1 (AnnotationTransferItem 수신) -> Step 2 (좌표 관련 필드 제거)

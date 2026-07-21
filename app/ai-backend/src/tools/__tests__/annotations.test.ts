@@ -202,4 +202,50 @@ describe('buildAnnotationTools - 목록 요청 기능 테스트', () => {
     assert.ok(result.error);
     assert.ok(result.error.includes('page_no array length'));
   });
+
+  it('add_text_callout 및 apply_annotations 호출 시 type=1 (Sticky Note / TEXT) 주석으로 생성되는지 검증', async () => {
+    let savedAnnotationsPayload: any = null;
+    const baseMock = createMockFetch();
+    const saveFetch = mock.fn(async (url: string | URL, options?: RequestInit) => {
+      const urlString = url.toString();
+      if (urlString.includes('/user-annotations')) {
+        savedAnnotationsPayload = JSON.parse((options?.body as string) || '{}');
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return baseMock(url, options);
+    }) as unknown as typeof fetch;
+
+    globalThis.fetch = saveFetch;
+
+    const tools = buildAnnotationTools({
+      jobId: 'job-test',
+      sourceIndex: 0,
+      authHeaders: {},
+    });
+
+    await (tools.add_text_callout as any).execute({
+      text: 'CalloutTarget',
+      page_no: 1,
+      comment: 'Callout comment',
+    });
+
+    const applyResult = await (tools.apply_annotations as any).execute({});
+    assert.equal(applyResult.saved, true);
+    assert.ok(savedAnnotationsPayload);
+    assert.equal(savedAnnotationsPayload.annotations.length, 1);
+
+    const anno = savedAnnotationsPayload.annotations[0].annotation;
+    assert.equal(anno.type, 1); // EmbedPDF TEXT (Sticky Note)
+    assert.equal(anno.icon, 'Comment');
+    assert.equal(anno.contents, 'Callout comment');
+    // bbox_pdf [100, 100, 200, 200]의 우상단 (x1=200, y1=200)에 20x20 rect
+    assert.deepEqual(anno.rect, {
+      origin: { x: 200, y: 200 },
+      size: { width: 20, height: 20 },
+    });
+  });
 });
+

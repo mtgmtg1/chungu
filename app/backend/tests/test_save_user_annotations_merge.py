@@ -230,3 +230,80 @@ class TestSaveUserAnnotationsMergedRegeneration:
             f"AI entry가 없어도 _merge_annotation_jsons가 호출되어야 함 (현재 {len(mock_env['merge_calls'])}회)"
         )
         assert result.get("merged_annotations_url") == mock_env["merged_url"]
+
+    def test_zip_pdf_storage_path_prefers_searchable(self, mock_env, monkeypatch):
+        """[Flow: pdf_storage_path가 zip(비-PDF)이고 searchable_pdf_storage_path가 존재할 때
+        -> source_pdf_path가 searchable.pdf를 가리켜야 함
+        -> _page_dimensions가 FileDataError를 던져도 500 없이 빈 dict로 폴백]
+
+        회귀: 원본 업로드가 zip일 때 pdf_storage_path가 zip을 가리키고,
+        entry가 없는 분기에서 zip을 다운로드해 PyMuPDF open이 실패하며 500이 발생하던 버그.
+        """
+        # AI entry 제거 (entry is None 분기)
+        mock_env["job"].annotated_pdf_files = []
+        locked_job = MagicMock()
+        locked_job.annotated_pdf_files = []
+        locked_execute_result = MagicMock()
+        locked_execute_result.scalar_one.return_value = locked_job
+        mock_env["db"].execute.return_value = locked_execute_result
+
+        # pdf_storage_path를 zip으로, searchable_pdf_storage_path를 정상 PDF 경로로 설정
+        job_id = mock_env["job_id"]
+        mock_env["job"].pdf_storage_path = f"{job_id}/{job_id}.zip"
+        mock_env["job"].searchable_pdf_storage_path = f"{job_id}/searchable.pdf"
+
+        # searchable.pdf를 FakeBucket에 추가 (내용은 모킹되므로 더미 바이트)
+        mock_env["fake_client"].storage._bucket.files[f"{job_id}/searchable.pdf"] = b"dummy-pdf-bytes"
+
+        # 다운로드 추적: 어떤 path가 요청되었는지 기록
+        downloaded_paths: list[str] = []
+        original_download = mock_env["fake_client"].storage._bucket.download
+
+        def _tracking_download(path: str) -> bytes:
+            downloaded_paths.append(path)
+            return original_download(path)
+
+        mock_env["fake_client"].storage._bucket.download = _tracking_download
+
+        # _page_dimensions가 FileDataError를 던지도록 모킹 (zip 다운로드 시뮬레이션)
+        import fitz
+
+        def _raise_file_data_error(_pdf_bytes):
+            raise fitz.FileDataError("Failed to open stream")
+
+        monkeypatch.setattr(jobs_module.pdf_annotate_converter, "_page_dimensions", _raise_file_data_error)
+
+        user_annotation = {
+            "type": "highlight",
+            "pageIndex": 0,
+            "rect": [10, 20, 100, 40],
+            "contents": "zip 회귀 테스트 주석",
+            "id": "user-annotation-zip-1",
+        }
+
+        # 500 없이 정상 저장되어야 함
+        result = jobs_module.save_user_annotations(
+            job_id=mock_env["job_id"],
+            payload={
+                "source_index": 0,
+                "annotations": [user_annotation],
+                "input_space": "device",
+            },
+            user=MagicMock(),
+            db=mock_env["db"],
+        )
+
+        # source_pdf_path가 searchable.pdf를 가리켜야 함 (zip이 아님)
+        pdf_download_paths = [p for p in downloaded_paths if p.endswith(".pdf") or p.endswith(".zip")]
+        assert any(p == f"{job_id}/searchable.pdf" for p in pdf_download_paths), (
+            f"searchable.pdf가 다운로드되어야 함 (실제: {pdf_download_paths})"
+        )
+        assert not any(p.endswith(".zip") for p in pdf_download_paths), (
+            f"zip은 다운로드되지 않아야 함 (실제: {pdf_download_paths})"
+        )
+
+        # _page_dimensions가 실패해도 500 없이 병합이 호출되어야 함
+        assert len(mock_env["merge_calls"]) == 1, (
+            f"page_dimensions 실패 시에도 _merge_annotation_jsons가 호출되어야 함 (현재 {len(mock_env['merge_calls'])}회)"
+        )
+        assert result.get("merged_annotations_url") == mock_env["merged_url"]

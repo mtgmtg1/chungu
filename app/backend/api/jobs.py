@@ -3365,13 +3365,15 @@ def save_user_annotations(
 
         # [Flow: 주석 좌표 기준 PDF 결정]
         # - pdf_user 입력: searchable PDF 우선, 없으면 원본 PDF
-        # - device/canonical 입력: source_index >= 0이면 searchable(annotated entry), 아니면 원본 PDF
+        # - device/canonical 입력: source_index >= 0이면 searchable(annotated entry), 아니면 searchable PDF 우선
+        # searchable PDF가 좌표 기준으로 더 적합하며(텍스트 레이어 포함), 원본 pdf_storage_path가
+        # zip 등 PDF가 아닌 컨테이너일 수 있어 PyMuPDF open 실패를 방지하기 위해 searchable를 우선한다.
         if input_space == "pdf_user":
             source_pdf_path = job.searchable_pdf_storage_path or job.pdf_storage_path
         elif source_index >= 0 and entry is not None:
             source_pdf_path = entry.get("storage_path") or job.searchable_pdf_storage_path or job.pdf_storage_path
         else:
-            source_pdf_path = job.pdf_storage_path
+            source_pdf_path = job.searchable_pdf_storage_path or job.pdf_storage_path
 
         pdf_bytes: bytes | None = None
         if source_pdf_path:
@@ -3391,7 +3393,15 @@ def save_user_annotations(
 
         valid_annotations = _deduplicate_annotations(valid_annotations)
 
-        page_dimensions = pdf_annotate_converter._page_dimensions(pdf_bytes) if pdf_bytes else {}
+        # [Flow: page_dimensions 수집 — 비-PDF 파일이거나 PyMuPDF open 실패 시 빈 dict로 폴백]
+        # pdf_bytes가 zip 등 PDF가 아닌 컨테이너일 수 있으므로 FileDataError를 잡아 500을 방지한다.
+        page_dimensions: dict = {}
+        if pdf_bytes:
+            try:
+                page_dimensions = pdf_annotate_converter._page_dimensions(pdf_bytes)
+            except Exception as e:
+                logger.warning(f"[save_user_annotations] {job_id} page_dimensions 수집 실패: {e}")
+                page_dimensions = {}
         if source_index >= 0 and entry is not None:
             # [Flow: 기존 AI 주석 JSON과 병합]
             # 사용자가 AI 주석을 편집/삭제한 경우를 감지해 보존한다.

@@ -156,6 +156,60 @@ def _pick_font_name(language: str | None) -> str:
     return FONT_NAME_BY_LANGUAGE.get(normalized, DEFAULT_FONT_NAME)
 
 
+# CJK 문자 범위: 한글, 한자, 가타카나, 히라가나, CJK 통합 한자 등
+_CJK_RANGES = (
+    (0x1100, 0x11FF),    # Hangul Jamo
+    (0x2E80, 0x2EFF),    # CJK Radicals Supplement
+    (0x3000, 0x303F),    # CJK Symbols and Punctuation
+    (0x3040, 0x309F),    # Hiragana
+    (0x30A0, 0x30FF),    # Katakana
+    (0x3400, 0x4DBF),    # CJK Unified Ideographs Extension A
+    (0x4E00, 0x9FFF),    # CJK Unified Ideographs
+    (0xAC00, 0xD7AF),    # Hangul Syllables
+    (0xF900, 0xFAFF),    # CJK Compatibility Ideographs
+    (0xFF00, 0xFFEF),    # Halfwidth and Fullwidth Forms
+)
+
+
+def _contains_cjk(text: str) -> bool:
+    """텍스트에 CJK(한/중/일) 문자가 포함되어 있는지 확인한다.
+
+    [Flow: Step 1 (텍스트의 각 문자 순회) -> Step 2 (CJK 유니코드 범위에 해당하는지 확인)
+          -> Step 3 (하나라도 CJK이면 True 반환)]
+
+    Args:
+        text: 검사할 텍스트
+
+    Returns:
+        CJK 문자가 하나라도 있으면 True, 없으면 False
+    """
+    for ch in text:
+        cp = ord(ch)
+        for start, end in _CJK_RANGES:
+            if start <= cp <= end:
+                return True
+    return False
+
+
+def _pick_font_for_text(text: str, language: str | None) -> str:
+    """텍스트 내용과 언어 코드를 모두 고려하여 적절한 폰트를 선택한다.
+
+    [Flow: Step 1 (텍스트에 CJK 문자 포함 여부 확인)
+          -> Step 2 (CJK가 없으면 helv(영문 폰트) 사용 — CJK 폰트로 영문을 렌더링하면 폭이 과도하게 넓어짐)
+          -> Step 3 (CJK가 있으면 언어 코드에 맞는 CJK 폰트 사용)]
+
+    Args:
+        text: 삽입할 텍스트
+        language: 언어 코드 (ko/ja/zh/zht/en)
+
+    Returns:
+        PyMuPDF fontname 문자열
+    """
+    if not _contains_cjk(text):
+        return "helv"
+    return _pick_font_name(language)
+
+
 def _insert_invisible_text(
     page: fitz.Page,
     text: str,
@@ -307,9 +361,7 @@ def _insert_text_layer_into_doc(
 ) -> None:
     """[Flow: Step 1 (문서의 각 페이지 순회)
           -> Step 2 (_convert_bbox_to_pdf_user로 bbox를 PDF user-space로 변환)
-          -> Step 3 (페이지 경계 내로 clamp) -> Step 4 (투명 텍스트 삽입)]"""
-    font_name = _pick_font_name(language)
-
+          -> Step 3 (페이지 경계 내로 clamp) -> Step 4 (텍스트별로 적절한 폰트 선택 후 투명 텍스트 삽입)]"""
     for page in doc:
         page_no = page.number + 1
         items = page_ocr_results.get(page_no, [])
@@ -335,6 +387,8 @@ def _insert_text_layer_into_doc(
             if not clamped_rect or clamped_rect.is_empty or clamped_rect.is_infinite:
                 continue
 
+            # 텍스트 내용에 따라 폰트 선택: CJK 문자가 없으면 helv(영문), 있으면 언어별 CJK 폰트
+            font_name = _pick_font_for_text(text, language)
             _insert_invisible_text(page, text, (clamped_rect.x0, clamped_rect.y0, clamped_rect.x1, clamped_rect.y1), font_name)
 
 

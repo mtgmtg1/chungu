@@ -47,7 +47,7 @@ function rgbToHex(rgb: [number, number, number]): string {
  *
  * 여러 검색 결과 rect를 하나의 bounding box로 합친다.
  *
- * @param rects PDF user-space rect 리스트
+ * @param rects device-space rect 리스트 (search_job_text 반환 좌표)
  * @returns bounding rect [x0, y0, x1, y1]
  */
 function _unionRects(rects: Array<[number, number, number, number]>): [number, number, number, number] {
@@ -591,9 +591,10 @@ export function buildAnnotationTools(context: AnnotationContext) {
         }
 
         try {
-          // [Flow: AI 백엔드는 좌표 변환을 하지 않고 PDF user-space 그대로 전송
-          //       -> 변환은 FastAPI /jobs/{id}/user-annotations에서 JSON으로 저장하며 수행]
-          console.log(`[apply_annotations] job=${jobId} count=${pending.length} input_space=pdf_user`);
+          // [Flow: AI 백엔드는 좌표 변환을 하지 않고 device-space 그대로 전송
+          //       -> search_job_text(search_for + OCR 폴백)는 모두 device-space(y=0 상단)를 반환
+          //       -> FastAPI /jobs/{id}/user-annotations는 input_space='device'일 때 변환 없이 저장]
+          console.log(`[apply_annotations] job=${jobId} count=${pending.length} input_space=device`);
           const annotations = pending.map((pendingAnnotation) => _buildAnnotationItem(pendingAnnotation));
           let saveSourceIndex = sourceIndex;
           let usedFallback = false;
@@ -635,16 +636,16 @@ export function buildAnnotationTools(context: AnnotationContext) {
 }
 
 /**
- * [Flow: Step 1 (PendingAnnotation 수신) -> Step 2 (PDF user-space AnnotationTransferItem 생성) -> Step 3 (반환)]
+ * [Flow: Step 1 (PendingAnnotation 수신) -> Step 2 (device-space AnnotationTransferItem 생성) -> Step 3 (반환)]
  *
- * AI 백엔드는 좌표 변환을 하지 않고 PDF user-space 좌표를 그대로 전달한다.
- * 변환은 FastAPI의 /jobs/{id}/user-annotations 엔드포인트에서 JSON 저장 시
- * 실제 PDF page_height를 기준으로 수행한다.
+ * AI 백엔드는 좌표 변환을 하지 않고 device-space 좌표를 그대로 전달한다.
+ * search_job_text의 search_for 경로와 OCR 폴백 경로는 모두 device-space(y=0 상단)를 반환한다.
+ * FastAPI의 /jobs/{id}/user-annotations 엔드포인트는 input_space='device'일 때 변환 없이 저장한다.
  *
- * PDF user-space rect: origin.y = y0 (페이지 하단 기준), size.height = y1 - y0.
+ * device-space rect: origin.y = y0 (페이지 상단 기준, y↓), size.height = y1 - y0.
  *
  * @param p pending 주석
- * @returns PDF user-space 기반 AnnotationTransferItem
+ * @returns device-space 기반 AnnotationTransferItem
  */
 function _buildAnnotationItem(p: PendingAnnotation): Record<string, unknown> {
   const [x0, y0, x1, y1] = p.target.bbox_pdf;

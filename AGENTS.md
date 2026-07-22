@@ -8,6 +8,20 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 스캔 PDF 표 내부 y좌표 반전 근본 원인 해결 — search_job_text OCR 폴백 좌표계 통일 — 2026-07-22
+
+- **근본 원인**:
+  - `search_job_text` 엔드포인트가 두 경로에서 서로 다른 좌표계를 반환하고 있었음.
+    - `search_for` 경로 (PyMuPDF): **device-space(y=0 상단)** 반환. 비표 텍스트는 대부분 이 경로.
+    - OCR 폴백 경로 (`build_agent_elements_from_ocr_layout`): **PDF user-space(y=0 하단)** 반환. 스캔 PDF에서 `search_for`가 0건일 때(특히 표 텍스트) 이 경로로 빠짐.
+  - 에이전트(`annotations.ts`)는 항상 `input_space='device'`로 저장하므로, OCR 폴백의 PDF user-space 좌표가 device-space로 잘못 해석되어 **y 반전(상하 거울)** 발생.
+  - "표에서만 반전" 현상: 표 텍스트가 `search_for`에서 실패하여 OCR 폴백으로 빠지는 빈도가 비표보다 높기 때문 (파이프 구분자, 단어 분할, 텍스트 레이어 누락 등).
+- **수정 내용**:
+  - `app/backend/api/jobs.py`: `search_job_text`의 OCR 폴백 경로에서 `bbox_pdf`를 `pdf_user_to_device`로 변환하여 device-space로 통일. 응답에 `coordinate_space: "device"` 필드 추가.
+  - `app/ai-backend/src/tools/annotations.ts`: 주석/로그를 "PDF user-space"에서 "device-space"로 정정 (실제 코드는 이미 `'device'` 전송).
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 247 passed. `cd app/ai-backend && npm run build` → 성공. `cd app/ai-backend && npm test` → 64 passed. `cd app/frontend && npm run build` → 성공.
+- **핵심 파일**: `app/backend/api/jobs.py`, `app/ai-backend/src/tools/annotations.ts`, `app/backend/tests/test_search_job_text_ocr_fallback_coords.py`.
+
 ### AI 주석 도구 texts 축약 배치 형식 도입 — 토큰 절약 최적화 — 2026-07-22
 
 - **기능 변경**:
@@ -83,21 +97,6 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 241 passed, `cd app/ai-backend && npm run build` → 성공, `cd app/frontend && npm run build` → 성공.
 - **핵심 파일**: `app/backend/api/jobs.py`, `app/backend/core/pdf_annotator.py`, `app/backend/core/pdf_user_annotator.py`, `app/ai-backend/src/lib/proof-api.ts`, `app/backend/tests/test_pdf_text_layer_baseline.py`, `app/backend/tests/test_jobs_result_json_annotations.py`.
 
-### AI 주석 y좌표 반전 재발 수정 — canonical 좌표계 도입 시점(c9e3c9c)으로 복구 — 2026-07-22
-
-- **원인**: 2026-07-21에 canonical 좌표계를 further 발전시킨 일련의 커밋들(4086288, 414107a, 9369ace, deb1689, 78cf1bd, 588cbb9, d4364c3, 9733b5d, 625c115, e7e2bf3, 1455164, 0ba16d9, 2f994ea, 5dca4b1, f5634f2, d883dea, bdf7126, 7564820, af5deba/602676a)이 device-space ↔ pdf_user-space 직접 변환을 canonical 경유 변환으로 교체하면서 y-flip이 재발. job 46557a21a74547518da300dc6de96b75(2026-07-20 19:13 생성) 시점에는 정상 작동했으나, 이후 변경으로 AI 에이전트가 추가한 주석의 y좌표가 다시 반전되어 표시됨.
-- **수정**: canonical 좌표 도입 직후 안정 시점인 `c9e3c9c`(2026-07-20 13:14)로 7개 핵심 파일을 checkout.
-  - `app/backend/core/pdf_annotator.py`: `_rect_to_canonical_rect`/`_device_annotation_to_canonical` 대신 `_rect_to_embedpdf_rect`(device-space 직접 변환) 사용.
-  - `app/backend/core/pdf_user_annotator.py`: `_convert_annotations_to_canonical`/`_convert_annotation_item` 등 canonical 경유 변환 함수 제거, `_convert_annotation_to_pdf_user`/`_convert_annotation_to_device_space` 직접 변환 복원.
-  - `app/backend/core/pdf_annotate_converter.py`: `_build_canonical_annotations_document`/`_extract_annotations_from_document`/`_page_dimensions` 제거, flat list 저장 복원.
-  - `app/backend/api/jobs.py`: `save_user_annotations`/`_merge_annotation_jsons`/`_load_all_annotations`/`get_job_annotations`/`get_job_result_json`/`update_job_annotation`/`_initialize_user_annotations_json`/`preview_job`를 c9e3c9c 버전으로 복원. canonical document 처리 제거, device-space ↔ pdf_user-space 직접 변환 사용.
-  - `app/frontend/src/components/SourcePanel.jsx`: `canonicalToDeviceAnnotation`/`canonicalToDeviceRect`/`canonicalToDevicePoint`/`normalizeAnnotationsJson`(canonical 분기) 제거, flat list 그대로 렌더링 복원.
-  - `app/frontend/src/components/PdfViewer.jsx`: c9e3c9c 버전으로 복원.
-  - `app/ai-backend/src/tools/annotations.ts`: c9e3c9c 버전으로 복원. 배치 주석, sticky note, line highlight 도구 제거, 단일 주석 도구 복원.
-- **손실 기능**: c9e3c9c 이후 추가된 기능(배치 주석 배열 입력, per-file searchable PDF, merged_annotations.json 자동 재생성, sticky note/line highlight 도구, callout→sticky note 변경, 다중 매개변수 목록 지원)은 모두 제거됨. 필요한 경우 별도 재개발 필요.
-- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 240 passed. `cd app/ai-backend && npm run build` → 성공. `cd app/frontend && npm run build` → 성공.
-- **핵심 파일**: `app/backend/core/pdf_annotator.py`, `app/backend/core/pdf_user_annotator.py`, `app/backend/core/pdf_annotate_converter.py`, `app/backend/api/jobs.py`, `app/frontend/src/components/SourcePanel.jsx`, `app/frontend/src/components/PdfViewer.jsx`, `app/ai-backend/src/tools/annotations.ts`.
-- **주의**: 기존 job의 `merged_annotations.json`/`user_annotations_*.json`이 canonical document 형식(dict with coordinate_system/page_dimensions)으로 저장되어 있는 경우, c9e3c9c 코드는 이를 list로 간주하지 않으므로 주석이 표시되지 않을 수 있음. 해당 job은 주석을 다시 추가하거나 JSON을 flat list로 변환해야 함.
 
 ### 프로 요금제 크레딧 혜택 상향 및 충전 크레딧 일치화 — 2026-07-21
 

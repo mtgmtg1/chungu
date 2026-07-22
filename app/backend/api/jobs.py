@@ -3832,20 +3832,52 @@ def search_job_text(
             pattern = _re.compile(query, _re.IGNORECASE)
         except _re.error:
             pattern = _re.compile(_re.escape(query), _re.IGNORECASE)
+
+        # [Flow: OCR 폴백 요소의 bbox_pdf는 PDF user-space(y=0 하단) 좌표계이다.
+        #       search_for 경로는 device-space(y=0 상단)를 반환하므로, 좌표계를 통일하기 위해
+        #       PDF user-space → device-space 변환을 적용한다. 그렇지 않으면 에이전트가
+        #       input_space='device'로 저장할 때 y 반전이 발생한다.]
+        from ..core.pdf_coordinate_transform import pdf_user_to_device
+
+        ocr_page_rect_map: dict[int, fitz.Rect] = {}
+        try:
+            _ocr_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            for _ocr_page in _ocr_doc:
+                ocr_page_rect_map[_ocr_page.number + 1] = _ocr_page.rect
+            _ocr_doc.close()
+        except Exception as e:
+            logger.warning(f"[search_job_text] {job_id} OCR 폴백 page rect 구축 실패: {e}")
+
         for el in ocr_elements:
             text = el.get("text") or ""
             if not pattern.search(text):
                 continue
+            el_page_no = el.get("page_no", 1)
+            el_bbox = list(el["bbox_pdf"])
+            # PDF user-space → device-space 변환 (page_rect가 있을 때만)
+            page_rect_ocr = ocr_page_rect_map.get(el_page_no)
+            if page_rect_ocr is not None:
+                try:
+                    device_rect = pdf_user_to_device(
+                        fitz.Rect(el_bbox[0], el_bbox[1], el_bbox[2], el_bbox[3]),
+                        page_rect_ocr,
+                    )
+                    el_bbox = [device_rect.x0, device_rect.y0, device_rect.x1, device_rect.y1]
+                except Exception as e:
+                    logger.warning(
+                        f"[search_job_text] {job_id} page={el_page_no} "
+                        f"PDF user-space → device-space 변환 실패: {e}"
+                    )
             # [TABLE_DEBUG] OCR 폴백 경로에서 표 행 좌표 로깅
             if el.get("kind") == "table_row" or "|" in text:
                 logger.info(
                     f"[TABLE_DEBUG] search_job_text OCR 폴백 매치: "
                     f"kind={el.get('kind')} text='{text[:40]}' "
-                    f"bbox_pdf={[round(v, 1) for v in el['bbox_pdf']]}"
+                    f"bbox_pdf(device-space)={[round(v, 1) for v in el_bbox]}"
                 )
             matches.append({
-                "page_no": el["page_no"],
-                "bbox_pdf": list(el["bbox_pdf"]),
+                "page_no": el_page_no,
+                "bbox_pdf": el_bbox,
                 "text": text.strip(),
             })
 
@@ -3860,8 +3892,15 @@ def search_job_text(
 
     import time as _time
     total_elapsed = _time.monotonic() - start_time
+    # [Flow: 모든 matches의 bbox_pdf는 device-space(y=0 상단)로 통일되어 있다.
+    #       search_for 경로와 OCR 폴백 경로 모두 device-space를 반환하므로,
+    #       에이전트는 input_space='device'로 저장하면 된다.]
     return Response(
-        json.dumps({"matches": matches, "total": len(matches)}, ensure_ascii=False, default=str),
+        json.dumps(
+            {"matches": matches, "total": len(matches), "coordinate_space": "device"},
+            ensure_ascii=False,
+            default=str,
+        ),
         media_type="application/json",
         headers={
             "X-Total-Elapsed": str(round(total_elapsed * 1000)),

@@ -8,6 +8,15 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### Supabase Storage PDF 업로드 Content-Type 명시 및 뷰어 바로 다운로드 증상 해결 — 2026-07-22
+
+- **원인 분석**:
+  - `app/backend/core/supabase_client.py`의 `upload_input` 함수가 PDF 파일을 Supabase Storage(`pdfs` 버킷)에 업로드할 때 Content-Type을 `"application/octet-stream"`으로 하드코딩하고 있었음.
+  - 이로 인해 프론트엔드 PDF 뷰어(`PdfViewer.jsx`)가 서명된 Signed URL을 통해 PDF를 불러올 때, 응답 헤더가 `Content-Type: application/octet-stream`으로 내려와 브라우저가 PDF 문서로 파싱하지 못하고 바로 파일을 다운로드받거나 뷰어 파싱 에러(`"데이터를 불러오지 못했습니다"`)를 일으키던 증상이 유발됨.
+- **수정 내용**:
+  - `app/backend/core/supabase_client.py`: `_get_content_type` 함수를 확장하여 `.pdf`일 때 `"application/pdf"`, `.json`일 때 `"application/json"` 등 동적 Content-Type을 반환하도록 수정하고 `upload_input`에서 이를 적용함.
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 241 passed.
+
 ### AI 주석 y좌표 근본 원인 해결 (PyMuPDF search_for Top-Left 좌표 정규화) — 2026-07-22
 
 - **근본 원인 발견**:

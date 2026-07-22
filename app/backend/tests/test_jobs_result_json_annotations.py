@@ -54,9 +54,9 @@ def _make_device_annotation() -> dict:
 
 
 class TestGetJobResultJsonAnnotations:
-    """get_job_result_json(kind=annotations)이 PDF user-space를 반환한다."""
+    """get_job_result_json(kind=annotations)이 뷰어용 device-space 좌표계를 그대로 반환한다."""
 
-    def test_result_json_annotations_converted_to_pdf_user(self, monkeypatch):
+    def test_result_json_annotations_returns_device_space(self, monkeypatch):
         # [Flow: Job 인스턴스 생성 및 필드 설정]
         job_id = "test-job-result-json"
         job = Job()
@@ -139,8 +139,8 @@ class TestGetJobResultJsonAnnotations:
         assert len(data) == 1
         annotation = data[0]["annotation"]
         rect = annotation["rect"]
-        # A4 842pt 기준 device origin.y=22, height=20 -> PDF user origin.y=800
-        assert rect["origin"]["y"] == pytest.approx(800.0, abs=0.01)
+        # 프론트엔드 뷰어용 device-space origin.y=22.0 그대로 반환
+        assert rect["origin"]["y"] == pytest.approx(22.0, abs=0.01)
         assert rect["origin"]["x"] == pytest.approx(100.0, abs=0.01)
         assert rect["size"]["width"] == pytest.approx(100.0, abs=0.01)
         assert rect["size"]["height"] == pytest.approx(20.0, abs=0.01)

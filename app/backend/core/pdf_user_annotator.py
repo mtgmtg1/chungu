@@ -166,6 +166,7 @@ def _parse_ink_list(ink_list: Any, page_height: float | None = None, page_x0: fl
 def _convert_annotation_to_device_space(
     raw: dict,
     page_height: float,
+    page_width: float = 0.0,
     page_x0: float = 0.0,
     page_y0: float = 0.0,
 ) -> dict:
@@ -177,7 +178,8 @@ def _convert_annotation_to_device_space(
     모든 좌표 변환은 pdf_coordinate_transform에서 matrix로 일원화 처리한다.
     """
     a = dict(raw)
-    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    p_width = page_width if page_width > 0 else page_height
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + p_width, page_y0 + page_height)
 
     def _pdf_rect_to_device(rect: Any) -> dict | None:
         if not rect:
@@ -255,6 +257,7 @@ def _convert_annotation_to_device_space(
 def _convert_annotation_to_pdf_user(
     raw: dict,
     page_height: float,
+    page_width: float = 0.0,
     page_x0: float = 0.0,
     page_y0: float = 0.0,
 ) -> dict:
@@ -269,7 +272,8 @@ def _convert_annotation_to_pdf_user(
     if not a:
         return raw
 
-    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)
+    p_width = page_width if page_width > 0 else page_height
+    page_rect = fitz.Rect(page_x0, page_y0, page_x0 + p_width, page_y0 + page_height)
 
     def _device_rect_to_pdf_user(rect: dict) -> dict:
         pdf_rect = pdf_user_rect_from_embedpdf(rect, page_rect)
@@ -305,11 +309,13 @@ def _convert_annotations_to_pdf_user(
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
         page_heights: dict[int, float] = {}
+        page_widths: dict[int, float] = {}
         page_x0s: dict[int, float] = {}
         page_y0s: dict[int, float] = {}
         for page in doc:
             page_no = page.number + 1
             page_heights[page_no] = page.rect.height
+            page_widths[page_no] = page.rect.width
             page_x0s[page_no] = page.rect.x0
             page_y0s[page_no] = page.rect.y0
     finally:
@@ -331,7 +337,7 @@ def _convert_annotations_to_pdf_user(
             converted.append(raw)
             continue
         _convert_annotation_to_pdf_user(
-            raw, page_height, page_x0s.get(page_no, 0.0), page_y0s.get(page_no, 0.0)
+            raw, page_height, page_widths.get(page_no, 0.0), page_x0s.get(page_no, 0.0), page_y0s.get(page_no, 0.0)
         )
         converted.append(raw)
     return converted
@@ -351,11 +357,13 @@ def _convert_annotations_to_device_space(
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
         page_heights: dict[int, float] = {}
+        page_widths: dict[int, float] = {}
         page_x0s: dict[int, float] = {}
         page_y0s: dict[int, float] = {}
         for page in doc:
             page_no = page.number + 1
             page_heights[page_no] = page.rect.height
+            page_widths[page_no] = page.rect.width
             page_x0s[page_no] = page.rect.x0
             page_y0s[page_no] = page.rect.y0
     finally:
@@ -379,7 +387,7 @@ def _convert_annotations_to_device_space(
         # AnnotationTransferItem 형식({annotation: {...}})이면 그대로 유지하고,
         # 평면 dict면 평면 dict를 반환한다.
         converted_a = _convert_annotation_to_device_space(
-            a, page_height, page_x0s.get(page_no, 0.0), page_y0s.get(page_no, 0.0)
+            a, page_height, page_widths.get(page_no, 0.0), page_x0s.get(page_no, 0.0), page_y0s.get(page_no, 0.0)
         )
         if "annotation" in raw and isinstance(raw["annotation"], dict):
             raw["annotation"] = converted_a

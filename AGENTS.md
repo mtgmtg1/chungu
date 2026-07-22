@@ -8,6 +8,17 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### AI 주석 y좌표 근본 원인 해결 (PyMuPDF search_for Top-Left 좌표 정규화) — 2026-07-22
+
+- **근본 원인 발견**:
+  - PyMuPDF의 `fitz.Page.search_for(text)`가 반환하는 `Rect(x0, y0, x1, y1)`는 표준 PDF User-Space(원점 좌하단, y=0 하단)가 아니라 **이미 Top-Left(Device-Space, y=0 상단)** 좌표계였음.
+  - 백엔드의 `pdf_annotate_converter.py` 및 AI 백엔드 도구가 이 `search_for` 결과를 "PDF User-Space"라고 착각하여 `_rect_to_embedpdf_rect` 또는 `save_user_annotations(input_space="pdf_user")`를 거쳐 `y_device = page_height - y` (y-flip)를 한 번 더 적용했음.
+  - 그로 인해 상단(예: y=100) 텍스트에 칠해져야 할 주석이 하단(y=742) 거울 반전 위치로 튕겨서 찍히던 증상의 100% 근본 원인이었음.
+- **수정 내용**:
+  - `app/backend/core/pdf_annotate_converter.py`: `_collect_targets_for_search_phrase` 및 `_collect_targets_with_vision_llm`에서 PyMuPDF `search_for()` 결과를 `AnnotationTarget`에 담을 때 `(x0, page_height - y1, x1, page_height - y0)`로 PDF User-Space 좌표계로 정확하게 정규화하여 `build_embedpdf_annotations`에 전달.
+  - `app/ai-backend/src/tools/annotations.ts`: `apply_annotations` 도구가 백엔드로 `saveAnnotations` 호출 시 `input_space='device'`로 전달하도록 정돈.
+- **검증**: PyMuPDF `search_for` 반환 좌표 수식적 검증 완료, `cd app/backend && venv/bin/python -m pytest tests/ -q` → 241 passed, `cd app/ai-backend && npm run build` → 성공.
+
 ### AI 주석 y좌표 반전 원인 해결 및 뷰어 device-space 좌표계 보장 — 2026-07-22
 
 - **원인 분석**:

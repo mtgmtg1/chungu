@@ -462,12 +462,12 @@ export function buildAnnotationTools(context: AnnotationContext) {
           // [Flow: Step 1 (source_index로 주석 JSON 저장) -> Step 2 (404/실패 감지)
           //       -> Step 3 (source_index=-1로 원본 PDF의 JSON 저장)]
           try {
-            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'pdf_user', authHeaders);
+            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'device', authHeaders);
           } catch (firstError) {
             if (saveSourceIndex < 0) throw firstError;
             saveSourceIndex = -1;
             usedFallback = true;
-            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'pdf_user', authHeaders);
+            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'device', authHeaders);
           }
 
           // 같은 실행에서 모델이 apply_annotations를 반복 호출해도 중복 저장하지 않는다.

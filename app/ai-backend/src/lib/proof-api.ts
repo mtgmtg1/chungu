@@ -409,12 +409,11 @@ export async function saveAnnotations(
   annotations: Array<Record<string, unknown>>,
   inputSpace: 'device' | 'pdf_user' | 'canonical' = 'device',
   authHeaders?: AuthHeaders,
-  removals?: string[],
 ): Promise<Record<string, unknown>> {
   return request<Record<string, unknown>>(
     `/api/jobs/${jobId}/user-annotations`,
     'POST',
-    { source_index: sourceIndex, annotations, input_space: inputSpace, removals: removals || [] },
+    { source_index: sourceIndex, annotations, input_space: inputSpace },
     authHeaders,
   );
 }

@@ -8,19 +8,6 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
-### 서처블 PDF 텍스트 레이어 정밀도 개선 (Horizontal Scaling & 문단 세로 분할) — 2026-07-22
-
-- **기능 및 알고리즘 개선**:
-  - `app/backend/core/pdf_text_layer.py`:
-    1. **[방안 1 & 2] Horizontal Scaling ($T_h$) 비례 스케일링**: PyMuPDF `_insert_invisible_text()`에서 폰트 세로 높이는 BBox 높이(`height`)에 맞춰 보존하고, 가로 폭만 비례 확축하는 `morph=(point, fitz.Matrix(scale_x, 1.0))` 매트릭스 적용. 좁거나 넓은 BBox에서 폰트 세로 크기가 찌그러지지 않고 서처블 레이어 정밀도가 95% 이상으로 대폭 향상됨.
-    2. **[방안 3] 문단 세로 분할 레이어링**: `parsing_res_list` 블록 텍스트 파싱 시 줄바꿈(`\n`) 단위로 문단을 분할하고 BBox 높이를 세로 분할하여 라인 단위로 배치. 문단 전체 텍스트 찌그러짐 현상 근본 차단.
-  - `app/backend/tests/test_pdf_text_layer_baseline.py`: `TestPrecisionImprovements` 테스트 클래스 추가 (TDD Red-Green 통과).
-- **사용자 및 AI 주석 누적 저장 및 삭제(removals) 지원**:
-  - `app/backend/api/jobs.py`: `save_user_annotations()` API에 `removals` 리스트 수신을 추가하고, 기존 주석 JSON을 ID 기반으로 다운로드하여 누적 병합(Accumulate)하도록 개편.
-  - `app/backend/tests/test_save_user_annotations_accumulation.py`: 주석 누적 및 삭제 기능 유닛 테스트 추가.
-- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 245 passed.
-- **핵심 파일**: `app/backend/core/pdf_text_layer.py`, `app/backend/api/jobs.py`, `app/backend/tests/test_pdf_text_layer_baseline.py`, `app/backend/tests/test_save_user_annotations_accumulation.py`.
-
 ### FreeTextCallout 화살표 리더 라인 연동 및 주석/형광펜 발화 의도 규칙 반영 — 2026-07-22
 
 - **기능 변경**:

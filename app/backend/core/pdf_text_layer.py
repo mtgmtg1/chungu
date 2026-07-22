@@ -218,10 +218,11 @@ def _insert_invisible_text(
 ) -> None:
     """주어진 bbox 안에 투명 텍스트를 삽입한다.
 
-    [Flow: Step 1 (bbox 크기 및 폰트 메트릭 확인) -> Step 2 (폰트 크기를 bbox 높이에 맞추어 계산)
-          -> Step 3 (fitz.get_text_length로 원본 텍스트 폭 측정)
-          -> Step 4 (Horizontal Scaling scale_x = width / text_width 매트릭스 생성)
-          -> Step 5 (baseline 계산 후 PyMuPDF morph=(point, matrix)로 투명 텍스트 삽입)]
+    [Flow: Step 1 (bbox 크기 확인) -> Step 2 (폰트 메트릭 획득: ascender/descender)
+          -> Step 3 (폰트 크기 산정: bbox 높이를 ascender-descender로 나누어 정확히 맞춤)
+          -> Step 4 (fitz.get_text_length로 정확한 텍스트 폭 측정 후 필요시 축소)
+          -> Step 5 (baseline 산정: bbox 중앙에 텍스트가 오도록 ascender/descender 보정)
+          -> Step 6 (insert_text로 render_mode=3 투명 삽입)]
 
     Args:
         page: PyMuPDF Page 객체
@@ -232,11 +233,12 @@ def _insert_invisible_text(
     x0, y0, x1, y1 = rect
     width = x1 - x0
     height = y1 - y0
-    if width <= 0 or height <= 0 or not text:
+    if width <= 0 or height <= 0:
         return
 
     # 폰트 메트릭을 통해 bbox 높이에 정확히 맞는 폰트 크기를 계산한다.
-    # 폰트 높이는 bbox 높이에 맞게 고정하고, 가로 폭은 morph matrix(Horizontal Scaling)로 조절한다.
+    # 폰트의 전체 높이 = (ascender - descender) * font_size 이므로,
+    # font_size = height / (ascender - descender) 로 설정하면 텍스트가 bbox에 꽉 찬다.
     ascender, descender = _get_font_metrics(font_name)
     font_total_height_ratio = ascender - descender
     if font_total_height_ratio <= 0:
@@ -244,32 +246,35 @@ def _insert_invisible_text(
 
     font_size = max(1.0, height * FONT_SIZE_RATIO / font_total_height_ratio)
 
-    # fitz.get_text_length로 정확한 원본 텍스트 폭을 측정한다.
+    # fitz.get_text_length로 정확한 텍스트 폭을 측정하여 폰트 크기를 조정한다.
+    # CHAR_WIDTH_RATIO 추정 대신 실제 폰트 메트릭스를 사용하므로 CJK/영문 모두 정확.
     try:
         text_width = fitz.get_text_length(text, fontname=font_name, fontsize=font_size)
     except Exception:
         text_width = max(1, len(text)) * font_size * 0.6
 
-    if text_width <= 0:
-        text_width = width
+    # 텍스트가 bbox 가로 폭을 넘으면 폰트 크기를 비례 축소한다.
+    safe_width = width * 0.95
+    if text_width > safe_width and text_width > 0:
+        font_size = max(1.0, font_size * safe_width / text_width)
 
-    # baseline 계산 (bbox 수직 중앙 기준)
+    # baseline을 bbox 중앙에 텍스트가 오도록 계산한다.
+    # insert_text의 point.y는 baseline이며, search_for 결과는:
+    #   search_for bottom = baseline - ascender * font_size
+    #   search_for top    = baseline - descender * font_size (descender < 0 이므로 위로 확장)
+    # search_for 중앙 = baseline - (ascender + descender) / 2 * font_size
+    # bbox 중앙 = (y0 + y1) / 2
+    # 따라서 baseline = bbox_center + (ascender + descender) / 2 * font_size
     bbox_center = (y0 + y1) / 2.0
     baseline_y = bbox_center + (ascender + descender) / 2.0 * font_size
 
-    # Horizontal Scaling (가로 비례 스케일링): font_size는 height에 고정하고 가로 폭만 스케일링
-    scale_x = (width * 0.98) / text_width
-    point = fitz.Point(x0, baseline_y)
-    morph_matrix = (point, fitz.Matrix(scale_x, 1.0))
-
     try:
         page.insert_text(
-            point,
+            fitz.Point(x0, baseline_y),
             text,
             fontsize=font_size,
             fontname=font_name,
             render_mode=INVISIBLE_RENDER_MODE,
-            morph=morph_matrix,
             overlay=True,
         )
     except Exception as e:
@@ -466,14 +471,12 @@ def _extract_items_from_overall_ocr_res(layout: dict) -> list[tuple[str, BBox]]:
 def _extract_items_from_parsing_res_list(layout: dict) -> list[tuple[str, BBox]]:
     """parsing_res_list에서 (text, bbox) 목록을 추출한다 (신 스키마 폴백).
 
-    [Flow: Step 1 (parsing_res_list 순회) -> Step 2 (텍스트 블록 필터링)
-          -> Step 3 (table 블록은 행 단위 파싱, 일반 문단 텍스트는 줄바꿈(\\n) 단위로 분할)
-          -> Step 4 (각 줄의 텍스트와 세로 분할된 bbox 반환)]
+    [Flow: Step 1 (parsing_res_list 순회) -> Step 2 (텍스트 블록만 필터링) -> Step 3 (block_content/block_bbox 추출) -> Step 4 (유효한 항목만 반환)]
 
     AI Studio API가 overall_ocr_res를 더 이상 반환하지 않는 경우, parsing_res_list의
     텍스트 블록(block_content + block_bbox)을 사용해 텍스트 레이어를 생성한다.
-    문단 텍스트는 줄바꿈(\\n) 단위로 나누어 블록 bbox를 높이 균등 분할함으로서
-    텍스트가 1개 찌그러진 bbox에 뭉치는 현상을 방지한다.
+    표(table) 블록은 HTML을 행(<tr>) 단위로 파싱하여 각 행의 텍스트를 표 bbox를
+    행 수만큼 분할한 영역에 각각 삽입한다.
     """
     blocks = layout.get("parsing_res_list") or []
     if not isinstance(blocks, list):
@@ -496,30 +499,15 @@ def _extract_items_from_parsing_res_list(layout: dict) -> list[tuple[str, BBox]]
             bbox_px: BBox = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
         except (ValueError, TypeError):
             continue
-
         # table 블록은 HTML을 행 단위로 파싱하여 각 행의 텍스트를 분할된 bbox에 삽입한다.
         if block_label == "table":
             table_items = _extract_table_row_items(content, bbox_px)
             items.extend(table_items)
             continue
-
-        # 일반 문단/텍스트 블록: 줄바꿈(\n) 단위로 분할하여 bbox 세로 분할
-        raw_lines = [line.strip() for line in content.split("\n") if line.strip()]
-        if not raw_lines:
+        text = content.strip()
+        if not text:
             continue
-
-        if len(raw_lines) == 1:
-            items.append((raw_lines[0], bbox_px))
-            continue
-
-        # 멀티라인 문단인 경우 block_bbox를 y축으로 균등 분할
-        x0, y0, x1, y1 = bbox_px
-        line_height = (y1 - y0) / len(raw_lines)
-        for idx, line_text in enumerate(raw_lines):
-            line_y0 = y0 + idx * line_height
-            line_y1 = y0 + (idx + 1) * line_height
-            items.append((line_text, (x0, line_y0, x1, line_y1)))
-
+        items.append((text, bbox_px))
     return items
 
 

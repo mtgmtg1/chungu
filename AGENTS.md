@@ -8,6 +8,13 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### AI 주석 도구 배치(목록) 요청 지원 및 시스템 프롬프트 가이드 갱신 — 2026-07-22
+
+- **기능 변경**:
+  - `app/ai-backend/src/tools/annotations.ts`: `add_text_highlight` 및 `add_text_callout` 도구가 `items: [{ text, page_no, comment, color, opacity }]` 목록 배열을 받아 **단 1회의 도구 호출로 N개의 주석을 일괄(Batch) 생성**할 수 있도록 확장함. (단일 `string` 및 `text: [...]` 평탄화 배열 입력과의 하위 호환성 유지)
+  - `app/ai-backend/src/chat/route.ts`: LLM 시스템 프롬프트에 `items` 목록 배치를 사용해 한 번에 여러 주석을 일괄 처리하도록 강제 가이드 및 예시 명시.
+- **검증**: `cd app/ai-backend && npm run build` → tsc 성공, `cd app/backend && venv/bin/python -m pytest tests/ -q` → 241 passed.
+
 ### Supabase Storage PDF 업로드 Content-Type 명시 및 뷰어 바로 다운로드 증상 해결 — 2026-07-22
 
 - **원인 분석**:

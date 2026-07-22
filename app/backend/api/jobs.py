@@ -1752,6 +1752,103 @@ def _deduplicate_annotations(annotations: list[dict]) -> list[dict]:
     return result
 
 
+def _normalize_annotation_json_to_list(data) -> list[dict]:
+    """[Flow: Step 1 (data가 list이면 그대로 반환)
+          -> Step 2 (dict이면 canonical document로 간주하고 annotations 추출)
+          -> Step 3 (canonical 좌표를 device-space로 변환하여 list 반환)]
+
+    c9e3c9c 이후에 생성된 job의 주석 JSON이 canonical document 형식(dict with
+    coordinate_system/page_dimensions/annotations)으로 저장되어 있을 수 있다.
+    c9e3c9c 코드는 flat list(device-space)만 처리하므로, dict 형식을 만나면
+    annotations 배열을 추출하고 canonical 좌표를 device-space로 변환한다.
+    """
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, dict):
+        return []
+    annotations = data.get("annotations")
+    if not isinstance(annotations, list):
+        return []
+    page_dimensions = data.get("page_dimensions") or {}
+    coordinate_system = data.get("coordinate_system") or "device"
+    if coordinate_system != "canonical" or not page_dimensions:
+        return annotations
+    return [_convert_canonical_annotation_to_device(a, page_dimensions) for a in annotations]
+
+
+def _convert_canonical_annotation_to_device(item: dict, page_dimensions: dict) -> dict:
+    """[Flow: Step 1 (annotation 객체 추출) -> Step 2 (pageIndex로 page_dimensions 조회)
+          -> Step 3 (rect/segmentRects/calloutLine/start/end/rectangleDifferences/inkList/paths를
+              canonical [0,1]에서 device-space points로 변환) -> Step 4 (갱신된 item 반환)]"""
+    if not isinstance(item, dict):
+        return item
+    ann = item.get("annotation") if isinstance(item.get("annotation"), dict) else item
+    page_index = ann.get("pageIndex")
+    if not isinstance(page_index, int):
+        return item
+    dims = page_dimensions.get(str(page_index + 1)) or page_dimensions.get(page_index + 1)
+    if not isinstance(dims, dict):
+        return item
+    page_width = float(dims.get("width_pt", 0) or 0)
+    page_height = float(dims.get("height_pt", 0) or 0)
+    if page_width <= 0 or page_height <= 0:
+        return item
+
+    def _rect(r):
+        if not isinstance(r, dict):
+            return r
+        origin = r.get("origin") or {}
+        size = r.get("size") or {}
+        ox = float(origin.get("x", r.get("x", 0)) or 0)
+        oy = float(origin.get("y", r.get("y", 0)) or 0)
+        w = float(size.get("width", r.get("width", 0)) or 0)
+        h = float(size.get("height", r.get("height", 0)) or 0)
+        return {"origin": {"x": ox * page_width, "y": oy * page_height}, "size": {"width": w * page_width, "height": h * page_height}}
+
+    def _point(p):
+        if not isinstance(p, dict):
+            return p
+        return {"x": float(p.get("x", 0) or 0) * page_width, "y": float(p.get("y", 0) or 0) * page_height}
+
+    def _rd(rd):
+        if not isinstance(rd, dict):
+            return rd
+        return {
+            "left": float(rd.get("left", 0) or 0) * page_width,
+            "right": float(rd.get("right", 0) or 0) * page_width,
+            "top": float(rd.get("top", 0) or 0) * page_height,
+            "bottom": float(rd.get("bottom", 0) or 0) * page_height,
+        }
+
+    new_ann = dict(ann)
+    if isinstance(new_ann.get("rect"), dict):
+        new_ann["rect"] = _rect(new_ann["rect"])
+    if isinstance(new_ann.get("segmentRects"), list):
+        new_ann["segmentRects"] = [_rect(r) for r in new_ann["segmentRects"] if isinstance(r, dict)]
+    if isinstance(new_ann.get("calloutLine"), list):
+        new_ann["calloutLine"] = [_point(p) for p in new_ann["calloutLine"] if isinstance(p, dict)]
+    if isinstance(new_ann.get("start"), dict):
+        new_ann["start"] = _point(new_ann["start"])
+    if isinstance(new_ann.get("end"), dict):
+        new_ann["end"] = _point(new_ann["end"])
+    if isinstance(new_ann.get("rectangleDifferences"), dict):
+        new_ann["rectangleDifferences"] = _rd(new_ann["rectangleDifferences"])
+    if isinstance(new_ann.get("inkList"), list):
+        new_ann["inkList"] = [
+            {**ink, "points": [_point(p) for p in ink.get("points", []) if isinstance(p, dict)]}
+            for ink in new_ann["inkList"] if isinstance(ink, dict)
+        ]
+    if isinstance(new_ann.get("paths"), list):
+        new_ann["paths"] = [
+            [_point(p) for p in stroke if isinstance(p, dict)]
+            for stroke in new_ann["paths"] if isinstance(stroke, list)
+        ]
+
+    if isinstance(item.get("annotation"), dict):
+        return {**item, "annotation": new_ann}
+    return new_ann
+
+
 def _annotation_id(item: dict) -> str:
     """[Flow: Step 1 (item이 dict인지 확인) -> Step 2 (annotation.id 추출) -> Step 3 (반환)]
 
@@ -1783,15 +1880,13 @@ def _merge_annotation_jsons(
         try:
             ai_bytes = client.storage.from_("results").download(ai_annotations_path)
             ai_list = json.loads(ai_bytes.decode("utf-8"))
-            if isinstance(ai_list, list):
-                merged.extend(ai_list)
+            merged.extend(_normalize_annotation_json_to_list(ai_list))
         except Exception:
             pass
     try:
         user_bytes = client.storage.from_("results").download(user_annotations_path)
         user_list = json.loads(user_bytes.decode("utf-8"))
-        if isinstance(user_list, list):
-            merged.extend(user_list)
+        merged.extend(_normalize_annotation_json_to_list(user_list))
     except Exception:
         pass
     merged = _deduplicate_annotations(merged)
@@ -1990,8 +2085,9 @@ def _initialize_user_annotations_json(job_id: str, annotations: list[dict], sour
         try:
             existing_bytes = client.storage.from_("results").download(storage_path)
             existing = json.loads(existing_bytes.decode("utf-8"))
-            if isinstance(existing, list):
-                annotations = existing + annotations
+            existing_list = _normalize_annotation_json_to_list(existing)
+            if existing_list:
+                annotations = existing_list + annotations
         except Exception:
             pass
         annotations = _deduplicate_annotations(annotations)
@@ -2902,9 +2998,10 @@ def annotate_action(
             client = supabase_client.get_service_client()
             existing_bytes = client.storage.from_("results").download(shared_annotations_json_path)
             existing = json.loads(existing_bytes.decode("utf-8"))
-            if isinstance(existing, list):
+            existing_list = _normalize_annotation_json_to_list(existing)
+            if existing_list:
                 filtered = [
-                    a for a in existing
+                    a for a in existing_list
                     if not any(_annotation_id(a).startswith(f"backend-{idx}-") for idx in retry_indices)
                 ]
                 client.storage.from_("results").upload(
@@ -3270,8 +3367,7 @@ def save_user_annotations(
             try:
                 existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
                 existing = json.loads(existing_bytes.decode("utf-8"))
-                if not isinstance(existing, list):
-                    existing = []
+                existing = _normalize_annotation_json_to_list(existing)
             except Exception:
                 existing = []
 
@@ -3813,8 +3909,7 @@ def _load_all_annotations(
         try:
             existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
             existing = json.loads(existing_bytes.decode("utf-8"))
-            if isinstance(existing, list):
-                all_annotations.extend(existing)
+            all_annotations.extend(_normalize_annotation_json_to_list(existing))
         except Exception:
             pass
 
@@ -3823,9 +3918,10 @@ def _load_all_annotations(
     try:
         user_bytes = client.storage.from_("results").download(user_annotations_json_path)
         user_annotations = json.loads(user_bytes.decode("utf-8"))
-        if isinstance(user_annotations, list):
+        user_list = _normalize_annotation_json_to_list(user_annotations)
+        if user_list:
             existing_ids = {_annotation_id(a) for a in all_annotations if _annotation_id(a)}
-            for a in user_annotations:
+            for a in user_list:
                 aid = _annotation_id(a)
                 if aid and aid in existing_ids:
                     continue
@@ -3836,9 +3932,10 @@ def _load_all_annotations(
         try:
             user_bytes = client.storage.from_("results").download(user_annotations_json_path)
             user_annotations = json.loads(user_bytes.decode("utf-8"))
-            if isinstance(user_annotations, list):
+            user_list = _normalize_annotation_json_to_list(user_annotations)
+            if user_list:
                 existing_ids = {_annotation_id(a) for a in all_annotations if _annotation_id(a)}
-                for a in user_annotations:
+                for a in user_list:
                     aid = _annotation_id(a)
                     if aid and aid in existing_ids:
                         continue
@@ -3926,8 +4023,7 @@ def update_job_annotation(
         try:
             existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
             existing = json.loads(existing_bytes.decode("utf-8"))
-            if isinstance(existing, list):
-                all_annotations = existing
+            all_annotations = _normalize_annotation_json_to_list(existing)
         except Exception:
             pass
 
@@ -3936,17 +4032,15 @@ def update_job_annotation(
     user_annotations: list[dict] = []
     try:
         user_bytes = client.storage.from_("results").download(user_annotations_json_path)
-        user_annotations = json.loads(user_bytes.decode("utf-8"))
-        if not isinstance(user_annotations, list):
-            user_annotations = []
+        user_raw = json.loads(user_bytes.decode("utf-8"))
+        user_annotations = _normalize_annotation_json_to_list(user_raw)
     except Exception:
         # 파일별 주석 JSON이 없으면 공유 user_annotations.json으로 폴백 (하위 호환)
         user_annotations_json_path = f"{job.id}/user_annotations.json"
         try:
             user_bytes = client.storage.from_("results").download(user_annotations_json_path)
-            user_annotations = json.loads(user_bytes.decode("utf-8"))
-            if not isinstance(user_annotations, list):
-                user_annotations = []
+            user_raw = json.loads(user_bytes.decode("utf-8"))
+            user_annotations = _normalize_annotation_json_to_list(user_raw)
         except Exception:
             user_annotations = []
 

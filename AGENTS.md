@@ -8,12 +8,16 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
-### FreeTextCallout 화살표 리더 라인 연동 및 주석 생성 기본 mode="both" 적용 — 2026-07-22
+### FreeTextCallout 화살표 리더 라인 연동 및 주석/형광펜 발화 의도 규칙 반영 — 2026-07-22
 
 - **기능 변경**:
   - `app/ai-backend/src/tools/annotations.ts`: `add_text_callout`으로 생성되는 주석 항목에 EmbedPDF 뷰어용 `calloutLine` (3점 꺾은선 `[tip, knee, boxConnection]`) 및 `rectangleDifferences` 좌표와 `lineEnding: 4` (`OpenArrow`) 속성을 완벽하게 보강하여 뷰어에서 본문 텍스트를 가리키는 화살표 주석이 정확히 렌더링되도록 구현함.
-  - `app/backend/api/jobs.py`: 주석 생성 엔드포인트의 기본 `mode` 디폴트값을 `"highlight"`에서 `"both"`(하이라이트 + 외곽 여백 화살표 콜아웃)로 상향 조정하여 본문 텍스트 위에 주석 코멘트가 바로 겹쳐서 가려지던 시각적 불편을 완전히 해소함.
+  - `app/ai-backend/src/chat/route.ts` & `app/backend/core/prompts.py`: 사용자 요청 발화 의도(Intent) 구분 규칙을 강화함.
+    1. 사용자가 **"주석", "메모", "콜아웃", "설명"**으로 요청하는 경우 → **화살표 코멘트 주석 (`add_text_callout`)**을 생성하여 본문 텍스트에 글자가 겹치지 않고 외곽 텍스트 박스로 지시선이 그려지도록 지시.
+    2. 사용자가 **"형광펜", "하이라이트", "강조", "색칠"**로 명시하는 경우 → **순수 형광펜 하이라이트 (`add_text_highlight` + `comment: ""`)**를 생성하여 코멘트 오버레이 글자 없이 칠만 적용하도록 규칙 명시.
+  - `app/backend/api/jobs.py`: 주석 생성 엔드포인트의 기본 `mode` 디폴트값을 `"highlight"`에서 `"both"`(하이라이트 + 외곽 여백 화살표 콜아웃)로 상향 조정함.
 - **검증**: `cd app/ai-backend && npm run build` → tsc 성공, `cd app/backend && venv/bin/python -m pytest tests/ -q` → 241 passed.
+
 
 ### AI 주석 도구 배치(목록) 요청 지원 및 시스템 프롬프트 가이드 갱신 — 2026-07-22
 

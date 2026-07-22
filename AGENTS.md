@@ -8,6 +8,12 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 서처블 PDF 텍스트 레이어 정밀도 실험 롤백 (Revert) — 2026-07-22
+
+- **원인 분석**: PyMuPDF `insert_text()`에 `morph` 행렬(Horizontal Scaling)을 적용할 경우, PyMuPDF 내부 TextPage 및 `search_for()` 검색 좌표계 파싱 시 Y축 오프셋 및 BBox 반전/트래킹 왜곡이 유발되어 AI/사용자 주석 렌더링 박스가 원본 텍스트 위치에서 크게 튕겨 나가는 회귀 현상 발견.
+- **조치 내용**: PyMuPDF `morph` matrix 적용 및 parsing_res_list 세로 분할 로직을 즉시 Revert하여 이전의 검증된 텍스트 레이어 구현으로 복구.
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 241 passed.
+
 ### FreeTextCallout 화살표 리더 라인 연동 및 주석/형광펜 발화 의도 규칙 반영 — 2026-07-22
 
 - **기능 변경**:

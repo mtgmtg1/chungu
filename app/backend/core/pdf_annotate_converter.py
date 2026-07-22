@@ -974,6 +974,7 @@ def _collect_targets_with_searchable_text(
         return [], mode, comment_mode
 
     targets: list[AnnotationTarget] = []
+    page_rect_map = _page_rects(pdf_bytes)
     text_searcher = TextLayerSearcher(pdf_bytes)
     try:
         for m in matches:
@@ -995,7 +996,10 @@ def _collect_targets_with_searchable_text(
             for page_no, rects in found_by_page:
                 if not rects:
                     continue
-                bounding_rect = _union_rects(rects)
+                p_rect = page_rect_map.get(page_no)
+                p_h = p_rect.height if p_rect else 842.0
+                pdf_user_rects = [(rx0, p_h - ry1, rx1, p_h - ry0) for rx0, ry0, rx1, ry1 in rects]
+                bounding_rect = _union_rects(pdf_user_rects)
                 targets.append(AnnotationTarget(
                     page_no=page_no,
                     bbox_pdf=bounding_rect,
@@ -1003,7 +1007,7 @@ def _collect_targets_with_searchable_text(
                     color=color,
                     callout_color=callout_color,
                     opacity=opacity,
-                    search_rects_pdf=rects,
+                    search_rects_pdf=pdf_user_rects,
                     search_text=text,
                 ))
     finally:
@@ -1033,6 +1037,7 @@ def _collect_targets_with_vision_llm(
     targets: list[AnnotationTarget] = []
     mode: str | None = None
     comment_mode: str | None = None
+    page_rect_map = _page_rects(pdf_bytes)
     text_searcher = TextLayerSearcher(pdf_bytes)
     try:
         for page_no, img_path in sorted(image_paths.items()):
@@ -1075,7 +1080,10 @@ def _collect_targets_with_vision_llm(
                         logger.info(f"[pdf_annotate] page={page_no} 텍스트 레이어 검색 실패: '{text[:50]}'")
                         continue
 
-                    bounding_rect = _union_rects(found)
+                    p_rect = page_rect_map.get(page_no)
+                    p_h = p_rect.height if p_rect else 842.0
+                    pdf_user_found = [(rx0, p_h - ry1, rx1, p_h - ry0) for rx0, ry0, rx1, ry1 in found]
+                    bounding_rect = _union_rects(pdf_user_found)
                     targets.append(AnnotationTarget(
                         page_no=page_no,
                         bbox_pdf=bounding_rect,
@@ -1083,7 +1091,7 @@ def _collect_targets_with_vision_llm(
                         color=color,
                         callout_color=callout_color,
                         opacity=opacity,
-                        search_rects_pdf=found,
+                        search_rects_pdf=pdf_user_found,
                         search_text=text,
                     ))
             except Exception as e:

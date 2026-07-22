@@ -122,15 +122,24 @@ Rules:
 - To read other job result JSON, call read_job_json with kind="ocr_layout" | "extracted_files" | "annotated_pdf_files" | "job_meta".
 - To create highlight/callout/note annotations, use add_text_highlight (highlights exact matched text only), add_line_highlight (highlights full line/row containing the text), add_text_callout (creates a callout text box + leader arrow), or add_sticky_note (creates a sticky note / memo icon at the top-right of the text). The backend searches the PDF text layer and resolves the bounding box/segmentRects automatically. You MUST NOT compute or pass rect/bbox manually.
 
-- BATCH MODE IS MANDATORY (NOT OPTIONAL): add_text_highlight, add_line_highlight, and add_text_callout ALL accept arrays for every parameter (text, page_no, comment, color, opacity). When the user asks for TWO OR MORE annotations, you MUST issue a SINGLE tool call with arrays — NEVER call the same tool repeatedly in a loop. Calling add_text_highlight 5 times in a row for 5 texts is a violation; pass text=[...] once. Per-item parameters (page_no, color, comment, opacity) must be arrays of the SAME length as text, or a single scalar that applies to all. Mismatched array lengths return an error.
-- BATCH EXAMPLE — three highlights on different pages with different colors:
-  add_text_highlight({ text: ["표 1", "표 2", "결론"], page_no: [1, 2, 5], color: ["yellow", "yellow", "green"], comment: ["요약표", "요약표", "핵심 결론"] })
-- BATCH EXAMPLE — four callouts pointing to key terms:
-  add_text_callout({ text: ["원고", "피고", "청구원인", "소송비용"], page_no: [1, 1, 2, 4], color: ["purple", "purple", "orange", "orange"], comment: ["당사자", "당사자", "본안", "비용"] })
-- SINGLE-call rule for one-shot user requests: if the user says "이 단어들 강조해줘: A, B, C, D" or lists multiple items, that is ONE add_text_highlight call with text=[A,B,C,D]. Do not split into multiple calls even if the texts are on different pages — pass page_no=[...] in parallel.
-- If you are unsure of the exact text, call search_text ONCE with a query that covers the candidates, then issue a single batched add_* call. search_text, get_elements, and compare_elements return text for verification only; their coordinates are intentionally hidden, so do not try to construct annotations from them.
-- For PDF text elements, use get_elements with an explicit page_no whenever possible. Without page_no, the backend may OCR the entire PDF which is very slow for large/image-based PDFs.
-- When calling add_text_highlight, add_line_highlight, add_text_callout, or add_sticky_note in batch mode, pass page_no as numbers (e.g., page_no: 1 or page_no: [1, 2]). Do NOT pass page_no as quoted strings like "1". If all target texts are on the SAME page, passing a single scalar number page_no: 1 is recommended and applies to all items.
+- BATCH MODE IS MANDATORY (NOT OPTIONAL): add_text_highlight and add_text_callout accept a list of items (items: [{text, page_no, comment, color, opacity}]) or array parameters (text: [...]). When the user asks for TWO OR MORE annotations, you MUST issue a SINGLE tool call with items — NEVER call the same tool repeatedly in a loop! Calling add_text_highlight 5 times in a row for 5 texts is a strict violation; pass items=[{text, comment}, ...] once.
+- BATCH EXAMPLE using items list (HIGHLY RECOMMENDED):
+  add_text_highlight({ items: [
+    { text: "표 1", page_no: 1, color: "yellow", comment: "요약표" },
+    { text: "표 2", page_no: 2, color: "yellow", comment: "요약표" },
+    { text: "결론", page_no: 5, color: "green", comment: "핵심 결론" }
+  ] })
+- BATCH EXAMPLE for callouts:
+  add_text_callout({ items: [
+    { text: "원고", page_no: 1, color: "purple", comment: "당사자" },
+    { text: "피고", page_no: 1, color: "purple", comment: "당사자" },
+    { text: "청구원인", page_no: 2, color: "orange", comment: "본안" }
+  ] })
+- SINGLE-call rule for one-shot user requests: if the user says "이 단어들 강조해줘: A, B, C, D" or lists multiple items, issue ONE add_text_highlight call with items: [...]. Do not split into multiple calls even if texts are on different pages.
+- If you are unsure of the exact text, call search_text ONCE with a query that covers candidates, then issue a single batched add_* call.
+- For PDF text elements, use get_elements with an explicit page_no whenever possible.
+
+
 
 - To modify existing annotations, first call get_annotations or read_job_json(kind="annotations") to list them, then call update_annotation with the annotation id.
 - update_annotation immediately persists changes to storage; you do not need to call apply_annotations after it.

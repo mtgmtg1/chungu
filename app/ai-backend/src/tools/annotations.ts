@@ -95,6 +95,50 @@ interface CachedElements {
   elements: Array<Record<string, unknown>>;
 }
 
+interface BatchItemInput {
+  text: string;
+  page_no?: number;
+  comment?: string;
+  color?: string;
+  opacity?: number;
+}
+
+function parseBatchInputs(input: {
+  items?: BatchItemInput[];
+  text?: string | string[];
+  page_no?: number | number[];
+  comment?: string | string[];
+  color?: string | string[];
+  opacity?: number | number[];
+}): BatchItemInput[] {
+  if (Array.isArray(input.items) && input.items.length > 0) {
+    return input.items.filter((item) => item && typeof item.text === 'string' && item.text.trim());
+  }
+  if (Array.isArray(input.text)) {
+    return input.text
+      .map((t, idx) => ({
+        text: String(t || '').trim(),
+        page_no: Array.isArray(input.page_no) ? input.page_no[idx] : (typeof input.page_no === 'number' ? input.page_no : undefined),
+        comment: Array.isArray(input.comment) ? input.comment[idx] : (typeof input.comment === 'string' ? input.comment : ''),
+        color: Array.isArray(input.color) ? input.color[idx] : (typeof input.color === 'string' ? input.color : undefined),
+        opacity: Array.isArray(input.opacity) ? input.opacity[idx] : (typeof input.opacity === 'number' ? input.opacity : undefined),
+      }))
+      .filter((item) => item.text);
+  }
+  if (typeof input.text === 'string' && input.text.trim()) {
+    return [
+      {
+        text: input.text.trim(),
+        page_no: typeof input.page_no === 'number' ? input.page_no : undefined,
+        comment: typeof input.comment === 'string' ? input.comment : '',
+        color: typeof input.color === 'string' ? input.color : undefined,
+        opacity: typeof input.opacity === 'number' ? input.opacity : undefined,
+      },
+    ];
+  }
+  return [];
+}
+
 /**
  * [Flow: Step 1 (context에서 job_id, source_index, authHeaders 추출) -> Step 2 (pending 상태 초기화)
  *       -> Step 3 (도구 정의) -> Step 4 (도구 객체 반환)]
@@ -323,76 +367,125 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     add_text_highlight: tool({
-      description: 'Add a highlight annotation by specifying the exact text to highlight. The backend searches the PDF text layer and highlights all matching occurrences. Use search_text first if you are unsure of the exact wording.',
+      description: 'Add one or more highlight annotations. Accepts either a list of items (`items: [{text, page_no, comment, color, opacity}]`) to highlight multiple texts in a SINGLE batch tool call, or array/scalar parameters (`text: [...]` or `text: "..."`). ALWAYS prefer sending multiple highlights in a single call using `items`.',
       inputSchema: z.object({
-        text: z.string().describe('Exact text string to highlight'),
-        page_no: z.number().optional().describe('1-based page number to limit the search. Searches all pages if omitted'),
-        comment: z.string().describe('Annotation comment'),
-        color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])
-          .default('yellow')
-          .describe('Color name'),
-        opacity: z.number().min(0).max(1).optional().describe('Highlight opacity (0.0~1.0)'),
+        items: z.array(
+          z.object({
+            text: z.string().describe('Exact text string to highlight'),
+            page_no: z.number().optional().describe('1-based page number'),
+            comment: z.string().optional().describe('Annotation comment'),
+            color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']).optional().describe('Color name'),
+            opacity: z.number().min(0).max(1).optional().describe('Highlight opacity (0.0~1.0)'),
+          })
+        ).optional().describe('List of highlight items to add in a single batch'),
+        text: z.union([z.string(), z.array(z.string())]).optional().describe('Exact text or array of text strings to highlight'),
+        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number or array of page numbers'),
+        comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment or array of comments'),
+        color: z.union([
+          z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),
+          z.array(z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])),
+        ]).optional().describe('Color name or array of color names'),
+        opacity: z.union([z.number(), z.array(z.number())]).optional().describe('Highlight opacity or array of opacities'),
       }),
-      execute: async ({ text, page_no, comment, color, opacity }) => {
-        const { matches } = await proofApi.searchText(jobId, text, page_no, authHeaders);
-        const validMatches = (matches || []).filter(
-          (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
-        );
-        if (validMatches.length === 0) {
-          return { error: `Text not found for highlight: '${text}'. Call search_text first to verify exact wording.` };
+      execute: async (input) => {
+        const itemsToProcess = parseBatchInputs(input as any);
+        if (itemsToProcess.length === 0) {
+          return { error: 'No valid text provided for add_text_highlight. Pass text or items array.' };
         }
-        const bboxes = validMatches.map((m) => (m as any).bbox_pdf as [number, number, number, number]);
-        const pageNos = validMatches.map((m) => Number((m as any).page_no || page_no || 1));
-        const pageNo = pageNos[0];
-        const target: AnnotationTarget = {
-          page_no: pageNo,
-          bbox_pdf: _unionRects(bboxes),
-          search_rects_pdf: bboxes,
-          search_text: text,
-          comment,
-          color: COLOR_PALETTE[color] || DEFAULT_HIGHLIGHT_COLOR,
-          opacity: opacity ?? DEFAULT_OPACITY,
+        const results = [];
+        for (const item of itemsToProcess) {
+          const { matches } = await proofApi.searchText(jobId, item.text, item.page_no, authHeaders);
+          const validMatches = (matches || []).filter(
+            (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
+          );
+          if (validMatches.length === 0) {
+            results.push({ text: item.text, success: false, error: `Text not found for highlight: '${item.text}'` });
+            continue;
+          }
+          const bboxes = validMatches.map((m) => (m as any).bbox_pdf as [number, number, number, number]);
+          const pageNos = validMatches.map((m) => Number((m as any).page_no || item.page_no || 1));
+          const pageNo = pageNos[0];
+          const colorKey = item.color || 'yellow';
+          const target: AnnotationTarget = {
+            page_no: pageNo,
+            bbox_pdf: _unionRects(bboxes),
+            search_rects_pdf: bboxes,
+            search_text: item.text,
+            comment: item.comment || '',
+            color: COLOR_PALETTE[colorKey] || DEFAULT_HIGHLIGHT_COLOR,
+            opacity: item.opacity ?? DEFAULT_OPACITY,
+          };
+          const id = `ai-${Date.now()}-${pending.length}`;
+          pending.push({ id, target, type: 'highlight' });
+          results.push({ ok: true, id, text: item.text, match_count: validMatches.length, page_no: pageNo });
+        }
+        return {
+          ok: true,
+          added_count: results.filter((r) => r.ok).length,
+          results,
         };
-        const id = `ai-${Date.now()}-${pending.length}`;
-        pending.push({ id, target, type: 'highlight' });
-        return { ok: true, id, text, match_count: validMatches.length, page_no: pageNo };
       },
     }),
 
     add_text_callout: tool({
-      description: 'Add a callout (text box + arrow) annotation by specifying the exact text to point to. The backend searches the PDF text layer and places the callout at the matching text. Use search_text first if you are unsure of the exact wording.',
+      description: 'Add one or more callout (text box + leader arrow) annotations. Accepts either a list of items (`items: [{text, page_no, comment, color, opacity}]`) to create multiple callouts in a SINGLE batch tool call, or array/scalar parameters (`text: [...]` or `text: "..."`). ALWAYS prefer sending multiple callouts in a single call using `items`.',
       inputSchema: z.object({
-        text: z.string().describe('Exact text string to point the callout to'),
-        page_no: z.number().optional().describe('1-based page number to limit the search. Searches all pages if omitted'),
-        comment: z.string().describe('Annotation comment'),
-        color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])
-          .default('purple')
-          .describe('Color name'),
-        opacity: z.number().min(0).max(1).optional().describe('Callout opacity (0.0~1.0)'),
+        items: z.array(
+          z.object({
+            text: z.string().describe('Exact text string to point callout to'),
+            page_no: z.number().optional().describe('1-based page number'),
+            comment: z.string().optional().describe('Annotation comment'),
+            color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']).optional().describe('Color name'),
+            opacity: z.number().min(0).max(1).optional().describe('Callout opacity (0.0~1.0)'),
+          })
+        ).optional().describe('List of callout items to add in a single batch'),
+        text: z.union([z.string(), z.array(z.string())]).optional().describe('Exact text or array of text strings to point callout to'),
+        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number or array of page numbers'),
+        comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment or array of comments'),
+        color: z.union([
+          z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),
+          z.array(z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])),
+        ]).optional().describe('Color name or array of color names'),
+        opacity: z.union([z.number(), z.array(z.number())]).optional().describe('Callout opacity or array of opacities'),
       }),
-      execute: async ({ text, page_no, comment, color, opacity }) => {
-        const { matches } = await proofApi.searchText(jobId, text, page_no, authHeaders);
-        const first = (matches || []).find(
-          (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
-        );
-        if (!first) {
-          return { error: `Text not found for callout: '${text}'. Call search_text first to verify exact wording.` };
+      execute: async (input) => {
+        const itemsToProcess = parseBatchInputs(input as any);
+        if (itemsToProcess.length === 0) {
+          return { error: 'No valid text provided for add_text_callout. Pass text or items array.' };
         }
-        const bbox = (first as any).bbox_pdf as [number, number, number, number];
-        const pageNo = Number((first as any).page_no || page_no || 1);
-        const target: AnnotationTarget = {
-          page_no: pageNo,
-          bbox_pdf: bbox,
-          search_text: text,
-          comment,
-          color: COLOR_PALETTE[color] || DEFAULT_CALLOUT_COLOR,
-          opacity: opacity ?? DEFAULT_OPACITY,
+        const results = [];
+        for (const item of itemsToProcess) {
+          const { matches } = await proofApi.searchText(jobId, item.text, item.page_no, authHeaders);
+          const first = (matches || []).find(
+            (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
+          );
+          if (!first) {
+            results.push({ text: item.text, success: false, error: `Text not found for callout: '${item.text}'` });
+            continue;
+          }
+          const bbox = (first as any).bbox_pdf as [number, number, number, number];
+          const pageNo = Number((first as any).page_no || item.page_no || 1);
+          const colorKey = item.color || 'purple';
+          const target: AnnotationTarget = {
+            page_no: pageNo,
+            bbox_pdf: bbox,
+            search_text: item.text,
+            comment: item.comment || '',
+            color: COLOR_PALETTE[colorKey] || DEFAULT_CALLOUT_COLOR,
+            opacity: item.opacity ?? DEFAULT_OPACITY,
+          };
+          const id = `ai-${Date.now()}-${pending.length}`;
+          pending.push({ id, target, type: 'callout' });
+          results.push({ ok: true, id, text: item.text, page_no: pageNo });
+        }
+        return {
+          ok: true,
+          added_count: results.filter((r) => r.ok).length,
+          results,
         };
-        const id = `ai-${Date.now()}-${pending.length}`;
-        pending.push({ id, target, type: 'callout' });
-        return { ok: true, id, text, page_no: pageNo };
       },
     }),
+
 
     remove_annotation: tool({
       description: 'Remove an existing AI annotation. User approval is required before deletion.',

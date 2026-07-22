@@ -3290,14 +3290,14 @@ def save_user_annotations(
     user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """[Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (주석 유효성 검사 및 중복 제거)
+    """[Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (주석 유효성 검사 및 removals 추출)
           -> Step 3 (source_index에 따른 JSON 경로 결정)
           -> Step 4 (input_space가 pdf_user이면 device-space로 변환)
-          -> Step 5 (AI 주석 JSON과 병합) -> Step 6 (JSON 오버레이 저장)
-          -> Step 7 (preview 캐시 무효화 후 OK 반환)]
+          -> Step 5 (기존 주석 JSON 다운로드 및 ID 기반 누적 병합/삭제)
+          -> Step 6 (JSON 오버레이 저장) -> Step 7 (preview 캐시 무효화 후 OK 반환)]
 
-    사용자가 EmbedPDF 뷰어에서 추가/편집한 주석을 JSON 오버레이로만 저장한다.
-    PDF flatten 다운로드는 EmbedPDF 브라우저 내 export 기능(saveAsCopy)을 사용한다.
+    사용자 및 AI 에이전트가 추가/편집/삭제한 주석을 JSON 오버레이로 누적 병합(Accumulate)하여 저장한다.
+    기존 저장소의 주석을 ID 기준으로 보존하고, 신규 주석은 추가/업데이트하며, removals 목록에 지정된 주석만 삭제한다.
     """
     job = db.get(Job, job_id)
     _require_job_access(job, user)
@@ -3306,6 +3306,9 @@ def save_user_annotations(
     source_index = payload.get("source_index")
     annotations = payload.get("annotations")
     input_space = payload.get("input_space", "device")
+    removals = payload.get("removals", [])
+    if not isinstance(removals, list):
+        removals = []
     if not isinstance(source_index, int) or not isinstance(annotations, list):
         raise HTTPException(status_code=400, detail="Invalid source_index or annotations")
     if input_space not in ("device", "pdf_user"):
@@ -3321,8 +3324,8 @@ def save_user_annotations(
     valid_annotations = [a for a in annotations if _has_annotation(a)]
     valid_annotations = _deduplicate_annotations(valid_annotations)
     valid_count = len(valid_annotations)
-    logger.info(f"[save_user_annotations] {job_id} source_index={source_index} raw={len(annotations)} valid={valid_count}")
-    if valid_count == 0:
+    logger.info(f"[save_user_annotations] {job_id} source_index={source_index} raw={len(annotations)} valid={valid_count} removals={len(removals)}")
+    if valid_count == 0 and len(removals) == 0:
         return {"ok": True, "annotations_json_storage_path": None}
 
     # source_index >= 0: 파일별 사용자 주석 JSON(user_annotations_{source_index}.json)에 저장
@@ -3361,66 +3364,52 @@ def save_user_annotations(
 
         valid_annotations = _deduplicate_annotations(valid_annotations)
 
-        if source_index >= 0 and entry is not None:
-            # [Flow: 기존 AI 주석 JSON과 병합]
-            # 사용자가 AI 주석을 편집/삭제한 경우를 감지해 보존한다.
-            try:
-                existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
-                existing = json.loads(existing_bytes.decode("utf-8"))
-                existing = _normalize_annotation_json_to_list(existing)
-            except Exception:
-                existing = []
+        # [Flow: 기존 주석 JSON 다운로드 및 ID 기반 병합]
+        try:
+            existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
+            existing_list = json.loads(existing_bytes.decode("utf-8"))
+            existing = _normalize_annotation_json_to_list(existing_list)
+        except Exception:
+            existing = []
 
-            existing_by_id: dict[str, dict] = {}
-            for a in existing:
-                aid = _annotation_id(a)
-                if aid.startswith("backend-"):
-                    existing_by_id[aid] = a
+        existing_by_id: dict[str, dict] = {}
+        for a in existing:
+            aid = _annotation_id(a)
+            if aid:
+                existing_by_id[aid] = a
 
-            ai_annotations: list[dict] = []
-            user_annotations: list[dict] = []
-            for a in valid_annotations:
-                if not isinstance(a, dict):
-                    continue
-                aid = _annotation_id(a)
-                if aid.startswith("backend-"):
-                    orig = existing_by_id.get(aid)
-                    if orig is None:
-                        ai_annotations.append(a)
-                    elif _is_annotation_edited(a, orig):
-                        _mark_user_edited(a)
-                        ai_annotations.append(a)
-                        logger.info(f"[save_user_annotations] {job_id} AI 주석 편집 감지: {aid}")
-                    else:
-                        ai_annotations.append(orig)
-                else:
-                    user_annotations.append(a)
+        # removals 처리: 명시적으로 삭제 요청된 주석 제거
+        for rid in removals:
+            if isinstance(rid, str) and rid in existing_by_id:
+                logger.info(f"[save_user_annotations] {job_id} 명시적 주석 삭제 처리: {rid}")
+                del existing_by_id[rid]
 
-            exported_ai_ids = {_annotation_id(a) for a in ai_annotations}
-            for aid, orig in existing_by_id.items():
-                if aid not in exported_ai_ids:
-                    logger.info(f"[save_user_annotations] {job_id} AI 주석 삭제 감지: {aid}")
+        # valid_annotations 수신분 병합 (기존 ID가 있으면 편집 체크 후 업데이트, 없으면 추가)
+        for a in valid_annotations:
+            if not isinstance(a, dict):
+                continue
+            aid = _annotation_id(a)
+            if not aid:
+                continue
+            orig = existing_by_id.get(aid)
+            if orig is not None and _is_annotation_edited(a, orig):
+                _mark_user_edited(a)
+                logger.info(f"[save_user_annotations] {job_id} 주석 편집 감지: {aid}")
+            existing_by_id[aid] = a
 
-            merged = ai_annotations + user_annotations
+        merged = list(existing_by_id.values())
+        merged = _deduplicate_annotations(merged)
 
-            client.storage.from_("results").upload(
-                annotations_json_storage_path,
-                json.dumps(merged, ensure_ascii=False).encode("utf-8"),
-                {"content-type": "application/json", "upsert": "true"},
-            )
-            if entry.get("annotations_json_storage_path") != annotations_json_storage_path:
-                entry["annotations_json_storage_path"] = annotations_json_storage_path
-                locked_job.annotated_pdf_files = entries
-                flag_modified(locked_job, "annotated_pdf_files")
-                db.commit()
-        else:
-            user_annotations = [a for a in valid_annotations if _is_user_annotation(a)]
-            user_annotations = _deduplicate_annotations(user_annotations)
-            client.storage.from_("results").upload(
-                annotations_json_storage_path,
-                json.dumps(user_annotations, ensure_ascii=False).encode("utf-8"),
-                {"content-type": "application/json", "upsert": "true"},
-            )
+        client.storage.from_("results").upload(
+            annotations_json_storage_path,
+            json.dumps(merged, ensure_ascii=False).encode("utf-8"),
+            {"content-type": "application/json", "upsert": "true"},
+        )
+        if entry is not None and entry.get("annotations_json_storage_path") != annotations_json_storage_path:
+            entry["annotations_json_storage_path"] = annotations_json_storage_path
+            locked_job.annotated_pdf_files = entries
+            flag_modified(locked_job, "annotated_pdf_files")
+            db.commit()
 
         cache.invalidate_pattern(f"preview:{job_id}:*")
         return {

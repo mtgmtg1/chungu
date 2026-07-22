@@ -534,20 +534,10 @@ export function buildAnnotationTools(context: AnnotationContext) {
           return { saved: false, reason: 'No annotation changes to save.' };
         }
 
-        if (pending.length === 0) {
-          // 현재 remove_annotation은 승인 대기 상태만 기록하고 실제 삭제 API를 호출하지 않는다.
-          // 빈 배열을 저장 API에 보내면 백엔드가 400을 반환하므로 명시적인 결과를 반환한다.
-          return {
-            saved: false,
-            removals: removals.length,
-            reason: 'Deletion requests are pending approval and no new annotations were added, so nothing was saved.',
-          };
-        }
-
         try {
           // [Flow: AI 백엔드는 좌표 변환을 하지 않고 PDF user-space 그대로 전송
           //       -> 변환은 FastAPI /jobs/{id}/user-annotations에서 JSON으로 저장하며 수행]
-          console.log(`[apply_annotations] job=${jobId} count=${pending.length} input_space=pdf_user`);
+          console.log(`[apply_annotations] job=${jobId} count=${pending.length} removals=${removals.length} input_space=device`);
           const annotations = pending.map((pendingAnnotation) => _buildAnnotationItem(pendingAnnotation));
           let saveSourceIndex = sourceIndex;
           let usedFallback = false;
@@ -555,12 +545,12 @@ export function buildAnnotationTools(context: AnnotationContext) {
           // [Flow: Step 1 (source_index로 주석 JSON 저장) -> Step 2 (404/실패 감지)
           //       -> Step 3 (source_index=-1로 원본 PDF의 JSON 저장)]
           try {
-            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'device', authHeaders);
+            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'device', authHeaders, removals);
           } catch (firstError) {
             if (saveSourceIndex < 0) throw firstError;
             saveSourceIndex = -1;
             usedFallback = true;
-            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'device', authHeaders);
+            await proofApi.saveAnnotations(jobId, saveSourceIndex, annotations, 'device', authHeaders, removals);
           }
 
           // 같은 실행에서 모델이 apply_annotations를 반복 호출해도 중복 저장하지 않는다.

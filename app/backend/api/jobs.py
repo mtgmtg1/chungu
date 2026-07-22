@@ -42,7 +42,7 @@ def get_current_user_or_api_key(
     wrapper dependency.
     """
     return auth[0]
-from ..core import archive_handler, cache, converter, docling_client, hwp_converter, media_loader, office_converter, pdf_annotate_converter, pdf_preview_converter, pdf_user_annotator, points_service, subscription_service, supabase_client
+from ..core import archive_handler, cache, converter, docling_client, hwp_converter, media_loader, office_converter, pdf_preview_converter, pdf_user_annotator, points_service, subscription_service, supabase_client
 from ..core.markdown_image_rewriter import rewrite_inline_images_to_storage
 
 
@@ -1556,7 +1556,6 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
         }
         # 이미지에 searchable PDF가 있으면 preview_url을 대체 (텍스트 검색/선택 가능)
         if ftype == "image":
-            searchable_applied = False
             searchable_path = info.get("searchable_pdf_storage_path")
             if searchable_path:
                 try:
@@ -1565,19 +1564,8 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
                     )
                     if searchable_url:
                         item["preview_url"] = searchable_url
-                        searchable_applied = True
                 except Exception as e:
                     logger.warning(f"[source_files] 이미지 searchable PDF URL 생성 실패: {e}")
-            # [Flow: searchable PDF가 없으면 이미지를 PDF로 변환하여 embedpdf 뷰어로 표시]
-            if not searchable_applied:
-                try:
-                    preview_pdf_url = pdf_preview_converter.get_preview_pdf_url(
-                        storage_path, source_bucket=bucket, expires_in=3600
-                    )
-                    if preview_pdf_url:
-                        item["preview_url"] = preview_pdf_url
-                except Exception as e:
-                    logger.warning(f"[source_files] 이미지 PDF 변환 실패 ({storage_path}): {e}")
         return item
     except Exception:
         return None
@@ -1618,22 +1606,13 @@ def _source_files(job: Job) -> list[dict]:
     # 원본 PDF에 내장된 주석이 있으면 clean PDF로 교체하고, 추출한 주석을 JSON 오버레이로
     # 초기화한다. 이렇게 하면 embedpdf가 PDF 내장 주석을 중복 렌더링/저장하는 문제를
     # 방지할 수 있다. docx/hwp는 여기서 PDF로 변환되지 않으므로 제외한다.
-    # [Flow: 멀티파일 searchable PDF 적용 — 각 원본 PDF마다 extracted_files[i].searchable_pdf_storage_path 우선]
-    # 멀티파일 업로드 시 각 PDF별로 개별 searchable PDF가 생성되어 extracted_files에 저장된다.
-    # job.searchable_pdf_storage_path는 첫 번째 PDF에 대한 것이므로 폴백으로만 사용한다.
+    # [Flow: searchable PDF는 첫 번째 원본 PDF에만 적용 — job.searchable_pdf_storage_path는
+    # Job 레벨 단일 값이므로, 모든 PDF 항목에 덮어쓰면 새로 추가된 파일이 원본 PDF로 보이는 문제 발생]
     first_original_pdf_index = next(
         (i for i, item in enumerate(source_files)
          if item.get("source_kind") == "original" and item.get("type") == "pdf"),
         None,
     )
-    # [Flow: extracted_files에서 파일별 searchable PDF 경로 조회]
-    extracted = list(job.extracted_files or [])
-    per_file_searchable: dict[int, str] = {}
-    for idx, info in enumerate(extracted):
-        if isinstance(info, dict) and info.get("type") == "pdf":
-            sp = info.get("searchable_pdf_storage_path")
-            if sp:
-                per_file_searchable[idx] = sp
     for i, item in enumerate(source_files):
         if item.get("source_kind") != "original" or item.get("type") != "pdf":
             continue
@@ -1645,27 +1624,16 @@ def _source_files(job: Job) -> list[dict]:
             item["preview_url"] = clean_url
         if extracted_annotations:
             # [Flow: 파일별 주석 분리 — source_index를 전달하여 해당 파일의 주석 JSON에 저장]
-            _initialize_user_annotations_json(job.id, extracted_annotations, item.get("source_index", 0), source_pdf_storage_path=storage_path)
+            _initialize_user_annotations_json(job.id, extracted_annotations, item.get("source_index", 0))
 
-        # [Flow: 파일별 searchable PDF 적용 — extracted_files[i].searchable_pdf_storage_path 우선]
+        # [Flow: searchable PDF가 있으면 미리보기 URL을 대체 — 첫 번째 원본 PDF에만 적용]
         # 다운로드용 url은 원본 clean PDF를 유지하고, preview_url만 searchable PDF로 변경.
         # 이렇게 하면 사용자는 뷰어에서 텍스트 검색/선택이 가능한 PDF를 보지만,
         # 다운로드는 원본 PDF를 받는다.
-        # 멀티파일에서는 각 PDF별로 개별 searchable PDF가 생성되므로 source_index로 조회.
-        # 단일 PDF job이나 과거 job(개별 경로가 없는 경우)은 job.searchable_pdf_storage_path로 폴백.
-        file_source_index = item.get("source_index", 0)
-        per_file_sp = per_file_searchable.get(file_source_index)
-        if per_file_sp:
-            try:
-                searchable_url = supabase_client.get_signed_download_url(
-                    per_file_sp, bucket="pdfs", expires_in=3600
-                )
-                if searchable_url:
-                    item["preview_url"] = searchable_url
-            except Exception as e:
-                logger.warning(f"[source_files:{job.id}] 파일별 searchable PDF URL 생성 실패: {e}")
-        elif i == first_original_pdf_index and job.searchable_pdf_storage_path:
-            # 폴백: 파일별 searchable PDF가 없고 첫 번째 PDF면 job.searchable_pdf_storage_path 사용
+        # job.searchable_pdf_storage_path는 단일 PDF Job의 원본에 대한 것이므로,
+        # 첫 번째 원본 PDF에만 적용한다. 추가로 업로드된 파일은 _build_source_file_item에서
+        # 개별 searchable_pdf_storage_path가 설정된 경우에만 searchable PDF를 사용한다.
+        if i == first_original_pdf_index and job.searchable_pdf_storage_path:
             try:
                 searchable_url = supabase_client.get_signed_download_url(
                     job.searchable_pdf_storage_path, bucket="pdfs", expires_in=3600
@@ -1752,41 +1720,36 @@ def _source_files(job: Job) -> list[dict]:
 
 
 def _deduplicate_annotations(annotations: list[dict]) -> list[dict]:
-    """[Flow: Step 1 (각 주석의 id 또는 pageIndex/rect/type/contents 기준 키 생성)
+    """[Flow: Step 1 (각 주석의 pageIndex/rect/type/contents 기준 키 생성)
           -> Step 2 (이미 본 키는 제거) -> Step 3 (중복 제거된 목록 반환)]
 
-    EmbedPDF 뷰어에서 exportAnnotations() 시 PDF 내장 주석이 반복 포함되거나
-    동일한 id 또는 pageIndex/rect/type/contents를 가진 주석이 누적되는 것을 방지한다.
+    EmbedPDF 뷰어에서 exportAnnotations() 시 PDF 내장 주석이 반복 포함되면서
+    동일한 pageIndex/rect/type/contents를 가진 주석이 누적되는 경우가 있다.
+    이런 중복을 제거해 user_annotations.json이 계속 불어나는 것을 막는다.
     """
     seen: set[str] = set()
     result: list[dict] = []
-    for item in reversed(annotations):
+    for item in annotations:
         if not isinstance(item, dict):
             continue
         a = item.get("annotation") if "annotation" in item else item
         if not isinstance(a, dict):
             continue
-        aid = _annotation_id(item)
-        if aid:
-            key = f"id:{aid}"
-        else:
-            key = json.dumps(
-                {
-                    "pageIndex": a.get("pageIndex"),
-                    "rect": a.get("rect"),
-                    "type": a.get("type"),
-                    "contents": a.get("contents", ""),
-                },
-                sort_keys=True,
-                ensure_ascii=False,
-            )
+        key = json.dumps(
+            {
+                "pageIndex": a.get("pageIndex"),
+                "rect": a.get("rect"),
+                "type": a.get("type"),
+                "contents": a.get("contents", ""),
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+        )
         if key in seen:
             continue
         seen.add(key)
         result.append(item)
-    result.reverse()
     return result
-
 
 
 def _annotation_id(item: dict) -> str:
@@ -1806,108 +1769,37 @@ def _merge_annotation_jsons(
     ai_annotations_path: str | None,
     user_annotations_path: str,
 ) -> str | None:
-    """[Flow: Step 1 (AI/사용자 주석 JSON 다운로드) -> Step 2 (list 또는 canonical document 파싱)
-          -> Step 3 (좌표계 통일: canonical document가 있으면 canonical 기준, 없으면 device list)
-          -> Step 4 (위치 기반 중복 제거) -> Step 5 (merged_annotations.json 업로드)
-          -> Step 6 (signed URL 반환)]
+    """[Flow: Step 1 (AI 주석 JSON 다운로드) -> Step 2 (사용자 주석 JSON 다운로드)
+          -> Step 3 (위치 기반 중복 제거 후 병합) -> Step 4 (merged_annotations.json 업로드)
+          -> Step 5 (signed URL 반환)]
 
     AI 주석 JSON과 사용자 주석 JSON을 병합하여 원본 PDF 탭에서 한 번에 표시한다.
-    canonical document 형식(JSON object with annotations/page_dimensions/source_pdf_storage_path)과
-    legacy list 형식을 모두 지원한다.
     동일한 pageIndex/rect/type/contents를 가진 주석은 _deduplicate_annotations로
     하나만 남겨 색이 진해지는 중복 렌더링을 방지한다.
     """
     client = supabase_client.get_service_client()
-
-    def _load_annotations(path: str | None) -> tuple[str | None, dict[str, dict] | None, str | None, str | None, list[dict]]:
-        """[Flow: Step 1 (Storage에서 JSON 다운로드)
-              -> Step 2 (list이면 device-space 목록, dict이면 canonical header 추출)
-              -> Step 3 (coordinate_system/page_dimensions/source_pdf/annotations 반환)]"""
-        if not path:
-            return (None, None, None, None, [])
-        try:
-            raw_bytes = client.storage.from_("results").download(path)
-            data = json.loads(raw_bytes.decode("utf-8"))
-        except Exception:
-            return (None, None, None, None, [])
-        if isinstance(data, list):
-            return ("device", None, None, None, data)
-        if isinstance(data, dict):
-            _, page_dimensions, annotations = pdf_annotate_converter._extract_annotations_from_document(data)
-            return (
-                data.get("coordinate_system") or "device",
-                page_dimensions,
-                data.get("source_pdf_storage_path"),
-                data.get("source_pdf_bucket", "pdfs"),
-                annotations,
-            )
-        return (None, None, None, None, [])
-
-    def _page_rect_for_annotation(annotation: dict, page_dimensions: dict[str, dict]) -> fitz.Rect | None:
-        """[Flow: Step 1 (annotation의 pageIndex/page_no 추출)
-              -> Step 2 (page_dimensions에서 해당 페이지 크기 조회)
-              -> Step 3 (fitz.Rect(x0, y0, x0+width, y0+height) 반환)]"""
-        if not page_dimensions:
-            return None
-        inner = _annotation_inner(annotation) or annotation
-        page_index = inner.get("pageIndex") if isinstance(inner, dict) else None
-        if not isinstance(page_index, int):
-            return None
-        page_no = page_index + 1
-        dims = page_dimensions.get(str(page_no)) or page_dimensions.get(page_no)
-        if not isinstance(dims, dict):
-            return None
-        width = float(dims.get("width_pt", 0) or 0)
-        height = float(dims.get("height_pt", 0) or 0)
-        x0 = float(dims.get("x0", 0) or 0)
-        y0 = float(dims.get("y0", 0) or 0)
-        if width <= 0 or height <= 0:
-            return None
-        return fitz.Rect(x0, y0, x0 + width, y0 + height)
-
-    ai_space, ai_dims, ai_source, ai_bucket, ai_annotations = _load_annotations(ai_annotations_path)
-    user_space, user_dims, user_source, user_bucket, user_annotations = _load_annotations(user_annotations_path)
-
-    # [Flow: canonical 기준선 선택 — AI canonical document를 우선, 없으면 사용자 canonical document 사용]
-    reference_dimensions = ai_dims or user_dims
-    reference_source = ai_source or user_source
-    reference_bucket = ai_bucket or user_bucket or "pdfs"
-    output_space = ai_space if ai_space == "canonical" else (user_space if user_space == "canonical" else "device")
-
     merged: list[dict] = []
-    for space, annotations in ((ai_space, ai_annotations), (user_space, user_annotations)):
-        if not annotations:
-            continue
-        if space == output_space:
-            merged.extend(annotations)
-            continue
-        for a in annotations:
-            page_rect = _page_rect_for_annotation(a, reference_dimensions or {})
-            if not page_rect:
-                merged.append(a)
-                continue
-            try:
-                merged.append(pdf_user_annotator._convert_annotation_item(a, page_rect, space, output_space))
-            except Exception as e:
-                logger.warning(f"[_merge_annotation_jsons] {job_id} 주석 좌표 변환 실패: {e}")
-                merged.append(a)
-
+    if ai_annotations_path:
+        try:
+            ai_bytes = client.storage.from_("results").download(ai_annotations_path)
+            ai_list = json.loads(ai_bytes.decode("utf-8"))
+            if isinstance(ai_list, list):
+                merged.extend(ai_list)
+        except Exception:
+            pass
+    try:
+        user_bytes = client.storage.from_("results").download(user_annotations_path)
+        user_list = json.loads(user_bytes.decode("utf-8"))
+        if isinstance(user_list, list):
+            merged.extend(user_list)
+    except Exception:
+        pass
     merged = _deduplicate_annotations(merged)
     merged_path = f"{job_id}/merged_annotations.json"
     try:
-        if output_space == "canonical" and reference_dimensions and reference_source:
-            merged_document = pdf_annotate_converter._build_canonical_annotations_document(
-                merged,
-                source_pdf_storage_path=reference_source,
-                source_pdf_bucket=reference_bucket,
-                page_dimensions=reference_dimensions,
-            )
-            upload_payload = json.dumps(merged_document, ensure_ascii=False).encode("utf-8")
-        else:
-            upload_payload = json.dumps(merged, ensure_ascii=False).encode("utf-8")
         client.storage.from_("results").upload(
             merged_path,
-            upload_payload,
+            json.dumps(merged, ensure_ascii=False).encode("utf-8"),
             {"content-type": "application/json", "upsert": "true"},
         )
         return supabase_client.get_signed_download_url(
@@ -2079,20 +1971,17 @@ def _ensure_clean_source_pdf(
         return None, None
 
 
-def _initialize_user_annotations_json(job_id: str, annotations: list[dict], source_index: int = 0, source_pdf_storage_path: str | None = None) -> None:
-    """[Flow: Step 1 (기존 주석 JSON 다운로드)
-          -> Step 2 (list 또는 canonical object에서 annotations 추출/병합)
-          -> Step 3 (중복 제거) -> Step 4 (canonical document로 저장)
-          -> Step 5 (preview 캐시 무효화)]
+def _initialize_user_annotations_json(job_id: str, annotations: list[dict], source_index: int = 0) -> None:
+    """[Flow: Step 1 (기존 주석 JSON 다운로드) -> Step 2 (기존 주석과 병합)
+          -> Step 3 (중복 제거) -> Step 4 (저장 및 preview 캐시 무효화)]
 
     원본 PDF에서 추출한 내장 주석을 파일별 주석 JSON에 초기값으로 저장한다.
-    이미 파일이 존재하면 기존 주석과 병합한 뒤 중복을 제거하여 canonical JSON으로 덮어쓴다.
+    이미 파일이 존재하면 기존 주석과 병합한 뒤 중복을 제거하여 덮어쓴다.
 
     매개변수:
         job_id: Job ID
-        annotations: 초기화할 주석 목록 (canonical normalized)
+        annotations: 초기화할 주석 목록
         source_index: 파일 인덱스 (해당 인덱스의 user_annotations_{source_index}.json에 저장)
-        source_pdf_storage_path: page_dimensions를 결정할 원본 PDF storage path
     """
     # [Flow: 파일별 주석 분리 — source_index별로 분리된 JSON에 저장]
     storage_path = f"{job_id}/user_annotations_{source_index}.json"
@@ -2101,31 +1990,14 @@ def _initialize_user_annotations_json(job_id: str, annotations: list[dict], sour
         try:
             existing_bytes = client.storage.from_("results").download(storage_path)
             existing = json.loads(existing_bytes.decode("utf-8"))
-        except Exception:
-            existing = []
-
-        _, __, existing_annotations = pdf_annotate_converter._extract_annotations_from_document(existing)
-        annotations = existing_annotations + annotations
-        annotations = _deduplicate_annotations(annotations)
-
-        source_path = source_pdf_storage_path or f"{job_id}/original.pdf"
-        # [Flow: 기준 PDF에서 page_dimensions 획득 시도]
-        page_dimensions = {}
-        try:
-            pdf_bytes = client.storage.from_("pdfs").download(source_path)
-            page_dimensions = pdf_annotate_converter._page_dimensions(pdf_bytes)
+            if isinstance(existing, list):
+                annotations = existing + annotations
         except Exception:
             pass
-
-        annotations_document = pdf_annotate_converter._build_canonical_annotations_document(
-            annotations,
-            source_pdf_storage_path=source_path,
-            source_pdf_bucket="pdfs",
-            page_dimensions=page_dimensions,
-        )
+        annotations = _deduplicate_annotations(annotations)
         client.storage.from_("results").upload(
             storage_path,
-            json.dumps(annotations_document, ensure_ascii=False).encode("utf-8"),
+            json.dumps(annotations, ensure_ascii=False).encode("utf-8"),
             {"content-type": "application/json", "upsert": "true"},
         )
         cache.invalidate_pattern(f"preview:{job_id}:*")
@@ -2349,12 +2221,9 @@ def preview_job(
     if job.pdf_storage_path:
         try:
             source_type = _detect_source_type(job)
-            # [Flow: PDF는 searchable PDF가 있으면 우선 사용, 없으면 원본 서명 URL 사용]
-            # searchable PDF가 텍스트 레이어를 포함하므로 뷰어에서 텍스트 검색/선택이 가능하다.
-            # docx/hwp/pptx는 _source_files 이후 변환된 PDF preview URL을 사용한다.
+            # [Flow: PDF는 원본 서명 URL, docx/hwp/pptx는 _source_files 이후 변환된 PDF preview URL 사용]
             if source_type == "pdf":
-                pdf_path_for_preview = job.searchable_pdf_storage_path or job.pdf_storage_path
-                source_url = supabase_client.get_signed_download_url(pdf_path_for_preview, bucket="pdfs", expires_in=3600)
+                source_url = supabase_client.get_signed_download_url(job.pdf_storage_path, bucket="pdfs", expires_in=3600)
         except Exception:
             pass
 
@@ -3342,7 +3211,7 @@ def save_user_annotations(
     input_space = payload.get("input_space", "device")
     if not isinstance(source_index, int) or not isinstance(annotations, list):
         raise HTTPException(status_code=400, detail="Invalid source_index or annotations")
-    if input_space not in ("device", "pdf_user", "canonical"):
+    if input_space not in ("device", "pdf_user"):
         raise HTTPException(status_code=400, detail="Invalid input_space")
 
     def _has_annotation(item):
@@ -3363,8 +3232,6 @@ def save_user_annotations(
     #                  AI 주석 entry가 있으면 병합 대상 경로로 함께 사용
     # source_index < 0: 하위 호환 — 공유 user_annotations.json에 저장
     entry = None
-    # [Flow: 병합 재생성용 AI 주석 경로 — entry가 있으면 공유 annotations JSON 경로, 없으면 None]
-    ai_annotations_path_for_merge: str | None = None
     if source_index >= 0:
         locked_job = db.execute(
             select(Job).where(Job.id == job_id).with_for_update()
@@ -3374,7 +3241,6 @@ def save_user_annotations(
         entry = next((e for e in entries if e.get("index") == 1), None)
         if entry is not None:
             annotations_json_storage_path = entry.get("annotations_json_storage_path") or f"{job_id}/annotated.annotations.json"
-            ai_annotations_path_for_merge = annotations_json_storage_path
         else:
             annotations_json_storage_path = f"{job_id}/user_annotations_{source_index}.json"
     else:
@@ -3383,71 +3249,34 @@ def save_user_annotations(
     try:
         client = supabase_client.get_service_client()
 
-        # [Flow: 주석 좌표 기준 PDF 결정]
-        # 멀티파일 업로드 시 pdf_storage_path는 zip 컨테이너를 가리키므로, source_index에 해당하는
-        # extracted_files[source_index]의 searchable_pdf_storage_path(개별 searchable PDF)를 우선 사용한다.
-        # searchable PDF가 없으면 원본 storage_path로 폴백.
-        # job.searchable_pdf_storage_path는 첫 번째 원본 PDF에 대한 것이므로 마지막 폴백.
-        per_file_searchable_path: str | None = None
-        per_file_pdf_path: str | None = None
-        if source_index >= 0:
-            extracted = list(job.extracted_files or [])
-            if 0 <= source_index < len(extracted):
-                info = extracted[source_index]
-                if isinstance(info, dict) and info.get("type") == "pdf":
-                    per_file_searchable_path = info.get("searchable_pdf_storage_path") or None
-                    per_file_pdf_path = info.get("storage_path")
-
-        # [Flow: 좌표 기준 PDF 우선순위]
-        # 1. extracted_files[source_index].searchable_pdf_storage_path (개별 searchable PDF)
-        # 2. extracted_files[source_index].storage_path (개별 원본 PDF)
-        # 3. job.searchable_pdf_storage_path (첫 번째 PDF의 searchable PDF, 하위 호환)
-        # 4. job.pdf_storage_path (단일 PDF job, 마지막 폴백)
-        if source_index >= 0 and entry is not None:
-            # AI annotate entry가 있으면 entry의 storage_path(searchable PDF)를 우선
-            source_pdf_path = entry.get("storage_path") or per_file_searchable_path or per_file_pdf_path or job.searchable_pdf_storage_path or job.pdf_storage_path
-        else:
-            source_pdf_path = per_file_searchable_path or per_file_pdf_path or job.searchable_pdf_storage_path or job.pdf_storage_path
-
-        pdf_bytes: bytes | None = None
-        if source_pdf_path:
-            try:
-                pdf_bytes = client.storage.from_("pdfs").download(source_pdf_path)
-            except Exception as e:
-                logger.warning(f"[save_user_annotations] {job_id} 기준 PDF 다운로드 실패: {e}")
-
-        # [Flow: 어떤 input_space든 canonical normalized 공간으로 변환]
-        if pdf_bytes and valid_annotations:
-            try:
-                valid_annotations = pdf_user_annotator._convert_annotations_to_canonical(
-                    valid_annotations, pdf_bytes, input_space=input_space
-                )
-            except Exception as e:
-                logger.warning(f"[save_user_annotations] {job_id} canonical 변환 실패: {e}")
+        # [Flow: AI 백엔드가 보내는 PDF user-space 좌표를 device-space로 변환]
+        # 뷰어는 항상 device-space를 기대하므로, JSON 저장 전에 좌표계를 맞춘다.
+        if input_space == "pdf_user" and valid_annotations:
+            original_path = job.pdf_storage_path
+            if original_path:
+                try:
+                    pdf_bytes = client.storage.from_("pdfs").download(original_path)
+                    valid_annotations = pdf_user_annotator._convert_annotations_to_device_space(
+                        valid_annotations, pdf_bytes
+                    )
+                except Exception as e:
+                    logger.warning(f"[save_user_annotations] {job_id} PDF user-space 변환 실패: {e}")
 
         valid_annotations = _deduplicate_annotations(valid_annotations)
 
-        # [Flow: page_dimensions 수집 — 비-PDF 파일이거나 PyMuPDF open 실패 시 빈 dict로 폴백]
-        # pdf_bytes가 zip 등 PDF가 아닌 컨테이너일 수 있으므로 FileDataError를 잡아 500을 방지한다.
-        page_dimensions: dict = {}
-        if pdf_bytes:
-            try:
-                page_dimensions = pdf_annotate_converter._page_dimensions(pdf_bytes)
-            except Exception as e:
-                logger.warning(f"[save_user_annotations] {job_id} page_dimensions 수집 실패: {e}")
-                page_dimensions = {}
         if source_index >= 0 and entry is not None:
             # [Flow: 기존 AI 주석 JSON과 병합]
             # 사용자가 AI 주석을 편집/삭제한 경우를 감지해 보존한다.
             try:
                 existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
                 existing = json.loads(existing_bytes.decode("utf-8"))
+                if not isinstance(existing, list):
+                    existing = []
             except Exception:
                 existing = []
 
-            _, __, existing_annotations = pdf_annotate_converter._extract_annotations_from_document(existing)
             existing_by_id: dict[str, dict] = {}
-            for a in existing_annotations:
+            for a in existing:
                 aid = _annotation_id(a)
                 if aid.startswith("backend-"):
                     existing_by_id[aid] = a
@@ -3476,49 +3305,13 @@ def save_user_annotations(
                 if aid not in exported_ai_ids:
                     logger.info(f"[save_user_annotations] {job_id} AI 주석 삭제 감지: {aid}")
 
-            # [Flow: AI 주석과 사용자 주석을 분리 저장]
-            # AI 주석(편집된 AI 포함)은 공유 annotations JSON에, 사용자가 직접 추가한 주석은
-            # 파일별 user_annotations_{source_index}.json에 저장한다.
-            # _source_files / _load_all_annotations이 두 파일을 병합하기 때문에
-            # 한 곳에 모두 저장하면 중복/과거 데이터가 남는다.
-            ai_annotations = _deduplicate_annotations(ai_annotations)
-            user_annotations = _deduplicate_annotations(user_annotations)
+            merged = ai_annotations + user_annotations
 
-            ai_document = pdf_annotate_converter._build_canonical_annotations_document(
-                ai_annotations,
-                source_pdf_storage_path=source_pdf_path or f"{job_id}/annotated.annotations.json",
-                source_pdf_bucket="pdfs",
-                page_dimensions=page_dimensions,
-            )
             client.storage.from_("results").upload(
                 annotations_json_storage_path,
-                json.dumps(ai_document, ensure_ascii=False).encode("utf-8"),
+                json.dumps(merged, ensure_ascii=False).encode("utf-8"),
                 {"content-type": "application/json", "upsert": "true"},
             )
-
-            per_file_user_annotations_path = f"{job_id}/user_annotations_{source_index}.json"
-            try:
-                existing_user_bytes = client.storage.from_("results").download(per_file_user_annotations_path)
-                existing_user_doc = json.loads(existing_user_bytes.decode("utf-8"))
-                _, __, existing_user_annos = pdf_annotate_converter._extract_annotations_from_document(existing_user_doc)
-            except Exception:
-                existing_user_annos = []
-
-            user_annotations = _deduplicate_annotations(existing_user_annos + user_annotations)
-
-            user_document = pdf_annotate_converter._build_canonical_annotations_document(
-                user_annotations,
-                source_pdf_storage_path=source_pdf_path or job.pdf_storage_path or f"{job_id}/user_annotations_{source_index}.json",
-                source_pdf_bucket="pdfs",
-                page_dimensions=page_dimensions,
-            )
-            client.storage.from_("results").upload(
-                per_file_user_annotations_path,
-                json.dumps(user_document, ensure_ascii=False).encode("utf-8"),
-                {"content-type": "application/json", "upsert": "true"},
-            )
-
-
             if entry.get("annotations_json_storage_path") != annotations_json_storage_path:
                 entry["annotations_json_storage_path"] = annotations_json_storage_path
                 locked_job.annotated_pdf_files = entries
@@ -3527,39 +3320,16 @@ def save_user_annotations(
         else:
             user_annotations = [a for a in valid_annotations if _is_user_annotation(a)]
             user_annotations = _deduplicate_annotations(user_annotations)
-            annotations_document = pdf_annotate_converter._build_canonical_annotations_document(
-                user_annotations,
-                source_pdf_storage_path=source_pdf_path or job.pdf_storage_path or f"{job_id}/user_annotations.json",
-                source_pdf_bucket="pdfs",
-                page_dimensions=page_dimensions,
-            )
             client.storage.from_("results").upload(
                 annotations_json_storage_path,
-                json.dumps(annotations_document, ensure_ascii=False).encode("utf-8"),
+                json.dumps(user_annotations, ensure_ascii=False).encode("utf-8"),
                 {"content-type": "application/json", "upsert": "true"},
             )
-
-        # [Flow: merged_annotations.json 재생성]
-        # 자동 저장 후 파일 전환/복귀 시 이전 병합본을 로드해 기존 사용자 주석이 유실되는 버그를 방지.
-        # 저장 직후 병합을 수행해 merged_annotations.json을 최신 상태로 갱신하고,
-        # 응답에 새 signed URL을 반환해 프론트엔드가 즉시 최신 병합본을 fetch할 수 있도록 한다.
-        if source_index >= 0 and entry is not None:
-            user_annotations_path_for_merge = per_file_user_annotations_path
-        else:
-            user_annotations_path_for_merge = annotations_json_storage_path
-        merged_url: str | None = None
-        try:
-            merged_url = _merge_annotation_jsons(
-                job_id, ai_annotations_path_for_merge, user_annotations_path_for_merge
-            )
-        except Exception as e:
-            logger.warning(f"[save_user_annotations] {job_id} merged_annotations 재생성 실패: {e}")
 
         cache.invalidate_pattern(f"preview:{job_id}:*")
         return {
             "ok": True,
             "annotations_json_storage_path": annotations_json_storage_path,
-            "merged_annotations_url": merged_url,
         }
     except Exception as e:
         logger.exception(f"[save_user_annotations] {job_id} source_index={source_index} 실패: {e}")
@@ -3853,12 +3623,11 @@ def search_job_text(
     job_id: str,
     query: str = Query(..., description="검색어 또는 정규식"),
     page_no: int | None = None,
-    mode: str = Query("text", description="검색 모드: text(해당 텍스트만) 또는 line(해당 줄 전체)"),
     user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """[Flow: Step 1 (job 조회) -> Step 2 (searchable PDF 확보) -> Step 3 (PyMuPDF search & mode별 bbox 조정)
-          -> Step 4 (page_no 필터링 및 OCR 폴백 시 선형 보간/라인 적용) -> Step 5 (매치 목록 반환)]
+    """[Flow: Step 1 (job 조회) -> Step 2 (searchable PDF 확보) -> Step 3 (PyMuPDF search)
+          -> Step 4 (page_no 필터링) -> Step 5 (매치 목록 반환)]
 
     PDF 텍스트 레이어에서 키워드/정규식 검색을 수행한다.
     """
@@ -3902,58 +3671,22 @@ def search_job_text(
             current_page_no = page.number + 1
             if page_no is not None and current_page_no != page_no:
                 continue
-
-            lines_bboxes: list[list[float]] = []
-            if mode == "line":
-                try:
-                    text_dict = page.get_text("dict")
-                    for block in text_dict.get("blocks", []):
-                        for line in block.get("lines", []):
-                            lines_bboxes.append(line.get("bbox"))
-                except Exception:
-                    pass
-
             # 정규식 검색과 일반 텍스트 검색 모두 지원
             try:
                 rects = page.search_for(query)
             except Exception:
                 # 정규식이 유효하지 않으면 일반 텍스트로 폴백
                 rects = page.search_for(query.replace("\\", ""))
-
             for rect in rects:
                 if not _is_rect_plausible_for_page(rect, page.rect):
                     logger.warning(
                         f"[search_job_text] {job_id} page={current_page_no} 비정상 bbox 스킵: {rect}"
                     )
                     continue
-
-                bbox_pdf = [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
-                if mode == "line" and lines_bboxes:
-                    best_bbox = None
-                    max_overlap = 0.0
-                    ry0, ry1 = rect.y0, rect.y1
-                    r_height = ry1 - ry0
-                    if r_height > 0:
-                        for lb in lines_bboxes:
-                            if not lb or len(lb) < 4:
-                                continue
-                            lx0, ly0, lx1, ly1 = (float(v) for v in lb[:4])
-                            overlap_y0 = max(ry0, ly0)
-                            overlap_y1 = min(ry1, ly1)
-                            overlap_h = overlap_y1 - overlap_y0
-                            if overlap_h > 0:
-                                ratio = overlap_h / r_height
-                                if ratio > max_overlap:
-                                    max_overlap = ratio
-                                    best_bbox = [lx0, ly0, lx1, ly1]
-                    if best_bbox and max_overlap > 0.5:
-                        bbox_pdf = best_bbox
-
-                matched_text = page.get_textbox(rect).strip() if mode == "text" else page.get_textbox(fitz.Rect(bbox_pdf)).strip()
                 matches.append({
                     "page_no": current_page_no,
-                    "bbox_pdf": bbox_pdf,
-                    "text": matched_text,
+                    "bbox_pdf": [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)],
+                    "text": page.get_textbox(rect).strip(),
                 })
     finally:
         doc.close()
@@ -3997,32 +3730,15 @@ def search_job_text(
             pattern = _re.compile(query, _re.IGNORECASE)
         except _re.error:
             pattern = _re.compile(_re.escape(query), _re.IGNORECASE)
-
         for el in ocr_elements:
             text = el.get("text") or ""
-            found_matches = list(pattern.finditer(text))
-            if not found_matches:
+            if not pattern.search(text):
                 continue
-            text_len = len(text)
-            for m in found_matches:
-                if mode == "text" and text_len > 0 and len(el.get("bbox_pdf", [])) == 4:
-                    x0, y0, x1, y1 = (float(v) for v in el["bbox_pdf"])
-                    width = x1 - x0
-                    start = m.start()
-                    end = m.end()
-                    x0_new = x0 + (start / text_len) * width
-                    x1_new = x0 + (end / text_len) * width
-                    bbox_pdf = [x0_new, y0, x1_new, y1]
-                    matched_text = m.group().strip()
-                else:
-                    bbox_pdf = list(el["bbox_pdf"])
-                    matched_text = text.strip()
-
-                matches.append({
-                    "page_no": el["page_no"],
-                    "bbox_pdf": bbox_pdf,
-                    "text": matched_text,
-                })
+            matches.append({
+                "page_no": el["page_no"],
+                "bbox_pdf": list(el["bbox_pdf"]),
+                "text": text.strip(),
+            })
 
     import time as _time
     total_elapsed = _time.monotonic() - start_time
@@ -4074,31 +3790,22 @@ def _load_all_annotations(
     job: Job,
     source_index: int,
     page_no: int | None = None,
-) -> dict:
+) -> list[dict]:
     """[Flow: Step 1 (AI 주석 JSON 경로 확보 — None이면 스킵) -> Step 2 (AI 주석 다운로드)
-          -> Step 3 (list/canonical object에서 annotations 추출)
-          -> Step 4 (사용자 주석과 병합) -> Step 5 (page_no 필터링)
-          -> Step 6 (coordinate_system/source_pdf/page_dimensions/annotations dict 반환)]
+          -> Step 3 (사용자 주석 다운로드 및 ID 중복 제거 병합) -> Step 4 (page_no 필터링)
+          -> Step 5 (병합된 주석 목록 반환)]
 
     AI 주석 JSON과 사용자 주석 JSON을 모두 로드하여 병합한다.
     _resolve_annotations_json_path가 None을 반환해도 에러를 발생시키지 않고
-    사용자 주석만 로드한다. 주석이 전혀 없으면 빈 annotations 배열을 반환한다.
+    사용자 주석만 로드한다. 주석이 전혀 없으면 빈 리스트를 반환한다.
 
     @param job Job 모델 인스턴스
     @param source_index 주석 파일 인덱스 (0=첫 번째 원본)
     @param page_no 1-based 페이지 번호. 생략 시 전체 페이지
-    @returns 병합된 주석 정보 (coordinate_system, source_pdf_storage_path, source_pdf_bucket, page_dimensions, annotations)
+    @returns 병합된 주석 목록 (EmbedPDF AnnotationTransferItem[] 형식)
     """
     client = supabase_client.get_service_client()
     all_annotations: list[dict] = []
-
-    result = {
-        "coordinate_system": "device",
-        "source_pdf_storage_path": None,
-        "source_pdf_bucket": "pdfs",
-        "page_dimensions": None,
-        "annotations": all_annotations,
-    }
 
     # AI 주석 로드 — 경로가 None이면 AI 주석이 아직 없으므로 스킵
     annotations_json_storage_path = _resolve_annotations_json_path(job, source_index)
@@ -4106,17 +3813,8 @@ def _load_all_annotations(
         try:
             existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
             existing = json.loads(existing_bytes.decode("utf-8"))
-            coord, dims, items = pdf_annotate_converter._extract_annotations_from_document(existing)
-            all_annotations.extend(items)
-            if coord:
-                result["coordinate_system"] = coord
-            if dims:
-                result["page_dimensions"] = dims
-            if isinstance(existing, dict):
-                if existing.get("source_pdf_storage_path"):
-                    result["source_pdf_storage_path"] = existing["source_pdf_storage_path"]
-                if existing.get("source_pdf_bucket"):
-                    result["source_pdf_bucket"] = existing["source_pdf_bucket"]
+            if isinstance(existing, list):
+                all_annotations.extend(existing)
         except Exception:
             pass
 
@@ -4125,38 +3823,26 @@ def _load_all_annotations(
     try:
         user_bytes = client.storage.from_("results").download(user_annotations_json_path)
         user_annotations = json.loads(user_bytes.decode("utf-8"))
-        coord, dims, items = pdf_annotate_converter._extract_annotations_from_document(user_annotations)
-        existing_ids = {_annotation_id(a) for a in all_annotations if _annotation_id(a)}
-        for a in items:
-            aid = _annotation_id(a)
-            if aid and aid in existing_ids:
-                continue
-            all_annotations.append(a)
-        if result["coordinate_system"] == "device" and coord:
-            result["coordinate_system"] = coord
-        if result["page_dimensions"] is None and dims:
-            result["page_dimensions"] = dims
-        if result["source_pdf_storage_path"] is None and isinstance(user_annotations, dict) and user_annotations.get("source_pdf_storage_path"):
-            result["source_pdf_storage_path"] = user_annotations["source_pdf_storage_path"]
+        if isinstance(user_annotations, list):
+            existing_ids = {_annotation_id(a) for a in all_annotations if _annotation_id(a)}
+            for a in user_annotations:
+                aid = _annotation_id(a)
+                if aid and aid in existing_ids:
+                    continue
+                all_annotations.append(a)
     except Exception:
         # 파일별 주석 JSON이 없으면 공유 user_annotations.json으로 폴백 (하위 호환)
         user_annotations_json_path = f"{job.id}/user_annotations.json"
         try:
             user_bytes = client.storage.from_("results").download(user_annotations_json_path)
             user_annotations = json.loads(user_bytes.decode("utf-8"))
-            coord, dims, items = pdf_annotate_converter._extract_annotations_from_document(user_annotations)
-            existing_ids = {_annotation_id(a) for a in all_annotations if _annotation_id(a)}
-            for a in items:
-                aid = _annotation_id(a)
-                if aid and aid in existing_ids:
-                    continue
-                all_annotations.append(a)
-            if result["coordinate_system"] == "device" and coord:
-                result["coordinate_system"] = coord
-            if result["page_dimensions"] is None and dims:
-                result["page_dimensions"] = dims
-            if result["source_pdf_storage_path"] is None and isinstance(user_annotations, dict) and user_annotations.get("source_pdf_storage_path"):
-                result["source_pdf_storage_path"] = user_annotations["source_pdf_storage_path"]
+            if isinstance(user_annotations, list):
+                existing_ids = {_annotation_id(a) for a in all_annotations if _annotation_id(a)}
+                for a in user_annotations:
+                    aid = _annotation_id(a)
+                    if aid and aid in existing_ids:
+                        continue
+                    all_annotations.append(a)
         except Exception:
             pass
 
@@ -4169,8 +3855,7 @@ def _load_all_annotations(
                 filtered.append(a)
         all_annotations = filtered
 
-    result["annotations"] = all_annotations
-    return result
+    return all_annotations
 
 
 # [Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (source_index로 주석 JSON 경로 확보)
@@ -4196,27 +3881,16 @@ def get_job_annotations(
     _require_job_access(job, user)
     _require_job_not_expired(job)
 
-    loaded = _load_all_annotations(job, source_index, page_no)
-    all_annotations = loaded["annotations"]
-    input_space = loaded.get("coordinate_system") or "device"
-
-    # [Flow: canonical 변환 기준 PDF 결정 — header의 source_pdf_storage_path 우선]
-    source_pdf_path = loaded.get("source_pdf_storage_path")
-    if not source_pdf_path:
-        if source_index >= 0:
-            source_pdf_path = job.searchable_pdf_storage_path or job.pdf_storage_path
-        else:
-            source_pdf_path = job.pdf_storage_path
-
-    if all_annotations and source_pdf_path:
+    all_annotations = _load_all_annotations(job, source_index, page_no)
+    if all_annotations and job.pdf_storage_path:
         try:
             client = supabase_client.get_service_client()
-            pdf_bytes = client.storage.from_("pdfs").download(source_pdf_path)
+            pdf_bytes = client.storage.from_("pdfs").download(job.pdf_storage_path)
             all_annotations = pdf_user_annotator._convert_annotations_to_pdf_user(
-                all_annotations, pdf_bytes, input_space=input_space
+                all_annotations, pdf_bytes
             )
         except Exception as e:
-            logger.warning(f"[get_job_annotations] {job_id} {input_space}→pdf_user 변환 실패: {e}")
+            logger.warning(f"[get_job_annotations] {job_id} device→pdf_user 변환 실패: {e}")
     return {"annotations": all_annotations, "total": len(all_annotations)}
 
 
@@ -4247,42 +3921,41 @@ def update_job_annotation(
     annotations_json_storage_path = _resolve_annotations_json_path(job, source_index)
 
     client = supabase_client.get_service_client()
-    existing_doc: dict | list | None = None
     all_annotations: list[dict] = []
     if annotations_json_storage_path:
         try:
             existing_bytes = client.storage.from_("results").download(annotations_json_storage_path)
-            existing_doc = json.loads(existing_bytes.decode("utf-8"))
-            _, __, all_annotations = pdf_annotate_converter._extract_annotations_from_document(existing_doc)
+            existing = json.loads(existing_bytes.decode("utf-8"))
+            if isinstance(existing, list):
+                all_annotations = existing
         except Exception:
             pass
 
     # [Flow: 파일별 주석 분리 — source_index별로 분리된 user_annotations_{source_index}.json을 먼저 확인]
     user_annotations_json_path = f"{job.id}/user_annotations_{source_index}.json"
-    user_doc: dict | list | None = None
     user_annotations: list[dict] = []
     try:
         user_bytes = client.storage.from_("results").download(user_annotations_json_path)
-        user_doc = json.loads(user_bytes.decode("utf-8"))
-        _, __, user_annotations = pdf_annotate_converter._extract_annotations_from_document(user_doc)
+        user_annotations = json.loads(user_bytes.decode("utf-8"))
+        if not isinstance(user_annotations, list):
+            user_annotations = []
     except Exception:
         # 파일별 주석 JSON이 없으면 공유 user_annotations.json으로 폴백 (하위 호환)
         user_annotations_json_path = f"{job.id}/user_annotations.json"
         try:
             user_bytes = client.storage.from_("results").download(user_annotations_json_path)
-            user_doc = json.loads(user_bytes.decode("utf-8"))
-            _, __, user_annotations = pdf_annotate_converter._extract_annotations_from_document(user_doc)
+            user_annotations = json.loads(user_bytes.decode("utf-8"))
+            if not isinstance(user_annotations, list):
+                user_annotations = []
         except Exception:
-            pass
+            user_annotations = []
 
     target_index = -1
     target_list = all_annotations
-    target_is_ai = True
     for i, a in enumerate(all_annotations):
         if _annotation_id(a) == annotation_id:
             target_index = i
             target_list = all_annotations
-            target_is_ai = True
             break
 
     if target_index == -1:
@@ -4290,7 +3963,6 @@ def update_job_annotation(
             if _annotation_id(a) == annotation_id:
                 target_index = i
                 target_list = user_annotations
-                target_is_ai = False
                 break
 
     if target_index == -1:
@@ -4322,22 +3994,16 @@ def update_job_annotation(
     if annotation_id.startswith("backend-"):
         _mark_user_edited(annotation)
 
-    # [Flow: canonical object이면 annotations 배열만 갱신하여 document 그대로 업로드]
-    if target_is_ai:
-        target_storage_path = annotations_json_storage_path
-        target_doc = existing_doc
-    else:
-        target_storage_path = user_annotations_json_path
-        target_doc = user_doc
-
-    if target_doc is not None:
-        if isinstance(target_doc, dict):
-            target_doc["annotations"] = target_list
-        client.storage.from_("results").upload(
-            target_storage_path,
-            json.dumps(target_doc, ensure_ascii=False).encode("utf-8"),
-            {"content-type": "application/json", "upsert": "true"},
-        )
+    target_storage_path = (
+        annotations_json_storage_path
+        if target_list is all_annotations and annotations_json_storage_path
+        else user_annotations_json_path
+    )
+    client.storage.from_("results").upload(
+        target_storage_path,
+        json.dumps(target_list, ensure_ascii=False).encode("utf-8"),
+        {"content-type": "application/json", "upsert": "true"},
+    )
 
     cache.invalidate_pattern(f"preview:{job_id}:*")
     return {"ok": True, "annotation_id": annotation_id, "updated_fields": updated_fields}
@@ -4575,28 +4241,18 @@ def get_job_result_json(
             raise HTTPException(status_code=502, detail=f"Failed to download OCR layout: {e}")
 
     if kind == "annotations":
-        loaded = _load_all_annotations(job, source_index, page_no)
-        all_annotations = loaded["annotations"]
-        input_space = loaded.get("coordinate_system") or "device"
-
+        all_annotations = _load_all_annotations(job, source_index, page_no)
         # [Flow: read_job_json도 get_annotations과 동일하게 AI 백엔드가 사용하는 PDF user-space 좌표계로 반환
         #       -> save_annotations 등에서 read_job_json 결과를 그대로 재사용할 때 좌표계 불일치 방지]
-        source_pdf_path = loaded.get("source_pdf_storage_path")
-        if not source_pdf_path:
-            if source_index >= 0:
-                source_pdf_path = job.searchable_pdf_storage_path or job.pdf_storage_path
-            else:
-                source_pdf_path = job.pdf_storage_path
-
-        if all_annotations and source_pdf_path:
+        if all_annotations and job.pdf_storage_path:
             try:
                 client = supabase_client.get_service_client()
-                pdf_bytes = client.storage.from_("pdfs").download(source_pdf_path)
+                pdf_bytes = client.storage.from_("pdfs").download(job.pdf_storage_path)
                 all_annotations = pdf_user_annotator._convert_annotations_to_pdf_user(
-                    all_annotations, pdf_bytes, input_space=input_space
+                    all_annotations, pdf_bytes
                 )
             except Exception as e:
-                logger.warning(f"[get_job_result_json] {job.id} {input_space}→pdf_user 변환 실패: {e}")
+                logger.warning(f"[get_job_result_json] {job.id} device→pdf_user 변환 실패: {e}")
         return {"kind": "annotations", "data": all_annotations, "total": len(all_annotations)}
 
     raise HTTPException(status_code=400, detail=f"Unknown kind: {kind}. Supported: annotations|ocr_layout|extracted_files|annotated_pdf_files|job_meta")

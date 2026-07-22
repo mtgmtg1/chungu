@@ -26,9 +26,6 @@ def mock_jobs_dependencies(monkeypatch):
 
     mock_supabase = MagicMock()
     mock_supabase.get_signed_download_url.return_value = "https://original.example.com/file.pptx"
-    # image 분기는 get_signed_download_url_with_client를 사용하므로 함께 모킹
-    mock_supabase.get_signed_download_url_with_client.return_value = "https://original.example.com/file.pptx"
-    mock_supabase.create_fresh_service_client.return_value = MagicMock()
     monkeypatch.setattr("backend.api.jobs.supabase_client", mock_supabase)
 
     return {"pdf": mock_pdf, "supabase": mock_supabase}
@@ -120,69 +117,6 @@ class TestBuildSourceFileItem:
         item = _build_source_file_item(info, 0)
 
         assert item["type"] == "pdf"
-        mock_jobs_dependencies["pdf"].get_preview_pdf_url.assert_not_called()
-
-    def test_image_generates_preview_pdf_url(self, mock_jobs_dependencies):
-        # [Flow: image 원본 -> get_preview_pdf_url로 PDF 변환 -> preview_url은 PDF URL, url은 원본 이미지]
-        info = {
-            "storage_path": "pdfs/photo.png",
-            "type": "image",
-            "bucket": "pdfs",
-        }
-
-        item = _build_source_file_item(info, 0)
-
-        assert item is not None
-        assert item["type"] == "image"
-        assert item["url"] == "https://original.example.com/file.pptx"
-        # preview_url이 PDF 변환 URL이어야 함 (원본 이미지 URL과 다름)
-        assert item["preview_url"] == "https://preview.example.com/preview.pdf"
-        assert item["preview_url"] != item["url"]
-
-        pdf = mock_jobs_dependencies["pdf"]
-        pdf.get_preview_pdf_url.assert_called_once_with(
-            "pdfs/photo.png",
-            source_bucket="pdfs",
-            expires_in=3600,
-        )
-
-    def test_image_preview_failure_falls_back_to_original_url(self, mock_jobs_dependencies):
-        # [Flow: 이미지 PDF 변환 실패 -> preview_url은 원본 이미지 URL로 폴백]
-        mock_jobs_dependencies["pdf"].get_preview_pdf_url.return_value = None
-
-        info = {
-            "storage_path": "pdfs/photo.png",
-            "type": "image",
-            "bucket": "pdfs",
-        }
-
-        item = _build_source_file_item(info, 0)
-
-        assert item is not None
-        assert item["type"] == "image"
-        # 변환 실패 시 preview_url == url (원본 이미지)
-        assert item["preview_url"] == item["url"]
-
-    def test_image_with_searchable_pdf_does_not_call_preview_converter(self, mock_jobs_dependencies):
-        # [Flow: 이미지에 searchable_pdf_storage_path가 있으면 해당 URL을 preview_url로 사용하고
-        #        pdf_preview_converter.get_preview_pdf_url는 호출하지 않음]
-        mock_supabase = mock_jobs_dependencies["supabase"]
-        # searchable PDF URL 반환
-        mock_supabase.get_signed_download_url_with_client.return_value = "https://searchable.example.com/s.pdf"
-
-        info = {
-            "storage_path": "pdfs/photo.png",
-            "type": "image",
-            "bucket": "pdfs",
-            "searchable_pdf_storage_path": "pdfs/searchable.pdf",
-        }
-
-        item = _build_source_file_item(info, 0)
-
-        assert item is not None
-        assert item["type"] == "image"
-        assert item["preview_url"] == "https://searchable.example.com/s.pdf"
-        # searchable PDF가 있으면 get_preview_pdf_url 미호출
         mock_jobs_dependencies["pdf"].get_preview_pdf_url.assert_not_called()
 
 

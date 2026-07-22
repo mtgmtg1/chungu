@@ -210,21 +210,15 @@ function SingleFilePreview({ file, filename, annotationsJson, pdfViewerRef, onAn
   } else if (file.type === "docx" || file.type === "hwp" || file.type === "pptx") {
     content = file.preview_url ? <PdfViewer ref={pdfViewerRef} url={file.preview_url} annotationsJson={annotationsJson} onAnnotationChanged={onAnnotationChanged} /> : null;
   } else if (file.type === "image") {
-    // [Flow: preview_url이 PDF 변환 URL이면 embedpdf 뷰어로 표시, 아니면 <img> 폴백]
-    // 백엔드에서 이미지를 PDF로 변환한 경우 preview_url이 원본 url과 다른 PDF URL이 됨
-    if (file.preview_url && file.preview_url !== file.url) {
-      content = <PdfViewer ref={pdfViewerRef} url={file.preview_url} annotationsJson={annotationsJson} onAnnotationChanged={onAnnotationChanged} />;
-    } else {
-      content = (
-        <div className="flex-1 overflow-auto custom-scrollbar p-4 flex items-center justify-center">
-          <img
-            src={file.url}
-            alt={displayName}
-            className="max-w-full max-h-full object-contain shadow-lg rounded border border-outline-variant bg-white"
-          />
-        </div>
-      );
-    }
+    content = (
+      <div className="flex-1 overflow-auto custom-scrollbar p-4 flex items-center justify-center">
+        <img
+          src={file.url}
+          alt={displayName}
+          className="max-w-full max-h-full object-contain shadow-lg rounded border border-outline-variant bg-white"
+        />
+      </div>
+    );
   } else if (file.type === "audio" || file.type === "video") {
     content = <MediaPlayer sourceType={file.type} url={file.url} filename={displayName} />;
   }
@@ -250,128 +244,6 @@ function ImageList({ urls, t }) {
       </div>
     </div>
   );
-}
-
-/**
- * [Flow: Step 1 (page_dimensions에서 1-based page_no 또는 0-based pageIndex로 크기 조회)
- *       -> Step 2 (width_pt/height_pt 반환, 없으면 null)]
- */
-function getAnnotationPageDimensions(pageDimensions, pageIndex) {
-  if (!pageDimensions || typeof pageDimensions !== "object") return null;
-  const dims = pageDimensions[String(pageIndex + 1)] ?? pageDimensions[pageIndex + 1];
-  if (!dims || typeof dims !== "object") return null;
-  const width = Number(dims.width_pt);
-  const height = Number(dims.height_pt);
-  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) return null;
-  return { width, height };
-}
-
-/**
- * [Flow: Step 1 (canonical rect origin/size 또는 x/y/width/height 수신)
- *       -> Step 2 (page_width/height를 곱해 device-space points로 변환)
- *       -> Step 3 ({origin, size} dict 반환)]
- */
-function canonicalToDeviceRect(rect, pageWidth, pageHeight) {
-  if (!rect || typeof rect !== "object") return rect;
-  const hasOrigin = rect.origin && typeof rect.origin.x === "number" && typeof rect.origin.y === "number";
-  const hasXY = typeof rect.x === "number" && typeof rect.y === "number";
-  if (hasOrigin) {
-    return {
-      origin: { x: rect.origin.x * pageWidth, y: rect.origin.y * pageHeight },
-      size: { width: rect.size.width * pageWidth, height: rect.size.height * pageHeight },
-    };
-  }
-  if (hasXY) {
-    return {
-      origin: { x: rect.x * pageWidth, y: rect.y * pageHeight },
-      size: { width: rect.width * pageWidth, height: rect.height * pageHeight },
-    };
-  }
-  return rect;
-}
-
-/**
- * [Flow: Step 1 (canonical point {x, y} 수신)
- *       -> Step 2 (page_width/height를 곱해 device-space point로 변환)]
- */
-function canonicalToDevicePoint(point, pageWidth, pageHeight) {
-  if (!point || typeof point !== "object") return point;
-  return { x: point.x * pageWidth, y: point.y * pageHeight };
-}
-
-/**
- * [Flow: Step 1 (주석 객체 추출) -> Step 2 (pageIndex에 해당하는 page_dimensions 획득)
- *       -> Step 3 (rect/segmentRects/calloutLine/start/end/rectangleDifferences/inkList/paths를 device-space로 변환)
- *       -> Step 4 (annotation wrapper를 보존한 채 반환)]
- */
-function canonicalToDeviceAnnotation(item, pageDimensions) {
-  if (!item || typeof item !== "object") return item;
-  const ann = item.annotation || item;
-  const pageIndex = typeof ann.pageIndex === "number" ? ann.pageIndex : (ann.page_index ?? 0);
-  const dims = getAnnotationPageDimensions(pageDimensions, pageIndex);
-  if (!dims) return item;
-  const { width, height } = dims;
-  const newAnn = { ...ann };
-  if (ann.rect) newAnn.rect = canonicalToDeviceRect(ann.rect, width, height);
-  if (Array.isArray(ann.segmentRects)) {
-    newAnn.segmentRects = ann.segmentRects.map((r) => canonicalToDeviceRect(r, width, height));
-  }
-  if (Array.isArray(ann.calloutLine)) {
-    newAnn.calloutLine = ann.calloutLine.map((p) => canonicalToDevicePoint(p, width, height));
-  }
-  if (ann.start && typeof ann.start === "object") {
-    newAnn.start = canonicalToDevicePoint(ann.start, width, height);
-  }
-  if (ann.end && typeof ann.end === "object") {
-    newAnn.end = canonicalToDevicePoint(ann.end, width, height);
-  }
-  if (ann.rectangleDifferences && typeof ann.rectangleDifferences === "object") {
-    const rd = ann.rectangleDifferences;
-    newAnn.rectangleDifferences = {
-      left: (rd.left ?? 0) * width,
-      right: (rd.right ?? 0) * width,
-      top: (rd.top ?? 0) * height,
-      bottom: (rd.bottom ?? 0) * height,
-    };
-  }
-  if (Array.isArray(ann.inkList)) {
-    newAnn.inkList = ann.inkList.map((ink) => {
-      if (!ink || typeof ink !== "object") return ink;
-      return {
-        ...ink,
-        points: Array.isArray(ink.points)
-          ? ink.points.map((p) => canonicalToDevicePoint(p, width, height))
-          : ink.points,
-      };
-    });
-  }
-  if (Array.isArray(ann.paths)) {
-    newAnn.paths = ann.paths.map((stroke) =>
-      Array.isArray(stroke)
-        ? stroke.map((p) => canonicalToDevicePoint(p, width, height))
-        : stroke
-    );
-  }
-  if (item.annotation) return { ...item, annotation: newAnn };
-  return newAnn;
-}
-
-/**
- * [Flow: Step 1 (Storage의 annotations JSON을 수신 — array 또는 canonical object)
- *       -> Step 2 (canonical object이면 annotations 추출 및 device-space로 변환)
- *       -> Step 3 (legacy array는 그대로 반환)]
- */
-function normalizeAnnotationsJson(data) {
-  if (Array.isArray(data)) return data;
-  if (data && typeof data === "object" && Array.isArray(data.annotations)) {
-    const coordinateSystem = data.coordinate_system || "device";
-    const pageDimensions = data.page_dimensions;
-    if (coordinateSystem === "canonical" && pageDimensions) {
-      return data.annotations.map((a) => canonicalToDeviceAnnotation(a, pageDimensions));
-    }
-    return data.annotations;
-  }
-  return null;
 }
 
 /**
@@ -841,10 +713,9 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
         return r.json();
       })
       .then((data) => {
-        const annotations = normalizeAnnotationsJson(data);
-        console.log("[SourcePanel] annotations json fetched:", Array.isArray(annotations) ? annotations.length : "invalid", "first item:", Array.isArray(annotations) ? annotations[0] : null);
+        console.log("[SourcePanel] annotations json fetched:", Array.isArray(data) ? data.length : "invalid", "first item:", Array.isArray(data) ? data[0] : null);
         if (!cancelled) {
-          setSelectedAnnotationsJson(annotations);
+          setSelectedAnnotationsJson(Array.isArray(data) ? data : null);
         }
       })
       .catch((e) => {
@@ -1119,9 +990,9 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
     if (selectedFile.type === "pdf") {
       return (
         <PdfViewerWithFab
-          key={selectedFile.preview_url || selectedFile.url}
+          key={selectedFile.url}
           viewerRef={pdfViewerRef}
-          url={selectedFile.preview_url || selectedFile.url}
+          url={selectedFile.url}
           page={currentPage}
           annotationsJson={selectedAnnotationsJson}
           onAnnotationChanged={handleAnnotationChanged}

@@ -3944,7 +3944,7 @@ def _load_all_annotations(
             pass
 
     # page_no 필터링 — EmbedPDF 주석의 pageIndex는 0-based이므로 page_no - 1과 비교
-    if page_no is not None:
+    if page_no is not None and isinstance(page_no, int):
         filtered = []
         for a in all_annotations:
             inner = _annotation_inner(a)

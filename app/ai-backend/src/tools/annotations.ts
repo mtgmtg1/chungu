@@ -632,25 +632,57 @@ function _buildAnnotationItem(p: PendingAnnotation): Record<string, unknown> {
   }
 
   // callout (FreeTextCallout)
+  // 대상 텍스트 영역: [x0, y0, x1, y1]
+  // 팁 위치 (대상 텍스트 좌측/상단): tip = [x0, y0 + height / 2]
+  const tbWidth = Math.max(width, 120);
+  const tbHeight = Math.max(height + 16, 32);
+  const boxX0 = Math.max(10, x0 - 150);
+  const boxY0 = y0;
+
+  // 3점 calloutLine: [arrowTip, knee, connectionPoint]
+  const tipPoint = { x: x0, y: y0 + height / 2 };
+  const kneePoint = { x: boxX0 + tbWidth + 15, y: y0 + height / 2 };
+  const boxConnPoint = { x: boxX0 + tbWidth, y: boxY0 + tbHeight / 2 };
+  const calloutLine = [tipPoint, kneePoint, boxConnPoint];
+
+  // overallRect (텍스트 박스 + calloutLine 을 포함하는 AABB)
+  const minX = Math.min(x0, boxX0);
+  const minY = Math.min(y0, boxY0);
+  const maxX = Math.max(x1, boxX0 + tbWidth);
+  const maxY = Math.max(y1, boxY0 + tbHeight);
+  const overallRect = { origin: { x: minX, y: minY }, size: { width: maxX - minX, height: maxY - minY } };
+
+  // rectangleDifferences: overallRect 내에서 텍스트 박스 위치와의 차이 (inset) [left, top, right, bottom]
+  const rd = [
+    boxX0 - minX,
+    boxY0 - minY,
+    maxX - (boxX0 + tbWidth),
+    maxY - (boxY0 + tbHeight),
+  ];
+
   return {
     annotation: {
       id: p.id,
       type: 3, // embedpdf FREETEXT
       intent: 'FreeTextCallout',
       pageIndex: p.target.page_no - 1,
-      rect: { origin: { x: x0, y: y0 }, size: { width: Math.max(width, 80), height: Math.max(height, 24) } },
+      rect: overallRect,
+      rectangleDifferences: rd,
+      calloutLine,
+      lineEnding: 4, // OpenArrow
       strokeColor: hexColor,
-      color: hexColor,
+      strokeWidth: 1.5,
+      color: '#FFFFFF',
       opacity: p.target.opacity,
       contents: p.target.comment,
-      lineEnding: 4, // OpenArrow
       fontFamily: 4, // PdfStandardFont.Helvetica
-      fontSize: 8,
-      fontColor: '#333333',
-      textAlign: 0, // PdfTextAlignment.Left
-      verticalAlign: 0, // PdfVerticalAlignment.Top
+      fontSize: 9,
+      fontColor: '#1A1A1A',
+      textAlign: 0, // Left
+      verticalAlign: 0, // Top
     },
   };
+
 }
 
 /**

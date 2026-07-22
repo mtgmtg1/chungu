@@ -8,6 +8,19 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### AI 주석 y좌표 반전 원인 해결 및 뷰어 device-space 좌표계 보장 — 2026-07-22
+
+- **원인 분석**:
+  - `get_job_result_json(kind="annotations")` 및 `get_job_annotations` API가 Storage에 저장된 device-space(y=0 상단) 주석 JSON을 프론트엔드/뷰어로 반환할 때, `pdf_user_annotator._convert_annotations_to_pdf_user`를 불필요하게 실행하여 PDF user-space(y=0 하단) 좌표계로 다시 반전시켜 보내고 있던 문제가 원인이었음.
+  - 프론트엔드 뷰어(`PdfViewer.jsx`)는 device-space(y=0 상단) 좌표를 기대하므로, 이 반환값(`origin.y = 800`)을 그대로 렌더링하면서 주석이 최하단(상하 거울 반전 위치)에 찍히던 증상이 발생했음.
+  - `pdf_annotator.py` 및 `pdf_user_annotator.py`의 `fitz.Rect` 생성 시 `page_x0 + page_height` 오타로 인해 비정방형 페이지에서 좌표 왜곡이 유발되던 2차 버그도 함께 수정.
+- **수정 내용**:
+  - `app/backend/api/jobs.py`: `get_job_result_json`에서 `_convert_annotations_to_pdf_user` 호출 제거하여 뷰어용 device-space 주석을 있는 그대로 반환. `/jobs/{job_id}/annotations` API에 `space` 파라미터(기본값 `"device"`)를 추가하여 `space="pdf_user"` 일 때만 PDF user-space로 변환.
+  - `app/backend/core/pdf_annotator.py` 및 `app/backend/core/pdf_user_annotator.py`: `fitz.Rect(page_x0, page_y0, page_x0 + page_height, page_y0 + page_height)` 오타를 `page_x0 + page_width`로 정정 및 `page_width` 선택적 수신 지원.
+  - `app/ai-backend/src/lib/proof-api.ts`: Node.js AI 에이전트 도구가 기존 주석을 조회할 때 `space=pdf_user`를 요청하도록 업데이트.
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 241 passed, `cd app/ai-backend && npm run build` → 성공, `cd app/frontend && npm run build` → 성공.
+- **핵심 파일**: `app/backend/api/jobs.py`, `app/backend/core/pdf_annotator.py`, `app/backend/core/pdf_user_annotator.py`, `app/ai-backend/src/lib/proof-api.ts`, `app/backend/tests/test_pdf_text_layer_baseline.py`, `app/backend/tests/test_jobs_result_json_annotations.py`.
+
 ### AI 주석 y좌표 반전 재발 수정 — canonical 좌표계 도입 시점(c9e3c9c)으로 복구 — 2026-07-22
 
 - **원인**: 2026-07-21에 canonical 좌표계를 further 발전시킨 일련의 커밋들(4086288, 414107a, 9369ace, deb1689, 78cf1bd, 588cbb9, d4364c3, 9733b5d, 625c115, e7e2bf3, 1455164, 0ba16d9, 2f994ea, 5dca4b1, f5634f2, d883dea, bdf7126, 7564820, af5deba/602676a)이 device-space ↔ pdf_user-space 직접 변환을 canonical 경유 변환으로 교체하면서 y-flip이 재발. job 46557a21a74547518da300dc6de96b75(2026-07-20 19:13 생성) 시점에는 정상 작동했으나, 이후 변경으로 AI 에이전트가 추가한 주석의 y좌표가 다시 반전되어 표시됨.

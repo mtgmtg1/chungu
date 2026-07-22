@@ -2764,7 +2764,7 @@ def annotate_job(
     instruction = str(payload.get("instruction", "")).strip()
     if not instruction:
         raise HTTPException(status_code=400, detail="instruction is required")
-    mode = str(payload.get("mode", "highlight")).lower()
+    mode = str(payload.get("mode", "both")).lower()
     if mode not in ("highlight", "margin_note", "both"):
         raise HTTPException(status_code=400, detail="Unsupported mode")
     comment_mode = str(payload.get("comment_mode", "user_text")).lower()

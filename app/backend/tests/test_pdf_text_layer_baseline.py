@@ -186,8 +186,8 @@ class TestInvisibleTextAccuracy:
 
         found = rects[0]
         found_height = found.y1 - found.y0
-        # 폰트 크기가 bbox 높이의 70% 이상이어야 함 (너무 작으면 안 됨)
-        assert found_height >= bbox_height * 0.7, (
+        # 폰트 크기가 bbox 높이의 65% 이상이어야 함 (small_glyph_heights 고려)
+        assert found_height >= bbox_height * 0.65, (
             f"Text height {found_height} too small vs bbox height {bbox_height}. "
             f"Font size may be over-shrunk."
         )
@@ -333,3 +333,71 @@ class TestTextLayerSearcherCoordinateSpace:
             )
         finally:
             searcher.close()
+
+
+class TestWordSegmentationAndLinePriority:
+    """단어 분할 배치 및 라인 BBox 우선 파싱 테스트."""
+
+    def test_overall_ocr_res_line_boxes_priority(self):
+        """[Flow: Step 1 (overall_ocr_res의 라인별 BBox와 parsing_res_list 블록 BBox가 함께 들어옴)
+              -> Step 2 (extract_page_ocr_results_from_layout 실행)
+              -> Step 3 (overall_ocr_res의 개별 라인 BBox가 최우선 100% 사용되는지 검증)]"""
+        layout_by_page = {
+            1: {
+                "overall_ocr_res": {
+                    "rec_texts": ["형사", "01035172214"],
+                    "rec_boxes": [[100.0, 200.0, 180.0, 230.0], [200.0, 200.0, 350.0, 230.0]],
+                },
+                "parsing_res_list": [
+                    {
+                        "block_label": "table",
+                        "block_content": "<table><tr><td>형사</td><td>01035172214</td></tr></table>",
+                        "block_bbox": [50.0, 150.0, 500.0, 300.0],
+                    }
+                ],
+            }
+        }
+        from backend.core.pdf_text_layer import extract_page_ocr_results_from_layout
+
+        results = extract_page_ocr_results_from_layout(layout_by_page)
+        items = results.get(1, [])
+        assert len(items) == 2, f"Expected 2 items from overall_ocr_res, got {len(items)}"
+        assert items[0][0] == "형사"
+        assert items[0][1] == (100.0, 200.0, 180.0, 230.0)
+        assert items[1][0] == "01035172214"
+        assert items[1][1] == (200.0, 200.0, 350.0, 230.0)
+
+    def test_word_segmented_invisible_text_placement(self):
+        """[Flow: Step 1 (띄어쓰기 포함된 긴 문장 준비)
+              -> Step 2 (add_text_layer_from_ocr 실행)
+              -> Step 3 (각 단어별로 search_for 실행 시 단어 각각의 검색 Rect가 반환되는지 검증)]"""
+        pdf_bytes = _make_a4_image_pdf()
+        page_width = 595.0
+        page_height = 842.0
+
+        # "서울 서초구 서초대로 278, 2층"
+        x0, y0_top, x1, y1_top = 100.0, 300.0, 450.0, 330.0
+        text = "서울 서초구 서초대로 278, 2층"
+        page_ocr_results = {1: [(text, (x0, y0_top, x1, y1_top))]}
+        layout_by_page = {1: {"width": page_width, "height": page_height}}
+
+        result_bytes = add_text_layer_from_ocr(
+            pdf_bytes, page_ocr_results, dpi=300, language="ko", layout_by_page=layout_by_page
+        )
+
+        doc = fitz.open(stream=result_bytes, filetype="pdf")
+        page = doc[0]
+
+        # 단어 "서초구" 와 "2층" 각각 검색
+        rects_word1 = page.search_for("서초구")
+        rects_word2 = page.search_for("2층")
+
+        assert len(rects_word1) >= 1, "Expected '서초구' to be found"
+        assert len(rects_word2) >= 1, "Expected '2층' to be found"
+
+        # "2층"은 "서초구"보다 오른쪽에 위치해야 함 (X축 순서 보장)
+        assert rects_word2[0].x0 > rects_word1[0].x0, (
+            f"Word '2층' (x0={rects_word2[0].x0}) should be to the right of '서초구' (x0={rects_word1[0].x0})"
+        )
+        doc.close()
+

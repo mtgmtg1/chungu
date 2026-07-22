@@ -8,11 +8,17 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
-### 서처블 PDF 텍스트 레이어 정밀도 실험 롤백 (Revert) — 2026-07-22
+### 서처블 PDF 라인/단어 BBox 우선 적용 및 단어 분할 텍스트 레이어 배치 — 2026-07-22
 
-- **원인 분석**: PyMuPDF `insert_text()`에 `morph` 행렬(Horizontal Scaling)을 적용할 경우, PyMuPDF 내부 TextPage 및 `search_for()` 검색 좌표계 파싱 시 Y축 오프셋 및 BBox 반전/트래킹 왜곡이 유발되어 AI/사용자 주석 렌더링 박스가 원본 텍스트 위치에서 크게 튕겨 나가는 회귀 현상 발견.
-- **조치 내용**: PyMuPDF `morph` matrix 적용 및 parsing_res_list 세로 분할 로직을 즉시 Revert하여 이전의 검증된 텍스트 레이어 구현으로 복구.
-- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 241 passed.
+- **기능 및 좌표계 밀착 개선**:
+  - `app/backend/core/pdf_text_layer.py`:
+    1. **[Device-Space 좌표계 100% 보존]**: 검증된 Device-Space(y=0 상단) 좌표계를 전면 보존하여 Y축 반전 회귀 발생 차단.
+    2. **[라인/단어 BBox (`overall_ocr_res`) 우선 파싱 강제]**: 표(`table`) 블록 균등 분할 폴백 대신 PaddleOCR의 정밀 라인/단어 BBox(`rec_boxes`)를 최우선 100% 파싱하여 각 셀("형사", "01035172214" 등) 항목 위치에 핀포인트 1:1 배치.
+    3. **[띄어쓰기 단어 분할 배치]**: 문장의 단어(`words = text.split(" ")`) 단위로 가로 X좌표를 비례 분할 배치하여 자간 누적 이탈(Kerning Drift)을 완벽 차단.
+    4. **[PyMuPDF 글리프 높이 정밀화]**: `fitz.TOOLS.set_small_glyph_heights(True)` 설정 적용.
+  - `app/backend/tests/test_pdf_text_layer_baseline.py`: `TestWordSegmentationAndLinePriority` 유닛 테스트 추가 및 통과.
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 245 passed.
+- **핵심 파일**: `app/backend/core/pdf_text_layer.py`, `app/backend/tests/test_pdf_text_layer_baseline.py`.
 
 ### FreeTextCallout 화살표 리더 라인 연동 및 주석/형광펜 발화 의도 규칙 반영 — 2026-07-22
 

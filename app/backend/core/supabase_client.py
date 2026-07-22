@@ -88,10 +88,11 @@ def upload_input(file: BytesIO, filename: str, job_id: str, unique_suffix: bool 
     else:
         storage_path = _safe_job_path(filename, job_id)
     content = file.read()
+    content_type = _get_content_type(filename)
     client.storage.from_("pdfs").upload(
         storage_path,
         content,
-        {"content-type": "application/octet-stream", "upsert": "true"},
+        {"content-type": content_type, "upsert": "true"},
     )
     return storage_path
 
@@ -178,6 +179,7 @@ def upload_edited_xlsx(job_id: str, data: bytes, filename: str) -> str:
 def _get_content_type(filename: str) -> str:
     """파일 확장자에 따른 Content-Type을 반환한다."""
     content_type_map = {
+        ".pdf": "application/pdf",
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
         ".png": "image/png",
@@ -186,9 +188,14 @@ def _get_content_type(filename: str) -> str:
         ".bmp": "image/bmp",
         ".tiff": "image/tiff",
         ".tif": "image/tiff",
+        ".json": "application/json",
+        ".csv": "text/csv",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     }
     ext = Path(filename).suffix.lower()
-    return content_type_map.get(ext, "image/jpeg")
+    return content_type_map.get(ext, "application/octet-stream")
 
 
 def upload_image_result(local_path: Path, job_id: str, filename: str) -> str:

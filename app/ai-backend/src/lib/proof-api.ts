@@ -321,11 +321,12 @@ export async function getAnnotations(
   sourceIndex: number = 0,
   pageNo?: number,
   authHeaders?: AuthHeaders,
+  space: 'device' | 'pdf_user' = 'pdf_user',
 ): Promise<{
   annotations: Array<Record<string, unknown>>;
   total: number;
 }> {
-  const params = new URLSearchParams({ source_index: String(sourceIndex) });
+  const params = new URLSearchParams({ source_index: String(sourceIndex), space });
   if (pageNo !== undefined) params.set('page_no', String(pageNo));
   const res = await request<{
     annotations?: Array<Record<string, unknown>>;

@@ -3963,23 +3963,22 @@ def get_job_annotations(
     job_id: str,
     source_index: int = Query(0, description="주석 파일 인덱스"),
     page_no: int | None = Query(None, description="1-based 페이지 번호. 생략 시 모든 페이지"),
+    space: str = Query("device", description="좌표계 (device | pdf_user)"),
     user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """[Flow: Step 1 (job 조회) -> Step 2 (_load_all_annotations로 AI+사용자 주석 병합 로드)
-          -> Step 3 (EmbedPDF 형식 주석 목록 반환)]
+          -> Step 3 (space="pdf_user" 요청 시에만 PDF user-space 변환 수행 후 반환)]
 
-    AI 에이전트가 기존 주석 목록을 확인할 때 사용한다.
-    AI 주석 PDF가 없어도 사용자 주석이 존재하면 반환하며, 주석이 전혀 없으면 빈 리스트를 반환한다.
-    저장된 좌표는 embedpdf device-space이므로 AI 백엔드가 다시 save할 때 일관되게
-    PDF user-space로 역변환하여 반환한다.
+    AI 에이전트 또는 프론트엔드 뷰어가 기존 주석 목록을 확인할 때 사용한다.
+    뷰어는 device-space(원점 좌상단)를 기대하며, space="pdf_user" 요청 시에만 PDF user-space로 역변환한다.
     """
     job = db.get(Job, job_id)
     _require_job_access(job, user)
     _require_job_not_expired(job)
 
     all_annotations = _load_all_annotations(job, source_index, page_no)
-    if all_annotations and job.pdf_storage_path:
+    if space == "pdf_user" and all_annotations and job.pdf_storage_path:
         try:
             client = supabase_client.get_service_client()
             pdf_bytes = client.storage.from_("pdfs").download(job.pdf_storage_path)
@@ -4336,17 +4335,6 @@ def get_job_result_json(
 
     if kind == "annotations":
         all_annotations = _load_all_annotations(job, source_index, page_no)
-        # [Flow: read_job_json도 get_annotations과 동일하게 AI 백엔드가 사용하는 PDF user-space 좌표계로 반환
-        #       -> save_annotations 등에서 read_job_json 결과를 그대로 재사용할 때 좌표계 불일치 방지]
-        if all_annotations and job.pdf_storage_path:
-            try:
-                client = supabase_client.get_service_client()
-                pdf_bytes = client.storage.from_("pdfs").download(job.pdf_storage_path)
-                all_annotations = pdf_user_annotator._convert_annotations_to_pdf_user(
-                    all_annotations, pdf_bytes
-                )
-            except Exception as e:
-                logger.warning(f"[get_job_result_json] {job.id} device→pdf_user 변환 실패: {e}")
         return {"kind": "annotations", "data": all_annotations, "total": len(all_annotations)}
 
     raise HTTPException(status_code=400, detail=f"Unknown kind: {kind}. Supported: annotations|ocr_layout|extracted_files|annotated_pdf_files|job_meta")

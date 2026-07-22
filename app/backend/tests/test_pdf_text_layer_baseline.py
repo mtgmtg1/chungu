@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 import fitz
 import pytest
 
-from backend.core.pdf_text_layer import add_text_layer_from_ocr
+from backend.core.pdf_text_layer import TextLayerSearcher, add_text_layer_from_ocr
 
 
 def _make_a4_image_pdf() -> bytes:
@@ -292,3 +292,44 @@ class TestInvisibleTextAccuracy:
             f"Font may be over-shrunk due to wrong width estimation."
         )
         doc.close()
+
+
+class TestTextLayerSearcherCoordinateSpace:
+    """[Flow: TextLayerSearcher.search가 PDF user-space (y=0 하단) 좌표를 반환하는지 검증]"""
+
+    def test_search_returns_pdf_user_space_coordinates(self):
+        """[Flow: Step 1 (A4 PDF에 상단 y=100~130 영역 텍스트 삽입)
+              -> Step 2 (TextLayerSearcher.search 실행)
+              -> Step 3 (반환된 y0, y1이 PDF user-space y=712~742 범위에 포함되는지 검증)]"""
+        pdf_bytes = _make_a4_image_pdf()
+        page_width = 595.0
+        page_height = 842.0
+
+        # 상단 100~130pt (top-left) 위치에 "SEARCH_TARGET"
+        x0, y0_top, x1, y1_top = 100.0, 100.0, 300.0, 130.0
+        page_ocr_results = {1: [("SEARCH_TARGET", (x0, y0_top, x1, y1_top))]}
+        layout_by_page = {1: {"width": page_width, "height": page_height}}
+
+        result_bytes = add_text_layer_from_ocr(
+            pdf_bytes, page_ocr_results, dpi=300, language="en", layout_by_page=layout_by_page
+        )
+
+        searcher = TextLayerSearcher(result_bytes)
+        try:
+            rects = searcher.search(1, "SEARCH_TARGET")
+            assert len(rects) == 1, f"Expected 1 match, got {len(rects)}"
+            found_x0, found_y0, found_x1, found_y1 = rects[0]
+
+            expected_pdf_user_y0 = page_height - y1_top  # 842 - 130 = 712.0 (하단 기준 y0)
+            expected_pdf_user_y1 = page_height - y0_top  # 842 - 100 = 742.0 (하단 기준 y1)
+
+            # TextLayerSearcher.search는 PDF user-space (y=0 하단) 좌표를 반환해야 하므로
+            # found_y0는 ~712.0 이어야 함
+            assert abs(found_y0 - expected_pdf_user_y0) <= 15.0, (
+                f"y0 mismatch: got {found_y0}, expected {expected_pdf_user_y0}"
+            )
+            assert abs(found_y1 - expected_pdf_user_y1) <= 15.0, (
+                f"y1 mismatch: got {found_y1}, expected {expected_pdf_user_y1}"
+            )
+        finally:
+            searcher.close()

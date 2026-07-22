@@ -8,81 +8,21 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
-### 멀티파일 PDF searchable PDF 개별 적용 — 2026-07-21
+### AI 주석 y좌표 반전 재발 수정 — canonical 좌표계 도입 시점(c9e3c9c)으로 복구 — 2026-07-22
 
-- **원인**: 멀티파일 업로드 시 `_build_and_upload_searchable_pdf`/`_register_searchable_pdf_if_text_layer`가 `if job.searchable_pdf_storage_path: return`으로 스킵하여 첫 번째 PDF만 searchable PDF가 생성되고, 나머지 PDF는 생성되지 않음. 생성되더라도 `job.searchable_pdf_storage_path` 단일 값에 덮어쓰기 되어 마지막 PDF만 남음. `_source_files`도 첫 번째 원본 PDF에만 `job.searchable_pdf_storage_path`를 적용. 이미지 파일은 이미 `extracted_files[i].searchable_pdf_storage_path` 패턴을 사용 중이었으나 PDF 멀티파일은 누락.
-- **수정 (workers/tasks.py)**:
-  - `_build_and_upload_searchable_pdf`와 `_register_searchable_pdf_if_text_layer`에 `force: bool = False`, `upload_name: str = "searchable.pdf"` 파라미터 추가. `force=True`면 `job.searchable_pdf_storage_path` 체크를 스킵하고 항상 생성하며, `job.searchable_pdf_storage_path`에 저장하지 않고 반환값으로 Storage 경로 반환.
-  - 멀티파일 PDF 처리 시 `is_multi_pdf = pdf_file_count > 1`로 판별하여 각 PDF별로 `force=True`로 호출. `pdf_searchable_paths[fp.name]`에 추적하고, 첫 번째 PDF의 searchable PDF를 `job.searchable_pdf_storage_path`에도 설정(하위 호환).
-  - extracted_info 구성 시 PDF 파일에 `searchable_pdf_storage_path` 설정(이미지 파일 패턴과 일관).
-- **수정 (api/jobs.py `_source_files`)**:
-  - 각 원본 PDF 항목의 preview_url로 `extracted_files[source_index].searchable_pdf_storage_path`를 우선 사용. 없으면 첫 번째 PDF에만 `job.searchable_pdf_storage_path`로 폴백.
-- **수정 (api/jobs.py `save_user_annotations`)**:
-  - 좌표 기준 PDF 우선순위: `extracted_files[source_index].searchable_pdf_storage_path` → `extracted_files[source_index].storage_path` → `job.searchable_pdf_storage_path` → `job.pdf_storage_path`.
-  - `input_space` 분기 제거하고 통일: 어떤 input_space든 개별 searchable PDF를 우선 사용.
-- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 260 passed (신규 회귀 테스트 1건 포함: `extracted_files[1].searchable_pdf_storage_path`가 있을 때 그것이 다운로드되고 첫 번째 파일용 `searchable.pdf`는 사용되지 않는지 검증).
-- **핵심 파일**: `app/backend/workers/tasks.py`, `app/backend/api/jobs.py`, `app/backend/tests/test_save_user_annotations_merge.py`.
-- **주의**: 기존 멀티파일 job은 첫 번째 PDF만 searchable PDF가 있으므로, 두 번째 이후 파일의 searchable PDF를 보려면 해당 job을 다시 처리하거나 별도 재생성 스크립트가 필요.
-
-### 주석 저장 500 (Failed to open stream) — 원본이 zip인 job의 좌표 기준 PDF 해석 수정 — 2026-07-21
-
-- **원인**: 멀티파일 업로드 시 백엔드가 파일들을 zip으로 패키징해 `pdf_storage_path`에 저장(`original_filename` = `N_files.zip`). `save_user_annotations`에서 좌표 기준 PDF를 결정할 때 `input_space == "device"`이고 AI entry가 없는 분기가 `job.pdf_storage_path`(zip)를 그대로 사용. zip을 다운로드해 `fitz.open(stream=zip_bytes, filetype="pdf")`를 호출하면 PyMuPDF가 `FileDataError: Failed to open stream`를 던짐. 게다가 `_page_dimensions(pdf_bytes)` 호출이 try/except 밖에 있어 예외가 그대로 500으로 전파되어 주석 저장이 전부 실패.
-- **수정 (백엔드)** (`app/backend/api/jobs.py`):
-  - 좌표 기준 PDF 결정 로직 전면 정비: `source_index >= 0`일 때 `extracted_files[source_index].storage_path`(개별 PDF)를 우선 사용. 멀티파일에서 `job.searchable_pdf_storage_path`는 첫 번째 원본 PDF에 대한 것이므로, `source_index > 0`에서 이를 쓰면 좌표가 어긋나는 문제를 방지.
-  - `input_space == "pdf_user"` 분기: `source_index == 0`일 때만 `searchable_pdf_storage_path` 우선(뷰어가 searchable PDF 기준으로 좌표를 보냄), 그 외는 개별 파일 우선.
-  - else 분기도 `per_file_pdf_path or searchable_pdf_storage_path or pdf_storage_path` 순서로 폴백. zip 등 비-PDF 컨테이너일 때 PyMuPDF open 실패를 원천 방지.
-  - `_page_dimensions(pdf_bytes)` 호출을 try/except로 감싸고 실패 시 빈 dict로 폴백. 비-PDF 파일이거나 PyMuPDF open이 실패해도 주석 저장이 500 없이 진행되도록 안전장치 추가.
-- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 259 passed (신규 회귀 테스트 2건 포함). 신규 테스트는 (1) `pdf_storage_path`가 zip일 때 `searchable.pdf`가 다운로드되는지 + `_page_dimensions` 실패 시 500 없이 폴백, (2) 멀티파일에서 `source_index=1` 저장 시 `extracted_files[1].storage_path`가 다운로드되고 첫 번째 파일용 `searchable.pdf`는 사용되지 않는지 검증.
-- **핵심 파일**: `app/backend/api/jobs.py`, `app/backend/tests/test_save_user_annotations_merge.py`.
-
-### 주석 추가 시 이전 주석 유실 버그 수정 (merged_annotations.json 자동 재생성) — 2026-07-21
-
-- **원인**: `save_user_annotations`가 `user_annotations_{source_index}.json`을 덮어쓰기한 후 `merged_annotations.json`을 재생성하지 않았음. 자동 저장 후 파일 전환/복귀 시 프론트엔드가 이전 `merged_annotations.json`(기존 사용자 주석 누락)을 로드하고, 그 상태에서 새 주석을 추가하면 `exportAnnotations()`에 기존 주석이 빠져 영구 유실되는 악순환 발생.
-- **수정 (백엔드)** (`app/backend/api/jobs.py`):
-  - `save_user_annotations`에 `ai_annotations_path_for_merge` 변수 추가 — entry가 있으면 공유 annotations JSON 경로, 없으면 None.
-  - 두 분기(if/else) 후 공통으로 `_merge_annotation_jsons` 호출해 `merged_annotations.json`을 즉시 재생성.
-  - 응답에 `merged_annotations_url`(새 signed URL) 추가.
-- **수정 (프론트엔드)** (`app/frontend/src/pages/JobResultPage.jsx`):
-  - `handleSaveAnnotations`에서 응답의 `merged_annotations_url`로 `sourceFiles[selectedFileIndex].annotations_json_url` 갱신. `loadJob` 없이도 `SourcePanel`이 최신 병합본을 fetch하도록 함.
-- **검증**: `cd app/backend && .venv/bin/python -m pytest tests/ -q` → 255 passed (신규 2건 포함). `cd app/frontend && npm run build` → 성공. `cd app/ai-backend && npm run build` → 성공.
-- **핵심 파일**: `app/backend/api/jobs.py`, `app/frontend/src/pages/JobResultPage.jsx`, `app/backend/tests/test_save_user_annotations_merge.py`.
-
-### 스캔 PDF searchable PDF 프리뷰 미적용 및 표 텍스트 레이어 행 분할 — 2026-07-21
-
-- **원인**: `app/frontend/src/components/SourcePanel.jsx`에서 PDF 파일 선택 시 `selectedFile.url`(원본 스캔 PDF)을 뷰어에 전달하고, `selectedFile.preview_url`(searchable PDF)은 무시. docx/hwp/pptx 분기는 `preview_url || url`을 올바르게 쓰고 있었으나 PDF 분기만 누락. `app/backend/api/jobs.py`의 `preview_job`도 `source_url`을 항상 원본 `pdf_storage_path`로 설정하고 `searchable_pdf_storage_path`를 무시.
-- **수정 (프리뷰 URL)**:
-  - `SourcePanel.jsx` PDF 분기: `url={selectedFile.preview_url || selectedFile.url}` 및 `key={selectedFile.preview_url || selectedFile.url}`로 변경. docx/hwp/pptx 분기와 일치.
-  - `jobs.py` `preview_job`: `source_type == "pdf"`일 때 `job.searchable_pdf_storage_path or job.pdf_storage_path`를 사용.
-- **표(table) 블록 텍스트 레이어 행 분할 삽입** (`app/backend/core/pdf_text_layer.py`):
-  - `_TEXT_BLOCK_LABELS_FOR_TEXT_LAYER`에 `paragraph_title`, `table` 추가.
-  - `_strip_html_tags` 헬퍼 추가: table 블록의 HTML 태그/엔티티 제거.
-  - `_extract_table_row_items` 헬퍼 추가: table HTML을 `<tr>` 단위로 파싱하여 각 행의 `<td>` 텍스트를 추출하고, 표 bbox를 행 수만큼 y축으로 균등 분할하여 각 행의 텍스트를 분할된 bbox에 삽입. 표 전체 텍스트를 하나의 bbox에 몰아넣으면 폰트가 너무 작아져 텍스트 선택이 불가능해지는 문제를 해결.
-  - `_insert_invisible_text` 개선: 텍스트가 bbox 가로 폭을 넘을 때 폰트 크기를 width의 90% 안전 여유를 두고 축소. 축소 후에도 넘으면 단어 단위 줄바꿈으로 여러 줄 삽입.
-- **검증**: `cd app/backend && .venv/bin/python -m pytest tests/ -q` → 249 passed. `cd app/frontend && npm run build` → 성공. a1 develop 배포 후 8c8bef99 작업의 searchable PDF 재생성 및 Storage 업로드 완료 — 수원구치소, 응우옌안뚜안, 2026노118, 003904, 변호인 접견예약 확인증 모두 검색 매칭 확인.
-- **핵심 파일**: `app/frontend/src/components/SourcePanel.jsx`, `app/backend/api/jobs.py`, `app/backend/core/pdf_text_layer.py`.
-
-### 텍스트 하이라이트(add_text_highlight)와 라인 하이라이트(add_line_highlight) 분리 및 목록 일괄 생성 지원 — 2026-07-21
-
-- **하이라이트 도구 영역 분리 및 선형 보간/라인 확장 구현**:
-  - `add_text_highlight`는 매칭된 텍스트 자체만을 칠하도록 구현. 스캔된 PDF 등 OCR 폴백 시 텍스트 문자열의 비율을 계산하여 선형 보간으로 정확히 해당 텍스트 영역만을 하이라이트.
-  - `add_line_highlight` 신규 도구를 추가하여 텍스트가 속한 줄(Row/Line) 전체를 하이라이트할 수 있도록 분리. PyMuPDF의 line dict 겹침 및 OCR 라인 요소 bbox를 활용.
-  - 두 도구 모두 단일 문자열 및 문자열 배열(목록) 입력을 지원하여 한 번의 에이전트 도구 호출로 복수의 주석을 처리할 수 있도록 보장.
-- **검증**:
-  - `app/backend/tests/test_search_text_modes.py` 신규 작성 및 전체 242개 단위 테스트 통과.
-  - `app/ai-backend/src/tools/__tests__/annotations.test.ts` 테스트 추가 및 `npm run test` (67개 통과), `npm run build` (tsc 빌드 성공) 검증 완료.
-- **핵심 파일**: `app/backend/api/jobs.py`, `app/ai-backend/src/lib/proof-api.ts`, `app/ai-backend/src/tools/annotations.ts`, `app/ai-backend/src/chat/route.ts`, `app/backend/tests/test_search_text_modes.py`.
-
-### AI 주석 도구 다중 매개변수 목록(Batch) 지원 및 Zod 스키마 확장 — 2026-07-21
-
-- **다중 매개변수(page_no, color, opacity) 목록 입력 지원** (`app/ai-backend/src/tools/annotations.ts`):
-  - `add_text_highlight` 및 `add_text_callout` 도구에서 기존에 단일 값만 받았던 `page_no`, `color`, `opacity` 매개변수들을 텍스트(text) 배열의 크기와 일치하는 배열 목록으로 전달할 수 있도록 확장.
-  - 이를 위해 `_normalizeTextList` 헬퍼 함수를 모든 매개변수 대응이 가능한 `_normalizeParams`로 개편하여 각 요소별 파라미터 값 매핑 및 길이 불일치 검증을 수행하도록 구조화.
-  - Zod의 `z.union([z.X, z.array(z.X)])`를 통해 단일 값과 배열 타입을 모두 유연하게 처리할 수 있도록 스키마 보강.
-- **검증**:
-  - `app/ai-backend/src/tools/__tests__/annotations.test.ts`에 목록 매개변수의 정상 전달 및 길이 불일치 시 에러 제어에 관한 단위 테스트 추가 완료.
-  - `cd app/ai-backend && npm run test` -> 66개 테스트 전체 통과.
-  - `npm run build` -> tsc 빌드 성공.
-  - **핵심 파일**: `app/ai-backend/src/tools/annotations.ts`, `app/ai-backend/src/tools/__tests__/annotations.test.ts`.
+- **원인**: 2026-07-21에 canonical 좌표계를 further 발전시킨 일련의 커밋들(4086288, 414107a, 9369ace, deb1689, 78cf1bd, 588cbb9, d4364c3, 9733b5d, 625c115, e7e2bf3, 1455164, 0ba16d9, 2f994ea, 5dca4b1, f5634f2, d883dea, bdf7126, 7564820, af5deba/602676a)이 device-space ↔ pdf_user-space 직접 변환을 canonical 경유 변환으로 교체하면서 y-flip이 재발. job 46557a21a74547518da300dc6de96b75(2026-07-20 19:13 생성) 시점에는 정상 작동했으나, 이후 변경으로 AI 에이전트가 추가한 주석의 y좌표가 다시 반전되어 표시됨.
+- **수정**: canonical 좌표 도입 직후 안정 시점인 `c9e3c9c`(2026-07-20 13:14)로 7개 핵심 파일을 checkout.
+  - `app/backend/core/pdf_annotator.py`: `_rect_to_canonical_rect`/`_device_annotation_to_canonical` 대신 `_rect_to_embedpdf_rect`(device-space 직접 변환) 사용.
+  - `app/backend/core/pdf_user_annotator.py`: `_convert_annotations_to_canonical`/`_convert_annotation_item` 등 canonical 경유 변환 함수 제거, `_convert_annotation_to_pdf_user`/`_convert_annotation_to_device_space` 직접 변환 복원.
+  - `app/backend/core/pdf_annotate_converter.py`: `_build_canonical_annotations_document`/`_extract_annotations_from_document`/`_page_dimensions` 제거, flat list 저장 복원.
+  - `app/backend/api/jobs.py`: `save_user_annotations`/`_merge_annotation_jsons`/`_load_all_annotations`/`get_job_annotations`/`get_job_result_json`/`update_job_annotation`/`_initialize_user_annotations_json`/`preview_job`를 c9e3c9c 버전으로 복원. canonical document 처리 제거, device-space ↔ pdf_user-space 직접 변환 사용.
+  - `app/frontend/src/components/SourcePanel.jsx`: `canonicalToDeviceAnnotation`/`canonicalToDeviceRect`/`canonicalToDevicePoint`/`normalizeAnnotationsJson`(canonical 분기) 제거, flat list 그대로 렌더링 복원.
+  - `app/frontend/src/components/PdfViewer.jsx`: c9e3c9c 버전으로 복원.
+  - `app/ai-backend/src/tools/annotations.ts`: c9e3c9c 버전으로 복원. 배치 주석, sticky note, line highlight 도구 제거, 단일 주석 도구 복원.
+- **손실 기능**: c9e3c9c 이후 추가된 기능(배치 주석 배열 입력, per-file searchable PDF, merged_annotations.json 자동 재생성, sticky note/line highlight 도구, callout→sticky note 변경, 다중 매개변수 목록 지원)은 모두 제거됨. 필요한 경우 별도 재개발 필요.
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 240 passed. `cd app/ai-backend && npm run build` → 성공. `cd app/frontend && npm run build` → 성공.
+- **핵심 파일**: `app/backend/core/pdf_annotator.py`, `app/backend/core/pdf_user_annotator.py`, `app/backend/core/pdf_annotate_converter.py`, `app/backend/api/jobs.py`, `app/frontend/src/components/SourcePanel.jsx`, `app/frontend/src/components/PdfViewer.jsx`, `app/ai-backend/src/tools/annotations.ts`.
+- **주의**: 기존 job의 `merged_annotations.json`/`user_annotations_*.json`이 canonical document 형식(dict with coordinate_system/page_dimensions)으로 저장되어 있는 경우, c9e3c9c 코드는 이를 list로 간주하지 않으므로 주석이 표시되지 않을 수 있음. 해당 job은 주석을 다시 추가하거나 JSON을 flat list로 변환해야 함.
 
 ### 프로 요금제 크레딧 혜택 상향 및 충전 크레딧 일치화 — 2026-07-21
 
@@ -95,38 +35,6 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **충전 금액 및 크레딧 비율 일치**:
   - `app/frontend/src/pages/PaymentPage.jsx`의 충전 입력창 및 예상 획득 크레딧 정보를 1달러 = 1,000크레딧(1milli-USD = 1크레딧)과 일치하게 수정하여 "20,000 크레딧 충전하기" 와 같이 표시되도록 변경.
 - **핵심 파일**: `app/backend/core/subscription_service.py`, `app/backend/tests/test_subscription_credits.py`, `app/frontend/src/pages/PricePage.jsx`, `app/frontend/src/components/PlanCard.jsx`, `app/frontend/src/pages/PaymentPage.jsx`, `app/frontend/src/locales/{ko,en,ja}/page.json`.
-
-### AI Annotation 일괄(Batch) 생성 지원 및 좌표계 식별자 Refactoring — 2026-07-21
-
-- **AI 주석 일괄(Batch) 생성 지원** (`app/ai-backend/src/tools/annotations.ts`):
-  - AI 백엔드 도구의 `add_text_highlight` 및 `add_text_callout` 도구가 문자열(string) 외에도 문자열 배열(array) 입력을 지원하여 여러 개의 주석을 한 번의 호출로 일괄 생성(pending 버퍼에 누적)할 수 있도록 강화.
-  - `_normalizeTextList` 헬퍼 함수를 추가하여 `text`와 `comment` 파라미터가 단일 값 혹은 배열인 경우를 일관성 있게 매핑하며, 수량이 불일치할 경우 에러를 반환.
-- **주석 저장 API 호출 시 좌표계 식별자 수정** (`app/ai-backend/src/tools/annotations.ts`):
-  - AI 백엔드 도구가 변경 사항을 저장(apply_annotations)하기 위해 `proofApi.saveAnnotations`를 호출할 때, `source_type` 매개변수 값을 기존 `pdf_user`에서 `device`로 변경.
-  - AI 백엔드 도구와 백엔드 서버 간 주석 처리 시 좌표계 식별 방식을 `device`로 통일.
-- **검증**:
-  - `cd app/ai-backend && npm run build` → tsc 빌드 성공.
-- **핵심 파일**: `app/ai-backend/src/tools/annotations.ts`.
-
-### PDF 뷰어 주석 좌표계 roundtrip 수정 (merged_annotations.json canonical document)
-
-- **목표**: 원본 PDF 뷰어에서 AI/사용자 주석이 좌상단 (0,0)에 몰려 보이거나, 추가한 주석이 위치가 어긋나 보이는 문제를 해결.
-- **원인**: `app/backend/api/jobs.py`의 `_merge_annotation_jsons`가 `page_dimensions`를 페이지 번호별 dict로 다루지 않고 단일 페이지 dimension 객체처럼 사용해, canonical document를 생성하지 못하고 좌표값 그대로의 flat list를 `merged_annotations.json`에 저장. 프론트엔드 `SourcePanel.jsx`는 이 flat list를 device-space로 오인해 `(0,0)` 근처에 그렸고, 뷰어가 내보낸 값도 동일하게 canonical로 잘못 해석되어 악순환이 반복됨.
-- **수정** (`app/backend/api/jobs.py`):
-  - `_merge_annotation_jsons`에서 AI/사용자 주석 JSON이 list든 canonical document(dict)든 파싱.
-  - `page_dimensions`를 `{page_no: {width_pt, height_pt, x0, y0, rotation}}` 형태로 취급하고, annotation의 `pageIndex+1`로 해당 페이지 크기를 조회.
-  - AI/사용자 주석의 좌표계를 canonical 기준으로 통일한 뒤 `pdf_annotate_converter._build_canonical_annotations_document()`로 canonical document를 저장.
-  - legacy list 형식도 device-space로 간주하여 canonical로 변환.
-- **영향 파일**: `app/backend/api/jobs.py`, `app/backend/core/pdf_annotate_converter.py`, `app/backend/core/pdf_user_annotator.py`, `app/frontend/src/components/SourcePanel.jsx`, `app/frontend/src/components/PdfViewer.jsx`.
-- **추가 수정 — 사용자 주석 분리 저장**:
-  - `save_user_annotations`에서 AI 주석(`annotated.annotations.json`)과 사용자 주석(`user_annotations_{source_index}.json`)을 한 파일에 뭉쳐 저장하고 있어, `_source_files`/`_load_all_annotations` 병합 시 중복/과거 데이터가 남는 문제를 수정.
-  - 이제 AI annotate가 있을 때: AI 주석은 공유 `annotated.annotations.json`에, 사용자 직접 추가 주석은 `user_annotations_{source_index}.json`에 분리 저장. `_merge_annotation_jsons`가 두 파일을 병합해 `merged_annotations.json` 생성.
-- **검증**:
-  - `cd app/backend && .venv/bin/python -m pytest tests/ -q` → 237 passed.
-  - Playwright로 worktree-c 프론트엔드에서 AI annotation 19개 import/export 좌표가 device-space로 정상 roundtrip됨을 확인.
-  - 수동 주석 추가 후 `merged_annotations.json`에 AI 주석 + 사용자 주석이 중복 없이 병합됨을 확인 (AI 26개 + 수동 1개 = 27개).
-- **배포**: worktree-c backend를 a1 develop(`chungu-dev`)에 재배포 완료. 프론트엔드 dev server는 Vite HMR.
-- **주의**: 기존에 이미 깨진 `merged_annotations.json`이나 `user_annotations_*.json`이 남아 있는 job은 한 번 삭제하거나 새로 annotate/하이라이트한 뒤 새로고침해야 정상 위치에 표시됨.
 
 ### Develop branch fixes — 2026-07-20
 

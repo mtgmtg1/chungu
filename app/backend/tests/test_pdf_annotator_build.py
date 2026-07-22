@@ -62,17 +62,17 @@ class TestBuildEmbedpdfAnnotations:
         item = result[0]
         assert "annotation" in item
         ann = item["annotation"]
-        assert ann["contents"] == ""
-        assert ann["custom"]["comment"] == "test"
+        assert ann["type"] == HIGHLIGHT_TYPE
+        assert ann["pageIndex"] == 0
+        assert ann["contents"] == "test"
         assert ann["opacity"] == DEFAULT_OPACITY
-        # build_embedpdf_annotations는 canonical normalized (0-1, 좌상단 원점) 좌표를 반환한다.
-        # A4 842pt 기준 PDF user-space (100,700,200,720) -> canonical
-        page_width, page_height = 595.0, 842.0
+        # A4 842pt 기준 PDF user-space (100,700,200,720) -> device-space
+        # origin.y = page_height - y1 = 842 - 720 = 122
         rect = ann["rect"]
-        assert rect["origin"]["x"] == pytest.approx(100.0 / page_width, rel=1e-5)
-        assert rect["origin"]["y"] == pytest.approx((page_height - 720.0) / page_height, rel=1e-5)
-        assert rect["size"]["width"] == pytest.approx(100.0 / page_width, rel=1e-5)
-        assert rect["size"]["height"] == pytest.approx(20.0 / page_height, rel=1e-5)
+        assert rect["origin"]["x"] == pytest.approx(100.0, abs=0.01)
+        assert rect["origin"]["y"] == pytest.approx(122.0, abs=0.01)
+        assert rect["size"]["width"] == pytest.approx(100.0, abs=0.01)
+        assert rect["size"]["height"] == pytest.approx(20.0, abs=0.01)
         assert "segmentRects" in ann
         assert len(ann["segmentRects"]) == 1
         assert "strokeColor" in ann
@@ -147,14 +147,13 @@ class TestBuildEmbedpdfAnnotations:
         assert len(result) == 1
         ann = result[0]["annotation"]
         rect = ann["rect"]
-        # build_embedpdf_annotations는 canonical (0-1) 좌표를 반환하므로 device points로 환산해 비교
-        page_width, page_height = 595.0, 842.0
-        tx0 = rect["origin"]["x"] * page_width
-        ty0 = rect["origin"]["y"] * page_height
-        tx1 = tx0 + rect["size"]["width"] * page_width
-        ty1 = ty0 + rect["size"]["height"] * page_height
-        # obstacle (200,400,400,600)은 PDF user-space; device-space y_top=842-600=242, y_bottom=842-400=442
-        assert (tx1 <= 200.0 or tx0 >= 400.0) or (ty1 <= 242.0 or ty0 >= 442.0)
+        # 텍스트 박스 전체 영역(obstacle + padding)과 겹치지 않아야 함
+        tx0 = rect["origin"]["x"]
+        ty0 = rect["origin"]["y"]
+        tx1 = tx0 + rect["size"]["width"]
+        ty1 = ty0 + rect["size"]["height"]
+        # 간단히: obstacle (200,400,400,600)과 겹치지 않도록 x1 <= 200 또는 x0 >= 400 이어야 함
+        assert (tx1 <= 200.0 or tx0 >= 400.0) or (ty1 <= 400.0 or ty0 >= 600.0)
 
     def test_targets_sorted_by_y_within_page(self):
         # [Flow: 같은 페이지에 y좌표가 뒤죽박죽인 대상 2개 -> 결과 순서가 y0 기준 오름차순인지 확인]
@@ -168,10 +167,8 @@ class TestBuildEmbedpdfAnnotations:
 
         assert len(result) == 2
         # y0 기준 오름차순(PDF user-space)이므로 lower(500) 먼저, upper(700) 다음
-        assert result[0]["annotation"]["contents"] == ""
-        assert result[0]["annotation"]["custom"]["comment"] == "lower"
-        assert result[1]["annotation"]["contents"] == ""
-        assert result[1]["annotation"]["custom"]["comment"] == "upper"
+        assert result[0]["annotation"]["contents"] == "lower"
+        assert result[1]["annotation"]["contents"] == "upper"
 
     def test_search_rects_pdf_creates_multiple_segment_rects(self):
         # [Flow: 한 대상에 여러 검색 결과 rects가 있을 때 -> segmentRects가 모두 포함되고 custom에 searchText가 남는지 확인]
@@ -191,4 +188,4 @@ class TestBuildEmbedpdfAnnotations:
         assert ann["type"] == HIGHLIGHT_TYPE
         assert "segmentRects" in ann
         assert len(ann["segmentRects"]) == 2
-        assert ann["custom"] == {"searchText": "hello", "comment": "multiple"}
+        assert ann["custom"] == {"searchText": "hello"}

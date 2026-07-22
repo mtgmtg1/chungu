@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
-from typing import Any
 
 import fitz  # PyMuPDF
 from sqlalchemy import select
@@ -126,16 +125,16 @@ def _merge_annotations_for_run(
     new_annotations: list[dict],
     annotation_index: int,
 ) -> list[dict]:
-    """[Flow: Step 1 (공유 annotations.json 다운로드)
-          -> Step 2 (list 또는 canonical object에서 annotations 배열 추출)
-          -> Step 3 (동일 run의 기존 주석 분류: 사용자 편집 보존, stale 제거)
-          -> Step 4 (새 주석 추가) -> Step 5 (병합된 annotations 배열 반환)]
+    """[Flow: Step 1 (공유 annotations.json 다운로드) -> Step 2 (동일 run의 기존 주석 분류)
+          -> Step 3 (사용자 편집 주석은 보존, 미편집 주석은 제거) -> Step 4 (새 주석 추가)
+          -> Step 5 (병합된 목록 반환)]
 
     병렬 AI 주석 생성에서 공유 JSON을 안전하게 갱신하기 위해 사용한다.
     실제 호출은 SELECT FOR UPDATE로 잠근 트랜잭션 안에서 이루어져야 한다.
 
     사용자가 AI 주석을 편집(색상/코멘트/위치/투명도 변경)한 경우, 해당 주석에
     `_userEdited: true` 필드가 설정되어 있으면 재생성 시 덮어쓰지 않고 보존한다.
+    이렇게 하면 같은 annotation_index로 재생성해도 사용자의 수동 편집이 유지된다.
     편집되지 않은 동일 run의 주석은 제거한 뒤 새 주석으로 교체하여 멱등성을 보장한다.
     """
     prefix = f"backend-{annotation_index}-"
@@ -143,10 +142,10 @@ def _merge_annotations_for_run(
     try:
         existing_bytes = client.storage.from_("results").download(shared_annotations_json_path)
         existing = json.loads(existing_bytes.decode("utf-8"))
+        if not isinstance(existing, list):
+            existing = []
     except Exception:
         existing = []
-
-    _, __, existing_annotations = _extract_annotations_from_document(existing)
 
     # [Flow: 기존 주석을 3그룹으로 분류]
     # - other: 다른 run의 주석 또는 사용자 주석 → 무조건 보존
@@ -154,7 +153,7 @@ def _merge_annotations_for_run(
     # - stale: 같은 run이고 편집되지 않은 주석 → 제거 (새 주석으로 교체)
     preserved_edited: list[dict] = []
     preserved_other: list[dict] = []
-    for a in existing_annotations:
+    for a in existing:
         aid = _annotation_id(a)
         if not aid.startswith(prefix):
             preserved_other.append(a)
@@ -611,64 +610,6 @@ def _page_rects(pdf_bytes: bytes) -> dict[int, fitz.Rect]:
 def _page_point_sizes(pdf_bytes: bytes) -> dict[int, tuple[float, float]]:
     """원본 PDF에서 페이지별 실제 크기(포인트)를 1-based page_no 기준으로 반환한다."""
     return {page_no: (rect.width, rect.height) for page_no, rect in _page_rects(pdf_bytes).items()}
-
-
-def _page_dimensions(pdf_bytes: bytes) -> dict[str, dict]:
-    """[Flow: Step 1 (PDF 열기) -> Step 2 (페이지별 page.rect/rotation 수집)
-          -> Step 3 (canonical JSON header용 page_dimensions dict 반환)]"""
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    try:
-        dims = {}
-        for page in doc:
-            rect = page.rect
-            dims[str(page.number + 1)] = {
-                "width_pt": float(rect.width),
-                "height_pt": float(rect.height),
-                "x0": float(rect.x0),
-                "y0": float(rect.y0),
-                "rotation": int(page.rotation or 0),
-            }
-        return dims
-    finally:
-        doc.close()
-
-
-def _build_canonical_annotations_document(
-    annotations: list[dict],
-    source_pdf_storage_path: str,
-    source_pdf_bucket: str,
-    page_dimensions: dict[str, dict],
-) -> dict:
-    """[Flow: Step 1 (주석 배열 + page_dimensions 수신)
-          -> Step 2 (canonical coordinate_system header와 결합)
-          -> Step 3 (Storage 저장용 JSON document 반환)]"""
-    return {
-        "coordinate_system": "canonical",
-        "source_pdf_storage_path": source_pdf_storage_path,
-        "source_pdf_bucket": source_pdf_bucket,
-        "page_dimensions": page_dimensions,
-        "annotations": annotations,
-    }
-
-
-def _extract_annotations_from_document(
-    data: Any,
-) -> tuple[str | None, dict[str, dict] | None, list[dict]]:
-    """[Flow: Step 1 (list 또는 canonical object 수신)
-          -> Step 2 (coordinate_system/page_dimensions/annotations 분리)
-          -> Step 3 (하위 호환을 위해 list는 device로 간주)]"""
-    if isinstance(data, list):
-        return ("device", None, data)
-    if isinstance(data, dict):
-        annotations = data.get("annotations", [])
-        if not isinstance(annotations, list):
-            annotations = []
-        return (
-            data.get("coordinate_system") or "device",
-            data.get("page_dimensions"),
-            annotations,
-        )
-    return ("device", None, [])
 
 
 def collect_elements_for_agent(
@@ -1272,9 +1213,6 @@ def run(
                 job.searchable_pdf_storage_path = shared_storage_path
             display_name = _searchable_display_name(job)
 
-            # [Flow: canonical JSON header용 page_dimensions 수집]
-            page_dimensions = _page_dimensions(pdf_bytes)
-
             # [Flow: callout 배치용 페이지 요소 bbox — 기존 텍스트 요소와 하이라이트 영역을 피해 텍스트 박스 배치]
             # elements의 bbox_px를 PDF user-space 좌표로 변환해 페이지별로 그룹화한다.
             # searchable PDF 경로에서는 elements가 비어 있지만, targets의 bbox_pdf를 추가해
@@ -1307,16 +1245,10 @@ def run(
             merged_annotations = _merge_annotations_for_run(
                 shared_annotations_json_path, embedpdf_annotations, next_index
             )
-            annotations_document = _build_canonical_annotations_document(
-                merged_annotations,
-                source_pdf_storage_path=shared_storage_path,
-                source_pdf_bucket="pdfs",
-                page_dimensions=page_dimensions,
-            )
             client = supabase_client.get_service_client()
             client.storage.from_("results").upload(
                 shared_annotations_json_path,
-                json.dumps(annotations_document, ensure_ascii=False).encode("utf-8"),
+                json.dumps(merged_annotations, ensure_ascii=False).encode("utf-8"),
                 {"content-type": "application/json", "upsert": "true"},
             )
 
@@ -1406,12 +1338,12 @@ def run_edit(
         try:
             existing_bytes = client.storage.from_("results").download(shared_annotations_json_path)
             existing = json.loads(existing_bytes.decode("utf-8"))
+            if not isinstance(existing, list):
+                existing = []
         except Exception:
             existing = []
 
-        _, existing_page_dimensions, existing_annotations = _extract_annotations_from_document(existing)
-
-        if not existing_annotations:
+        if not existing:
             _update_entry_status(db, job_id, next_index, "done", recovery_notes=[{"reason": "편집할 기존 주석이 없습니다"}])
             return {"job_id": job_id, "status": "done", "edited_count": 0}
 
@@ -1502,13 +1434,13 @@ def run_edit(
         # [Flow: Step 5 — 병합: 편집 대상이 아닌 주석 보존, 편집 대상은 갱신된 버전으로 교체]
         edited_ids = {a["id"] for a in editable}
         editable_by_id = {a["id"]: a["_item"] for a in editable}
-        preserved_annotations: list[dict] = []
-        for item in existing_annotations:
+        preserved: list[dict] = []
+        for item in existing:
             aid = _annotation_id(item)
             if aid in edited_ids:
-                preserved_annotations.append(editable_by_id[aid])
+                preserved.append(editable_by_id[aid])
             else:
-                preserved_annotations.append(item)
+                preserved.append(item)
 
         # 동시 쓰기 안전성을 위해 SELECT FOR UPDATE로 행 잠금
         locked_job = db.execute(
@@ -1521,19 +1453,9 @@ def run_edit(
             db.rollback()
             return {"job_id": job_id, "status": "cancelled", "edited_count": 0}
 
-        # [Flow: canonical JSON document로 재구성]
-        source_pdf_storage_path = existing.get("source_pdf_storage_path") if isinstance(existing, dict) else (job.searchable_pdf_storage_path or shared_annotations_json_path)
-        source_pdf_bucket = existing.get("source_pdf_bucket") if isinstance(existing, dict) else "pdfs"
-        annotations_document = _build_canonical_annotations_document(
-            preserved_annotations,
-            source_pdf_storage_path=source_pdf_storage_path,
-            source_pdf_bucket=source_pdf_bucket or "pdfs",
-            page_dimensions=existing_page_dimensions or {},
-        )
-
         client.storage.from_("results").upload(
             shared_annotations_json_path,
-            json.dumps(annotations_document, ensure_ascii=False).encode("utf-8"),
+            json.dumps(preserved, ensure_ascii=False).encode("utf-8"),
             {"content-type": "application/json", "upsert": "true"},
         )
 

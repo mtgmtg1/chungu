@@ -76,3 +76,34 @@ describe("SourcePanel pptx 미리보기", () => {
     expect(viewer).toHaveAttribute("data-url", "https://example.com/slides.pdf");
   });
 });
+
+describe("SourcePanel pdf 미리보기 (searchable_pdf)", () => {
+  const basePdfFile = {
+    name: "scanned.pdf",
+    type: "pdf",
+    url: "https://example.com/original.pdf",
+    preview_url: "https://example.com/searchable.pdf",
+    storage_path: "jobs/scanned.pdf",
+    bucket: "pdfs",
+    page_num: 1,
+    source_index: 0,
+    source_kind: "original",
+    status: "done",
+  };
+
+  it("pdf sourceFiles에 preview_url(searchable pdf)이 있으면 PdfViewer에 preview_url을 전달한다", () => {
+    render(<SourcePanel sourceFiles={[basePdfFile]} />);
+
+    const viewer = screen.getByTestId("pdf-viewer");
+    expect(viewer).toBeInTheDocument();
+    expect(viewer).toHaveAttribute("data-url", basePdfFile.preview_url);
+  });
+
+  it("pdf sourceFiles에 preview_url이 없으면 원본 url을 전달한다", () => {
+    const file = { ...basePdfFile, preview_url: undefined };
+    render(<SourcePanel sourceFiles={[file]} />);
+
+    const viewer = screen.getByTestId("pdf-viewer");
+    expect(viewer).toHaveAttribute("data-url", basePdfFile.url);
+  });
+});

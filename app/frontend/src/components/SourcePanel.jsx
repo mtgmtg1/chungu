@@ -206,7 +206,7 @@ function SingleFilePreview({ file, filename, annotationsJson, pdfViewerRef, onAn
   const displayName = getDisplayName({ name: filename || file?.name, storage_path: file?.storage_path });
   let content = null;
   if (file.type === "pdf") {
-    content = <PdfViewer ref={pdfViewerRef} url={file.url} annotationsJson={annotationsJson} onAnnotationChanged={onAnnotationChanged} />;
+    content = <PdfViewer ref={pdfViewerRef} url={file.preview_url || file.url} annotationsJson={annotationsJson} onAnnotationChanged={onAnnotationChanged} />;
   } else if (file.type === "docx" || file.type === "hwp" || file.type === "pptx") {
     content = file.preview_url ? <PdfViewer ref={pdfViewerRef} url={file.preview_url} annotationsJson={annotationsJson} onAnnotationChanged={onAnnotationChanged} /> : null;
   } else if (file.type === "image") {
@@ -871,10 +871,11 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
   function renderPreview() {
     if (!selectedFile) {
       if (sourceType === "pdf" && sourceUrl) {
+        const initialPdfUrl = files[0]?.preview_url || sourceUrl;
         return (
           <PdfViewerWithFab
             viewerRef={pdfViewerRef}
-            url={sourceUrl}
+            url={initialPdfUrl}
             page={currentPage}
             annotationsJson={selectedAnnotationsJson}
             onAnnotationChanged={handleAnnotationChanged}
@@ -988,11 +989,12 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
     }
 
     if (selectedFile.type === "pdf") {
+      const pdfPreviewUrl = selectedFile.preview_url || selectedFile.url;
       return (
         <PdfViewerWithFab
-          key={selectedFile.url}
+          key={pdfPreviewUrl}
           viewerRef={pdfViewerRef}
-          url={selectedFile.url}
+          url={pdfPreviewUrl}
           page={currentPage}
           annotationsJson={selectedAnnotationsJson}
           onAnnotationChanged={handleAnnotationChanged}

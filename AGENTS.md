@@ -8,6 +8,18 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### AI 주석 도구 texts 축약 배치 형식 도입 — 토큰 절약 최적화 — 2026-07-22
+
+- **기능 변경**:
+  - `app/ai-backend/src/tools/annotations.ts`: `add_text_highlight` 및 `add_text_callout` 도구에 `texts` (문자열 배열) 파라미터를 추가. 공통 `page_no`/`comment`/`color`/`opacity`를 공유하는 여러 텍스트를 하이라이트할 때 `items` 배열 대신 `texts` 배열 + 공유 파라미터로 호출하여 토큰을 대폭 절약.
+    - 이전: `{ items: [{text:"A", page_no:1, color:"yellow", comment:""}, {text:"B", page_no:1, color:"yellow", comment:""}, ...] }` (반복되는 파라미터로 토큰 낭비)
+    - 이후: `{ texts: ["A", "B", "C"], page_no: 1, color: "yellow", comment: "" }` (공통 파라미터 1회만 전달)
+  - `parseBatchInputs()` 함수의 입력 우선순위를 `texts > items > text[] > text` 순으로 재정의.
+  - `app/ai-backend/src/chat/route.ts`: 시스템 프롬프트의 배치 모드 가이드를 `texts` 축약 형식 우선으로 업데이트. `items`는 각 항목마다 다른 설정이 필요할 때만 사용하도록 가이드.
+- **하위 호환성**: 기존 `items` 배열, `text` 단일/배열 입력은 모두 그대로 작동.
+- **검증**: `cd app/ai-backend && npm run build` → tsc 성공.
+- **핵심 파일**: `app/ai-backend/src/tools/annotations.ts`, `app/ai-backend/src/chat/route.ts`.
+
 ### 서처블 PDF 라인/단어 BBox 우선 적용 및 단어 분할 텍스트 레이어 배치 — 2026-07-22
 
 - **기능 및 좌표계 밀착 개선**:

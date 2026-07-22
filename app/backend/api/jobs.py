@@ -3762,6 +3762,19 @@ def search_job_text(
             except Exception:
                 # 정규식이 유효하지 않으면 일반 텍스트로 폴백
                 rects = page.search_for(query.replace("\\", ""))
+            # [TABLE_DEBUG] search_for 결과 좌표 로깅
+            if rects:
+                logger.info(
+                    f"[TABLE_DEBUG] search_job_text: job={job_id} page={current_page_no} "
+                    f"query='{query[:40]}' search_for 결과 {len(rects)}건, "
+                    f"page.rect=({page.rect.x0:.1f}, {page.rect.y0:.1f}, {page.rect.x1:.1f}, {page.rect.y1:.1f})"
+                )
+                for ri, rect in enumerate(rects[:5]):
+                    logger.info(
+                        f"[TABLE_DEBUG]   search_for[{ri}]: "
+                        f"rect=({rect.x0:.1f}, {rect.y0:.1f}, {rect.x1:.1f}, {rect.y1:.1f}), "
+                        f"text='{page.get_textbox(rect).strip()[:40]}'"
+                    )
             for rect in rects:
                 if not _is_rect_plausible_for_page(rect, page.rect):
                     logger.warning(
@@ -3781,6 +3794,10 @@ def search_job_text(
     # 요소 텍스트에 대해 대소문자 무관 정규식 매칭을 수행한다.]
     ocr_page_range = [page_no] if page_no is not None else None
     if not matches:
+        logger.info(
+            f"[TABLE_DEBUG] search_job_text: job={job_id} query='{query[:40]}' "
+            f"search_for 매치 0건 → OCR 폴백 진입"
+        )
         ocr_elements: list[dict] = []
         # 1) 저장된 OCR layout 재사용
         if job.result_ocr_layout_storage_path:
@@ -3819,11 +3836,27 @@ def search_job_text(
             text = el.get("text") or ""
             if not pattern.search(text):
                 continue
+            # [TABLE_DEBUG] OCR 폴백 경로에서 표 행 좌표 로깅
+            if el.get("kind") == "table_row" or "|" in text:
+                logger.info(
+                    f"[TABLE_DEBUG] search_job_text OCR 폴백 매치: "
+                    f"kind={el.get('kind')} text='{text[:40]}' "
+                    f"bbox_pdf={[round(v, 1) for v in el['bbox_pdf']]}"
+                )
             matches.append({
                 "page_no": el["page_no"],
                 "bbox_pdf": list(el["bbox_pdf"]),
                 "text": text.strip(),
             })
+
+    # [TABLE_DEBUG] 최종 결과 요약
+    table_matches = [m for m in matches if "|" in m.get("text", "")]
+    if table_matches:
+        logger.info(
+            f"[TABLE_DEBUG] search_job_text 최종: job={job_id} query='{query[:40]}' "
+            f"total={len(matches)}건 (표 행 {len(table_matches)}건), "
+            f"경로={'search_for' if not used_ocr_layout and not used_ocr_fallback else 'OCR 폴백'}"
+        )
 
     import time as _time
     total_elapsed = _time.monotonic() - start_time

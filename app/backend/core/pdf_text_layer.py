@@ -139,10 +139,17 @@ def _extract_table_row_items(content: str, bbox: BBox) -> list[tuple[str, BBox]]
     # 표 bbox를 행 수만큼 y축으로 균등 분할한다.
     x0, y0, x1, y1 = bbox[:4]
     row_height = (y1 - y0) / len(row_texts)
+    logger.info(
+        f"[TABLE_DEBUG] _extract_table_row_items: 원본 table bbox=({x0:.1f}, {y0:.1f}, {x1:.1f}, {y1:.1f}), "
+        f"행 수={len(row_texts)}, row_height={row_height:.1f}, y방향={'y↓(top-left)' if y0 < y1 else 'y↑(bottom-left)'}"
+    )
     items: list[tuple[str, BBox]] = []
     for i, text in enumerate(row_texts):
         row_y0 = y0 + i * row_height
         row_y1 = y0 + (i + 1) * row_height
+        logger.info(
+            f"[TABLE_DEBUG]   행[{i}] text='{text[:40]}' → row_bbox=({x0:.1f}, {row_y0:.1f}, {x1:.1f}, {row_y1:.1f})"
+        )
         items.append((text, (x0, row_y0, x1, row_y1)))
     return items
 
@@ -406,6 +413,17 @@ def _insert_text_layer_into_doc(
             if not clamped_rect or clamped_rect.is_empty or clamped_rect.is_infinite:
                 continue
 
+            # [TABLE_DEBUG] 표 행 텍스트(| 구분자 포함)의 좌표 변환 과정 추적
+            is_table_row_text = "|" in text
+            if is_table_row_text:
+                logger.info(
+                    f"[TABLE_DEBUG] _insert_text_layer page={page_no}: text='{text[:40]}' "
+                    f"원본 bbox=({bbox_pdf[0]:.1f}, {bbox_pdf[1]:.1f}, {bbox_pdf[2]:.1f}, {bbox_pdf[3]:.1f}) "
+                    f"→ pdf_user=({ocr_rect.x0:.1f}, {ocr_rect.y0:.1f}, {ocr_rect.x1:.1f}, {ocr_rect.y1:.1f}) "
+                    f"→ clamped=({clamped_rect.x0:.1f}, {clamped_rect.y0:.1f}, {clamped_rect.x1:.1f}, {clamped_rect.y1:.1f}) "
+                    f"page_rect=({page_rect.x0:.1f}, {page_rect.y0:.1f}, {page_rect.x1:.1f}, {page_rect.y1:.1f})"
+                )
+
             # 텍스트 내용에 따라 폰트 선택: CJK 문자가 없으면 helv(영문), 있으면 언어별 CJK 폰트
             font_name = _pick_font_for_text(text, language)
             _insert_invisible_text(page, text, (clamped_rect.x0, clamped_rect.y0, clamped_rect.x1, clamped_rect.y1), font_name)
@@ -550,9 +568,17 @@ def extract_page_ocr_results_from_layout(
             continue
         # 구 스키마: overall_ocr_res에서 단어 단위 추출 (좀 더 정밀한 bbox)
         page_items = _extract_items_from_overall_ocr_res(layout)
+        used_source = "overall_ocr_res"
         # 신 스키마 폴백: overall_ocr_res가 없으면 parsing_res_list에서 블록 단위 추출
         if not page_items:
             page_items = _extract_items_from_parsing_res_list(layout)
+            used_source = "parsing_res_list"
+        # [TABLE_DEBUG] 어떤 소스에서 텍스트 레이어 데이터를 가져왔는지 로깅
+        table_items_count = sum(1 for _text, _bbox in page_items if "|" in _text)
+        logger.info(
+            f"[TABLE_DEBUG] extract_page_ocr_results page={page_no}: "
+            f"source={used_source}, total_items={len(page_items)}, table_row_items={table_items_count}"
+        )
         if page_items:
             results[page_no] = page_items
     return results

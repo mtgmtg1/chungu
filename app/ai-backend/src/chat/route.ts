@@ -130,20 +130,20 @@ Rules:
      - You MUST use 'add_text_highlight' and pass EMPTY comment (comment: "") so that only pure highlight fill is drawn without overlay text!
 
 
-- BATCH MODE IS MANDATORY (NOT OPTIONAL): add_text_highlight and add_text_callout accept a list of items (items: [{text, page_no, comment, color, opacity}]) or array parameters (text: [...]). When the user asks for TWO OR MORE annotations, you MUST issue a SINGLE tool call with items — NEVER call the same tool repeatedly in a loop! Calling add_text_highlight 5 times in a row for 5 texts is a strict violation; pass items=[{text, comment}, ...] once.
-- BATCH EXAMPLE using items list (HIGHLY RECOMMENDED):
+- BATCH MODE IS MANDATORY (NOT OPTIONAL): add_text_highlight and add_text_callout support multiple input formats. When the user asks for TWO OR MORE annotations, you MUST issue a SINGLE tool call — NEVER call the same tool repeatedly in a loop!
+- TOKEN-SAVING RULE: When all items share the SAME page_no/comment/color/opacity, use 'texts' (string array) + shared parameters. This is the MOST token-efficient format.
+- BEST EXAMPLE — texts shorthand (USE THIS WHEN settings are shared):
+  add_text_highlight({ texts: ["수원구치소", "5839", "응우옌안뚜안"], page_no: 1, color: "yellow", comment: "" })
+  → This replaces 3 separate items objects with just a texts array!
+- EXAMPLE — texts shorthand for callouts:
+  add_text_callout({ texts: ["원고", "피고"], page_no: 1, color: "purple", comment: "당사자" })
+- EXAMPLE — items list (USE ONLY when each item needs DIFFERENT settings):
   add_text_highlight({ items: [
     { text: "표 1", page_no: 1, color: "yellow", comment: "" },
     { text: "표 2", page_no: 2, color: "yellow", comment: "" },
-    { text: "결론", page_no: 5, color: "green", comment: "" }
+    { text: "결론", page_no: 5, color: "green", comment: "중요" }
   ] })
-- BATCH EXAMPLE for callouts (화살표 주석):
-  add_text_callout({ items: [
-    { text: "원고", page_no: 1, color: "purple", comment: "당사자" },
-    { text: "피고", page_no: 1, color: "purple", comment: "당사자" },
-    { text: "청구원인", page_no: 2, color: "orange", comment: "본안" }
-  ] })
-- SINGLE-call rule for one-shot user requests: if the user says "이 단어들 강조해줘: A, B, C, D" or lists multiple items, issue ONE add_text_highlight call with items: [...]. Do not split into multiple calls even if texts are on different pages.
+- SINGLE-call rule for one-shot user requests: if the user says "이 단어들 강조해줘: A, B, C, D" or lists multiple items, issue ONE add_text_highlight call with texts: [...]. Do not split into multiple calls even if texts are on different pages.
 - If you are unsure of the exact text, call search_text ONCE with a query that covers candidates, then issue a single batched add_* call.
 
 - For PDF text elements, use get_elements with an explicit page_no whenever possible.

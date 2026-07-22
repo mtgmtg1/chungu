@@ -311,9 +311,10 @@ def build_vision_text_highlight_prompt(
         "When the user asks for a specific highlight color, use one of the following colors: "
         "red, yellow, green, blue, orange, purple, pink, gray. If no color is implied, default to yellow.\n"
         "Determine the annotation display mode based on the user's request: "
-        "'highlight' if the user asks for highlights only, "
-        "'margin_note' if the user asks for margin notes only, "
+        "'margin_note' (callout with leader arrow) if the user asks for annotations/notes ('주석', '메모', '콜아웃', '설명'), "
+        "'highlight' (pure highlight fill without overlay text) if the user asks for fluorescent pen/highlight ('형광펜', '하이라이트', '강조', '색칠'), "
         "'both' if the user asks for both or does not specify.\n"
+
         "Determine the comment mode based on the user's request: "
         "'user_text' if the user explicitly says to use the input text verbatim as the comment, "
         "'llm_summary' if the user wants AI-generated summaries or does not specify.\n"

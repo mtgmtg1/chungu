@@ -8,6 +8,20 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 스캔 PDF 표 내부 행 순서 반전 근본 원인 해결 — _extract_table_row_items 행 배정 방향 수정 — 2026-07-22
+
+- **진짜 근본 원인 (이전 "search_job_text 좌표계 통일" 수정으로도 해결되지 않았던 문제)**:
+  - 사용자 재현: 표에서 아래쪽 행(예: "예약일시")에 달려야 할 주석이 위쪽 행(예: "수용기관") 위치에 표시되고, 그 반대도 발생. 표가 아닌 제목/문단은 정상 표시됨.
+  - PyMuPDF `insert_text`/`search_for`는 실제로 **device-space(y=0 상단, y↓)**를 사용함 (공식 문서로 재확인: `page.rect`, `get_text`, `insert_text` 모두 MuPDF 네이티브 top-left 좌표계). 이전 조사에서 `insert_text`로 삽입 후 `search_for`로 재검색하는 방식은 두 함수가 같은 내부 좌표계를 공유한다는 것만 증명하는 순환 검증이었음 — `get_pixmap()` 렌더링으로 직접 확인하여 이를 정정함.
+  - `pdf_text_layer._convert_bbox_to_pdf_user`(`normalized_top_left_to_pdf_user`)는 "top-left normalized(y=0 상단)" 입력을 "PDF user-space(y=0 하단)"로 뒤집는 변환을 적용하는데, 이 결과값이 `_insert_invisible_text`를 거쳐 그대로 `page.insert_text()`의 device-space y로 사용됨. **단일 블록(제목, 문단, 푸터)은 "잘못된 가정으로 한 번 뒤집고, 그 결과를 다시 device-space로 잘못 해석"하는 두 번의 오류가 우연히 상쇄되어 절대 위치가 정상으로 보임.**
+  - 그러나 `_extract_table_row_items`는 표 bbox를 HTML 행 순서대로 `row_y0 = y0 + i*row_height` (raw y가 작은 쪽부터 첫 행 배정)로 분할하는데, 이 값이 이후 파이프라인을 거치면 **첫 행이 표의 "아래쪽 끝"에, 마지막 행이 표의 "위쪽 끝"에 배치**되어 표 내부에서만 행 순서가 뒤집히는 버그가 발생. 실제 job 데이터로 검증: 표 전체 device-space 범위(165.9~588.6)에서 HTML 첫 행("수용기관")이 546.3(아래쪽 끝)에, 마지막 행이 위쪽에 배치됨을 확인.
+  - 이전 커밋(같은 날)에서 시도한 "search_job_text OCR 폴백 좌표계를 device-space로 통일" 수정은 여전히 유효하지만, 이 특정 "표 내부 행 뒤바뀜" 증상의 근본 원인은 아니었음(그 수정은 search_for가 0건일 때만 발동하는 별개의 OCR 폴백 경로에 대한 것이고, 이번 문제는 searchable PDF 생성 자체에서 발생).
+- **수정 내용**:
+  - `app/backend/core/pdf_text_layer.py`: `_extract_table_row_items`의 행 배정 공식을 `row_y0 = y0 + i*row_height` → `row_y0 = y1 - (i+1)*row_height` (역순)로 변경. 첫 HTML 행이 raw bbox의 `y1`(변환 후 표의 맨 위)에 가깝게 배정되도록 수정.
+  - `app/backend/tests/test_extract_table_row_items_order.py`: 표 전체 device-space 범위 대비 첫/마지막 행의 위치, 10행 표에서 y가 HTML 순서대로 단조 증가하는지 검증하는 회귀 테스트 추가.
+- **검증**: 실제 job(`8c8bef99...`, "변호인 접견예약 확인증") 데이터로 searchable PDF 재생성 후 `search_for` 좌표 확인 — 표 행0(수용기관) y0=178(표 상단), 표 행9(예약일시) y0=562(표 하단)로 HTML 순서와 시각적 위치가 일치함을 확인. `cd app/backend && venv/bin/python -m pytest tests/ -q` → 249 passed.
+- **핵심 파일**: `app/backend/core/pdf_text_layer.py`, `app/backend/tests/test_extract_table_row_items_order.py`.
+
 ### 스캔 PDF 표 내부 y좌표 반전 근본 원인 해결 — search_job_text OCR 폴백 좌표계 통일 — 2026-07-22
 
 - **근본 원인**:

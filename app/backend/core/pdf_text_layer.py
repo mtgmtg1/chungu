@@ -137,6 +137,13 @@ def _extract_table_row_items(content: str, bbox: BBox) -> list[tuple[str, BBox]]
         return []
 
     # 표 bbox를 행 수만큼 y축으로 균등 분할한다.
+    #
+    # [주의] 이 bbox는 이후 normalized_top_left_to_pdf_user(_convert_bbox_to_pdf_user)를 거쳐
+    # 그대로 page.insert_text()의 device-space 좌표로 쓰인다. 이 변환은 y값을 뒤집으므로
+    # (raw y가 작을수록 변환 후 device y가 커짐/아래쪽), HTML의 첫 번째 행(시각적으로 표의
+    # 맨 위)은 raw bbox에서 y1(큰 값)에 가까운 구간을 받아야 변환 후 device-space에서
+    # 표의 맨 위(작은 y)에 위치하게 된다. 반대로 y0(작은 값)에 첫 행을 배정하면 변환 후
+    # 표의 맨 아래에 배치되어, 위/아래 행의 주석이 서로 뒤바뀌는 반전 버그가 발생한다.
     x0, y0, x1, y1 = bbox[:4]
     row_height = (y1 - y0) / len(row_texts)
     logger.info(
@@ -145,8 +152,9 @@ def _extract_table_row_items(content: str, bbox: BBox) -> list[tuple[str, BBox]]
     )
     items: list[tuple[str, BBox]] = []
     for i, text in enumerate(row_texts):
-        row_y0 = y0 + i * row_height
-        row_y1 = y0 + (i + 1) * row_height
+        # 첫 행(i=0)이 y1(변환 후 표의 맨 위)에 가장 가깝도록 역순으로 배정한다.
+        row_y0 = y1 - (i + 1) * row_height
+        row_y1 = y1 - i * row_height
         logger.info(
             f"[TABLE_DEBUG]   행[{i}] text='{text[:40]}' → row_bbox=({x0:.1f}, {row_y0:.1f}, {x1:.1f}, {row_y1:.1f})"
         )

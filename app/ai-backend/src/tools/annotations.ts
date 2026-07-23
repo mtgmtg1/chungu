@@ -422,7 +422,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
         }
         const results = [];
         for (const item of itemsToProcess) {
-          const { matches } = await proofApi.searchText(jobId, item.text, item.page_no, authHeaders);
+          const { matches } = await proofApi.searchText(jobId, item.text, item.page_no, authHeaders, 'line');
           const validMatches = (matches || []).filter(
             (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
           );
@@ -501,7 +501,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
         }
         const results = [];
         for (const item of itemsToProcess) {
-          const { matches } = await proofApi.searchText(jobId, item.text, item.page_no, authHeaders);
+          const { matches } = await proofApi.searchText(jobId, item.text, item.page_no, authHeaders, 'line');
           const first = (matches || []).find(
             (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
           );

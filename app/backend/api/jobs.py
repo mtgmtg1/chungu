@@ -3825,6 +3825,44 @@ def _cross_validate_matches_with_ocr_layout(
     return matches
 
 
+def _expand_match_to_line(
+    match: dict,
+    page_rect: Any,
+    expand: bool = True,
+) -> dict:
+    """[Flow: Step 1 (match의 bbox와 page_rect 확인) -> Step 2 (expand=True면 x 범위를 페이지 전체로 확장)
+          -> Step 3 (y 범위는 유지) -> Step 4 (확장된 match 반환)]
+
+    스캔 PDF 출신 searchable PDF에서 하이라이트/주석을 해당 줄 전체에 표시하기 위해,
+    match의 bbox x 범위를 페이지 전체 너비(좌우 5% 여백)로 확장한다.
+    y 범위는 유지하여 줄 높이는 그대로 유지한다.
+
+    Args:
+        match: 검색 매치 딕셔너리 (page_no, bbox_pdf, text 포함)
+        page_rect: PyMuPDF Page.rect 객체 (x0, y0, x1, y1)
+        expand: True면 x 범위 확장, False면 원본 유지
+
+    Returns:
+        확장된 match 딕셔너리 (원본 변경 없이 새 딕셔너리 반환)
+    """
+    if not expand:
+        return dict(match)
+
+    bbox = list(match.get("bbox_pdf", []))
+    if len(bbox) < 4:
+        return dict(match)
+
+    # 좌우 5% 여백을 둔 페이지 전체 너비로 x 범위 확장
+    page_width = float(page_rect.x1 - page_rect.x0)
+    margin = page_width * 0.05
+    new_x0 = float(page_rect.x0) + margin
+    new_x1 = float(page_rect.x1) - margin
+
+    expanded = dict(match)
+    expanded["bbox_pdf"] = [new_x0, bbox[1], new_x1, bbox[3]]
+    return expanded
+
+
 # [Flow: Step 1 (job 조회) -> Step 2 (searchable PDF 다운로드) -> Step 3 (텍스트 검색)
 #       -> Step 4 (page_no 필터링) -> Step 5 (매치 목록 반환)]
 # Node.js AI 백엔드의 search_text 도구가 호출하는 엔드포인트.
@@ -3833,6 +3871,7 @@ def search_job_text(
     job_id: str,
     query: str = Query(..., description="검색어 또는 정규식"),
     page_no: int | None = None,
+    mode: str = Query("text", description="text: 매치 단어만, line: 스캔 PDF 출신 시 해당 줄 전체로 확장"),
     user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -4009,6 +4048,30 @@ def search_job_text(
             f"total={len(matches)}건 (표 행 {len(table_matches)}건), "
             f"경로={'search_for' if not used_ocr_layout and not used_ocr_fallback else 'OCR 폴백'}"
         )
+
+    # [Flow: mode=line이고 스캔 PDF 출신(OCR layout 있음)인 경우,
+    #       각 match의 bbox를 해당 줄 전체로 확장하여 하이라이트/주석이 줄 전체에 표시되도록 한다.
+    #       스캔 PDF의 텍스트 레이어는 OCR 기반이므로 단어 단위 위치가 부정확할 수 있어,
+    #       줄 전체 확장이 시각적으로 더 안정적이다.]
+    if mode == "line" and matches and job.result_ocr_layout_storage_path:
+        try:
+            _line_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            try:
+                page_rect_map: dict[int, Any] = {}
+                for _p in _line_doc:
+                    page_rect_map[_p.number + 1] = _p.rect
+            finally:
+                _line_doc.close()
+            matches = [
+                _expand_match_to_line(m, page_rect_map.get(m["page_no"], page_rect_map.get(1)))
+                if page_rect_map else m
+                for m in matches
+            ]
+            logger.info(
+                f"[search_job_text] {job_id} mode=line: {len(matches)}개 매치 bbox를 줄 전체로 확장"
+            )
+        except Exception as e:
+            logger.warning(f"[search_job_text] {job_id} mode=line 확장 실패: {e}")
 
     import time as _time
     total_elapsed = _time.monotonic() - start_time

@@ -4167,6 +4167,86 @@ def _compute_coordinate_validation(
             "detail": detail_4,
         })
 
+    # Check 5: 문단(비표 텍스트) search_for ↔ ocr_elements y 차이
+    # 표 행이 아닌 ocr_elements(kind != table_row)와 search_for의 y 차이를 검사한다.
+    # 문단이 여러 줄인데 text layer에서 한 줄로 배치되면 y 차이가 발생한다.
+    paragraph_ocr = [el for el in ocr_elements if el.get("kind") != "table_row"]
+    if search_for_rects and paragraph_ocr:
+        max_para_y_diff = 0.0
+        worst_para_pair = None
+        for sf in search_for_rects:
+            sf_y_center = (sf["device"][1] + sf["device"][3]) / 2.0
+            sf_text = sf.get("text", "")
+            # 가장 가까운 비표 ocr_element 찾기
+            best_diff = float("inf")
+            best_ocr = None
+            for ocr in paragraph_ocr:
+                ocr_y_center = (ocr["device"][1] + ocr["device"][3]) / 2.0
+                y_diff = abs(sf_y_center - ocr_y_center)
+                if y_diff < best_diff:
+                    best_diff = y_diff
+                    best_ocr = ocr
+            if best_diff > max_para_y_diff:
+                max_para_y_diff = best_diff
+                worst_para_pair = (sf_text, best_ocr.get("text", "") if best_ocr else "")
+        status_5 = "pass" if max_para_y_diff < y_threshold else "fail"
+        checks.append({
+            "name": "문단 search_for ↔ ocr_elements y 일치도",
+            "status": status_5,
+            "max_y_diff": round(max_para_y_diff, 1),
+            "threshold": round(y_threshold, 1),
+            "detail": (
+                f"최대 y 차이: {max_para_y_diff:.1f}px (임계값: {y_threshold:.1f}px)"
+                if worst_para_pair is None else
+                f"최대 y 차이: {max_para_y_diff:.1f}px — '{worst_para_pair[0][:20]}' ↔ '{worst_para_pair[1][:20]}'"
+            ),
+        })
+
+    # Check 6: 문단 text_blocks 높이 vs ocr_elements 높이 비교
+    # text_blocks가 한 줄 높이(작은 높이)인데 ocr_elements가 여러 줄 높이(큰 높이)면
+    # text layer에서 문단이 한 줄로 배치된 것임.
+    if text_blocks and paragraph_ocr:
+        # 비표 text_blocks (| 구분자 없음, y > 100으로 표 행 제외)
+        para_text_blocks = [b for b in text_blocks if "|" not in b.get("text", "") and b["text"].strip() and b["device"][1] > 100 and b["device"][3] < 700]
+        if para_text_blocks and paragraph_ocr:
+            # 가장 큰 높이 차이를 가진 쌍 찾기
+            max_height_ratio = 0.0
+            worst_height_pair = None
+            for tb in para_text_blocks:
+                tb_height = tb["device"][3] - tb["device"][1]
+                if tb_height <= 0:
+                    continue
+                for ocr in paragraph_ocr:
+                    ocr_height = ocr["device"][3] - ocr["device"][1]
+                    if ocr_height <= 0:
+                        continue
+                    # 텍스트가 겹치는지 확인 (간단한 포함 검사)
+                    if not any(word in ocr.get("text", "") for word in tb.get("text", "").split()[:3]):
+                        continue
+                    ratio = ocr_height / tb_height
+                    if ratio > max_height_ratio:
+                        max_height_ratio = ratio
+                        worst_height_pair = (tb.get("text", "")[:20], ocr.get("text", "")[:20], tb_height, ocr_height)
+            # 높이 비율이 3배 이상이면 문단이 한 줄로 배치된 것임
+            if max_height_ratio >= 3.0:
+                status_6 = "fail"
+                detail_6 = (
+                    f"문단 높이 비율: {max_height_ratio:.1f}x — "
+                    f"text_blocks 높이 {worst_height_pair[2]:.1f}px vs ocr_elements 높이 {worst_height_pair[3]:.1f}px "
+                    f"(한 줄로 배치됨, '{worst_height_pair[0]}' ↔ '{worst_height_pair[1]}')"
+                )
+            elif max_height_ratio >= 2.0:
+                status_6 = "warn"
+                detail_6 = f"문단 높이 비율: {max_height_ratio:.1f}x (text_blocks가 ocr_elements보다 작음)"
+            else:
+                status_6 = "pass"
+                detail_6 = f"문단 높이 비율: {max_height_ratio:.1f}x (정상)"
+            checks.append({
+                "name": "문단 text_blocks 높이 vs ocr_elements 높이",
+                "status": status_6,
+                "detail": detail_6,
+            })
+
     # 종합 판정
     if not checks:
         return {"status": "warn", "checks": [], "summary": "검사할 데이터가 부족함"}

@@ -98,6 +98,105 @@ def _strip_html_tags(content: str) -> str:
     return " ".join(text.split())
 
 
+def _split_paragraph_into_lines(
+    text: str,
+    bbox: BBox,
+    font_name: str = "helv",
+) -> list[tuple[str, BBox]]:
+    """[Flow: Step 1 (텍스트의 \\n 기준 줄 분할) -> Step 2 (\\n이 없으면 단어 단위 줄바꿈 추정)
+          -> Step 3 (블록 bbox를 줄 수만큼 세로로 균등 분할) -> Step 4 (각 줄의 텍스트와 분할된 bbox 반환)]
+
+    문단 텍스트가 여러 줄인 경우, 전체 텍스트를 하나의 bbox에 한 줄로 배치하면
+    폰트 크기가 너무 작아져 (예: fontsize=2.61) 텍스트 검색/선택이 불가능해진다.
+    이 함수는 문단을 줄 단위로 분할하여 각 줄에 블록 bbox의 세로 영역을 분할한
+    bbox를 할당한다. 이렇게 하면 각 줄이 적절한 폰트 크기로 올바른 y 위치에 배치된다.
+
+    Args:
+        text: 문단 텍스트 (\\n 포함 가능)
+        bbox: 블록 전체 bbox (x0, y0, x1, y1)
+        font_name: 줄바꿈 추정 시 텍스트 폭 계산에 사용할 폰트 이름
+
+    Returns:
+        [(line_text, line_bbox), ...]. 빈 텍스트면 빈 리스트.
+    """
+    if not text or not text.strip():
+        return []
+
+    x0, y0, x1, y1 = bbox
+    block_width = x1 - x0
+    block_height = y1 - y0
+    if block_width <= 0 or block_height <= 0:
+        return [(text, bbox)]
+
+    # Step 1: \n이 포함된 경우 줄바꿈 문자 기준으로 분할
+    if "\n" in text:
+        raw_lines = text.split("\n")
+        lines = [ln.strip() for ln in raw_lines if ln.strip()]
+        if not lines:
+            return []
+    else:
+        # Step 2: \n이 없으면 문자 수 기반으로 줄 수 추정
+        # 한글은 정사각형 글자이므로, 글자 폭 ≈ 폰트 크기, 줄 높이 ≈ 폰트 크기 * 1.4
+        # 줄당 글자 수 = 너비 / 폰트 크기 = 너비 / (줄 높이 / 1.4)
+        # 줄 수 = 총 글자 수 / 줄당 글자 수
+        # 줄 높이 = 블록 높이 / 줄 수
+        # 이를 정리하면: 줄 수 ≈ sqrt(총 글자 수 * 1.4 * 블록 높이 / 너비)
+        words = text.split(" ")
+        if len(words) <= 1:
+            return [(text, bbox)]
+
+        total_chars = len(text.replace(" ", ""))
+        if total_chars == 0:
+            return [(text, bbox)]
+
+        # 줄 수 추정 (최소 1, 최대 20)
+        import math
+        estimated_line_count = max(1, min(20, round(math.sqrt(total_chars * 1.4 * block_height / block_width))))
+
+        if estimated_line_count <= 1:
+            return [(text, bbox)]
+
+        # 추정된 줄 수로 줄 높이 계산
+        line_height_est = block_height / estimated_line_count
+        font_size_est = line_height_est / 1.4
+        # 줄당 예상 글자 수 (한글 기준, 글자 폭 ≈ 폰트 크기)
+        chars_per_line = max(1, int(block_width / font_size_est))
+
+        # 단어를 줄에 추가하다가 줄당 글자 수를 초과하면 다음 줄로
+        lines = []
+        current_line_words = []
+        current_char_count = 0
+        for word in words:
+            word_chars = len(word)
+            # 공백 1자 추가
+            if current_line_words:
+                word_chars_with_space = word_chars + 1
+            else:
+                word_chars_with_space = word_chars
+
+            if current_char_count + word_chars_with_space > chars_per_line and current_line_words:
+                lines.append(" ".join(current_line_words))
+                current_line_words = [word]
+                current_char_count = word_chars
+            else:
+                current_line_words.append(word)
+                current_char_count += word_chars_with_space
+        if current_line_words:
+            lines.append(" ".join(current_line_words))
+
+        if len(lines) <= 1:
+            return [(text, bbox)]
+
+    # Step 3: 블록 bbox를 줄 수만큼 세로로 균등 분할
+    line_height = block_height / len(lines)
+    result = []
+    for i, line_text in enumerate(lines):
+        line_bbox = (x0, y0 + i * line_height, x1, y0 + (i + 1) * line_height)
+        result.append((line_text, line_bbox))
+
+    return result
+
+
 def _extract_table_row_items(content: str, bbox: BBox) -> list[tuple[str, BBox]]:
     """table 블록의 HTML을 행(<tr>) 단위로 파싱하여 (text, row_bbox) 목록을 반환한다.
 
@@ -552,7 +651,10 @@ def _extract_items_from_parsing_res_list(layout: dict) -> list[tuple[str, BBox]]
         text = content.strip()
         if not text:
             continue
-        items.append((text, bbox_px))
+        # 문단 텍스트가 여러 줄인 경우, 줄 단위로 분할하여 각 줄에 세로 분할된 bbox를 할당한다.
+        # 전체 텍스트를 한 줄로 배치하면 fontsize가 너무 작아져 텍스트 검색/선택이 불가능해진다.
+        paragraph_items = _split_paragraph_into_lines(text, bbox_px)
+        items.extend(paragraph_items)
     return items
 
 

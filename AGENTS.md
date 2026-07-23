@@ -59,11 +59,24 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
   4. `API.md`/`API.ko.md`/`API.ja.md`는 이제 v1 실제 동작에 맞춤. v1에 새 기능을 추가할 때는 세 파일 모두 업데이트할 것.
 - **핵심 파일**: `app/backend/api/v1/jobs.py`, `app/backend/api/v1/account.py`, `app/backend/tests/test_v1_jobs_markdown_title_subscription.py`, `app/API.md`, `app/API.ko.md`, `app/API.ja.md`, `app/docs/docs/core-concepts/file-formats.md`, `app/docs/docs/core-concepts/extraction-options.md`, `app/docs/docs/pricing.md`, `app/docs/docs/api-reference/jobs/upload.md`, `app/docs/docs/api-reference/account/get-subscription.md`, `app/docs/docs/api-reference/jobs/rename-job.md`, `app/docs/docs/changelog.md`, `app/docs/sidebars.js`.
 
-### 마크다운 프리뷰 패널 숨김 + HTML/코드 파일 업로드 금지 + 다중 파일 표시 + job title 인라인 수정 — 2026-07-23
+### 마크다운 프리뷰 패널 표시 + 파일 탭 파일명 표시 수정 — 2026-07-23
 
-- **배경**: 마크다운 파일 업로드 시 불필요한 원본 프리뷰 패널이 표시됨. HTML/코드 파일은 변환 대상이 아니지만 업로드가 허용되어 있었음. 다중 파일 업로드 시 "N_files.zip"이라는 의미 없는 이름이 표시됨. job 이름을 수정할 수 없었음.
+- **배경**: 마크다운 파일 업로드 시 좌측 프리뷰 패널을 숨겼으나, 원본 마크다운 렌더링을 좌측 패널에서 보여주는 것이 더 유용함. 또한 마크다운 파일의 파일 탭에 원래 파일명이 무시되고 "file"이라고만 표시되는 문제가 있었음.
 - **변경 내용**:
-  - **마크다운 프리뷰 패널 숨김**: `JobResultPage.jsx`에 `isMarkdownOnly` 계산값 추가 (모든 sourceFiles의 type이 "markdown"이면 true). 마크다운 전용 job은 PagedResultViewer(좌우 분할) 대신 SimpleEditor만 전체 너비로 렌더링. 패널 토글 버튼도 숨김.
+  - **마크다운 프리뷰 패널 표시**: `JobResultPage.jsx`에서 `isMarkdownOnly` 변수와 "마크다운 전용 job은 에디터만 전체 너비" 분기를 제거. 마크다운 전용 job도 항상 `PagedResultViewer`를 사용. 패널 토글 버튼에서 `!isMarkdownOnly` 조건 제거.
+  - **SourcePanel markdown 타입 처리**: `SourcePanel.jsx`의 `SourceIcon`에 `markdown` 타입 아이콘 추가. `selectedFile.type === "markdown"`일 때 `FilePreview`로 렌더링 (marked → prose HTML).
+  - **파일 탭 파일명 표시 수정**: `preview.py`의 병합 로직에서 source_files 항목에 `name` 필드 추가 (`_normalize_display_name` 적용). `SourcePanel.jsx`의 `getDisplayName`에 `file?.filename` fallback 추가.
+- **검증**: 백엔드 305 tests pass, 프론트엔드 84 tests pass, vite build 성공.
+- **⚠️ 회귀 방지 경고**:
+  1. 마크다운 전용 job은 이제 `PagedResultViewer`를 사용하므로, 좌측 패널에서 원본 마크다운이 `FilePreview`로 렌더링되고 우측 패널에서 `SimpleEditor`로 편집 가능. 패널 토글로 각각 숨기기/보이기 가능.
+  2. `preview.py`의 병합 로직이 source_files 항목에 `name`과 `filename` 모두 설정한다. 프론트엔드 `getDisplayName`은 `name` → `filename` → `storage_path` → "file" 순서로 fallback.
+  3. 백엔드 `_build_source_file_item`에서 markdown 타입을 원본 type("markdown") 그대로 유지한다. `preview.py`에서 extracted_files를 source_files에 병합할 때도 `info.get("type", "")`를 포함한다.
+- **핵심 파일**: `app/frontend/src/pages/JobResultPage.jsx`, `app/frontend/src/components/SourcePanel.jsx`, `app/backend/api/jobs/preview.py`.
+
+### HTML/코드 파일 업로드 금지 + 다중 파일 표시 + job title 인라인 수정 — 2026-07-23
+
+- **배경**: HTML/코드 파일은 변환 대상이 아니지만 업로드가 허용되어 있었음. 다중 파일 업로드 시 "N_files.zip"이라는 의미 없는 이름이 표시됨. job 이름을 수정할 수 없었음.
+- **변경 내용**:
   - **HTML/코드 파일 업로드 금지**: `UploadWidget.jsx`의 `ACCEPT_TYPES`에서 `.html`, `.htm` 제거. `REJECTED_EXTENSIONS` 세트 추가 (.html, .js, .ts, .py, .css, .json 등 50+ 확장자). `addFiles`에서 거부된 파일을 분리하여 커스텀 모달로 표시 (앱 디자인 시스템 사용 — AlertTriangle 아이콘, surface-container 배경). 백엔드 `_shared.py`의 `MEDIA_EXTENSIONS`에서도 `.html`, `.htm`, `.xhtml` 제거.
   - **다중 파일 "대표파일명 등 N개" 표시**: `uploads.py`의 `upload_job`과 `init_job`에서 다중 파일 시 `original_filename`을 `f"{len(files)}_files.zip"` → `f"{files[0].filename} 등 {len(files)}개의 파일"` 형식으로 변경.
   - **job title 인라인 수정**: 백엔드 `uploads.py`에 `PATCH /api/jobs/{job_id}/title` 엔드포인트 추가 (모든 상태에서 수정 가능, 200자 제한, preview 캐시 무효화). 프론트엔드 `api.js`에 `renameJob` 메서드 추가. `JobResultPage.jsx` 헤더의 h1 title을 클릭하면 input으로 전환, Enter/체크 버튼으로 저장, Escape/X 버튼으로 취소.
@@ -71,9 +84,8 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **검증**: 백엔드 295 tests pass, 프론트엔드 84 tests pass, vite build 성공.
 - **⚠️ 회귀 방지 경고**:
   1. `REJECTED_EXTENSIONS`에 새 확장자를 추가하면 해당 파일이 업로드 거부 모달에 표시된다. `.csv`는 거부 목록에 있지만 백엔드 `MEDIA_EXTENSIONS`에는 없으므로 백엔드에서도 거부됨 — 일관성 유지 필요.
-  2. 마크다운 전용 job 감지는 `sourceFiles.every(f => f.type === "markdown")` 기반이다. 백엔드 `_build_source_file_item`에서 markdown 타입을 원본 type("markdown") 그대로 유지한다 (이전에는 "file"로 변환했으나, 프론트엔드 판별을 위해 "markdown"으로 유지하도록 수정됨). `preview.py`에서 extracted_files를 source_files에 병합할 때도 `info.get("type", "")`를 포함한다.
-  3. `PATCH /api/jobs/{job_id}/title`은 모든 상태에서 호출 가능하다. job이 processing 중일 때 title을 변경해도 처리에는 영향 없음.
-- **핵심 파일**: `app/frontend/src/pages/JobResultPage.jsx`, `app/frontend/src/components/UploadWidget.jsx`, `app/frontend/src/api.js`, `app/backend/api/jobs/uploads.py`, `app/backend/api/jobs/_shared.py`, `app/frontend/src/locales/{ko,en,ja}/page.json`.
+  2. `PATCH /api/jobs/{job_id}/title`은 모든 상태에서 호출 가능하다. job이 processing 중일 때 title을 변경해도 처리에는 영향 없음.
+- **핵심 파일**: `app/frontend/src/components/UploadWidget.jsx`, `app/frontend/src/api.js`, `app/backend/api/jobs/uploads.py`, `app/backend/api/jobs/_shared.py`, `app/frontend/src/locales/{ko,en,ja}/page.json`.
 
 ### 디버그 전용 패널 토글 페이지 라우트 추가 — 2026-07-23
 

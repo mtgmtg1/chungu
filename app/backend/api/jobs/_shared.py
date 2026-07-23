@@ -1450,6 +1450,45 @@ def _cross_validate_matches_with_ocr_layout(
 
 
 
+def _expand_match_to_line(
+    match: dict,
+    page_rect: Any,
+    expand: bool = True,
+) -> dict:
+    """[Flow: Step 1 (match의 bbox와 page_rect 확인) -> Step 2 (expand=True면 x 범위를 페이지 전체로 확장)
+          -> Step 3 (y 범위는 유지) -> Step 4 (확장된 match 반환)]
+
+    스캔 PDF 출신 searchable PDF에서 하이라이트/주석을 해당 줄 전체에 표시하기 위해,
+    match의 bbox x 범위를 페이지 전체 너비(좌우 5% 여백)로 확장한다.
+    y 범위는 유지하여 줄 높이는 그대로 유지한다.
+
+    Args:
+        match: 검색 매치 딕셔너리 (page_no, bbox_pdf, text 포함)
+        page_rect: PyMuPDF Page.rect 객체 (x0, y0, x1, y1)
+        expand: True면 x 범위 확장, False면 원본 유지
+
+    Returns:
+        확장된 match 딕셔너리 (원본 변경 없이 새 딕셔너리 반환)
+    """
+    if not expand:
+        return dict(match)
+
+    bbox = list(match.get("bbox_pdf", []))
+    if len(bbox) < 4:
+        return dict(match)
+
+    # 좌우 5% 여백을 둔 페이지 전체 너비로 x 범위 확장
+    page_width = float(page_rect.x1 - page_rect.x0)
+    margin = page_width * 0.05
+    new_x0 = float(page_rect.x0) + margin
+    new_x1 = float(page_rect.x1) - margin
+
+    expanded = dict(match)
+    expanded["bbox_pdf"] = [new_x0, bbox[1], new_x1, bbox[3]]
+    return expanded
+
+
+
 def _is_rect_plausible_for_page(rect: fitz.Rect, page_rect: fitz.Rect) -> bool:
     """검색된 텍스트 bbox가 페이지 크기 대비 비정상적으로 크거나 멀리 벗어나지 않는지 확인한다.
 
@@ -1607,6 +1646,164 @@ def _compute_coordinate_validation(
             "status": status_4,
             "detail": detail_4,
         })
+
+    # Check 5: 문단(비표 텍스트) search_for ↔ ocr_elements y 차이
+    # 표 행이 아닌 ocr_elements(kind != table_row)와 search_for의 y 차이를 검사한다.
+    # 문단이 여러 줄인데 text layer에서 한 줄로 배치되면 y 차이가 발생한다.
+    paragraph_ocr = [el for el in ocr_elements if el.get("kind") != "table_row"]
+    if search_for_rects and paragraph_ocr:
+        max_para_y_diff = 0.0
+        worst_para_pair = None
+        for sf in search_for_rects:
+            sf_y_center = (sf["device"][1] + sf["device"][3]) / 2.0
+            sf_text = sf.get("text", "")
+            # 가장 가까운 비표 ocr_element 찾기
+            best_diff = float("inf")
+            best_ocr = None
+            for ocr in paragraph_ocr:
+                ocr_y_center = (ocr["device"][1] + ocr["device"][3]) / 2.0
+                y_diff = abs(sf_y_center - ocr_y_center)
+                if y_diff < best_diff:
+                    best_diff = y_diff
+                    best_ocr = ocr
+            if best_diff > max_para_y_diff:
+                max_para_y_diff = best_diff
+                worst_para_pair = (sf_text, best_ocr.get("text", "") if best_ocr else "")
+        status_5 = "pass" if max_para_y_diff < y_threshold else "fail"
+        checks.append({
+            "name": "문단 search_for ↔ ocr_elements y 일치도",
+            "status": status_5,
+            "max_y_diff": round(max_para_y_diff, 1),
+            "threshold": round(y_threshold, 1),
+            "detail": (
+                f"최대 y 차이: {max_para_y_diff:.1f}px (임계값: {y_threshold:.1f}px)"
+                if worst_para_pair is None else
+                f"최대 y 차이: {max_para_y_diff:.1f}px — '{worst_para_pair[0][:20]}' ↔ '{worst_para_pair[1][:20]}'"
+            ),
+        })
+
+    # Check 6: 문단 text_blocks y 범위 vs ocr_elements y 범위
+    # 같은 문단에 속하는 text_blocks의 y 범위(최소 y0 ~ 최대 y1)가
+    # ocr_elements의 y 범위와 비슷한지 검사한다.
+    # text layer에서 문단이 한 줄로 배치되면 text_blocks y 범위가 ocr_elements보다 훨씬 작다.
+    if text_blocks and paragraph_ocr:
+        # 비표 text_blocks (| 구분자 없음, y > 100으로 표 행 제외, y < 700으로 푸터 제외)
+        para_text_blocks = [b for b in text_blocks if "|" not in b.get("text", "") and b["text"].strip() and 100 < b["device"][1] < 700]
+        if para_text_blocks and paragraph_ocr:
+            # 각 ocr_element에 대해, 그 y 범위 안에 있는 text_blocks의 y 범위를 비교
+            max_range_ratio = 0.0
+            worst_range_pair = None
+            for ocr in paragraph_ocr:
+                ocr_y0 = ocr["device"][1]
+                ocr_y1 = ocr["device"][3]
+                ocr_height = ocr_y1 - ocr_y0
+                if ocr_height <= 0:
+                    continue
+                # 이 ocr_element의 y 범위 안에 있는 text_blocks 찾기
+                overlapping_tbs = [
+                    b for b in para_text_blocks
+                    if b["device"][1] >= ocr_y0 - 5 and b["device"][3] <= ocr_y1 + 5
+                ]
+                if not overlapping_tbs:
+                    continue
+                # text_blocks의 합산 y 범위
+                tb_y0 = min(b["device"][1] for b in overlapping_tbs)
+                tb_y1 = max(b["device"][3] for b in overlapping_tbs)
+                tb_height = tb_y1 - tb_y0
+                if tb_height <= 0:
+                    continue
+                # ocr_height 대비 tb_height 비율 (1.0에 가까울수록 정상)
+                ratio = tb_height / ocr_height
+                if ratio > max_range_ratio:
+                    max_range_ratio = ratio
+                    worst_range_pair = (
+                        ocr.get("text", "")[:20],
+                        len(overlapping_tbs),
+                        tb_height,
+                        ocr_height,
+                    )
+            # 비율이 0.5 이상이면 정상 (text_blocks가 ocr_elements y 범위의 50% 이상을 커버)
+            if max_range_ratio < 0.3:
+                status_6 = "fail"
+                detail_6 = (
+                    f"문단 y 범위 비율: {max_range_ratio:.2f} — "
+                    f"text_blocks y 범위 {worst_range_pair[2]:.1f}px vs ocr_elements y 범위 {worst_range_pair[3]:.1f}px "
+                    f"({worst_range_pair[1]}개 text_blocks, '{worst_range_pair[0]}')"
+                )
+            elif max_range_ratio < 0.5:
+                status_6 = "warn"
+                detail_6 = f"문단 y 범위 비율: {max_range_ratio:.2f} (text_blocks가 ocr_elements 범위의 절반 미만)"
+            else:
+                status_6 = "pass"
+                detail_6 = f"문단 y 범위 비율: {max_range_ratio:.2f} (정상, {worst_range_pair[1]}개 text_blocks가 ocr_element 범위를 커버)"
+            checks.append({
+                "name": "문단 text_blocks y 범위 vs ocr_elements y 범위",
+                "status": status_6,
+                "detail": detail_6,
+            })
+
+    # Check 7: 문단 줄 순서 (text_blocks y 순서 vs OCR 텍스트 순서)
+    # 같은 문단(ocr_element)에 속하는 text_blocks를 y 오름차순(상단→하단)으로 정렬했을 때,
+    # 첫 text_block의 텍스트가 OCR 텍스트의 첫 부분과 일치해야 한다.
+    # 반전된 경우: 첫 text_block(상단)이 OCR 텍스트의 마지막 부분을 포함하게 된다.
+    if text_blocks and paragraph_ocr:
+        para_text_blocks_all = [b for b in text_blocks if "|" not in b.get("text", "") and b["text"].strip() and 100 < b["device"][1] < 700]
+        if para_text_blocks_all and paragraph_ocr:
+            order_fail_count = 0
+            order_checks = 0
+            worst_order_mismatch = None
+            for ocr in paragraph_ocr:
+                ocr_y0 = ocr["device"][1]
+                ocr_y1 = ocr["device"][3]
+                ocr_text = ocr.get("text", "").strip()
+                if not ocr_text:
+                    continue
+                # 이 ocr_element의 y 범위 안에 있는 text_blocks 찾기 (y 오름차순 정렬)
+                overlapping_tbs = [
+                    b for b in para_text_blocks_all
+                    if b["device"][1] >= ocr_y0 - 5 and b["device"][3] <= ocr_y1 + 5
+                ]
+                if len(overlapping_tbs) < 2:
+                    continue
+                # y 오름차순 (상단→하단, device-space y=0 상단)
+                overlapping_tbs_sorted = sorted(overlapping_tbs, key=lambda b: b["device"][1])
+                # OCR 텍스트의 첫 단어
+                ocr_first_word = ocr_text.split(" ")[0].strip() if ocr_text else ""
+                if not ocr_first_word:
+                    continue
+                # 첫 text_block(상단)의 텍스트에 OCR 첫 단어가 포함되어야 함
+                first_tb_text = overlapping_tbs_sorted[0].get("text", "").strip()
+                order_checks += 1
+                if ocr_first_word not in first_tb_text:
+                    # 반대로 마지막 text_block(하단)에 OCR 첫 단어가 있으면 반전
+                    last_tb_text = overlapping_tbs_sorted[-1].get("text", "").strip()
+                    if ocr_first_word in last_tb_text:
+                        order_fail_count += 1
+                        worst_order_mismatch = (
+                            ocr_first_word[:15],
+                            first_tb_text[:20],
+                            overlapping_tbs_sorted[0]["device"][1],
+                            last_tb_text[:20],
+                            overlapping_tbs_sorted[-1]["device"][1],
+                        )
+            if order_checks > 0 and order_fail_count > 0:
+                status_7 = "fail"
+                detail_7 = (
+                    f"문단 줄 순서 반전: OCR 첫 단어 '{worst_order_mismatch[0]}'가 "
+                    f"상단(y={worst_order_mismatch[2]:.1f}, '{worst_order_mismatch[1]}')이 아닌 "
+                    f"하단(y={worst_order_mismatch[4]:.1f}, '{worst_order_mismatch[3]}')에 있음"
+                )
+            elif order_checks > 0:
+                status_7 = "pass"
+                detail_7 = f"문단 줄 순서: {order_checks}개 문단 검사, 모두 정상 (첫 단어가 상단에 위치)"
+            else:
+                status_7 = "warn"
+                detail_7 = "문단 줄 순서: 검사할 다중 줄 문단이 없음"
+            checks.append({
+                "name": "문단 줄 순서 (text_blocks y 순서 vs OCR 텍스트 순서)",
+                "status": status_7,
+                "detail": detail_7,
+            })
 
     # 종합 판정
     if not checks:

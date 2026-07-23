@@ -22,6 +22,7 @@ from .annotations import get_job_result_json, save_user_annotations, search_job_
 from ._shared import (
     _build_source_file_item,
     _detect_source_type,
+    _expand_match_to_line,
     _get_markdown_content,
     _load_all_annotations,
     _require_job_access,
@@ -48,4 +49,5 @@ __all__ = [
     "_get_markdown_content",
     "_build_source_file_item",
     "_detect_source_type",
+    "_expand_match_to_line",
 ]

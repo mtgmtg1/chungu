@@ -30,6 +30,7 @@ from ._shared import (
     _compute_coordinate_validation,
     _cross_validate_matches_with_ocr_layout,
     _deduplicate_annotations,
+    _expand_match_to_line,
     _ensure_clean_source_pdf,
     _initialize_user_annotations_json,
     _is_annotation_edited,
@@ -884,6 +885,7 @@ def search_job_text(
     job_id: str,
     query: str = Query(..., description="검색어 또는 정규식"),
     page_no: int | None = None,
+    mode: str = Query("text", description="text: 매치 단어만, line: 스캔 PDF 출신 시 해당 줄 전체로 확장"),
     user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -1060,6 +1062,30 @@ def search_job_text(
             f"total={len(matches)}건 (표 행 {len(table_matches)}건), "
             f"경로={'search_for' if not used_ocr_layout and not used_ocr_fallback else 'OCR 폴백'}"
         )
+
+    # [Flow: mode=line이고 스캔 PDF 출신(OCR layout 있음)인 경우,
+    #       각 match의 bbox를 해당 줄 전체로 확장하여 하이라이트/주석이 줄 전체에 표시되도록 한다.
+    #       스캔 PDF의 텍스트 레이어는 OCR 기반이므로 단어 단위 위치가 부정확할 수 있어,
+    #       줄 전체 확장이 시각적으로 더 안정적이다.]
+    if mode == "line" and matches and job.result_ocr_layout_storage_path:
+        try:
+            _line_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            try:
+                page_rect_map: dict[int, Any] = {}
+                for _p in _line_doc:
+                    page_rect_map[_p.number + 1] = _p.rect
+            finally:
+                _line_doc.close()
+            matches = [
+                _expand_match_to_line(m, page_rect_map.get(m["page_no"], page_rect_map.get(1)))
+                if page_rect_map else m
+                for m in matches
+            ]
+            logger.info(
+                f"[search_job_text] {job_id} mode=line: {len(matches)}개 매치 bbox를 줄 전체로 확장"
+            )
+        except Exception as e:
+            logger.warning(f"[search_job_text] {job_id} mode=line 확장 실패: {e}")
 
     import time as _time
     total_elapsed = _time.monotonic() - start_time

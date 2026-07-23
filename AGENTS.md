@@ -281,34 +281,25 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **배포 시 주의**: 프론트엔드 전용 변경. 백엔드/DB 변경 없음.
 - **핵심 파일**: `app/frontend/src/components/timeline/EdiscoveryTimelinePanel.jsx`, `app/frontend/src/components/timeline/EdiscoveryDetailCard.jsx`, `app/frontend/src/components/timeline/TimelinePreviewCard.jsx`, `app/frontend/src/components/EDiscoveryViewer.jsx`, `app/frontend/src/pages/DevEdiscoveryTimelinePage.jsx`, `app/frontend/src/pages/DevEdiscoveryPage.jsx`, `app/frontend/src/index.css`, `app/frontend/package.json`.
 
-### SimpleEditor 고도화 — 노션 스타일 토글 헤딩 + TOC 미니맵 사이드바
+### SimpleEditor 고도화 — TOC 미니맵 사이드바 (토글 헤딩은 미구현)
 
-- **목표**: TipTap 에디터에 노션 스타일 "제목 토글로 아래 본문 숨기기/보이기" 기능과 우측 TOC(목차) 미니맵 사이드바를 추가. 긴 문서 작성 시 탐색성 개선.
+- **목표**: TipTap 에디터에 우측 TOC(목차) 미니맵 사이드바를 추가. 긴 문서 작성 시 탐색성 개선. (원래 노션 스타일 "제목 토글로 아래 본문 숨기기/보이기" 기능도 계획했으나 **현재 미구현** — `CollapsibleHeading.jsx`가 생성되지 않았고 `expandAllHeadings`/`collapseAllHeadings` 헬퍼, `ChevronsDownUp`/`ChevronsUpDown` 툴바 버튼, `.collapsible-heading-wrapper` CSS도 없음.)
 - **의존성 추가** (`app/frontend/package.json`):
   - `@tiptap/extension-heading@^3.27.1` — 커스텀 헤딩 확장 베이스.
   - `@tiptap/extension-table-of-contents@^3.27.1` — TOC anchor 수집.
   - `@tiptap/extension-unique-id@^3.27.1` — 헤딩에 고유 id 부여(TOC 스크롤 대상).
-- **Phase 1: CollapsibleHeading 확장** (`app/frontend/src/components/editor/CollapsibleHeading.jsx` 신규):
-  - `heading` 노드에 `collapsed` boolean attribute 추가. `ReactNodeViewRenderer`로 토글 버튼 + 본문 렌더링.
-  - ProseMirror plugin으로 `view.update` 후 같거나 상위 레벨의 다음 헤딩이 나올 때까지 형제 블록 DOM을 숨김.
-  - doc 구조는 변경하지 않고 view 레이어에서만 숨김 → `marked`/`turndown` 마크다운 라운드트립에 영향 없음.
-- **Phase 2: TocSidebar 컴포넌트** (`app/frontend/src/components/editor/TocSidebar.jsx` 신규):
+- **구현됨 — TocSidebar 컴포넌트** (`app/frontend/src/components/editor/TocSidebar.jsx`):
   - `TableOfContents` 확장의 `onUpdate`에서 anchors 배열 수신.
   - heading depth별 들여쓰기 + 활성 heading 하이라이트. 클릭 시 해당 heading id로 `scrollIntoView`.
   - 펼침/접힘 토글 버튼.
-- **Phase 3: SimpleEditor 통합** (`app/frontend/src/components/SimpleEditor.jsx`):
-  - `StarterKit.configure({ heading: false })` 후 `CollapsibleHeading.configure({ levels: [1,2,3,4] })` + `UniqueID` + `TableOfContents` 확장 추가.
-  - `expandAllHeadings`/`collapseAllHeadings` 헬퍼 — doc 내 모든 heading 노드 순회하며 `collapsed` 일괄 트랜잭션.
-  - 툴바에 `ChevronsDownUp`/`ChevronsUpDown` 버튼 추가.
+- **구현됨 — SimpleEditor 통합** (`app/frontend/src/components/SimpleEditor.jsx`):
+  - `TableOfContents.configure({...})` + `UniqueID` 확장 추가.
   - 레이아웃을 `flex`로 변경 — 좌측 에디터 콘텐츠 + 우측 `TocSidebar`.
-- **Phase 4: index.css 스타일** (`app/frontend/src/index.css`):
-  - `.collapsible-heading-wrapper`/`.collapsible-heading-toggle` — 토글 버튼 절대 위치 + 회전 애니메이션.
-  - `.toc-sidebar`/`.toc-sidebar-collapsed` — 사이드바 레이아웃.
-- **Phase 5: 테스트** (`app/frontend/src/components/editor/__tests__/collapsibleHeading.test.jsx`): `getHeadingLevel` 헬퍼 단위 테스트.
+- **미구현 — CollapsibleHeading**: `app/frontend/src/components/editor/CollapsibleHeading.jsx`가 생성되지 않았음. `heading` 노드의 `collapsed` attribute, ProseMirror plugin 형제 블록 숨김, `expandAllHeadings`/`collapseAllHeadings` 헬퍼, 토글 버튼, `.collapsible-heading-wrapper` CSS 모두 미구현.
 - **Phase 6: 신규 에셋** (`app/frontend/public/assets/`): `audio-thumbnail.svg`, `pdf-thumbnail.svg` — 미디어 타입 썸네일.
 - **검증**: 프론트엔드 `npm run build` 성공, `npm run test` 14 passed.
 - **배포 시 주의**: 프론트엔드 전용 변경. 백엔드/DB 변경 없음.
-- **핵심 파일**: `app/frontend/src/components/editor/CollapsibleHeading.jsx`, `app/frontend/src/components/editor/TocSidebar.jsx`, `app/frontend/src/components/SimpleEditor.jsx`, `app/frontend/src/index.css`, `app/frontend/package.json`, `app/frontend/public/assets/audio-thumbnail.svg`, `app/frontend/public/assets/pdf-thumbnail.svg`.
+- **핵심 파일**: `app/frontend/src/components/editor/TocSidebar.jsx`, `app/frontend/src/components/SimpleEditor.jsx`, `app/frontend/src/index.css`, `app/frontend/package.json`, `app/frontend/public/assets/audio-thumbnail.svg`, `app/frontend/public/assets/pdf-thumbnail.svg`.
 
 ### 통합 크레딧(포인트) 시스템 마이그레이션 — 페이지/오디오/비디오/에이전트 스텝 통합 과금
 
@@ -775,25 +766,79 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 ```
 app/
   backend/          FastAPI app, workers, DB models, API endpoints
-    api/v1/         Public API v1 (jobs, account, keys)
-    auth/           JWT auth, API key auth
-    core/           OCR pipeline, media loader, rate limit
-      docling_client.py           Docling 서비스 클라이언트
-      paddleocr_client.py         PaddleOCR 클라이언트
-      paddleocr_fallback.py       PaddleOCR 폴백 제어 (회로 차단기)
+    api/            Internal API routers
+      v1/           Public API v1 (jobs, account, keys, agent, ai)
+      admin.py, auth.py, chat_conversations.py, dev_auth.py,
+      ediscovery.py, flow_drawings.py, gdpr.py, jobs.py,
+      on_premise.py, payments.py, sandboxes.py, subscriptions.py,
+      supabase_proxy.py
+    auth/           JWT auth, API key auth (supabase_auth.py, api_key_auth.py, security.py, crypto.py)
+    core/           비즈니스 로직, OCR/변환 파이프라인, 과금, 주석
+      ai_client.py                 OpenAI 호환 LLM 스트리밍 클라이언트
+      archive_handler.py           아카이브 처리
+      cache.py                     Redis 캐시 유틸
+      canonical_annotation_coords.py  주석 좌표 정규화
+      converter.py                 공통 변환 유틸
+      docling_client.py            Docling 서비스 클라이언트
+      excel_writer.py              Excel 출력
+      hwp_converter.py             HWP 변환
+      image_deskew.py              이미지 기울기 보정
+      legal_case_profile.py        법률 사건 프로파일
+      legal_elements.py            요건 사실 정의
+      legal_issue_tree.py          쟁점 트리
+      llm_utils.py                 LLM 공통 유틸 (chat_template, thinking budget)
+      llm_xlsx_converter.py        LLM 기반 XLSX 변환
+      markdown_image_rewriter.py   마크다운 이미지 경로 재작성
+      markdown_sanitizer.py        마크다운 새니타이저
+      media_loader.py              오디오/비디오 로더
+      merge.py                     다중 파일 병합
+      ocr_client.py                OCR 클라이언트 (has_pdf_text_layer, tile_large_image)
+      ocr_layout.py                OCR 레이아웃 파싱
+      office_converter.py          DOCX/PPTX 변환
+      paddleocr_client.py          PaddleOCR 클라이언트
+      paddleocr_fallback.py        PaddleOCR 폴백 제어 (회로 차단기)
       paddleocr_parameter_recommender.py  Vision LLM 샘플 기반 파라미터 추천
-      pdf_annotate_converter.py   PDF 하이라이트/여백 주석 오케스트레이터
-      pdf_annotator.py            PDF 주석 적용
-      pdf_coords.py               좌표 변환
-      ocr_layout.py               OCR 레이아웃 파싱
-      xlsx_advanced_converter.py  마크다운에서 고급 XLSX 변환
-      pipeline_docling.py         Docling 파이프라인
-      pipeline_vision.py          Vision 파이프라인
-      pipeline_media.py           Media 파이프라인
-      pipeline_hybrid.py          Hybrid 파이프라인 (사용하지 않음)
-    db/             SQLAlchemy models and migrations
-    workers/        Celery tasks
-    docling_service/ Docling 서비스 (별도 Docker 컨테이너)
+      password_security.py         비밀번호 해시
+      pdf_annotate_converter.py    PDF 하이라이트/여백 주석 오케스트레이터
+      pdf_annotator.py             PDF 주석 적용
+      pdf_coordinate_transform.py  좌표계 변환
+      pdf_coords.py                좌표 유틸
+      pdf_optimizer.py             PDF 최적화
+      pdf_preview_converter.py     PDF 미리보기 변환
+      pdf_text_layer.py            서처블 PDF 텍스트 레이어 생성
+      pdf_user_annotator.py        PDF user-space 주석
+      pipeline_docling.py          Docling 파이프라인
+      pipeline_ediscovery.py       e-Discovery GraphRAG 파이프라인
+      pipeline_hybrid.py           Hybrid 파이프라인 (사용하지 않음)
+      pipeline_media.py            Media 파이프라인 (오디오/비디오/이미지 라우팅)
+      pipeline_vision.py           Vision 파이프라인 (PaddleOCR 우선 + vLLM fallback)
+      points_service.py            포인트 비용 계산
+      prompts.py                   LLM 프롬프트
+      rate_limit.py                요청 속도 제한
+      sandbox/                     Kata Containers 샌드박스 관리
+        collector.py, communicator.py, manager.py, security.py, workspace.py
+      subscription_service.py      구독/크레딧 관리 (PLAN_MONTHLY_CREDITS)
+      supabase_client.py           Supabase Storage 클라이언트
+      turnstile.py                 Cloudflare Turnstile 검증
+      xlsx_advanced_converter.py   마크다운에서 고급 XLSX 변환
+    db/             SQLAlchemy models and migrations (38 SQL files)
+    workers/        Celery tasks (tasks.py)
+    docling_service/ Docling 서비스 (별도 Docker 컨테이너, main.py, Dockerfile, requirements.txt)
+    paddleocr_service/ PaddleOCR 서비스 (별도 Docker 컨테이너, main.py, Dockerfile.*)
+    unoserver/      LibreOffice headless 서비스 (Dockerfile)
+  ai-backend/       Express + TypeScript AI 에이전트 백엔드
+    src/chat/route.ts          AI 채팅 라우터 (Vercel AI SDK 5.x)
+    src/lib/proof-api.ts       PROOF 백엔드 API 클라이언트
+    src/server.ts              Express 서버 진입점
+    src/tools/                 AI 에이전트 도구
+      annotations.ts           PDF 주석 도구 (highlight, callout, batch)
+      browserless.ts           원격 브라우저 도구
+      ediscovery.ts            e-Discovery 도구
+      flow.ts                  Flow drawing 도구
+      mapper.ts                Element mapper 도구
+      markdown.ts              마크다운 도구
+      sandbox.ts               샌드박스 도구
+      spreadsheet.ts           스프레드시트 도구
   frontend/         React SPA
     src/locales/   i18n translation files (en/ko/ja × common/page)
     src/i18n.js     i18next configuration
@@ -805,11 +850,16 @@ app/
     static/img/      PROOF logo & favicon SVGs
     docusaurus.config.js
     build/           Generated static site (gitignored)
+  llmlingua-service/  LLMLingua-2 프롬프트 압축 서비스 (별도 Docker 컨테이너)
   Dockerfile.backend
   docker-compose.yml
+  docker-compose.docling.yml
+  docker-compose.paddleocr.yml
   .env.example
 infra/
   mailu/            Mailu mail server deployment
+  kata-guest/       Kata Containers guest 설정
+  kata-host/        Kata Containers host 설정
 ocr_output/         OCR output artifacts (ignored in git)
 *.py                Standalone scripts and test helpers
 ```
@@ -834,7 +884,7 @@ Copy `app/.env.example` to `app/.env` and fill in:
 
 ## Local Development
 
-### Full Local Stack (backend + frontend + worker)
+### Full Local Stack (backend + frontend + worker + ai-backend)
 
 ```bash
 cd app
@@ -851,6 +901,12 @@ npm run dev
 # Worker
 cd ../backend
 celery -A backend.celery_app.celery worker --loglevel=info
+
+# AI Backend (Express + TypeScript, Vercel AI SDK)
+cd ../ai-backend
+npm install
+npm run dev          # 개발 모드 (ts-node)
+# 또는 npm run build && npm start
 
 # Docs (Docusaurus)
 cd ../docs
@@ -1151,7 +1207,7 @@ bash deploy_a1.sh
 
 1. LAN(a1) 또는 WAN(wan-1)으로 SSH 연결
 2. `rsync`로 로컬 `app/` 디렉토리를 서버 `~/chungu-app/`에 동기화 (`.env` 제외)
-3. 서버에서 `docker compose down && docker compose up --build -d` 실행 (이미지 빌드 + 컨테이너 재시작)
+3. 서버에서 `COMPOSE_PROJECT_NAME=chungu-app docker compose down && COMPOSE_PROJECT_NAME=chungu-app docker compose up --build -d` 실행 (이미지 빌드 + 컨테이너 재시작). `COMPOSE_PROJECT_NAME=chungu-app` 환경변수는 컨테이너/네트워크 이름 접두사를 고정하므로 생략하면 안 됨.
 4. 컨테이너 상태 확인
 
 서버 `.env`는 rsync로 덮어쓰지 않으므로 수동으로 관리해야 한다.
@@ -1163,17 +1219,17 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 
 ## Storage Retention & Source Cleanup
 
-- OCR 원본 업로드 파일은 `Job.created_at` 기준 **48시간** 후 Supabase Storage `pdfs` 버킷에서 자동 삭제된다.
+- OCR 원본 업로드 파일의 Supabase Storage `pdfs` 버킷 보관 기간은 `RETENTION_DAYS = 30` (30일)로 설정되어 있다 (`app/backend/workers/tasks.py`).
+- **현재 실제 삭제는 보류 중** — `cleanup_expired_uploads` Celery 태스크가 30일 이상 경과한 job을 조회하되, 아카이빙 스토리지 구성 전까지 로그만 기록하고 Storage 파일을 삭제하지 않는다. Celery beat의 `cleanup-expired-uploads` 스케줄도 주석 처리되어 비활성화 상태 (`app/backend/celery_app.py`).
 - 변환 결과 파일(`results` 버킷)은 별도 보관 정책을 유지하며, 원본 삭제와 무관하게 다운로드 가능하다.
 - DB의 `jobs` 레코드는 유지되며, 삭제 후 `pdf_storage_path` 및 `extracted_files` 내 `storage_path` 참조만 제거된다.
-- 삭제 스케줄링: Celery beat가 1시간마다 `cleanup_expired_uploads` 태스크를 실행한다.
 - 사용자가 수동으로 작업을 삭제하면 DB 레코드 삭제 전에 `pdfs` 버킷 원본 파일도 함께 삭제된다.
 - jobs 리스트에는 `source_expires_at`를 기준으로 남은 시간(일/시간/분)이 표시된다.
 - Key files:
   - `app/backend/api/jobs.py` — `_source_expires_at()`, `delete_job` Storage 정리
   - `app/backend/core/supabase_client.py` — `delete_source_files()`, `clear_source_paths()`
-  - `app/backend/workers/tasks.py` — `cleanup_expired_uploads` periodic task
-  - `app/backend/celery_app.py` — Celery beat schedule
+  - `app/backend/workers/tasks.py` — `cleanup_expired_uploads` 태스크 (현재 삭제 보류)
+  - `app/backend/celery_app.py` — Celery beat schedule (`cleanup-expired-uploads` 비활성화, `cleanup-expired-sandboxes` 10분 간격 활성, `grant-monthly-subscription-credits` 1일 간격 활성)
   - `app/frontend/src/pages/JobsPage.jsx` — 남은 시간 표시
   - `app/docker-compose.yml` — `beat` 서비스
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 from ...auth.api_key_auth import require_api_key_or_session
 from ...auth.supabase_auth import CurrentUser
 from ...core import cache, converter, subscription_service, supabase_client
+from ...core.markdown_image_rewriter import rewrite_inline_images_to_storage
 from ...db.models import Job, User
 from ...db.session import get_db
 from ...workers.tasks import run_job

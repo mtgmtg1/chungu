@@ -1,44 +1,57 @@
-#!/usr/bin/env python3
-# [Flow: Step 1 (job 로드) -> Step 2 (Storage에서 입력 다운로드) -> Step 3 (PDF: vision|hybrid / 미디어: 파일별 처리) -> Step 4 (Excel/CSV/MD 저장) -> Step 5 (Storage 업로드) -> Step 6 (DB/이메일)]
-import json
+"""workers/tasks/job_tasks.py — Job 실행 Celery 태스크.
+
+run_job과 run_job_added_files 태스크를 포함한다.
+Celery name= 문자열은 기존값(backend.workers.tasks.run_job 등)을 유지한다.
+"""
+from __future__ import annotations
+
 import logging
-import tempfile
 import time
 import traceback
-import zipfile
-from datetime import datetime, timedelta, timezone
-from io import BytesIO
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import fitz  # PyMuPDF
-from pypdf import PdfReader
-from sqlalchemy import text as sql_text
-
-from ..celery_app import celery
 from celery.signals import worker_ready
-from ..config import settings
-from ..core import archive_handler, converter, excel_writer, media_loader, merge, paddleocr_client, pdf_annotate_converter, pdf_text_layer, pipeline_ediscovery, points_service, subscription_service, supabase_client, xlsx_advanced_converter
-from ..core.job_helpers import upload_ocr_layout
-from ..core.markdown_image_rewriter import rewrite_inline_images_to_storage
-from ..core.ocr_client import has_pdf_text_layer
-from ..core.pipeline_docling import run_docling, run_hwp
-from ..core.pipeline_hybrid import run_hybrid
-from ..core.pipeline_media import run_media
-from ..core.pipeline_vision import run_vision
-from ..db.models import Job, User
-from ..db.session import SessionLocal
-from .. import email_sender, settings_store
+
+from ...celery_app import celery
+from ...core import (
+    archive_handler,
+    converter,
+    excel_writer,
+    media_loader,
+    merge,
+    paddleocr_client,
+    pdf_annotate_converter,
+    pdf_text_layer,
+    pipeline_ediscovery,
+    points_service,
+    subscription_service,
+    supabase_client,
+    xlsx_advanced_converter,
+)
+from ...core.job_helpers import upload_ocr_layout
+from ...core.markdown_image_rewriter import rewrite_inline_images_to_storage
+from ...core.ocr_client import has_pdf_text_layer
+from ...core.pipeline_docling import run_docling, run_hwp
+from ...core.pipeline_hybrid import run_hybrid
+from ...core.pipeline_media import run_media
+from ...core.pipeline_vision import run_vision
+from ...db.models import Job, User
+from ...db.session import SessionLocal
+from ... import email_sender, settings_store
+from ._helpers import (
+    _build_and_upload_searchable_pdf,
+    _handle_job_failure,
+    _register_searchable_pdf_if_text_layer,
+    _release_subscription_usage,
+    _set_status,
+    count_oversized_pages,
+)
 
 logger = logging.getLogger(__name__)
 
-MAX_PAGE_SIDE_MM = 350
-MM_PER_PT = 0.3528
-MAX_RETRY_COUNT = 3
 
-
-# [Flow: Step 1 (worker_ready 시그널 수신) -> Step 2 (DB에서 중단된 job 조회) -> Step 3 (retry_count < 3인 job 재시도) -> Step 4 (>= 3인 job error로 변경)]
-@worker_ready.connect
 def recover_stuck_jobs(sender=None, **kwargs):
     """Worker 시작 시 중단된 job(queued/rendering/ocr/merging)을 자동으로 재시도한다."""
     time.sleep(3)
@@ -93,294 +106,7 @@ def recover_stuck_jobs(sender=None, **kwargs):
         db.close()
 
 
-def _set_status(db, job: Job, status: str) -> None:
-    job.status = status
-    db.commit()
 
-
-def _release_subscription_usage(db, job: Job) -> None:
-    """최종 실패한 작업이 차감한 크레딧을 되돌린다.
-    Job에 예약 기록이 있으면 해당 기록을 우선 사용하고, 없으면 extracted_files로부터 계산한다."""
-    if not job.user_id:
-        return
-    db_user = db.get(User, job.user_id)
-    if db_user is None:
-        return
-
-    # extracted_files로부터 미디어/Docling 세부값을 재계산한다.
-    pages = job.total_pages or 0
-    image_count = 0
-    audio_seconds = 0
-    video_seconds = 0
-    for info in job.extracted_files or []:
-        ftype = info.get("type", "")
-        if ftype == "image":
-            image_count += 1
-        elif ftype == "audio":
-            audio_seconds += info.get("duration", 0)
-        elif ftype == "video":
-            video_seconds += info.get("duration", 0)
-    if job.file_type in media_loader.DOCLING_TYPES or job.file_type in media_loader.HWP_TYPES:
-        image_count = 0
-        audio_seconds = 0
-        video_seconds = 0
-    docling_refinement_pages = pages if job.use_docling_refinement else 0
-    ocr_model = job.ocr_model or "premium"
-    basic_pages = job.reserved_basic_pages if job.reserved_basic_pages else (pages + image_count if ocr_model == "basic" else 0)
-    premium_pages = job.reserved_premium_pages if job.reserved_premium_pages else (pages + image_count if ocr_model != "basic" else 0)
-    period_start = job.reserved_period_start
-
-    try:
-        subscription_service.release_usage(
-            db,
-            db_user,
-            basic_pages=basic_pages,
-            premium_pages=premium_pages,
-            audio_seconds=audio_seconds,
-            video_seconds=video_seconds,
-            docling_refinement_pages=docling_refinement_pages,
-            period_start=period_start,
-        )
-        logger.info(f"[run_job:{job.id}] 크레딧 환불 완료")
-    except Exception as e:
-        logger.warning(f"[run_job:{job.id}] 크레딧 환불 중 오류 (무시): {e}")
-    except Exception as e:
-        logger.warning(f"[run_job:{job.id}] 구독 사용량 환불 중 오류 (무시): {e}")
-
-
-# [Flow: Step 1 (retry_count 증가) -> Step 2 (3회 미만이면 retrying 상태로 재시도) -> Step 3 (3회 이상이면 error + refundable + 이메일)]
-def _handle_job_failure(db, job: Job, error_detail: str) -> dict:
-    """run_job 실행 실패 시 retry_count를 증가시키고 재시도 또는 최종 에러 상태로 전환한다."""
-    job.retry_count += 1
-    job.error_log = error_detail
-    db.commit()
-
-    if job.retry_count < MAX_RETRY_COUNT:
-        job.status = "retrying"
-        db.commit()
-        run_job.delay(job.id)
-        logger.info(f"[run_job:{job.id}] 재시도 예약 ({job.retry_count}/{MAX_RETRY_COUNT})")
-        return {"job_id": job.id, "status": "retrying", "retry_count": job.retry_count}
-
-    _release_subscription_usage(db, job)
-    job.status = "error"
-    job.refundable = True
-    job.finished_at = datetime.now(timezone.utc)
-    db.commit()
-    logger.warning(f"[run_job:{job.id}] 재시도 한계 초과, error + refundable 전환")
-    try:
-        user_lang = "en"
-        if job.user_id:
-            user = db.get(User, job.user_id)
-            if user and user.language:
-                user_lang = user.language
-        subject, html = email_sender.build_error_email(job.id, job.original_filename, error_detail, lang=user_lang)
-        email_sender.send_email(db, job.email, subject, html)
-    except Exception:  # noqa: BLE001
-        pass
-    return {"job_id": job.id, "error": error_detail, "retry_count": job.retry_count}
-
-
-def count_oversized_pages(file_path: Path) -> tuple[int, int]:
-    """PDF에서 350mm를 초과하는 페이지 수를 반환한다. (oversized_count, total_pages)"""
-    try:
-        reader = PdfReader(str(file_path))
-        total = len(reader.pages)
-        oversized = 0
-        for page in reader.pages:
-            w = float(page.mediabox.width) * MM_PER_PT
-            h = float(page.mediabox.height) * MM_PER_PT
-            if w > MAX_PAGE_SIDE_MM or h > MAX_PAGE_SIDE_MM:
-                oversized += 1
-        return oversized, total
-    except Exception:
-        return 0, 0
-
-
-def _build_and_upload_searchable_pdf(
-    db,
-    job: Job,
-    input_path: Path,
-    layout_by_page: dict[int, dict],
-    dpi: int,
-    force: bool = False,
-    upload_name: str = "searchable.pdf",
-) -> str | None:
-    """[Flow: Step 1 (원본 PDF를 페이지별 이미지로 렌더링 + deskew 보정) -> Step 2 (보정된 이미지로 새 PDF 생성)
-          -> Step 3 (layout_by_page에서 OCR 결과 추출) -> Step 4 (새 PDF에 투명 텍스트 레이어 추가)
-          -> Step 5 (searchable PDF Storage 업로드) -> Step 6 (OCR layout Storage 업로드) -> Step 7 (Job DB 저장)]
-
-    PaddleOCR이 반환한 페이지별 layout로부터 텍스트/bbox를 추출해 deskew 보정된 PDF에
-    투명 텍스트 레이어를 입히고, 그 결과를 Storage에 업로드한다.
-    원본 PDF가 아닌 deskew 보정된 페이지 이미지로 새 PDF를 만들어 기울어진 스캔 문서도
-    수평으로 정렬된 searchable PDF를 제공한다.
-    동시에 OCR layout을 Storage에 저장해 AI agent의 get_elements/search_text가 재사용할 수 있게 한다.
-
-    매개변수:
-        force: True면 job.searchable_pdf_storage_path가 이미 설정되어 있어도 강제로 새로 생성.
-            멀티파일에서 각 PDF별로 개별 searchable PDF를 생성할 때 사용.
-        upload_name: Storage에 업로드할 파일명. 멀티파일에서 파일별 고유 이름이 필요할 때 사용.
-
-    반환값: 업로드된 Storage 경로 (실패 시 None). force=False일 때는 job.searchable_pdf_storage_path에도 저장.
-    """
-    # [Flow: 이미 원본 텍스트 레이어가 searchable PDF로 등록되어 있으면 OCR 재생성을 건너뛴다]
-    if not force and job.searchable_pdf_storage_path:
-        return None
-
-    from ..core.image_deskew import deskew_image
-    from ..core.ocr_client import render_pdf
-
-    # [Flow: run_vision에서 layout이 비어 있을 경우(방어), PaddleOCR client를 직접 호출해 layout 복구]
-    if not layout_by_page:
-        try:
-            doc = fitz.open(str(input_path))
-            total_input_pages = len(doc)
-            doc.close()
-            if total_input_pages <= 10:
-                pages = paddleocr_client.convert_pdf_with_layout(input_path)
-                layout_pages = [p[1] for p in pages]
-                layout_by_page = {i + 1: layout for i, layout in enumerate(layout_pages) if layout}
-                logger.info(f"[run_job:{job.id}] searchable PDF 생성 직접 PaddleOCR layout 확보: {len(layout_by_page)}페이지")
-        except Exception as e:
-            logger.warning(f"[run_job:{job.id}] searchable PDF 생성 직접 PaddleOCR layout 확보 실패: {e}")
-
-    # OCR layout을 먼저 Storage에 저장해 agent 도구가 재사용할 수 있게 한다.
-    if layout_by_page:
-        upload_ocr_layout(db, job, layout_by_page)
-
-    page_ocr_results = pdf_text_layer.extract_page_ocr_results_from_layout(layout_by_page)
-    if not page_ocr_results:
-        logger.warning(
-            f"[run_job:{job.id}] searchable PDF 생성 스킵: page_ocr_results 비어있음 "
-            f"(layout_by_page keys={list(layout_by_page.keys())}, "
-            f"첫 페이지 layout keys={list(layout_by_page[list(layout_by_page.keys())[0]].keys()) if layout_by_page else 'N/A'})"
-        )
-        return
-    try:
-        # Step 1: 원본 PDF를 페이지별 이미지로 렌더링
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_dir = Path(tmpdir)
-            render_pdf(str(input_path), str(tmp_dir), dpi=dpi)
-
-            # Step 2: 각 페이지 이미지에 deskew 적용
-            deskewed_dir = tmp_dir / "deskewed"
-            deskewed_paths: dict[int, Path] = {}
-            for img_path in sorted(tmp_dir.glob("page-*.png")):
-                try:
-                    page_num = int(img_path.stem.split("-")[-1])
-                except Exception:
-                    continue
-                deskewed_path, applied = deskew_image(img_path, output_dir=deskewed_dir)
-                deskewed_paths[page_num] = deskewed_path
-
-            if not deskewed_paths:
-                # 렌더링 실패 시 원본 PDF에 텍스트 레이어만 추가 (폴백)
-                pdf_bytes = input_path.read_bytes()
-                searchable_pdf_bytes = pdf_text_layer.add_text_layer_from_ocr(pdf_bytes, page_ocr_results, dpi=dpi, language="ko", layout_by_page=layout_by_page)
-                storage_path = supabase_client.upload_input(BytesIO(searchable_pdf_bytes), upload_name, job.id)
-                if not force:
-                    job.searchable_pdf_storage_path = storage_path
-                    db.commit()
-                logger.info(f"[run_job:{job.id}] searchable PDF 업로드 완료 (폴백 — deskew 미적용): {storage_path}")
-                return storage_path
-
-            # Step 3: deskew 적용된 이미지로 새 PDF 생성
-            doc = fitz.open()
-            for page_num in sorted(deskewed_paths.keys()):
-                img_path = deskewed_paths[page_num]
-                img = fitz.Pixmap(str(img_path))
-                width_pt = img.width * 72.0 / dpi
-                height_pt = img.height * 72.0 / dpi
-                page = doc.new_page(width=width_pt, height=height_pt)
-                page.insert_image(fitz.Rect(0, 0, width_pt, height_pt), filename=str(img_path))
-            deskewed_pdf_bytes = doc.tobytes()
-            doc.close()
-
-            # Step 4: 새 PDF에 투명 텍스트 레이어 추가
-            searchable_pdf_bytes = pdf_text_layer.add_text_layer_from_ocr(deskewed_pdf_bytes, page_ocr_results, dpi=dpi, language="ko", layout_by_page=layout_by_page)
-
-        storage_path = supabase_client.upload_input(BytesIO(searchable_pdf_bytes), upload_name, job.id)
-        if not force:
-            job.searchable_pdf_storage_path = storage_path
-            db.commit()
-        logger.info(f"[run_job:{job.id}] searchable PDF 업로드 완료 (deskew 적용): {storage_path}")
-        return storage_path
-    except Exception as e:
-        logger.warning(f"[run_job:{job.id}] searchable PDF 생성/업로드 실패: {e}")
-        return None
-
-
-def _register_searchable_pdf_if_text_layer(
-    db, job: Job, input_path: Path, force: bool = False, upload_name: str = "searchable.pdf"
-) -> str | None:
-    """[Flow: Step 1 (PDF 텍스트 레이어 검사) -> Step 2 (있으면 원본을 searchable PDF로 등록)]
-
-    원본 PDF에 텍스트 레이어가 있으면 별도 OCR 텍스트 레이어 생성 없이 원본 PDF를
-    주석 검색용 searchable PDF로 그대로 등록한다. 디지털 텍스트 PDF의 정확한 좌표를
-    주석에 직접 활용할 수 있다.
-
-    매개변수:
-        force: True면 job.searchable_pdf_storage_path가 이미 설정되어 있어도 강제로 등록.
-            멀티파일에서 각 PDF별로 개별 searchable PDF를 등록할 때 사용.
-        upload_name: Storage에 업로드할 파일명.
-
-    반환값: 업로드된 Storage 경로 (실패/스킵 시 None).
-    """
-    if not force and job.searchable_pdf_storage_path:
-        return None  # 이미 등록되어 있으면 스킵
-    try:
-        if not has_pdf_text_layer(str(input_path)):
-            return None
-        # 원본 PDF를 Storage에 searchable PDF로 업로드
-        pdf_bytes = input_path.read_bytes()
-        storage_path = supabase_client.upload_input(BytesIO(pdf_bytes), upload_name, job.id)
-        if not force:
-            job.searchable_pdf_storage_path = storage_path
-            db.commit()
-        logger.info(f"[run_job:{job.id}] 원본 PDF에 텍스트 레이어 있음 → searchable PDF로 등록: {storage_path}")
-        return storage_path
-    except Exception as e:
-        logger.warning(f"[run_job:{job.id}] 원본 PDF searchable 등록 실패: {e}")
-        return None
-
-
-def _image_to_searchable_pdf(
-    image_path: Path,
-    layout_raw: dict,
-    dpi: int = 300,
-) -> bytes:
-    """[Flow: Step 1 (이미지 deskew 보정) -> Step 2 (보정된 이미지로 1페이지 PDF 생성)
-          -> Step 3 (OCR layout에서 텍스트/bbox 추출) -> Step 4 (투명 텍스트 레이어 추가)
-          -> Step 5 (searchable PDF bytes 반환)]
-
-    단일 이미지를 deskew 보정 후 1페이지 PDF로 변환하고, PaddleOCR layout의 텍스트/bbox를
-    투명 텍스트 레이어로 추가해 searchable PDF를 만든다.
-    """
-    from ..core.image_deskew import deskew_image
-
-    # Step 1: deskew 보정 적용
-    deskewed_path, _applied = deskew_image(image_path)
-
-    # Step 2: 보정된 이미지로 1페이지 PDF 생성
-    img = fitz.Pixmap(str(deskewed_path))
-    doc = fitz.open()
-    try:
-        width_pt = img.width * 72.0 / dpi
-        height_pt = img.height * 72.0 / dpi
-        page = doc.new_page(width=width_pt, height=height_pt)
-        page.insert_image(fitz.Rect(0, 0, width_pt, height_pt), filename=str(deskewed_path))
-        pdf_bytes = doc.tobytes()
-    finally:
-        doc.close()
-
-    page_ocr_results = pdf_text_layer.extract_page_ocr_results_from_layout({1: layout_raw})
-    if page_ocr_results:
-        return pdf_text_layer.add_text_layer_from_ocr(pdf_bytes, page_ocr_results, dpi=dpi, language="ko", layout_by_page={1: layout_raw})
-    return pdf_bytes
-
-
-@celery.task(name="backend.workers.tasks.run_job")
 def run_job(job_id: str) -> dict:
     """업로드된 파일(단일 PDF 또는 멀티미디어)을 변환하는 메인 워커 태스크."""
     db = SessionLocal()
@@ -1017,8 +743,7 @@ def run_job(job_id: str) -> dict:
         db.close()
 
 
-# [Flow: Step 1 (is_new=true 파일 필터링) -> Step 2 (파일 타입별 파이프라인 실행) -> Step 3 (result_markdown 채우기) -> Step 4 (전체 extracted_files에서 combined markdown 재생성) -> Step 5 (Storage 재업로드 + 캐시 무효화)]
-@celery.task(name="backend.workers.tasks.run_job_added_files")
+
 def run_job_added_files(job_id: str) -> dict:
     """기존 완료된 Job에 새로 추가된 파일(is_new=true)만 변환하여 결과에 추가한다.
 
@@ -1026,7 +751,7 @@ def run_job_added_files(job_id: str) -> dict:
     처리 완료 후 전체 extracted_files의 combined markdown을 재생성하여 Storage에 업로드한다.
     Job의 status는 "done"을 유지하며, 새 파일의 status 필드로 진행 상황을 추적한다.
     """
-    from ..core import paddleocr_client
+    from ...core import paddleocr_client
     from sqlalchemy.orm.attributes import flag_modified
 
     db = SessionLocal()
@@ -1244,7 +969,7 @@ def run_job_added_files(job_id: str) -> dict:
         # XLSX Advanced는 별도 LLM 변환이므로 사용자가 수동으로 재실행해야 한다.
         if combined_markdown.strip():
             try:
-                from ..core import office_converter
+                from ...core import office_converter
                 with tempfile.TemporaryDirectory() as tmpdir:
                     xlsx_path = Path(tmpdir) / "result.xlsx"
                     csv_path = Path(tmpdir) / "result.csv"
@@ -1277,7 +1002,7 @@ def run_job_added_files(job_id: str) -> dict:
 
         # preview 캐시 무효화
         try:
-            from ..core import cache
+            from ...core import cache
             cache.invalidate_pattern(f"preview:{job_id}:*")
         except Exception:
             pass
@@ -1304,329 +1029,4 @@ def run_job_added_files(job_id: str) -> dict:
         db.close()
 
 
-# OCR 업로드 원본 파일 및 변환 결과의 Supabase Storage 보관 기간 (일)
-# 실제 Storage 삭제는 별도 아카이빙 스토리지 구성 전까지 수행하지 않는다.
-RETENTION_DAYS = 30
 
-
-# [Flow: Step 1 (30일 이전 생성된 job 조회) -> Step 2 (실제 삭제는 보류, 아카이빙 스토리지 구성 후 활성화) -> Step 3 (현재는 로그만 기록)]
-@celery.task(name="backend.workers.tasks.cleanup_expired_uploads")
-def cleanup_expired_uploads() -> dict:
-    """created_at 기준 30일이 지난 job의 원본 업로드 파일 삭제를 보류한다. (아카이빙 스토리지 구성 전까지)"""
-    db = SessionLocal()
-    try:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)
-        jobs = (
-            db.query(Job)
-            .filter(Job.created_at < cutoff)
-            .filter((Job.pdf_storage_path != "") | (Job.extracted_files.isnot(None)))
-            .all()
-        )
-
-        pending = 0
-        skipped = 0
-        for job in jobs:
-            has_source = bool(job.pdf_storage_path) or any(
-                isinstance(info, dict) and info.get("storage_path")
-                for info in job.extracted_files or []
-            )
-            if not has_source:
-                skipped += 1
-                continue
-
-            pending += 1
-            logger.info(f"[cleanup_expired_uploads] {job.id} 원본 파일 삭제 보류 (아카이빙 스토리지 미구성)")
-
-        return {"pending": pending, "skipped": skipped}
-    except Exception as e:
-        logger.exception(f"[cleanup_expired_uploads] 태스크 오류: {e}")
-        return {"error": str(e)}
-    finally:
-        db.close()
-
-
-@celery.task(name="backend.workers.tasks.convert_xlsx_advanced")
-def convert_xlsx_advanced(parent_job_id: str) -> dict:
-    """마크다운 결과를 LLM 기반 고급 변환으로 xlsx로 변환한다."""
-    return xlsx_advanced_converter.run(parent_job_id)
-
-
-@celery.task(name="backend.workers.tasks.annotate_pdf_job")
-def annotate_pdf_job(
-    job_id: str, instruction: str, mode: str, comment_mode: str, advanced: bool = False,
-    annotation_index: int = 0, page_range: list[int] | None = None,
-) -> dict:
-    """원본 PDF/이미지에서 조건에 맞는 텍스트 요소를 하이라이트/여백 주석으로 표시한다.
-
-    advanced=True이면 Vision LLM을 사용해 정밀 bbox + 색상을 직접 검출한다.
-    주석 코멘트는 사용자가 instruction에 사용한 언어로 작성된다 (프롬프트가 LLM에 지시).
-    annotation_index는 API 수준에서 원자적으로 할당된 고유 인덱스로, 파일명 충돌을 방지한다.
-    page_range는 처리할 1-based 페이지 번호 리스트. None이면 전체 페이지를 처리한다.
-    """
-    return pdf_annotate_converter.run(
-        job_id, instruction, mode, comment_mode, advanced=advanced,
-        annotation_index=annotation_index, page_range=page_range,
-    )
-
-
-@celery.task(name="backend.workers.tasks.annotate_edit_job")
-def annotate_edit_job(
-    job_id: str, instruction: str, page_range: list[int] | None, annotation_index: int,
-) -> dict:
-    """[Flow: Step 1 (기존 AI 주석 추출) -> Step 2 (LLM으로 색상/코멘트 재편집) -> Step 3 (병합 업로드)]
-
-    기존 AI 주석의 색상/코멘트를 사용자 instruction에 맞게 LLM으로 재편집한다.
-    지정한 페이지 범위의 기존 AI 주석만 편집 대상으로 삼고, 사용자 수동 편집 주석과
-    다른 페이지의 주석은 건드리지 않는다. 기존 주석의 id/rect는 유지하고 속성만 갱신한다.
-    annotation_index는 API 수준에서 원자적으로 할당된 고유 인덱스로, entry 추적에 사용한다.
-    """
-    return pdf_annotate_converter.run_edit(
-        job_id, instruction, page_range, annotation_index,
-    )
-
-
-@celery.task(name="backend.workers.tasks.run_ediscovery")
-def run_ediscovery(
-    job_id: str,
-    chunk_size: int | None = None,
-    threshold: float | None = None,
-    page_range: list[int] | None = None,
-    max_chunks: int | None = None,
-    max_docs: int | None = None,
-    query: str | None = None,
-    context: str | None = None,
-) -> dict:
-    """[Flow: Step 1 (pipeline_ediscovery.run 호출) -> Step 2 (결과 반환)]
-
-    수천 장 법률 문서에서 쟁점/증거 노드를 추출해 그래프 JSON으로 저장한다.
-    chunk_size/threshold/max_chunks/max_docs가 None이면 LLM이 문서 샘플을 보고 자동 추천한다.
-    page_range는 처리할 1-based 페이지 번호 리스트. None이면 전체 페이지를 처리한다.
-    query는 자연어 쿼리로, 지정 시 관련 청크만 처리 대상으로 한다.
-    max_docs는 api/ediscovery.py extract 엔드포인트와의 호환성을 위한 max_chunks 별칭이다.
-    context는 사용자가 입력한 프로젝트 주요/중요 사항으로, LLM 프롬프트에 포함된다.
-    """
-    db = SessionLocal()
-    try:
-        job = db.get(Job, job_id)
-        user_id = str(job.user_id) if job else None
-        return pipeline_ediscovery.run(
-            job_id,
-            chunk_size=chunk_size,
-            threshold=threshold,
-            page_range=page_range,
-            max_chunks=max_chunks,
-            max_docs=max_docs,
-            query=query,
-            context=context,
-            user_id=user_id,
-        )
-    finally:
-        db.close()
-
-
-@celery.task(name="backend.workers.tasks.auto_recharge_retry")
-def auto_recharge_retry() -> dict:
-    """자동 충전 실패 사용자를 찾아 1일 간격으로 재시도한다.
-    auto_recharge_retries > 0 && < 3 && auto_recharge_enabled == True인 사용자 대상."""
-    # [Flow: Step 1 (재시도 대상 조회) -> Step 2 (각 사용자에 대해 trigger_auto_recharge 호출) -> Step 3 (결과 집계)]
-    from sqlalchemy import select as sa_select
-    from ..db.models import User
-    from ..api.payments import trigger_auto_recharge
-
-    db = SessionLocal()
-    try:
-        users = db.execute(
-            sa_select(User).where(
-                User.auto_recharge_enabled == True,  # noqa: E712
-                User.auto_recharge_retries > 0,
-                User.auto_recharge_retries < 3,
-            )
-        ).scalars().all()
-
-        retried = 0
-        succeeded = 0
-        for user in users:
-            try:
-                result = trigger_auto_recharge(db, user)
-                retried += 1
-                if result.get("ok"):
-                    succeeded += 1
-                    logger.info(f"[auto_recharge_retry] {user.id} 재시도 성공")
-                else:
-                    logger.warning(f"[auto_recharge_retry] {user.id} 재시도 실패: {result.get('reason')}")
-            except Exception as e:
-                logger.error(f"[auto_recharge_retry] {user.id} 예외: {e}")
-
-        return {"retried": retried, "succeeded": succeeded}
-    except Exception as e:
-        logger.exception(f"[auto_recharge_retry] 태스크 오류: {e}")
-        return {"error": str(e)}
-    finally:
-        db.close()
-
-
-@celery.task(name="backend.workers.tasks.cleanup_expired_sandboxes")
-def cleanup_expired_sandboxes() -> dict:
-    """[Flow: Step 1 (만료된 sandbox 조회·종료) -> Step 2 (결과 수집) -> Step 3 (오래된 workspace 디스크 정리)]
-
-    만료된 Kata 샌드박스를 자동으로 종료하고 결과 파일을 수집한다.
-    또한 이미 종료된 sandbox 의 workspace 디스크를 보존 기간(7일) 경과 후 삭제한다.
-    Celery beat 에 의해 주기적으로 실행된다 (기본 10분 간격).
-    """
-    from datetime import datetime, timedelta, timezone
-    from pathlib import Path
-    from sqlalchemy import select as sa_select, update as sa_update
-    from ..db.models import Sandbox
-    from ..core.sandbox import ResultCollector, SandboxManager, WorkspaceManager
-
-    # [Flow: Step 1 (만료된 sandbox 조회·종료) -> Step 2 (결과 수집) -> Step 3 (workspace 정리)]
-    db = SessionLocal()
-    try:
-        now = datetime.now(timezone.utc)
-        timeout_seconds = settings.sandbox_default_timeout
-        cutoff = now - timedelta(seconds=timeout_seconds)
-
-        manager = SandboxManager()
-        collector = ResultCollector()
-        workspace_mgr = WorkspaceManager()
-
-        # supabase_client 지연 import (순환 참조 방지)
-        try:
-            from ..core.supabase_client import get_supabase_client
-            supabase = get_supabase_client()
-        except Exception:
-            supabase = None
-
-        # ========================================
-        # Step 1: 만료된 sandbox 종료 + 결과 수집
-        # ========================================
-        expired = db.execute(
-            sa_select(Sandbox).where(
-                Sandbox.status.in_(["creating", "running"]),
-                Sandbox.created_at < cutoff,
-            )
-        ).scalars().all()
-
-        destroyed_count = 0
-        destroy_errors = 0
-
-        for sandbox in expired:
-            try:
-                logger.info(f"[cleanup_expired_sandboxes] sandbox {sandbox.id} 만료, 종료 시도")
-                workspace_path = Path(sandbox.workspace_path) if sandbox.workspace_path else None
-
-                # 결과 수집 시도 (실패해도 종료는 진행)
-                if workspace_path and workspace_path.exists():
-                    try:
-                        collector.collect_and_upload(
-                            workspace_path=workspace_path,
-                            job_id=sandbox.job_id or "",
-                            supabase_client=supabase,
-                        )
-                    except Exception as collect_err:
-                        logger.warning(f"[cleanup_expired_sandboxes] {sandbox.id} 결과 수집 실패: {collect_err}")
-
-                # sandbox 종료 — destroy_sandbox(container_name, workspace_path)
-                manager.destroy_sandbox(sandbox.container_name, workspace_path)
-
-                # DB 상태 업데이트
-                db.execute(
-                    sa_update(Sandbox)
-                    .where(Sandbox.id == sandbox.id)
-                    .values(status="expired", updated_at=now)
-                )
-                destroyed_count += 1
-            except Exception as e:
-                logger.error(f"[cleanup_expired_sandboxes] sandbox {sandbox.id} 종료 실패: {e}")
-                destroy_errors += 1
-
-        # ========================================
-        # Step 2: 오래된 workspace 디스크 정리 (보존 기간 7일 경과)
-        # ========================================
-        # 이미 destroyed/expired 상태이고 workspace_path 가 비어있지 않은 sandbox 조회
-        stale = db.execute(
-            sa_select(Sandbox).where(
-                Sandbox.status.in_(["destroyed", "expired"]),
-                Sandbox.workspace_path != "",
-            )
-        ).scalars().all()
-
-        workspace_cleaned = 0
-        workspace_errors = 0
-
-        for sandbox in stale:
-            workspace_path = Path(sandbox.workspace_path) if sandbox.workspace_path else None
-            if not workspace_path or not workspace_path.exists():
-                # 이미 디스크에 없으면 DB 의 workspace_path 만 비우기
-                db.execute(
-                    sa_update(Sandbox)
-                    .where(Sandbox.id == sandbox.id)
-                    .values(workspace_path="", updated_at=now)
-                )
-                continue
-
-            try:
-                # cleanup_workspace: mtime 기준 preserve_days(7일) 경과 시 rmtree 실행
-                removed = workspace_mgr.cleanup_workspace(workspace_path, preserve_days=7)
-                if removed:
-                    db.execute(
-                        sa_update(Sandbox)
-                        .where(Sandbox.id == sandbox.id)
-                        .values(workspace_path="", updated_at=now)
-                    )
-                    workspace_cleaned += 1
-                    logger.info(f"[cleanup_expired_sandboxes] workspace 정리 완료: {workspace_path}")
-            except Exception as e:
-                logger.error(f"[cleanup_expired_sandboxes] workspace 정리 실패 {sandbox.id}: {e}")
-                workspace_errors += 1
-
-        db.commit()
-        logger.info(
-            f"[cleanup_expired_sandboxes] 완료: destroyed={destroyed_count}, destroy_errors={destroy_errors}, "
-            f"workspace_cleaned={workspace_cleaned}, workspace_errors={workspace_errors}"
-        )
-        return {
-            "destroyed": destroyed_count,
-            "destroy_errors": destroy_errors,
-            "workspace_cleaned": workspace_cleaned,
-            "workspace_errors": workspace_errors,
-        }
-    except Exception as e:
-        logger.exception(f"[cleanup_expired_sandboxes] 태스크 오류: {e}")
-        return {"error": str(e)}
-    finally:
-        db.close()
-
-
-# [Flow: Step 1 (Celery beat 스케줄) -> Step 2 (모든 대상 사용자 조회) -> Step 3 (월간 크레딧 지급 조건 확인) -> Step 4 (points_balance 충전)]
-@celery.task(name="backend.workers.tasks.grant_monthly_subscription_credits")
-def grant_monthly_subscription_credits() -> dict[str, Any]:
-    """Celery beat로 매일 실행되어 월간 구독 크레딧을 지급한다.
-
-    연간 요금제의 경우 Paddle 웹훅이 월별로 발생하지 않으므로, 이 태스크가
-    구독 기간 시작일 기준으로 매월 크레딧을 지급하는 폴백 역할을 한다.
-    """
-    db = SessionLocal()
-    try:
-        plans = list(subscription_service.PLAN_MONTHLY_CREDITS.keys())
-        query = db.query(User).where(User.subscription_plan.in_(plans))
-        users = query.all()
-        granted = 0
-        skipped = 0
-        for user in users:
-            try:
-                if subscription_service.grant_monthly_credits(db, user):
-                    granted += 1
-                else:
-                    skipped += 1
-            except Exception as e:
-                logger.warning(f"[grant_monthly] user={user.id} 크레딧 지급 실패: {e}")
-                skipped += 1
-        db.commit()
-        logger.info(f"[grant_monthly] 완료: granted={granted}, skipped={skipped}")
-        return {"granted": granted, "skipped": skipped}
-    except Exception as e:
-        logger.exception(f"[grant_monthly] 태스크 오류: {e}")
-        return {"error": str(e)}
-    finally:
-        db.close()

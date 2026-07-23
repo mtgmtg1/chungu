@@ -8,6 +8,26 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 디버그 전용 패널 토글 페이지 라우트 추가 — 2026-07-23
+
+- **배경**: 마크다운 결과 페이지에서 좌·우 패널이 완전히 숨겨지는 문제를 진단하기 위해, 로그인을 우회하고 패널 보이기/숨기기를 독립적으로 테스트할 수 있는 디버그 페이지가 필요함.
+- **변경 내용**:
+  - `app/frontend/src/main.jsx`: `DebugPanelTogglePage` import 및 `/dev/debug-panel-toggle` 라우트 추가.
+  - `app/frontend/src/pages/DebugPanelTogglePage.jsx` (신규): 패널 토글 상태를 독립적으로 제어·시각화하는 디버그 페이지.
+- **핵심 파일**: `app/frontend/src/main.jsx`, `app/frontend/src/pages/DebugPanelTogglePage.jsx`.
+
+### 드로잉 도구 키보드 단축키 언어 무관 처리 + 형광펜 설정 분리 + 패널 상태 localStorage 저장 — 2026-07-23
+
+- **배경**: 드로잉 도구 단축키가 한글 입력 모드에서 동작하지 않았고, 펜과 형광펜 색상/굵기가 공유 상태라 전환 시 설정이 초기화됨. 패널 토글 상태도 새로고침 후 유지되지 않았음.
+- **변경 내용**:
+  - `FlowViewer.jsx`: `e.key` → `e.code`로 변경하여 한/영 입력 언어와 무관하게 단축키 동작 (KeyZ/KeyX/KeyV/KeyP/KeyH/KeyS/KeyT/KeyE/KeyN/KeyL/KeyF).
+  - `useFlowDrawing.js`: 펜/형광펜 색상·굵기를 독립 상태로 분리, localStorage 저장하여 새로고침 후에도 유지. 형광펜 기본값 `#eab308`/16px, 펜 `#6366f1`/4px.
+  - `DrawingToolbar.jsx` / `DrawingOverlay.jsx`: 형광펜 굵기 컨트롤 분리, 도구 전환 시 해당 도구의 저장된 설정 로드.
+  - `JobResultPage.jsx` / `PagedResultViewer.jsx`: 패널 토글 상태를 localStorage에 저장하여 새로고침 후에도 유지.
+  - `index.css`: 형광펜 관련 스타일 추가.
+- **테스트**: `PagedResultViewer.test.jsx`에 패널 토글 상태 영속성 테스트 추가.
+- **핵심 파일**: `app/frontend/src/components/FlowViewer.jsx`, `app/frontend/src/hooks/useFlowDrawing.js`, `app/frontend/src/components/flow/DrawingToolbar.jsx`, `app/frontend/src/components/flow/DrawingOverlay.jsx`, `app/frontend/src/pages/JobResultPage.jsx`, `app/frontend/src/components/PagedResultViewer.jsx`.
+
 ### .md 파일 업로드 및 파싱 허용 — markdown 타입 전체 파이프라인 지원 — 2026-07-23
 
 - **배경**: 파일 업로드 시 `.md` 확장자가 `MEDIA_EXTENSIONS`와 프론트엔드 `ACCEPT_TYPES`에 없어 업로드가 차단됨. 마크다운은 텍스트가 그대로 결과이므로 OCR/LLM 처리 없이 파싱 가능.

@@ -133,6 +133,7 @@ def preview_job(
             if fname not in existing_filenames:
                 source_files.append({
                     "filename": fname,
+                    "type": info.get("type", ""),
                     "result_markdown": md,
                     "source_kind": "original",
                     "source_index": idx,

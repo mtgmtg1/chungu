@@ -104,6 +104,7 @@ export const api = {
   initAddFiles: (jobId, payload) => request(`/api/jobs/${jobId}/init-add-files`, { method: 'POST', body: JSON.stringify(payload) }),
   confirmAddFiles: (jobId, payload) => request(`/api/jobs/${jobId}/confirm-add-files`, { method: 'POST', body: JSON.stringify(payload) }),
   updateJob: (id, payload) => request(`/api/jobs/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  renameJob: (id, title) => request(`/api/jobs/${id}/title`, { method: 'PATCH', body: JSON.stringify({ title }) }),
   confirmJob: (id) => request(`/api/jobs/${id}/confirm`, { method: 'POST' }),
   getJob: (id) => request(`/api/jobs/${id}`),
   listJobs: () => request('/api/jobs'),

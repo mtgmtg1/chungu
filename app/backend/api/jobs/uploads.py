@@ -102,7 +102,7 @@ async def upload_job(
     if is_single_file:
         single_file_type = media_loader.detect_file_type(Path(files[0].filename))
 
-    original_filename = _normalize_display_name(files[0].filename if is_single_file else f"{len(files)}_files.zip")
+    original_filename = _normalize_display_name(files[0].filename if is_single_file else f"{files[0].filename} 등 {len(files)}개의 파일")
 
     job = Job(
         user_id=uuid.UUID(user.user_id),
@@ -303,7 +303,7 @@ async def init_job(
         raise HTTPException(status_code=413, detail=f"Total file size exceeds limit (max {max_mb}MB)")
 
     is_single_file = len(files) == 1
-    original_filename = _normalize_display_name(files[0]["name"] if is_single_file else f"{len(files)}_files.zip")
+    original_filename = _normalize_display_name(files[0]["name"] if is_single_file else f"{files[0]['name']} 등 {len(files)}개의 파일")
 
     job = Job(
         user_id=uuid.UUID(user.user_id),
@@ -786,6 +786,34 @@ def update_job(
         job.ocr_model = "premium"
 
     db.commit()
+    return _job_summary(job)
+
+
+
+@router.patch("/jobs/{job_id}/title")
+def rename_job(
+    job_id: str,
+    payload: dict,
+    user: CurrentUser = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Job의 표시 이름(original_filename)을 수정한다.
+
+    [Flow: Step 1 (job 조회 및 접근 권한 확인) -> Step 2 (새 이름 검증) -> Step 3 (DB 업데이트 + 캐시 무효화)]
+
+    모든 상태(pending/processing/done/error)에서 수정 가능하다.
+    결과 페이지 헤더에서 인라인 편집으로 호출된다.
+    """
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    new_title = str(payload.get("title", "") or "").strip()
+    if not new_title:
+        raise HTTPException(status_code=400, detail="Title must not be empty")
+    if len(new_title) > 200:
+        raise HTTPException(status_code=400, detail="Title must be 200 characters or less")
+    job.original_filename = _normalize_display_name(new_title)
+    db.commit()
+    cache.invalidate_pattern(f"preview:{job.id}:*")
     return _job_summary(job)
 
 

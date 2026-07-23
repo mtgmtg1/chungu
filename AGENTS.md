@@ -8,6 +8,22 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 마크다운 프리뷰 패널 숨김 + HTML/코드 파일 업로드 금지 + 다중 파일 표시 + job title 인라인 수정 — 2026-07-23
+
+- **배경**: 마크다운 파일 업로드 시 불필요한 원본 프리뷰 패널이 표시됨. HTML/코드 파일은 변환 대상이 아니지만 업로드가 허용되어 있었음. 다중 파일 업로드 시 "N_files.zip"이라는 의미 없는 이름이 표시됨. job 이름을 수정할 수 없었음.
+- **변경 내용**:
+  - **마크다운 프리뷰 패널 숨김**: `JobResultPage.jsx`에 `isMarkdownOnly` 계산값 추가 (모든 sourceFiles의 type이 "markdown"이면 true). 마크다운 전용 job은 PagedResultViewer(좌우 분할) 대신 SimpleEditor만 전체 너비로 렌더링. 패널 토글 버튼도 숨김.
+  - **HTML/코드 파일 업로드 금지**: `UploadWidget.jsx`의 `ACCEPT_TYPES`에서 `.html`, `.htm` 제거. `REJECTED_EXTENSIONS` 세트 추가 (.html, .js, .ts, .py, .css, .json 등 50+ 확장자). `addFiles`에서 거부된 파일을 분리하여 커스텀 모달로 표시 (앱 디자인 시스템 사용 — AlertTriangle 아이콘, surface-container 배경). 백엔드 `_shared.py`의 `MEDIA_EXTENSIONS`에서도 `.html`, `.htm`, `.xhtml` 제거.
+  - **다중 파일 "대표파일명 등 N개" 표시**: `uploads.py`의 `upload_job`과 `init_job`에서 다중 파일 시 `original_filename`을 `f"{len(files)}_files.zip"` → `f"{files[0].filename} 등 {len(files)}개의 파일"` 형식으로 변경.
+  - **job title 인라인 수정**: 백엔드 `uploads.py`에 `PATCH /api/jobs/{job_id}/title` 엔드포인트 추가 (모든 상태에서 수정 가능, 200자 제한, preview 캐시 무효화). 프론트엔드 `api.js`에 `renameJob` 메서드 추가. `JobResultPage.jsx` 헤더의 h1 title을 클릭하면 input으로 전환, Enter/체크 버튼으로 저장, Escape/X 버튼으로 취소.
+  - **i18n**: `page:upload.rejectedTitle`, `page:upload.rejectedDesc`, `page:result.clickToEdit` 키를 ko/en/ja에 추가.
+- **검증**: 백엔드 295 tests pass, 프론트엔드 84 tests pass, vite build 성공.
+- **⚠️ 회귀 방지 경고**:
+  1. `REJECTED_EXTENSIONS`에 새 확장자를 추가하면 해당 파일이 업로드 거부 모달에 표시된다. `.csv`는 거부 목록에 있지만 백엔드 `MEDIA_EXTENSIONS`에는 없으므로 백엔드에서도 거부됨 — 일관성 유지 필요.
+  2. 마크다운 전용 job 감지는 `sourceFiles.every(f => f.type === "markdown")` 기반이다. 백엔드 `_build_source_file_item`에서 markdown 타입을 원본 type("markdown") 그대로 유지한다 (이전에는 "file"로 변환했으나, 프론트엔드 판별을 위해 "markdown"으로 유지하도록 수정됨). `preview.py`에서 extracted_files를 source_files에 병합할 때도 `info.get("type", "")`를 포함한다.
+  3. `PATCH /api/jobs/{job_id}/title`은 모든 상태에서 호출 가능하다. job이 processing 중일 때 title을 변경해도 처리에는 영향 없음.
+- **핵심 파일**: `app/frontend/src/pages/JobResultPage.jsx`, `app/frontend/src/components/UploadWidget.jsx`, `app/frontend/src/api.js`, `app/backend/api/jobs/uploads.py`, `app/backend/api/jobs/_shared.py`, `app/frontend/src/locales/{ko,en,ja}/page.json`.
+
 ### 디버그 전용 패널 토글 페이지 라우트 추가 — 2026-07-23
 
 - **배경**: 마크다운 결과 페이지에서 좌·우 패널이 완전히 숨겨지는 문제를 진단하기 위해, 로그인을 우회하고 패널 보이기/숨기기를 독립적으로 테스트할 수 있는 디버그 페이지가 필요함.

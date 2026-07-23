@@ -1,12 +1,41 @@
-// [Flow: Step 1 (onComplete 콜백 수신) -> Step 2 (파일/폴더 드래그앤드롭 + input 선택) -> Step 3 (중복 제거 후 파일 목록 관리) -> Step 4 (제출 시 initJob + TUS 업로드 + createJob) -> Step 5 (완료 시 onComplete(jobId) 호출)]
+// [Flow: Step 1 (onComplete 콜백 수신) -> Step 2 (파일/폴더 드래그앤드롭 + input 선택) -> Step 3 (HTML/코드 파일 거부 + 모달) -> Step 4 (중복 제거 후 파일 목록 관리) -> Step 5 (제출 시 initJob + TUS 업로드 + createJob) -> Step 6 (완료 시 onComplete(jobId) 호출)]
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { FileUp, Loader2, X } from "lucide-react";
+import { AlertTriangle, FileUp, Loader2, X } from "lucide-react";
 import { api } from "../api.js";
 import { uploadFilesTUS } from "../tusUpload.js";
 import { AnimatedRow } from "./AnimatedList.jsx";
 import { useAuth } from "../AuthContext.jsx";
+
+// [Flow: 업로드가 허용되지 않는 확장자 — HTML 및 코드 파일]
+// 이 확장자들은 변환 대상이 아니며, 업로드 시 커스텀 모달로 거부 안내를 표시한다.
+const REJECTED_EXTENSIONS = new Set([
+  ".html", ".htm", ".xhtml",
+  ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx",
+  ".py", ".rb", ".go", ".rs", ".java", ".kt", ".swift",
+  ".c", ".cpp", ".cc", ".h", ".hpp", ".cs",
+  ".php", ".pl", ".lua", ".r", ".scala", ".clj",
+  ".css", ".scss", ".sass", ".less",
+  ".xml", ".svg", ".vue", ".svelte",
+  ".sh", ".bash", ".zsh", ".fish", ".ps1",
+  ".sql", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
+  ".json", ".csv", ".tsv",
+  ".bat", ".cmd", ".psd1",
+  ".dart", ".elm", ".ex", ".exs", ".erl", ".hs", ".jl", ".nim", ".v", ".zig",
+]);
+
+/**
+ * 파일명에서 확장자를 추출하여 거부 목록에 포함되어 있는지 확인한다.
+ * 반환값: 거부된 경우 해당 파일명, 아니면 null
+ */
+function getRejectedFileName(file) {
+  const name = file.name || "";
+  const dotIdx = name.lastIndexOf(".");
+  if (dotIdx < 0) return null;
+  const ext = name.slice(dotIdx).toLowerCase();
+  return REJECTED_EXTENSIONS.has(ext) ? name : null;
+}
 
 /**
  * 랜딩페이지와 동일한 업로드 플로우를 제공하는 재사용 가능한 위젯입니다.
@@ -30,6 +59,8 @@ export default function UploadWidget({ onComplete, submitLabel, jobId, onProgres
   const [error, setError] = useState("");
   const [doclingRefinement, setDoclingRefinement] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, percent: 0, fileName: "" });
+  // [Flow: 거부된 파일 목록 — 커스텀 모달로 표시]
+  const [rejectedFiles, setRejectedFiles] = useState([]);
 
   // [Flow: Step 1 (새 진행률 상태 설정) -> Step 2 (상위 컴포넌트에 동일한 상태 전달)]
   function updateProgress(next) {
@@ -37,12 +68,26 @@ export default function UploadWidget({ onComplete, submitLabel, jobId, onProgres
     if (onProgress) onProgress(next);
   }
 
-  // [Flow: Step 1 (기존 파일 집합 생성) -> Step 2 (새 파일들의 이름+크기 중복 검사) -> Step 3 (중복이 아닌 파일만 병합)]
+  // [Flow: Step 1 (새 파일 목록에서 HTML/코드 파일 분리) -> Step 2 (거부된 파일이 있으면 모달 표시) -> Step 3 (허용된 파일만 기존 목록에 병합)]
   function addFiles(newFiles) {
+    const accepted = [];
+    const rejected = [];
+    for (const f of newFiles) {
+      const rejectedName = getRejectedFileName(f);
+      if (rejectedName) {
+        rejected.push(rejectedName);
+      } else {
+        accepted.push(f);
+      }
+    }
+    if (rejected.length > 0) {
+      setRejectedFiles((prev) => [...prev, ...rejected]);
+    }
+    if (accepted.length === 0) return;
     setFiles((prev) => {
       const existing = new Set(prev.map((f) => `${f.name}|${f.size}`));
       const merged = [...prev];
-      for (const f of newFiles) {
+      for (const f of accepted) {
         const key = `${f.name}|${f.size}`;
         if (!existing.has(key)) {
           existing.add(key);
@@ -173,7 +218,7 @@ export default function UploadWidget({ onComplete, submitLabel, jobId, onProgres
     }
   }
 
-  const ACCEPT_TYPES = ".pdf,.zip,.rar,.7z,.tar.gz,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.mp4,.avi,.mov,.mkv,.webm,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.html,.htm,.hwp,.hwpx,.md";
+  const ACCEPT_TYPES = ".pdf,.zip,.rar,.7z,.tar.gz,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.mp4,.avi,.mov,.mkv,.webm,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.hwp,.hwpx,.md";
 
   return (
     <form
@@ -316,6 +361,52 @@ export default function UploadWidget({ onComplete, submitLabel, jobId, onProgres
           </div>
         </div>
       )}
+
+      {/* [Flow: HTML/코드 파일 업로드 거부 모달 — 앱 디자인 시스템 사용] */}
+      {rejectedFiles.length > 0 &&
+      <div
+        className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+        onClick={() => setRejectedFiles([])}
+        data-oid="upload-rejected-overlay"
+      >
+        <div
+          className="bg-white rounded-lg shadow-lg border border-outline-variant p-6 w-full max-w-md mx-4"
+          onClick={(e) => e.stopPropagation()}
+          data-oid="upload-rejected-modal"
+        >
+          <div className="flex items-start gap-3 mb-4" data-oid="upload-rejected-header">
+            <div className="w-10 h-10 bg-error/10 flex items-center justify-center flex-shrink-0" data-oid="upload-rejected-icon-wrap">
+              <AlertTriangle className="text-error" size={22} data-oid="upload-rejected-icon" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="font-headline-md text-headline-md font-bold text-on-surface mb-1" data-oid="upload-rejected-title">
+                {t("page:upload.rejectedTitle")}
+              </h3>
+              <p className="text-sm text-on-surface-variant" data-oid="upload-rejected-desc">
+                {t("page:upload.rejectedDesc")}
+              </p>
+            </div>
+          </div>
+          <ul className="bg-surface-container-low p-3 mb-4 max-h-40 overflow-y-auto space-y-1" data-oid="upload-rejected-list">
+            {rejectedFiles.map((name, i) => (
+              <li key={i} className="text-sm text-on-surface-variant truncate" data-oid={`upload-rejected-file-${i}`}>
+                {name}
+              </li>
+            ))}
+          </ul>
+          <div className="flex justify-end" data-oid="upload-rejected-actions">
+            <button
+              type="button"
+              onClick={() => setRejectedFiles([])}
+              className="px-4 py-2 rounded-lg bg-primary text-on-primary hover:bg-primary-container transition-colors font-medium"
+              data-oid="upload-rejected-confirm"
+            >
+              {t("common:actions.confirm")}
+            </button>
+          </div>
+        </div>
+      </div>
+      }
     </form>
   );
 }

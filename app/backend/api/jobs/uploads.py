@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from ...auth.api_key_auth import require_api_key_or_session
 from ...auth.supabase_auth import CurrentUser
+from ...config import settings
 from ...core import archive_handler, cache, docling_client, hwp_converter, media_loader, points_service, subscription_service, supabase_client
 from ...core.job_helpers import parse_columns
 from ...db.models import Job, User

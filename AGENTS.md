@@ -8,6 +8,16 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 결과 페이지 파일탭 업로드 500 오류 수정 — confirm_add_files settings 미임포트 — 2026-07-23
+
+- **증상**: 결과 표시 페이지의 파일 탭 업로드 버튼으로 파일 추가 시 `POST /api/jobs/{id}/confirm-add-files` 가 500 반환. `NameError: name 'settings' is not defined` at `uploads.py:671`.
+- **근본 원인**: `app/backend/api/jobs/uploads.py` 의 `confirm_add_files` 가 `settings.data_dir` 을 참조하지만, 해당 모듈은 `from ... import settings_store` 만 임포트하고 `from ...config import settings` 를 임포트하지 않음. `api/jobs.py` 단일 파일에서 패키지로 분할(`api/jobs/`) 시 누락된 임포트. `_shared.py` 에는 `from ...config import settings` 가 있으나 `uploads.py` 로 전파되지 않음.
+- **수정 내용**: `app/backend/api/jobs/uploads.py` 에 `from ...config import settings` 추가.
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q -k "uploads or add_files or confirm"` → 3 passed. a1 dev 재배포 후 200 확인 예정.
+- **⚠️ 회귀 방지 경고**:
+  1. `api/jobs/` 패키지의 각 서브모듈은 자신이 사용하는 심볼을 직접 임포트해야 한다. `_shared.py` 에서 임포트한 심볼이 서브모듈로 전파되지 않는다. 새 서브모듈에서 `settings`, `cache`, `supabase_client` 등을 사용할 때는 반드시 해당 모듈 상단에서 임포트할 것.
+- **핵심 파일**: `app/backend/api/jobs/uploads.py`.
+
 ### 로컬 데브 모드 마크다운 에디터 AI "Invalid API key" 해결 — VITE_DEV_API_KEY envDir 불일치 수정 — 2026-07-23
 
 - **증상**: 로컬 데브 모드(`npm run dev`)에서 마크다운 에디터의 AI 기능(AiMenu `useCompletion` → `/api/v1/ai/generate`, 에이전트 채팅 `useChat` → `/api/ai/chat`) 사용 시 백엔드가 401 "Invalid API key" 반환.

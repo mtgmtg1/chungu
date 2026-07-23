@@ -712,7 +712,9 @@ def run_job(job_id: str) -> dict:
         # 변환이 완료된 문서는 최초 1회 자동으로 GraphRAG 추출을 실행한다.
         if not job.ediscovery_status or job.ediscovery_status in ("", "error"):
             try:
-                task = run_ediscovery.delay(
+                # [순환 import 방지: run_ediscovery는 ediscovery_tasks.py에 정의]
+                from .ediscovery_tasks import run_ediscovery as _run_ediscovery
+                task = _run_ediscovery.delay(
                     job_id,
                     chunk_size=None,
                     threshold=None,

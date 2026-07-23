@@ -51,7 +51,7 @@ class TestSearchablePdfPriority:
         db = MagicMock()
 
         # OCR layout 업로드는 테스트 대상이 아니미 무시
-        monkeypatch.setattr(tasks, "_upload_ocr_layout", lambda *a, **k: None)
+        monkeypatch.setattr(tasks, "upload_ocr_layout", lambda *a, **k: None)
 
         # PaddleOCR에서 추출할 더미 결과
         monkeypatch.setattr(

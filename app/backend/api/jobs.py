@@ -43,6 +43,7 @@ def get_current_user_or_api_key(
     """
     return auth[0]
 from ..core import archive_handler, cache, converter, docling_client, hwp_converter, media_loader, office_converter, pdf_preview_converter, pdf_user_annotator, points_service, subscription_service, supabase_client
+from ..core.job_helpers import convert_format_alias, parse_columns, upload_ocr_layout
 from ..core.markdown_image_rewriter import rewrite_inline_images_to_storage
 
 
@@ -206,19 +207,6 @@ MEDIA_EXTENSIONS = {
 }
 
 
-def _parse_columns(raw: str) -> list[str]:
-    raw = (raw or "").strip()
-    if not raw:
-        return list(DEFAULT_COLUMNS)
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, list) and parsed:
-            return [str(c).strip() for c in parsed if str(c).strip()]
-    except json.JSONDecodeError:
-        pass
-    return [c.strip() for c in raw.split(",") if c.strip()]
-
-
 async def _count_pages_with_docling(data: bytes, filename: str) -> int:
     """Docling 서비스에 파일을 보내 page_count를 얻는다. 실패하면 1을 반환."""
     if not docling_client.is_enabled():
@@ -302,7 +290,7 @@ async def upload_job(
         user_id=uuid.UUID(user.user_id),
         email=user.email,
         pipeline=pipeline,
-        columns=_parse_columns(columns),
+        columns=parse_columns(columns),
         prompt=prompt.strip(),
         dpi=dpi,
         use_docling_refinement=docling_refinement,
@@ -545,7 +533,7 @@ async def init_job(
         user_id=uuid.UUID(user.user_id),
         email=user.email,
         pipeline=pipeline,
-        columns=_parse_columns(payload.get("columns", "")),
+        columns=parse_columns(payload.get("columns", "")),
         prompt=payload.get("prompt", "").strip(),
         dpi=payload.get("dpi", 300),
         use_docling_refinement=payload.get("docling_refinement", False),
@@ -999,7 +987,7 @@ def update_job(
     if "ocr_engine" in payload and payload["ocr_engine"] in ("tesseract", "easyocr", "rapidocr"):
         job.ocr_engine = payload["ocr_engine"]
     if "columns" in payload:
-        job.columns = _parse_columns(payload["columns"])
+        job.columns = parse_columns(payload["columns"])
     if "prompt" in payload:
         job.prompt = str(payload["prompt"]).strip()
     # [Flow: e-Discovery 분석 맥락 업데이트 — 비용 확인 팝업에서 입력된 맥락을 저장]
@@ -1265,11 +1253,6 @@ def delete_source_file(
     return _delete_annotation_file(job, source_index, db)
 
 
-def _convert_format_alias(fmt: str) -> str:
-    """구형 'xlsx'/'csv' 요청을 새 기본 변환 포맷으로 매핑한다."""
-    return {"xlsx": "xlsx_basic", "csv": "csv_basic"}.get(fmt, fmt)
-
-
 @router.get("/jobs/{job_id}/download")
 def download_job(
     job_id: str,
@@ -1283,7 +1266,7 @@ def download_job(
     if job.status != "done":
         raise HTTPException(status_code=400, detail="Only completed jobs can be downloaded")
 
-    type = _convert_format_alias(type)
+    type = convert_format_alias(type)
 
     # csv/xlsx 기본 변환은 동일한 번들로 처리; advanced는 별도 경로 사용
     if type in ("csv_basic", "xlsx_basic"):
@@ -2535,7 +2518,7 @@ def convert_job(
     if job.status != "done":
         raise HTTPException(status_code=400, detail="Only completed jobs can be converted")
 
-    fmt = _convert_format_alias(str(payload.get("format", "")).lower())
+    fmt = convert_format_alias(str(payload.get("format", "")).lower())
     if fmt not in ("xlsx_basic", "csv_basic", "xlsx_advanced", "docx", "pptx"):
         raise HTTPException(status_code=400, detail="Unsupported conversion format")
 
@@ -3497,29 +3480,6 @@ def job_action(
     return {"job_id": job_id, "status": "queued"}
 
 
-def _upload_ocr_layout(db: Session, job: Job, layout_by_page: dict[int, dict]) -> None:
-    """[Flow: Step 1 (layout_by_page를 JSON 직렬화) -> Step 2 (results 버킷에 업로드)
-          -> Step 3 (Job DB에 경로 저장)]
-
-    OCR로 확보한 layout_by_page를 Storage에 저장해 이후 get_elements/search_text 호출이
-    PaddleOCR을 재실행하지 않도록 한다.
-    """
-    try:
-        data = json.dumps(layout_by_page, ensure_ascii=False, default=str).encode("utf-8")
-        storage_path = f"{job.id}/ocr_layout.json"
-        client = supabase_client.get_service_client()
-        client.storage.from_("results").upload(
-            storage_path,
-            data,
-            {"content-type": "application/json", "upsert": "true"},
-        )
-        job.result_ocr_layout_storage_path = storage_path
-        db.commit()
-        logger.info(f"[get_job_elements] {job.id} OCR layout 저장 완료: {storage_path}")
-    except Exception as e:
-        logger.warning(f"[get_job_elements] {job.id} OCR layout 저장 실패: {e}")
-
-
 # [Flow: Step 1 (job 조회 및 권한 확인) -> Step 2 (searchable PDF 다운로드)
 #       -> Step 3 (PyMuPDF로 페이지별 텍스트 블록 추출) -> Step 4 (요소 목록 반환)]
 # Node.js AI 백엔드의 PDF 주석 도구가 요소를 조회하기 위한 전용 엔드포인트.
@@ -3662,7 +3622,7 @@ def get_job_elements(
 
                 # 다음 호출을 위해 OCR layout을 Storage에 저장
                 if layout_by_page:
-                    _upload_ocr_layout(db, job, layout_by_page)
+                    upload_ocr_layout(db, job, layout_by_page)
 
     import time as _time
     total_elapsed = _time.monotonic() - start_time
@@ -3959,7 +3919,7 @@ def search_job_text(
 
             # 다음 호출을 위해 OCR layout 저장
             if layout_by_page:
-                _upload_ocr_layout(db, job, layout_by_page)
+                upload_ocr_layout(db, job, layout_by_page)
 
         try:
             pattern = _re.compile(query, _re.IGNORECASE)
@@ -4993,7 +4953,7 @@ def email_download_redirect(token: str, type: str = "xlsx_basic", db: Session = 
     if job.status != "done":
         raise HTTPException(status_code=400, detail="Only completed jobs can be downloaded")
 
-    fmt = _convert_format_alias(type)
+    fmt = convert_format_alias(type)
     path_map = {
         "csv_basic": job.result_csv_storage_path,
         "md": job.result_edited_md_storage_path or job.result_md_storage_path,

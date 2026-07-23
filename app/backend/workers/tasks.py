@@ -19,6 +19,7 @@ from ..celery_app import celery
 from celery.signals import worker_ready
 from ..config import settings
 from ..core import archive_handler, converter, excel_writer, media_loader, merge, paddleocr_client, pdf_annotate_converter, pdf_text_layer, pipeline_ediscovery, points_service, subscription_service, supabase_client, xlsx_advanced_converter
+from ..core.job_helpers import upload_ocr_layout
 from ..core.markdown_image_rewriter import rewrite_inline_images_to_storage
 from ..core.ocr_client import has_pdf_text_layer
 from ..core.pipeline_docling import run_docling, run_hwp
@@ -35,30 +36,6 @@ MAX_PAGE_SIDE_MM = 350
 MM_PER_PT = 0.3528
 MAX_RETRY_COUNT = 3
 
-
-def _upload_ocr_layout(db, job: Job, layout_by_page: dict[int, dict]) -> None:
-    """[Flow: Step 1 (layout_by_page를 JSON 직렬화) -> Step 2 (results 버킷에 업로드)
-          -> Step 3 (Job DB에 경로 저장)]
-
-    PaddleOCR로 확보한 layout_by_page를 Storage에 저장해 AI agent의 get_elements/search_text가
-    재실행하지 않도록 한다.
-    """
-    if not layout_by_page:
-        return
-    try:
-        data = json.dumps(layout_by_page, ensure_ascii=False, default=str).encode("utf-8")
-        storage_path = f"{job.id}/ocr_layout.json"
-        client = supabase_client.get_service_client()
-        client.storage.from_("results").upload(
-            storage_path,
-            data,
-            {"content-type": "application/json", "upsert": "true"},
-        )
-        job.result_ocr_layout_storage_path = storage_path
-        db.commit()
-        logger.info(f"[run_job:{job.id}] OCR layout 저장 완료: {storage_path}")
-    except Exception as e:
-        logger.warning(f"[run_job:{job.id}] OCR layout 저장 실패: {e}")
 
 # [Flow: Step 1 (worker_ready 시그널 수신) -> Step 2 (DB에서 중단된 job 조회) -> Step 3 (retry_count < 3인 job 재시도) -> Step 4 (>= 3인 job error로 변경)]
 @worker_ready.connect
@@ -269,7 +246,7 @@ def _build_and_upload_searchable_pdf(
 
     # OCR layout을 먼저 Storage에 저장해 agent 도구가 재사용할 수 있게 한다.
     if layout_by_page:
-        _upload_ocr_layout(db, job, layout_by_page)
+        upload_ocr_layout(db, job, layout_by_page)
 
     page_ocr_results = pdf_text_layer.extract_page_ocr_results_from_layout(layout_by_page)
     if not page_ocr_results:

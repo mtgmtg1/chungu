@@ -64,4 +64,73 @@ describe("Messages", () => {
     );
     expect(screen.getByTestId("message-assistant-loading")).toBeInTheDocument();
   });
+
+  // [Flow: 프롬프트 복사/수정 버튼 — 마지막 사용자 메시지 아래에만 표시]
+  it("ready 상태에서 마지막 사용자 메시지 아래에 프롬프트 복사/수정 버튼을 표시한다", () => {
+    render(
+      <Messages
+        messages={[
+          makeMessage({ id: "m1", role: "user", text: "표를 정리해줘" }),
+          makeMessage({ id: "m2", role: "assistant", text: "정리했습니다." }),
+          makeMessage({ id: "m3", role: "user", text: "다시 요약해줘" }),
+        ]}
+        status="ready"
+        onCopyPrompt={() => {}}
+        onEditPrompt={() => {}}
+      />,
+    );
+    // 마지막 user 메시지(m3) 아래에 버튼이 있어야 한다
+    expect(screen.getByTestId("agent-message-copy-prompt")).toBeInTheDocument();
+    expect(screen.getByTestId("agent-message-edit-prompt")).toBeInTheDocument();
+  });
+
+  it("streaming 중에는 프롬프트 복사/수정 버튼을 표시하지 않는다", () => {
+    render(
+      <Messages
+        messages={[makeMessage({ id: "m1", role: "user", text: "요약해줘" })]}
+        status="streaming"
+        onCopyPrompt={() => {}}
+        onEditPrompt={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId("agent-message-copy-prompt")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("agent-message-edit-prompt")).not.toBeInTheDocument();
+  });
+
+  it("onCopyPrompt 클릭 시 콜백이 호출된다", () => {
+    const handleCopy = vi.fn();
+    render(
+      <Messages
+        messages={[makeMessage({ id: "m1", role: "user", text: "복사 대상" })]}
+        status="ready"
+        onCopyPrompt={handleCopy}
+      />,
+    );
+    screen.getByTestId("agent-message-copy-prompt").click();
+    expect(handleCopy).toHaveBeenCalledTimes(1);
+  });
+
+  it("onEditPrompt 클릭 시 콜백이 호출된다", () => {
+    const handleEdit = vi.fn();
+    render(
+      <Messages
+        messages={[makeMessage({ id: "m1", role: "user", text: "수정 대상" })]}
+        status="ready"
+        onEditPrompt={handleEdit}
+      />,
+    );
+    screen.getByTestId("agent-message-edit-prompt").click();
+    expect(handleEdit).toHaveBeenCalledTimes(1);
+  });
+
+  it("onCopyPrompt/onEditPrompt가 전달되지 않으면 버튼을 표시하지 않는다", () => {
+    render(
+      <Messages
+        messages={[makeMessage({ id: "m1", role: "user", text: "대상" })]}
+        status="ready"
+      />,
+    );
+    expect(screen.queryByTestId("agent-message-copy-prompt")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("agent-message-edit-prompt")).not.toBeInTheDocument();
+  });
 });

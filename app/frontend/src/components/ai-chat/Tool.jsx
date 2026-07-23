@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   ShieldAlert,
 } from "lucide-react";
+import MarkdownDiffApproval from "./MarkdownDiffApproval.jsx";
 
 // [Flow: tool state -> i18n 키 매핑 (STATUS_LABELS 하드코딩 대체)]
 const STATUS_I18N_KEYS = {
@@ -211,6 +212,7 @@ function safeJsonStringify(obj) {
  * @param {() => void} [props.onApprove] - 도구 승인 콜백
  * @param {() => void} [props.onDeny] - 도구 거부 콜백
  * @param {() => void} [props.onAlways] - 항상 승인 콜백 (설정 저장 + 승인)
+ * @param {string} [props.jobId] - Job ID (마크다운 diff 승인 시 저장 API 호출용)
  */
 export default function Tool({
   toolName,
@@ -224,6 +226,7 @@ export default function Tool({
   onApprove,
   onDeny,
   onAlways,
+  jobId,
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(defaultOpen);
@@ -237,9 +240,17 @@ export default function Tool({
   const requiresApproval =
     hasOutput && !hasError && typeof output === "object" && output?.requires_approval === true;
 
+  // [Flow: 마크다운 apply_edits diff 승인 — original/edited 마크다운이 함께 반환된 경우
+  //       일반 승인 버튼 대신 전용 diff 승인 UI를 표시]
+  const isMarkdownDiffApproval =
+    requiresApproval &&
+    toolName === "apply_edits" &&
+    typeof output?.original_markdown === "string" &&
+    typeof output?.edited_markdown === "string";
+
   // [Flow: 승인 모드가 'always'이거나 이미 승인/거부된 경우 버튼 미표시]
   const showApprovalButtons =
-    requiresApproval && approvalMode === "ask" && approvalState === "pending";
+    requiresApproval && !isMarkdownDiffApproval && approvalMode === "ask" && approvalState === "pending";
 
   // [Flow: 사용자 친화적 라벨 + 표시 메시지 생성]
   const toolLabel = getToolLabel(t, toolName);
@@ -260,9 +271,11 @@ export default function Tool({
     onAlways?.();
   };
 
-  // [Flow: 펼침 가능 여부 — 승인 버튼, 에러, 또는 관리자 디버그 모드일 때 펼침 가능]
-  const canExpand = showApprovalButtons || hasError || isAdmin;
+  // [Flow: 펼침 가능 여부 — 승인 버튼, 마크다운 diff 승인, 에러, 또는 관리자 디버그 모드일 때 펼침 가능]
+  const canExpand = showApprovalButtons || isMarkdownDiffApproval || hasError || isAdmin;
 
+  // [Flow: 마크다운 diff 승인은 기본 펼침 — 사용자가 즉시 diff를 볼 수 있도록]
+  const effectiveOpen = isMarkdownDiffApproval ? true : open;
   const isRunning = state === "input-available" || state === "input-streaming";
 
   return (
@@ -297,7 +310,7 @@ export default function Tool({
             <StatusIcon state={state} />
             {statusLabel}
           </span>
-          {requiresApproval && approvalState === "pending" && approvalMode === "ask" && (
+          {requiresApproval && approvalState === "pending" && (isMarkdownDiffApproval || approvalMode === "ask") && (
             <span className="flex items-center gap-1 rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700 flex-shrink-0">
               <ShieldAlert size={11} />
               {t("page:agent.approvalRequired", "승인 필요")}
@@ -314,8 +327,8 @@ export default function Tool({
         )}
       </div>
 
-      {/* 본문 (펼침 시) — 승인 버튼, 에러 메시지, 또는 관리자 디버그 JSON 표시 */}
-      {open && canExpand && (
+      {/* 본문 (펼침 시) — 마크다운 diff 승인, 일반 승인 버튼, 에러 메시지, 또는 관리자 디버그 JSON 표시 */}
+      {effectiveOpen && canExpand && (
         <div className="space-y-3 px-3 pb-3">
           {/* 에러 메시지 — errorText만 표시, output JSON은 노출하지 않음 */}
           {hasError && (
@@ -324,8 +337,20 @@ export default function Tool({
               <span>{errorText || t("page:agent.toolGenericError", "도구 실행 중 오류가 발생했습니다.")}</span>
             </div>
           )}
-          {/* 승인 버튼 영역 */}
-          {requiresApproval && (
+          {/* [Flow: 마크다운 apply_edits diff 승인 — 전용 diff UI + 수락/거부 버튼]
+              수락 시 프론트엔드가 직접 saveResultPage API 호출로 저장한다 */}
+          {isMarkdownDiffApproval && (
+            <MarkdownDiffApproval
+              jobId={jobId}
+              pageNum={output.page_num}
+              originalMarkdown={output.original_markdown}
+              editedMarkdown={output.edited_markdown}
+              onApprove={handleApprove}
+              onDeny={handleDeny}
+            />
+          )}
+          {/* 일반 승인 버튼 영역 (마크다운 diff 승인이 아닌 경우) */}
+          {requiresApproval && !isMarkdownDiffApproval && (
             <ApprovalButtons
               onApprove={handleApprove}
               onDeny={handleDeny}

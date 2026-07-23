@@ -8,6 +8,39 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 로컬 데브 모드 마크다운 에디터 AI "Invalid API key" 해결 — VITE_DEV_API_KEY envDir 불일치 수정 — 2026-07-23
+
+- **증상**: 로컬 데브 모드(`npm run dev`)에서 마크다운 에디터의 AI 기능(AiMenu `useCompletion` → `/api/v1/ai/generate`, 에이전트 채팅 `useChat` → `/api/ai/chat`) 사용 시 백엔드가 401 "Invalid API key" 반환.
+- **근본 원인**: `vite.config.js`의 `envDir: '..'` 설정으로 인해 Vite는 `app/` 디렉토리의 `.env*` 파일만 로드. 그러나 `VITE_DEV_API_KEY`가 `app/frontend/.env.local`에만 있어 Vite가 로드하지 못함. 결과적으로 `import.meta.env.VITE_DEV_API_KEY`가 `undefined`가 되고, `api.js`·`useAgentChat.ts`·`AiMenu.jsx`의 폴백값 `chu_live_testkey12345` (유효하지 않은 더미 키)가 사용되어 백엔드 `api_key_auth.get_current_api_key`가 401 반환.
+- **수정 내용**:
+  - `app/.env.development.local`: `VITE_DEV_API_KEY=chu_live_ff9VN9qmUQajrID2FudLB-sYAYwzGs9_rAwy6mUcKxM` 추가. 다른 `VITE_DEV_*` 변수들과 같은 파일에 배치하여 `envDir: '..'` 로 Vite가 정상 로드.
+  - `app/frontend/.env.local`: 더 이상 로드되지 않음을 안내하는 주석으로 대체. 혼란 방지.
+- **검증**: 잘못된 키 `chu_live_testkey12345` → 401 재현, 올바른 키 → 200 확인. Vite 재시작 후 `import.meta.env.VITE_DEV_API_KEY`에 실제 키 주입 확인.
+- **⚠️ 회귀 방지 경고**:
+  1. **`vite.config.js`의 `envDir`가 `'..'`(= `app/`)이므로, 모든 `VITE_` 변수는 `app/` 디렉토리의 `.env*` 파일에 있어야 한다.** `app/frontend/.env*`는 Vite에 의해 로드되지 않으므로 `VITE_` 변수를 거기에 두지 말 것.
+  2. **`VITE_DEV_API_KEY` 폴백값 `chu_live_testkey12345`는 유효하지 않은 더미 키다.** env 파일에 실제 키가 없으면 마크다운 에디터 AI 및 에이전트 채팅이 401로 실패한다. env 파일 로딩 문제를 의심할 것.
+- **핵심 파일**: `app/.env.development.local`, `app/frontend/.env.local`, `app/frontend/vite.config.js` (참조용, 변경 없음).
+
+### 마크다운 에디터 AI 편집 diff 승인 패널 + 에이전트 채팅 UI 개선 — 2026-07-23
+
+- **배경**: 마크다운 에디터의 AI 메뉴(AiMenu)가 AI 생성 결과를 에디터에 즉시 삽입하여 사용자가 변경사항을 사전 검토할 수 없었음. 에이전트 채팅 메시지/도구 UI도 개선 필요.
+- **변경 내용**:
+  - **`MarkdownDiffApproval.jsx` 신규** (`app/frontend/src/components/ai-chat/`): `diff` 라이브러리의 `diffLines`로 원본·편집본 라인 단위 diff 렌더링 (추가=녹색, 삭제=적색). 수락 시 `api.saveResultPage` 직접 호출 후 승인 콜백, 거부 시 취소. `MarkdownDiffApproval.test.jsx`로 테스트.
+  - **`AiMenu.jsx`**: `useCompletion`의 `onFinish`에서 즉시 `applyResultToEditor` 호출 대신 `pendingDiff` 상태로 diff 승인 패널 표시. 사용자 수락 시에만 에디터에 삽입. `continue` 옵션은 빈 원본 사용.
+  - **`AgentChatModal.jsx`**: 에이전트 채팅 모달 개선 (컨텍스트 표시, 배경 클릭 닫기 등).
+  - **`Message.jsx` / `Messages.jsx` / `Tool.jsx`**: 에이전트 채팅 메시지 렌더링 및 도구 카드 UI 개선. `Messages.test.jsx` 테스트 추가.
+  - **`ai-backend/src/tools/markdown.ts`**: 마크다운 도구 로직 개선, `markdown.test.ts` 테스트 확장.
+  - **`chat/route.ts`**: AI 백엔드 채팅 라우트 minor 수정.
+- **핵심 파일**: `app/frontend/src/components/ai-chat/MarkdownDiffApproval.jsx` (신규), `app/frontend/src/components/AiMenu.jsx`, `app/frontend/src/components/AgentChatModal.jsx`, `app/frontend/src/components/ai-chat/Message.jsx`, `app/frontend/src/components/ai-chat/Messages.jsx`, `app/frontend/src/components/ai-chat/Tool.jsx`, `app/ai-backend/src/tools/markdown.ts`, `app/ai-backend/src/chat/route.ts`.
+
+### PagedResultViewer 패널 토글 — 좌·우 패널 expand/collapse imperative 제어 — 2026-07-23
+
+- **배경**: 마크다운 모드에서 헤더의 좌·우 탭 토글이 내부 `react-resizable-panels` Panel에 전달되지 않아 패널이 열리지/닫히지 않았음.
+- **변경 내용**:
+  - `app/frontend/src/components/PagedResultViewer.jsx`: `leftPanelOpen` / `rightPanelOpen` prop 추가. Panel에 `ref` + `collapsible` + `collapsedSize={0}` 설정. `useEffect`로 prop 변경 시 `panelRef.expand()` / `panelRef.collapse()` 호출.
+  - `app/frontend/src/pages/JobResultPage.jsx`: 패널 토글 상태를 PagedResultViewer에 전달.
+- **핵심 파일**: `app/frontend/src/components/PagedResultViewer.jsx`, `app/frontend/src/pages/JobResultPage.jsx`.
+
 ### 코드베이스 리팩토링 및 청소 — 대형 파일 분할 + 프론트엔드 번들 최적화 — 2026-07-23
 
 - **배경**: `api/jobs.py` (5005줄)와 `workers/tasks.py` (1632줄)가 단일 파일로 유지보수 어려움. 루트에 산재한 일회성 스크립트/산물 파일들. 프론트엔드 메인 번들 3,350kB로 초기 로드 지연.
@@ -969,11 +1002,12 @@ a1 서버에서 백엔드/워커/Supabase가 이미 실행 중일 때, 로컬 �
 cp app/.env.development.example app/.env.development
 ```
 
-핵심 변수:
+핵심 변수 (모두 `app/` 디렉토리의 `.env*` 파일에 작성 — `vite.config.js`의 `envDir: '..'` 설정 때문에 `app/frontend/.env*`는 로드되지 않음):
 
 - `VITE_DEV_BACKEND_URL`: a1 백엔드 주소
   - 내부망 직접 연결: `http://192.168.1.50:28181`
   - SSH 터널링 사용: `http://localhost:28181`
+- `VITE_DEV_API_KEY`: 로컬 데브 모드에서 마크다운 에디터 AI 및 에이전트 채팅 인증용 dev API key (a1에서 발급, `chu_live_` 접두사). 없으면 폴백값 `chu_live_testkey12345`가 사용되어 401 "Invalid API key" 발생.
 - `VITE_SUPABASE_ANON_KEY`: a1 Supabase anon key
 - `VITE_TURNSTILE_SITE_KEY` / `VITE_TURNSTILE_WORKER_URL`: CAPTCHA 사용 시 (비워두면 미사용)
 

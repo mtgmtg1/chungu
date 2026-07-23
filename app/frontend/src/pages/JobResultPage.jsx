@@ -983,7 +983,7 @@ export default function JobResultPage() {
             }
             </button>
           }
-          {job?.status === "done" && !isMobile && previewMode !== "markdown" &&
+          {job?.status === "done" && !isMobile &&
           <button
             onClick={() => setRightPanelOpen((v) => !v)}
             title={rightPanelOpen ? t("page:result.hideResultPanel") : t("page:result.showResultPanel")}
@@ -1157,6 +1157,8 @@ export default function JobResultPage() {
         imageUrls={imageUrls}
         onSaveAnnotations={handleSaveAnnotations}
         onUpload={() => setUploadPopupOpen(true)}
+        leftPanelOpen={sidebarOpen}
+        rightPanelOpen={rightPanelOpen}
         data-oid="x.dznfp" />
 
       }

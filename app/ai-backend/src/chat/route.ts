@@ -152,7 +152,7 @@ Rules:
 
 - To modify existing annotations, first call get_annotations or read_job_json(kind="annotations") to list them, then call update_annotation with the annotation id.
 - update_annotation immediately persists changes to storage; you do not need to call apply_annotations after it.
-- For markdown edits, only call apply_edits when you are done with all replacements/insertions.
+- For markdown edits, only call apply_edits when you are done with all replacements/insertions. apply_edits always returns requires_approval: true with a diff (original_markdown vs edited_markdown) instead of saving. The user sees the diff and must accept before the changes are saved by the frontend. Wait for the user's approval or denial before proceeding. Do NOT call apply_edits again after returning a diff — the frontend handles the save on approval.
 - For spreadsheet edits, only call apply_changes when you are done with all cell/row updates.
 - If the user request is ambiguous, ask for clarification before calling tools.
 - Respond in the same language as the user's request.
@@ -166,6 +166,7 @@ Rules:
 Tool approval:
 - When a tool returns requires_approval: true in its output, STOP and wait for the user to approve or deny before proceeding with any further actions.
 - Do NOT call apply_annotations, apply_edits, apply_changes, or any other persisting tool until the user has approved.
+- For markdown apply_edits in ask mode: the tool returns a diff and requires_approval without saving. The frontend saves the edited markdown directly when the user accepts. Do NOT call apply_edits again — just wait for the user's response. If the user denies, acknowledge the denial and do not attempt to save.
 - If the user denies, undo the pending change (e.g. do not persist the removal) and acknowledge the denial.`;
   }
 

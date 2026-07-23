@@ -49,6 +49,9 @@ from ... import email_sender, settings_store
 
 logger = logging.getLogger(__name__)
 
+MAX_PAGE_SIDE_MM = 350
+MM_PER_PT = 0.3528
+
 
 def _set_status(db, job: Job, status: str) -> None:
     job.status = status

@@ -51,6 +51,8 @@ from ._helpers import (
 
 logger = logging.getLogger(__name__)
 
+MAX_RETRY_COUNT = 3
+
 
 @worker_ready.connect
 def recover_stuck_jobs(sender=None, **kwargs):

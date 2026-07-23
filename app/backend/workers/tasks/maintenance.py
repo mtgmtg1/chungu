@@ -20,6 +20,8 @@ from ._helpers import _handle_job_failure, _release_subscription_usage, _set_sta
 
 logger = logging.getLogger(__name__)
 
+RETENTION_DAYS = 30
+
 
 @celery.task(name="backend.workers.tasks.cleanup_expired_uploads")
 def cleanup_expired_uploads() -> dict:

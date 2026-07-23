@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ...celery_app import celery
+from ...config import settings
 from ...core import points_service, subscription_service, supabase_client
 from ...db.models import Job, User
 from ...db.session import SessionLocal

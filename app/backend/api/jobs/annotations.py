@@ -12,7 +12,7 @@ from typing import Any
 
 import fitz
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 

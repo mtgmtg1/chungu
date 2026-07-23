@@ -2,12 +2,11 @@
 // processing/error 상태의 주석 항목은 URL 없이 상태 정보만 표시한다.
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { FileText, FileUp, FileDown, ImageIcon, Volume2, Film, Trash2, Loader2, AlertCircle, RotateCw, Sparkles, ChevronDown, ChevronUp, List, Check, Presentation } from "lucide-react";
+import { FileText, FileUp, FileDown, ImageIcon, Volume2, Film, Trash2, Loader2, AlertCircle, RotateCw, Sparkles, ChevronDown, ChevronUp, Check, Presentation } from "lucide-react";
 import { marked } from "marked";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer from "./PdfViewer.jsx";
 import MediaPlayer from "./MediaPlayer.jsx";
-import AnnotationListPanel from "./AnnotationListPanel.jsx";
 import { api } from "../api.js";
 import { useIsMobile } from "../hooks/useMediaQuery.js";
 
@@ -523,10 +522,7 @@ function PdfViewerWithFab({
   converting,
   annotationRuns,
   totalPages = 1,
-  showAnnotationPanel = false,
-  onToggleAnnotationPanel,
 }) {
-  const { t } = useTranslation();
   return (
     <div className="relative flex flex-col h-full w-full min-h-0 overflow-hidden">
       <PdfViewer
@@ -536,30 +532,6 @@ function PdfViewerWithFab({
         annotationsJson={annotationsJson}
         onAnnotationChanged={onAnnotationChanged}
       />
-      {/* 주석 목록 패널 토글 버튼 — 우측 상단 */}
-      {onToggleAnnotationPanel && (
-        <button
-          type="button"
-          onClick={onToggleAnnotationPanel}
-          className={`absolute top-2 right-2 z-30 flex items-center justify-center w-8 h-8 rounded-lg shadow border transition-colors ${
-            showAnnotationPanel
-              ? "bg-primary text-white border-primary"
-              : "bg-white/90 text-on-surface-variant border-outline-variant hover:text-on-surface hover:bg-white"
-          }`}
-          aria-label={t("page:result.annotationListTitle")}
-          data-oid="annotation-panel-toggle">
-          <List size={16} />
-        </button>
-      )}
-      {/* 주석 편집 패널 — 우측에서 슬라이드 인 */}
-      {showAnnotationPanel && (
-        <AnnotationListPanel
-          viewerRef={viewerRef}
-          annotationsJson={annotationsJson}
-          onAnnotationChanged={onAnnotationChanged}
-          onClose={onToggleAnnotationPanel}
-        />
-      )}
       {onStartAnnotate && (
         <AiAnnotationFab
           onStartAnnotate={onStartAnnotate}
@@ -608,7 +580,6 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
   const autoSaveRef = useRef(null);
   const pendingScrollRef = useRef(null);
   const [selectedAnnotationsJson, setSelectedAnnotationsJson] = useState(null);
-  const [showAnnotationPanel, setShowAnnotationPanel] = useState(false);
 
   const selectedFile = files[selectedIndex] || files[0];
 
@@ -885,8 +856,6 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
             converting={converting}
             annotationRuns={annotationRuns}
             totalPages={totalPages}
-            showAnnotationPanel={showAnnotationPanel}
-            onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}
           />
         );
       }
@@ -1004,8 +973,6 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
           converting={converting}
           annotationRuns={annotationRuns}
           totalPages={totalPages}
-          showAnnotationPanel={showAnnotationPanel}
-          onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}
         />
       );
     }
@@ -1024,8 +991,6 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
           converting={converting}
           annotationRuns={annotationRuns}
           totalPages={totalPages}
-          showAnnotationPanel={showAnnotationPanel}
-          onToggleAnnotationPanel={() => setShowAnnotationPanel((v) => !v)}
         />
       );
     }

@@ -26,12 +26,6 @@ vi.mock("./MediaPlayer.jsx", () => ({
   },
 }));
 
-vi.mock("./AnnotationListPanel.jsx", () => ({
-  default: function MockAnnotationListPanel() {
-    return null;
-  },
-}));
-
 vi.mock("react-resizable-panels", () => ({
   PanelGroup: ({ children }) => <>{children}</>,
   Panel: ({ children }) => <>{children}</>,

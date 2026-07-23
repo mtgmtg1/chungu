@@ -6,8 +6,10 @@ Celery name= 문자열은 기존값(backend.workers.tasks.run_job 등)을 유지
 from __future__ import annotations
 
 import logging
+import tempfile
 import time
 import traceback
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -39,6 +41,7 @@ from ...core.pipeline_media import run_media
 from ...core.pipeline_vision import run_vision
 from ...db.models import Job, User
 from ...db.session import SessionLocal
+from ...config import settings
 from ... import email_sender, settings_store
 from ._helpers import (
     _build_and_upload_searchable_pdf,

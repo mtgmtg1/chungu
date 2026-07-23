@@ -128,7 +128,7 @@ function TitleNode({ data, selected }) {
           TITLE
         </span>
       </div>
-      <div className="font-bold text-lg text-on-surface line-clamp-2 break-words">
+      <div className="font-bold text-lg text-on-primary line-clamp-2 break-words">
         {data.label}
       </div>
       {/* 나가는 next 엣지: 오른쪽 */}
@@ -883,12 +883,13 @@ function FlowCanvas({ rawNodes, rawEdges, onNodeClick, dependencyEdges = [], job
       if (isEditableTarget(e.target)) return;
 
       // 드로잉 실행 취소 / 전체 지우기
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+      // e.code(물리적 키 위치)를 사용하여 키보드 입력 언어(한/영 등)와 무관하게 동작
+      if ((e.ctrlKey || e.metaKey) && e.code === "KeyZ") {
         e.preventDefault();
         undoDrawing();
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "x") {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "KeyX") {
         e.preventDefault();
         clearDrawing();
         return;
@@ -906,20 +907,19 @@ function FlowCanvas({ rawNodes, rawEdges, onNodeClick, dependencyEdges = [], job
       // 드로잉 중에는 도구 전환/레이아웃 단축키를 막아서 그리기가 끊기지 않도록 한다
       if (isDrawing) return;
 
-      // 드로잉 도구 전환
-      const toolMap = { v: "select", p: "pen", h: "highlighter", s: "shape", t: "text", e: "eraser" };
-      const tool = toolMap[e.key.toLowerCase()];
+      // 드로잉 도구 전환 — e.code 기반 매핑으로 언어 무관 처리
+      const toolMap = { KeyV: "select", KeyP: "pen", KeyH: "highlighter", KeyS: "shape", KeyT: "text", KeyE: "eraser" };
+      const tool = toolMap[e.code];
       if (tool) {
         e.preventDefault();
         setDrawingTool(tool);
         return;
       }
 
-      // 플로우뷰 액션 단축키
-      const key = e.key.toLowerCase();
-      if (key === "n") { e.preventDefault(); handleAddNote(); return; }
-      if (key === "l") { e.preventDefault(); handleRelayout(); return; }
-      if (key === "f") { e.preventDefault(); handleFitView(); return; }
+      // 플로우뷰 액션 단축키 — e.code 기반
+      if (e.code === "KeyN") { e.preventDefault(); handleAddNote(); return; }
+      if (e.code === "KeyL") { e.preventDefault(); handleRelayout(); return; }
+      if (e.code === "KeyF") { e.preventDefault(); handleFitView(); return; }
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -992,6 +992,7 @@ function FlowCanvas({ rawNodes, rawEdges, onNodeClick, dependencyEdges = [], job
       nodesDraggable={!isDrawingMode && !isSpacePanning}
       panOnDrag={!isDrawingMode || isSpacePanning}
       selectionOnDrag={!isDrawingMode && !isSpacePanning}
+      className={isDrawingMode && !isSpacePanning ? "drawing-active" : undefined}
       style={{ cursor: isSpacePanning ? "grab" : undefined }}
       data-oid="flow-canvas">
       <Background variant={bgVariantEnum} gap={16} size={1} />
@@ -1011,9 +1012,10 @@ function FlowCanvas({ rawNodes, rawEdges, onNodeClick, dependencyEdges = [], job
         onRelayout={handleRelayout}
         onFitView={handleFitView}
       />
-      {/* [Flow: 드로잉 오버레이 — ViewportPortal로 pan/zoom 자동 따라감] */}
+      {/* [Flow: 드로잉 오버레이 — ViewportPortal로 pan/zoom 자동 따라감.
+          스페이스바 패닝 중에는 오버레이를 비활성화하여 팬 이벤트가 React Flow에 전달.] */}
       <DrawingOverlay
-        isActive={isDrawingMode}
+        isActive={isDrawingMode && !isSpacePanning}
         paths={drawing.paths}
         currentPathD={drawing.getCurrentPathD()}
         strokeColor={drawing.strokeColor}

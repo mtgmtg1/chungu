@@ -28,8 +28,32 @@ export function useFlowDrawing(jobId, screenToFlowPosition) {
   const currentPointsRef = useRef([]);
   const [isDrawing, setIsDrawing] = useState(false);
   const isDrawingRef = useRef(false);
-  const [strokeColor, setStrokeColor] = useState("#6366f1");
-  const [strokeWidth, setStrokeWidth] = useState(4);
+
+  // [Flow: 도구별 색상/굵기 분리 — 펜과 형광펜이 독립된 설정을 가짐]
+  // 기본값: 펜은 얇게(#6366f1, 4px), 형광펜은 굵게(#eab308, 16px).
+  // localStorage에 저장하여 새로고침 후에도 유지.
+  const SETTINGS_STORAGE_KEY = "flow-drawing-settings";
+  const DEFAULT_PEN = { color: "#6366f1", width: 4 };
+  const DEFAULT_HIGHLIGHTER = { color: "#eab308", width: 16 };
+
+  const loadToolSettings = () => {
+    try {
+      const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (!raw) return { pen: DEFAULT_PEN, highlighter: DEFAULT_HIGHLIGHTER };
+      const parsed = JSON.parse(raw);
+      return {
+        pen: { color: parsed.pen?.color ?? DEFAULT_PEN.color, width: parsed.pen?.width ?? DEFAULT_PEN.width },
+        highlighter: { color: parsed.highlighter?.color ?? DEFAULT_HIGHLIGHTER.color, width: parsed.highlighter?.width ?? DEFAULT_HIGHLIGHTER.width },
+      };
+    } catch { return { pen: DEFAULT_PEN, highlighter: DEFAULT_HIGHLIGHTER }; }
+  };
+
+  const initialSettings = loadToolSettings();
+  const [penColor, setPenColor] = useState(initialSettings.pen.color);
+  const [penWidth, setPenWidth] = useState(initialSettings.pen.width);
+  const [highlighterColor, setHighlighterColor] = useState(initialSettings.highlighter.color);
+  const [highlighterWidth, setHighlighterWidth] = useState(initialSettings.highlighter.width);
+
   const [tool, setTool] = useState("pen");
   const [shapeType, setShapeType] = useState("line");
   const [shapeStart, setShapeStart] = useState(null);
@@ -38,6 +62,30 @@ export function useFlowDrawing(jobId, screenToFlowPosition) {
   const storageKey = jobId ? `flow-drawing-${jobId}` : null;
   const saveTimerRef = useRef(null);
   const screenToFlowRef = useRef(screenToFlowPosition);
+
+  // 도구별 설정을 localStorage에 저장 (pen/highlighter 색상·굵기 변경 시)
+  useEffect(() => {
+    try {
+      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({
+        pen: { color: penColor, width: penWidth },
+        highlighter: { color: highlighterColor, width: highlighterWidth },
+      }));
+    } catch { /* quota 초과 무시 */ }
+  }, [penColor, penWidth, highlighterColor, highlighterWidth]);
+
+  // 현재 도구에 해당하는 색상/굵기를 반환 (드로잉 로직에서 사용)
+  const strokeColor = tool === "highlighter" ? highlighterColor : penColor;
+  const strokeWidth = tool === "highlighter" ? highlighterWidth : penWidth;
+
+  // 도구별 색상/굵기 setter — 현재 도구에 맞는 setter로 라우팅
+  const setStrokeColor = useCallback((color) => {
+    if (tool === "highlighter") setHighlighterColor(color);
+    else setPenColor(color);
+  }, [tool]);
+  const setStrokeWidth = useCallback((width) => {
+    if (tool === "highlighter") setHighlighterWidth(width);
+    else setPenWidth(width);
+  }, [tool]);
 
   // screenToFlowPosition 최신값 유지
   useEffect(() => {
@@ -208,6 +256,8 @@ export function useFlowDrawing(jobId, screenToFlowPosition) {
     }
 
     // 펜 / 형광펜 — SVG path 확정 (최신 좌표는 ref에서 읽음)
+    // 형광펜은 이미 자체 굵기(highlighterWidth)를 사용하므로 추가 곱셈 없음.
+    // subtype 필드로 펜/형광펜 구분 (DrawingOverlay에서 투명도 적용용).
     if (currentPointsRef.current.length > 1) {
       const d = getFreehandPath(currentPointsRef.current, strokeWidth);
       if (d) {
@@ -215,8 +265,9 @@ export function useFlowDrawing(jobId, screenToFlowPosition) {
           id: `path-${Date.now()}`,
           d,
           stroke: strokeColor,
-          strokeWidth: tool === "highlighter" ? strokeWidth * 3 : strokeWidth,
+          strokeWidth,
           type: "path",
+          subtype: tool === "highlighter" ? "highlighter" : "pen",
         }]);
       }
     }

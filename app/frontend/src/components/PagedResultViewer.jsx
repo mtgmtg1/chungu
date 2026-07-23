@@ -171,7 +171,9 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
           ref={leftPanelRef}
           defaultSize={45}
           minSize={25}
-          maxSize={70}
+          // [Flow: 오른쪽 패널이 collapse되어 있으면 왼쪽이 100%까지 확장 가능해야 함]
+          // 반대 패널의 maxSize가 collapse를 막지 않도록 동적 maxSize 적용
+          maxSize={rightPanelOpen ? 70 : 100}
           collapsible
           collapsedSize={0}
           className="overflow-hidden"
@@ -199,7 +201,9 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
           ref={rightPanelRef}
           defaultSize={55}
           minSize={30}
-          maxSize={75}
+          // [Flow: 왼쪽 패널이 collapse되어 있으면 오른쪽이 100%까지 확장 가능해야 함]
+          // 반대 패널의 maxSize가 collapse를 막지 않도록 동적 maxSize 적용
+          maxSize={leftPanelOpen ? 75 : 100}
           collapsible
           collapsedSize={0}
           className="flex flex-col bg-white overflow-hidden"

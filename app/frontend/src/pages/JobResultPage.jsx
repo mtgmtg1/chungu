@@ -39,6 +39,26 @@ import { SkeletonPageResult } from "../components/Skeleton.jsx";
 import { getDisplayProgress } from "../utils/progress.js";
 import { useIsMobile } from "../hooks/useMediaQuery.js";
 
+// [Flow: 패널 보이기/숨기기 상태를 localStorage에 저장하여 새로고침 후에도 유지]
+// 좌·우 패널의 열림/닫힘 상태를 사용자 UI 선호도로 저장한다 (모든 job에 공통 적용).
+const PANEL_STATE_STORAGE_KEY = "proof:panelState";
+
+// localStorage에서 패널 상태를 읽어 초기값으로 사용한다.
+// 파싱 실패·값 없음·SSR 환경에서는 기본값(둘 다 열림)을 반환한다.
+function loadPanelState() {
+  try {
+    const raw = localStorage.getItem(PANEL_STATE_STORAGE_KEY);
+    if (!raw) return { sidebarOpen: true, rightPanelOpen: true };
+    const parsed = JSON.parse(raw);
+    return {
+      sidebarOpen: parsed.sidebarOpen !== false,
+      rightPanelOpen: parsed.rightPanelOpen !== false,
+    };
+  } catch {
+    return { sidebarOpen: true, rightPanelOpen: true };
+  }
+}
+
 function downloadByUrl(url, filename) {
   const a = document.createElement("a");
   a.href = url;
@@ -68,8 +88,8 @@ export default function JobResultPage() {
   const [fileMarkdowns, setFileMarkdowns] = useState([]);
   const [selectedFileIndex, setSelectedFileIndex] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => loadPanelState().sidebarOpen);
+  const [rightPanelOpen, setRightPanelOpen] = useState(() => loadPanelState().rightPanelOpen);
   const [now, setNow] = useState(Date.now());
   const pollRef = useRef(null);
   // [Flow: 중복 loadPreview 방지 — job 완료 상태와 주석 처리 상태의 전이 시점만 추적]
@@ -286,6 +306,16 @@ export default function JobResultPage() {
       rightPanelHandle.collapse();
     }
   }, [rightPanelHandle, rightPanelOpen]);
+
+  // [Flow: Step 1 (좌·우 패널 상태 변경 감지) -> Step 2 (localStorage에 저장하여 새로고침 후에도 유지)]
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        PANEL_STATE_STORAGE_KEY,
+        JSON.stringify({ sidebarOpen, rightPanelOpen })
+      );
+    } catch { /* quota 초과·비활성 환경은 무시 */ }
+  }, [sidebarOpen, rightPanelOpen]);
 
   async function loadPreview() {
     try {

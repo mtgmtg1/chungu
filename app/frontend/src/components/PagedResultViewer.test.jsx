@@ -29,14 +29,16 @@ vi.mock("./SimpleEditor.jsx", () => ({
 
 // [Flow: Panel ref에 expand/collapse 스파이를 노출하는 mock]
 // 각 Panel 인스턴스는 data-panel-side 속성으로 좌/우를 식별하여 spy를 등록한다.
+// maxSize prop을 캡처하여 동적 maxSize(반대 패널 collapse 시 100) 검증에 사용한다.
 const panelSpies = { left: null, right: null };
+const panelProps = { left: {}, right: {} };
 vi.mock("react-resizable-panels", () => {
-  const Panel = forwardRef(function MockPanel({ children, "data-panel-side": side }, ref) {
+  const Panel = forwardRef(function MockPanel({ children, "data-panel-side": side, maxSize, minSize, collapsible, collapsedSize }, ref) {
     // [Flow: 실제 Panel처럼 imperative handle을 인스턴스당 한 번만 생성해 안정적으로 유지]
     // 매 렌더마다 새 spy를 만들면 비동기 재렌더링 후 spy가 덮어씌워져 호출 기록이 사라진다.
     const spy = useMemo(() => ({ expand: vi.fn(), collapse: vi.fn() }), []);
-    if (side === "left") panelSpies.left = spy;
-    if (side === "right") panelSpies.right = spy;
+    if (side === "left") { panelSpies.left = spy; panelProps.left = { maxSize, minSize, collapsible, collapsedSize }; }
+    if (side === "right") { panelSpies.right = spy; panelProps.right = { maxSize, minSize, collapsible, collapsedSize }; }
     if (typeof ref === "function") ref(spy);
     else if (ref && "current" in ref) ref.current = spy;
     return children;
@@ -128,5 +130,47 @@ describe("PagedResultViewer — 좌·우 패널 토글 제어", () => {
       );
     });
     expect(panelSpies.left.collapse).toHaveBeenCalled();
+  });
+
+  // [Flow: 반대 패널이 collapse되어 있으면 자신의 maxSize가 100으로 확장되어야 함]
+  // maxSize가 100이 아니면 collapse 시 반대 패널이 공간을 다 채우지 못해 완전 숨김이 불가능하다.
+  it("rightPanelOpen=false면 왼쪽 패널 maxSize가 100으로 확장된다", () => {
+    render(
+      <PagedResultViewer
+        jobId="job-maxsize-left"
+        pages={[{ page_num: 1 }]}
+        sourceFiles={[]}
+        leftPanelOpen={true}
+        rightPanelOpen={false}
+      />
+    );
+    expect(panelProps.left.maxSize).toBe(100);
+  });
+
+  it("leftPanelOpen=false면 오른쪽 패널 maxSize가 100으로 확장된다", () => {
+    render(
+      <PagedResultViewer
+        jobId="job-maxsize-right"
+        pages={[{ page_num: 1 }]}
+        sourceFiles={[]}
+        leftPanelOpen={false}
+        rightPanelOpen={true}
+      />
+    );
+    expect(panelProps.right.maxSize).toBe(100);
+  });
+
+  it("양쪽 패널 모두 열려 있으면 maxSize가 기본값(70/75)을 유지한다", () => {
+    render(
+      <PagedResultViewer
+        jobId="job-maxsize-default"
+        pages={[{ page_num: 1 }]}
+        sourceFiles={[]}
+        leftPanelOpen={true}
+        rightPanelOpen={true}
+      />
+    );
+    expect(panelProps.left.maxSize).toBe(70);
+    expect(panelProps.right.maxSize).toBe(75);
   });
 });

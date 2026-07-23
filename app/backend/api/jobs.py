@@ -4202,47 +4202,62 @@ def _compute_coordinate_validation(
             ),
         })
 
-    # Check 6: 문단 text_blocks 높이 vs ocr_elements 높이 비교
-    # text_blocks가 한 줄 높이(작은 높이)인데 ocr_elements가 여러 줄 높이(큰 높이)면
-    # text layer에서 문단이 한 줄로 배치된 것임.
+    # Check 6: 문단 text_blocks y 범위 vs ocr_elements y 범위
+    # 같은 문단에 속하는 text_blocks의 y 범위(최소 y0 ~ 최대 y1)가
+    # ocr_elements의 y 범위와 비슷한지 검사한다.
+    # text layer에서 문단이 한 줄로 배치되면 text_blocks y 범위가 ocr_elements보다 훨씬 작다.
     if text_blocks and paragraph_ocr:
-        # 비표 text_blocks (| 구분자 없음, y > 100으로 표 행 제외)
-        para_text_blocks = [b for b in text_blocks if "|" not in b.get("text", "") and b["text"].strip() and b["device"][1] > 100 and b["device"][3] < 700]
+        # 비표 text_blocks (| 구분자 없음, y > 100으로 표 행 제외, y < 700으로 푸터 제외)
+        para_text_blocks = [b for b in text_blocks if "|" not in b.get("text", "") and b["text"].strip() and 100 < b["device"][1] < 700]
         if para_text_blocks and paragraph_ocr:
-            # 가장 큰 높이 차이를 가진 쌍 찾기
-            max_height_ratio = 0.0
-            worst_height_pair = None
-            for tb in para_text_blocks:
-                tb_height = tb["device"][3] - tb["device"][1]
+            # 각 ocr_element에 대해, 그 y 범위 안에 있는 text_blocks의 y 범위를 비교
+            max_range_ratio = 0.0
+            worst_range_pair = None
+            for ocr in paragraph_ocr:
+                ocr_y0 = ocr["device"][1]
+                ocr_y1 = ocr["device"][3]
+                ocr_height = ocr_y1 - ocr_y0
+                if ocr_height <= 0:
+                    continue
+                # 이 ocr_element의 y 범위 안에 있는 text_blocks 찾기
+                overlapping_tbs = [
+                    b for b in para_text_blocks
+                    if b["device"][1] >= ocr_y0 - 5 and b["device"][3] <= ocr_y1 + 5
+                ]
+                if not overlapping_tbs:
+                    continue
+                # text_blocks의 합산 y 범위
+                tb_y0 = min(b["device"][1] for b in overlapping_tbs)
+                tb_y1 = max(b["device"][3] for b in overlapping_tbs)
+                tb_height = tb_y1 - tb_y0
                 if tb_height <= 0:
                     continue
-                for ocr in paragraph_ocr:
-                    ocr_height = ocr["device"][3] - ocr["device"][1]
-                    if ocr_height <= 0:
-                        continue
-                    # 텍스트가 겹치는지 확인 (간단한 포함 검사)
-                    if not any(word in ocr.get("text", "") for word in tb.get("text", "").split()[:3]):
-                        continue
-                    ratio = ocr_height / tb_height
-                    if ratio > max_height_ratio:
-                        max_height_ratio = ratio
-                        worst_height_pair = (tb.get("text", "")[:20], ocr.get("text", "")[:20], tb_height, ocr_height)
-            # 높이 비율이 3배 이상이면 문단이 한 줄로 배치된 것임
-            if max_height_ratio >= 3.0:
+                # ocr_height 대비 tb_height 비율 (1.0에 가까울수록 정상)
+                ratio = tb_height / ocr_height
+                if ratio > max_range_ratio:
+                    max_range_ratio = ratio
+                    worst_range_pair = (
+                        ocr.get("text", "")[:20],
+                        len(overlapping_tbs),
+                        tb_height,
+                        ocr_height,
+                    )
+            # 비율이 0.5 이상이면 정상 (text_blocks가 ocr_elements y 범위의 50% 이상을 커버)
+            if max_range_ratio < 0.3:
                 status_6 = "fail"
                 detail_6 = (
-                    f"문단 높이 비율: {max_height_ratio:.1f}x — "
-                    f"text_blocks 높이 {worst_height_pair[2]:.1f}px vs ocr_elements 높이 {worst_height_pair[3]:.1f}px "
-                    f"(한 줄로 배치됨, '{worst_height_pair[0]}' ↔ '{worst_height_pair[1]}')"
+                    f"문단 y 범위 비율: {max_range_ratio:.2f} — "
+                    f"text_blocks y 범위 {worst_range_pair[2]:.1f}px vs ocr_elements y 범위 {worst_range_pair[3]:.1f}px "
+                    f"({worst_range_pair[1]}개 text_blocks, '{worst_range_pair[0]}')"
                 )
-            elif max_height_ratio >= 2.0:
+            elif max_range_ratio < 0.5:
                 status_6 = "warn"
-                detail_6 = f"문단 높이 비율: {max_height_ratio:.1f}x (text_blocks가 ocr_elements보다 작음)"
+                detail_6 = f"문단 y 범위 비율: {max_range_ratio:.2f} (text_blocks가 ocr_elements 범위의 절반 미만)"
             else:
                 status_6 = "pass"
-                detail_6 = f"문단 높이 비율: {max_height_ratio:.1f}x (정상)"
+                detail_6 = f"문단 y 범위 비율: {max_range_ratio:.2f} (정상, {worst_range_pair[1]}개 text_blocks가 ocr_element 범위를 커버)"
             checks.append({
-                "name": "문단 text_blocks 높이 vs ocr_elements 높이",
+                "name": "문단 text_blocks y 범위 vs ocr_elements y 범위",
                 "status": status_6,
                 "detail": detail_6,
             })

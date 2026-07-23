@@ -11,6 +11,7 @@ import TurndownService from "turndown";
 import { useCompletion } from "@ai-sdk/react";
 import { DOMSerializer } from "@tiptap/pm/model";
 import { getToken } from "../api.js";
+import MarkdownDiffApproval from "./ai-chat/MarkdownDiffApproval.jsx";
 import {
   ArrowDownWideNarrow,
   CheckCheck,
@@ -71,6 +72,8 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
   const [open, setOpen] = useState(false);
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [error, setError] = useState("");
+  // [Flow: diff 승인 패널 상태 — AI 결과를 즉시 삽입하지 않고 사용자 승인 대기]
+  const [pendingDiff, setPendingDiff] = useState(null);
   const menuRef = useRef(null);
   const customInputRef = useRef(null);
   const pendingOptionRef = useRef(null);
@@ -97,9 +100,31 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
       setError(err.message || "AI error");
     },
     onFinish: (_prompt, completionText) => {
-      // [Flow: Step 1 (스트리밍 완료) -> Step 2 (요청 직전 선택/커서 위치에 결과 적용) -> Step 3 (메뉴 닫기)]
+      // [Flow: Step 1 (스트리밍 완료) -> Step 2 (diff 승인 패널 표시, 즉시 삽입하지 않음)
+      //       -> Step 3 (사용자가 수락하면 applyResultToEditor로 삽입)]
       if (editor && completionText) {
-        applyResultToEditor(editor, completionText, pendingOptionRef.current, selectionRef.current);
+        const option = pendingOptionRef.current;
+        const selection = selectionRef.current;
+        // [Flow: continue 옵션은 커서 위치의 기존 텍스트를 원본으로 사용]
+        let originalText = "";
+        if (option === "continue") {
+          originalText = "";
+        } else {
+          const { from, to } = selection;
+          if (from !== to) {
+            const slice = editor.state.doc.slice(from, to);
+            const serializer = DOMSerializer.fromSchema(editor.schema);
+            const div = document.createElement("div");
+            div.appendChild(serializer.serializeFragment(slice.content));
+            originalText = turndown.turndown(div.innerHTML);
+          }
+        }
+        setPendingDiff({
+          original: originalText,
+          edited: completionText,
+          option,
+          selection,
+        });
       }
       setOpen(false);
       setShowCustomInput(false);
@@ -234,6 +259,35 @@ export default function AiMenu({ editor, editable = true, fullMarkdown = "" }) {
               {error}
             </div>
           )}
+        </div>
+      )}
+
+      {/* [Flow: diff 승인 패널 — AI 결과를 즉시 삽입하지 않고 사용자 승인 대기]
+          수락 시 applyResultToEditor로 에디터에 삽입, 거부 시 취소] */}
+      {pendingDiff && (
+        <div
+          className="absolute top-full left-0 mt-1 w-96 max-w-[calc(100vw-2rem)] bg-white rounded-lg shadow-lg border border-outline-variant p-3 z-50"
+          data-oid="ai-menu-diff-panel"
+        >
+          <MarkdownDiffApproval
+            originalMarkdown={pendingDiff.original}
+            editedMarkdown={pendingDiff.edited}
+            title={t("page:agent.diffTitle", "AI 편집 내용 확인")}
+            onAccept={(editedMarkdown) => {
+              applyResultToEditor(
+                editor,
+                editedMarkdown,
+                pendingDiff.option,
+                pendingDiff.selection,
+              );
+            }}
+            onApprove={() => {
+              setPendingDiff(null);
+            }}
+            onDeny={() => {
+              setPendingDiff(null);
+            }}
+          />
         </div>
       )}
     </div>

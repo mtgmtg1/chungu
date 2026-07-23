@@ -1,9 +1,9 @@
 ---
 trigger: model_decision
-description: Point in time when the work is completed and deployed
+description: When deploying the app
 ---
 
-배포는 deploy_develop.sh 를 실행해서 develop브랜치를 a1서버에 배포 해야한다. 
+deploy_develop.sh 로 a1의 develop 에 배포할 수 있다. 현재 백엔드,db가 a1의 develop 브랜치와 연결돼있다.
 
 배포 전에:
 1. 전체 변경 부분을 AGENTS.md 에 upsert/update(변경부분과 배치되는 것은 삭제해)

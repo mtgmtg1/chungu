@@ -38,18 +38,23 @@ function DrawingOverlay({
 }) {
   return (
     <ViewportPortal>
-      {/* 드로잉 이벤트 수신용 투명 오버레이 — 드로잉 모드일 때만 pointer 활성 */}
+      {/* 드로잉 이벤트 수신용 투명 오버레이 — 드로잉 모드일 때만 pointer 활성.
+          z-index를 노드(기본 1)보다 높여 캔버스 모든 영역에서 드로잉 이벤트를 수신.
+          width/height를 100%가 아닌 매우 큰 값으로 설정하여, ViewportPortal 내부
+          (flow 좌표계)에서 노드와 멀리 떨어진 빈 캔버스 영역까지 커버.
+          top/left를 음수 오프셋으로 중앙 정렬하여 음수 flow 좌표도 커버. */}
       <div
         className="nopan nodrag"
         style={{
           position: "absolute",
-          top: 0,
-          left: 0,
-          width: "100%",
-          height: "100%",
+          top: -50000,
+          left: -50000,
+          width: 100000,
+          height: 100000,
           pointerEvents: isActive ? "auto" : "none",
           cursor: isActive ? "crosshair" : "default",
           touchAction: "none",
+          zIndex: isActive ? 10 : 0,
         }}
         onPointerDown={isActive ? onPointerDown : undefined}
         onPointerMove={isActive ? onPointerMove : undefined}
@@ -57,15 +62,17 @@ function DrawingOverlay({
         onPointerLeave={isActive ? onPointerUp : undefined}
         onPointerCancel={isActive ? onPointerUp : undefined}
       >
-        {/* SVG 드로잉 레이어 — flow 좌표계 기준 */}
+        {/* SVG 드로잉 레이어 — flow 좌표계 기준.
+            overflow: visible로 path가 SVG 밖이어도 렌더링. */}
         <svg
-          className="absolute top-0 left-0"
-          style={{ width: "100%", height: "100%", pointerEvents: "none", overflow: "visible" }}
+          className="absolute"
+          style={{ top: 50000, left: 50000, width: 1, height: 1, pointerEvents: "none", overflow: "visible" }}
         >
           {/* 저장된 경로들 */}
           {paths.map((path, i) => {
             const isShape = path.type === "shape";
-            const isHighlighter = path.strokeWidth >= 12 && path.type === "path";
+            // 형광펜 판별: subtype 필드 우선, 없으면 기존 폴백(strokeWidth >= 12)
+            const isHighlighter = path.subtype === "highlighter" || (path.strokeWidth >= 12 && path.type === "path" && !path.subtype);
             return (
               <path
                 key={path.id || i}

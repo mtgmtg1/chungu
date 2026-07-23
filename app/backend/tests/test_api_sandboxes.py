@@ -7,6 +7,7 @@ job.extracted_files에 반영하고 preview 캐시를 무효화하는지 검증�
 import os
 import sys
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -25,6 +26,7 @@ def mock_sandbox():
     sandbox.job_id = "job-123"
     sandbox.user_id = "11111111-1111-1111-1111-111111111111"
     sandbox.workspace_path = ""
+    sandbox.created_at = datetime.now() - timedelta(hours=1)
     return sandbox
 
 
@@ -62,7 +64,7 @@ def mock_db(mock_sandbox, mock_job):
 class FakeCollector:
     """collect_and_upload 호출 시 가짜 수집 결과를 반환하는 Collector mock."""
 
-    def collect_and_upload(self, workspace_path, job_id, supabase_client=None):
+    def collect_and_upload(self, workspace_path, job_id, supabase_client=None, since_commit=None, since_timestamp=None):
         """workspace/agent_output/result.csv가 수집된 것처럼 결과를 반환한다."""
         return {
             "files": [

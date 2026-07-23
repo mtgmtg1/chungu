@@ -6,7 +6,6 @@
 import { tool } from 'ai';
 import { z } from 'zod';
 import type { AuthHeaders } from '../lib/auth.js';
-import * as proofApi from '../lib/proof-api.js';
 import { sanitizeMarkdownForLLM } from '../lib/markdown-sanitizer.js';
 import {
   DEFAULT_CHUNK_LIMIT,
@@ -50,11 +49,13 @@ export function buildMarkdownTools(context: MarkdownContext) {
     : undefined;
 
   let workingMarkdown = '';
+  // [Flow: 원본 마크다운 — loadFile 시점에 캡처하여 apply_edits diff 비교 기준으로 사용]
+  let originalMarkdown = '';
   let currentFileIndex = 0;
   let markdownLoaded = false;
   let hasChanges = false;
 
-  // [Flow: FastAPI 에서 전체 markdown 조회 -> 파일 마커 분할 -> 선택 파일 로드]
+  // [Flow: FastAPI 에서 전체 markdown 조회 -> 파일 마커 분할 -> 선택 파일 로드 -> 원본 캡처]
   async function loadFile(requestedPageNo?: number) {
     const combinedMarkdown = await fetchMarkdown(jobId, authHeaders);
     const parts = splitMarkdownByFileMarkers(combinedMarkdown);
@@ -69,6 +70,8 @@ export function buildMarkdownTools(context: MarkdownContext) {
     workingMarkdown = parts.length > 0
       ? extractFileMarkdown(combinedMarkdown, fileIndex)
       : combinedMarkdown;
+    // [Flow: 편집 전 원본을 보관 — apply_edits에서 diff 생성 시 기준으로 사용]
+    originalMarkdown = workingMarkdown;
     currentFileIndex = fileIndex;
     markdownLoaded = true;
     hasChanges = false;
@@ -275,16 +278,26 @@ export function buildMarkdownTools(context: MarkdownContext) {
     }),
 
     apply_edits: tool({
-      description: 'Save the markdown edits made so far to the document/report editor.',
+      description: 'Save the markdown edits made so far to the document/report editor. Always returns a diff for user approval — the frontend saves on accept.',
       inputSchema: z.object({}),
       execute: async () => {
         if (!hasChanges) {
           return { saved: false, reason: 'No pending edits' };
         }
 
-        await proofApi.saveMarkdown(jobId, currentFileIndex + 1, workingMarkdown, authHeaders);
-        hasChanges = false;
-        return { saved: true, file_index: currentFileIndex, page_num: currentFileIndex + 1 };
+        // [Flow: 항상 diff 데이터와 함께 승인 요청 반환 (저장하지 않음)
+        //       approvalMode와 무관하게 프론트엔드가 diff를 표시하고
+        //       수락 시 직접 saveResultPage API 호출로 저장한다]
+        const additions = workingMarkdown.split('\n').length - originalMarkdown.split('\n').length;
+        return {
+          requires_approval: true,
+          has_changes: true,
+          original_markdown: originalMarkdown,
+          edited_markdown: workingMarkdown,
+          file_index: currentFileIndex,
+          page_num: currentFileIndex + 1,
+          changes_summary: `${Math.abs(additions)} line(s) changed`,
+        };
       },
     }),
   };

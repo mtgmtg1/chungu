@@ -96,13 +96,14 @@ export function createSandboxTools(context: SandboxContext) {
     description:
       'Execute a shell command inside the sandbox / 코드 실행 공간. Can run Python scripts, Node.js scripts, git commands, ' +
       'LibreOffice conversion, FFmpeg processing, ImageMagick image conversion, etc. ' +
-      'Commands run as an unprivileged user (agent, UID 1000) with /workspace as the working directory. ' +
+      'Commands run as an unprivileged user (agent, UID 1000) with /workspace/agent_output as the working directory. ' +
+      'Files created with relative paths are automatically saved to /workspace/agent_output/ and collected. ' +
       'Dangerous commands (rm -rf /, dd of=/dev/, mount, reboot, etc.) are blocked by security policy. ' +
       'Filename guide: user-visible filenames are in /workspace/original/ with their original names. ' +
       'Example: if the user says "report.pdf", it refers to /workspace/original/report.pdf. ' +
       '/workspace/input.pdf is the same file, but using the original filename is recommended. ' +
-      'If this command creates or modifies files, call collect_sandbox_results next so the user can see them in the file panel. ' +
-      'Files must be saved under /workspace/agent_output/, /workspace/extracted/, or /workspace/annotations/ to be collected.',
+      'After this command creates or modifies files, results are automatically collected so the user can see them in the file panel. ' +
+      'Files anywhere under /workspace/ (except /workspace/original/) are collected automatically.',
     inputSchema: z.object({
       command: z.string().describe('Shell command to execute (e.g., "python3 /workspace/script.py")'),
       timeout: z
@@ -120,19 +121,31 @@ export function createSandboxTools(context: SandboxContext) {
       const body: Record<string, unknown> = { command };
       if (timeout) body.timeout = timeout;
 
-      return proofApi.request<{
+      const execResult = await proofApi.request<{
         exit_code: number;
         stdout: string;
         stderr: string;
         error?: string;
-      }>(`/api/sandboxes/${activeSandboxId}/execute`, 'POST', body, authHeaders).then(
-        // [Flow: 출력 크기 제한 — stdout/stderr 를 2000자로 잘라서 토큰 소비 절약]
-        (result: { exit_code: number; stdout: string; stderr: string; error?: string }) => ({
-          ...result,
-          stdout: _truncate(result.stdout, 2000),
-          stderr: _truncate(result.stderr, 1000),
-        }),
-      );
+      }>(`/api/sandboxes/${activeSandboxId}/execute`, 'POST', body, authHeaders);
+
+      // [Flow: 명령 실행 후 자동으로 collect 호출 — 사용자가 파일패널에서 새 파일을 볼 수 있게 함]
+      // 에이전트가 collect_sandbox_results 를 명시적으로 호출하지 않아도 자동 수집.
+      // 단, 명령이 에러(exit_code != 0)인 경우 자동 수집을 스킵하지 않음 —
+      // 부분적으로 생성된 파일도 사용자에게 보여야 함.
+      let collectResult;
+      try {
+        collectResult = await proofApi.collectSandboxResults(activeSandboxId, authHeaders);
+      } catch (e) {
+        collectResult = { error: String(e) };
+      }
+
+      return {
+        ...execResult,
+        stdout: _truncate(execResult.stdout, 2000),
+        stderr: _truncate(execResult.stderr, 1000),
+        collect_status: collectResult.error ? 'error' : 'ok',
+        collect_result: collectResult,
+      };
     },
   });
 
@@ -178,7 +191,7 @@ export function createSandboxTools(context: SandboxContext) {
       'Write a file to the sandbox workspace / 코드 실행 공간. ' +
       'Use when the agent creates Python/Node.js scripts, config files, data files, etc. ' +
       'After writing, the result is automatically collected so the user can see the new file in the file panel. ' +
-      'Files must be under /workspace/agent_output/, /workspace/extracted/, or /workspace/annotations/ to be collected.',
+      'Files anywhere under /workspace/ (except /workspace/original/) are collected automatically.',
     inputSchema: z.object({
       path: z
         .string()
@@ -313,8 +326,8 @@ export function createSandboxTools(context: SandboxContext) {
     description:
       'Collect result files from the sandbox / 코드 실행 공간 and upload them to Supabase Storage. ' +
       'This makes newly created or modified files visible to the user in the file panel. ' +
-      'Call after creating or modifying files, and before destroying the sandbox. ' +
-      'Only files under /workspace/agent_output/, /workspace/extracted/, and /workspace/annotations/ are collected.',
+      'Files anywhere under /workspace/ (except /workspace/original/) are collected. ' +
+      'Note: execute_in_sandbox and write_file already auto-collect after each call, so this tool is mainly for manual re-collection.',
     inputSchema: z.object({}),
     execute: async () => {
       if (!activeSandboxId) {
@@ -365,7 +378,7 @@ export function createSandboxTools(context: SandboxContext) {
       'Use when the agent fetches external resources (images, documents, data files). ' +
       'Downloads using curl inside the sandbox. ' +
       'After downloading, the result is automatically collected so the user can see the new file in the file panel. ' +
-      'Save files under /workspace/agent_output/, /workspace/extracted/, or /workspace/annotations/ to be collected.',
+      'Files anywhere under /workspace/ (except /workspace/original/) are collected automatically.',
     inputSchema: z.object({
       url: z.string().url().describe('URL of the file to download'),
       outputPath: z

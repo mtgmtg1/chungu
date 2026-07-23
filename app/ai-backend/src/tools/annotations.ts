@@ -47,7 +47,7 @@ function rgbToHex(rgb: [number, number, number]): string {
  *
  * 여러 검색 결과 rect를 하나의 bounding box로 합친다.
  *
- * @param rects PDF user-space rect 리스트
+ * @param rects device-space rect 리스트 (search_job_text 반환 좌표)
  * @returns bounding rect [x0, y0, x1, y1]
  */
 function _unionRects(rects: Array<[number, number, number, number]>): [number, number, number, number] {
@@ -103,7 +103,18 @@ interface BatchItemInput {
   opacity?: number;
 }
 
+/**
+ * [Flow: Step 1 (texts 축약 배열 → 공통 파라미터 적용) → Step 2 (items 배열 그대로 사용)
+ *       → Step 3 (text 배열 → 인덱스별 매핑) → Step 4 (text 단일 문자열 → 단건)]
+ *
+ * 입력 우선순위: texts > items > text[](배열) > text(문자열)
+ * texts를 사용하면 page_no/comment/color/opacity는 모든 텍스트에 동일 적용되어 토큰 절약.
+ *
+ * @param input 도구 입력 파라미터
+ * @returns 파싱된 BatchItemInput 배열
+ */
 function parseBatchInputs(input: {
+  texts?: string[];
   items?: BatchItemInput[];
   text?: string | string[];
   page_no?: number | number[];
@@ -111,6 +122,22 @@ function parseBatchInputs(input: {
   color?: string | string[];
   opacity?: number | number[];
 }): BatchItemInput[] {
+  // [Flow: texts 축약 배열 — 공통 page_no/comment/color/opacity를 모든 텍스트에 일괄 적용]
+  if (Array.isArray(input.texts) && input.texts.length > 0) {
+    const sharedPageNo = typeof input.page_no === 'number' ? input.page_no : undefined;
+    const sharedComment = typeof input.comment === 'string' ? input.comment : '';
+    const sharedColor = typeof input.color === 'string' ? input.color : undefined;
+    const sharedOpacity = typeof input.opacity === 'number' ? input.opacity : undefined;
+    return input.texts
+      .map((t) => ({
+        text: String(t || '').trim(),
+        page_no: sharedPageNo,
+        comment: sharedComment,
+        color: sharedColor,
+        opacity: sharedOpacity,
+      }))
+      .filter((item) => item.text);
+  }
   if (Array.isArray(input.items) && input.items.length > 0) {
     return input.items.filter((item) => item && typeof item.text === 'string' && item.text.trim());
   }
@@ -367,8 +394,9 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     add_text_highlight: tool({
-      description: 'Add one or more highlight annotations. Accepts either a list of items (`items: [{text, page_no, comment, color, opacity}]`) to highlight multiple texts in a SINGLE batch tool call, or array/scalar parameters (`text: [...]` or `text: "..."`). ALWAYS prefer sending multiple highlights in a single call using `items`.',
+      description: 'Add one or more highlight annotations. PREFERRED: Use `texts` (string array) + shared page_no/comment/color/opacity when all items share the same settings — this saves tokens. Use `items` only when each item needs DIFFERENT settings. Example: `{ texts: ["A", "B", "C"], page_no: 1, color: "yellow" }` instead of 3 separate items.',
       inputSchema: z.object({
+        texts: z.array(z.string()).optional().describe('PREFERRED for batch: Array of text strings to highlight with shared settings below'),
         items: z.array(
           z.object({
             text: z.string().describe('Exact text string to highlight'),
@@ -377,15 +405,15 @@ export function buildAnnotationTools(context: AnnotationContext) {
             color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']).optional().describe('Color name'),
             opacity: z.number().min(0).max(1).optional().describe('Highlight opacity (0.0~1.0)'),
           })
-        ).optional().describe('List of highlight items to add in a single batch'),
+        ).optional().describe('List of highlight items when each needs DIFFERENT settings'),
         text: z.union([z.string(), z.array(z.string())]).optional().describe('Exact text or array of text strings to highlight'),
-        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number or array of page numbers'),
-        comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment or array of comments'),
+        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number (shared when using texts)'),
+        comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment (shared when using texts)'),
         color: z.union([
           z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),
           z.array(z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])),
-        ]).optional().describe('Color name or array of color names'),
-        opacity: z.union([z.number(), z.array(z.number())]).optional().describe('Highlight opacity or array of opacities'),
+        ]).optional().describe('Color name (shared when using texts)'),
+        opacity: z.union([z.number(), z.array(z.number())]).optional().describe('Highlight opacity (shared when using texts)'),
       }),
       execute: async (input) => {
         const itemsToProcess = parseBatchInputs(input as any);
@@ -394,10 +422,21 @@ export function buildAnnotationTools(context: AnnotationContext) {
         }
         const results = [];
         for (const item of itemsToProcess) {
-          const { matches } = await proofApi.searchText(jobId, item.text, item.page_no, authHeaders);
+          const { matches } = await proofApi.searchText(jobId, item.text, item.page_no, authHeaders, 'line');
           const validMatches = (matches || []).filter(
             (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
           );
+          // [TABLE_DEBUG] searchText 결과 좌표 로깅
+          if (validMatches.length > 0) {
+            const bboxSample = validMatches.slice(0, 3).map((m) => ({
+              bbox: (m as any).bbox_pdf.map((v: number) => Math.round(v * 10) / 10),
+              text: String((m as any).text || '').slice(0, 30),
+            }));
+            console.log(
+              `[TABLE_DEBUG] add_text_highlight: text='${item.text.slice(0, 40)}' ` +
+              `matches=${validMatches.length} bboxes=${JSON.stringify(bboxSample)}`
+            );
+          }
           if (validMatches.length === 0) {
             results.push({ text: item.text, success: false, error: `Text not found for highlight: '${item.text}'` });
             continue;
@@ -415,6 +454,12 @@ export function buildAnnotationTools(context: AnnotationContext) {
             color: COLOR_PALETTE[colorKey] || DEFAULT_HIGHLIGHT_COLOR,
             opacity: item.opacity ?? DEFAULT_OPACITY,
           };
+          // [TABLE_DEBUG] 최종 AnnotationTarget 좌표 로깅
+          console.log(
+            `[TABLE_DEBUG] add_text_highlight target: page=${pageNo} ` +
+            `bbox_pdf=[${target.bbox_pdf.map(v => v.toFixed(1)).join(', ')}] ` +
+            `rects_count=${bboxes.length}`
+          );
           const id = `ai-${Date.now()}-${pending.length}`;
           pending.push({ id, target, type: 'highlight' });
           results.push({ ok: true, id, text: item.text, match_count: validMatches.length, page_no: pageNo });
@@ -428,8 +473,9 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     add_text_callout: tool({
-      description: 'Add one or more callout (text box + leader arrow) annotations. Accepts either a list of items (`items: [{text, page_no, comment, color, opacity}]`) to create multiple callouts in a SINGLE batch tool call, or array/scalar parameters (`text: [...]` or `text: "..."`). ALWAYS prefer sending multiple callouts in a single call using `items`.',
+      description: 'Add one or more callout (text box + leader arrow) annotations. PREFERRED: Use `texts` (string array) + shared page_no/comment/color/opacity when all items share the same settings — this saves tokens. Use `items` only when each item needs DIFFERENT settings.',
       inputSchema: z.object({
+        texts: z.array(z.string()).optional().describe('PREFERRED for batch: Array of text strings with shared settings below'),
         items: z.array(
           z.object({
             text: z.string().describe('Exact text string to point callout to'),
@@ -438,15 +484,15 @@ export function buildAnnotationTools(context: AnnotationContext) {
             color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']).optional().describe('Color name'),
             opacity: z.number().min(0).max(1).optional().describe('Callout opacity (0.0~1.0)'),
           })
-        ).optional().describe('List of callout items to add in a single batch'),
+        ).optional().describe('List of callout items when each needs DIFFERENT settings'),
         text: z.union([z.string(), z.array(z.string())]).optional().describe('Exact text or array of text strings to point callout to'),
-        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number or array of page numbers'),
-        comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment or array of comments'),
+        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number (shared when using texts)'),
+        comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment (shared when using texts)'),
         color: z.union([
           z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),
           z.array(z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])),
-        ]).optional().describe('Color name or array of color names'),
-        opacity: z.union([z.number(), z.array(z.number())]).optional().describe('Callout opacity or array of opacities'),
+        ]).optional().describe('Color name (shared when using texts)'),
+        opacity: z.union([z.number(), z.array(z.number())]).optional().describe('Callout opacity (shared when using texts)'),
       }),
       execute: async (input) => {
         const itemsToProcess = parseBatchInputs(input as any);
@@ -455,7 +501,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
         }
         const results = [];
         for (const item of itemsToProcess) {
-          const { matches } = await proofApi.searchText(jobId, item.text, item.page_no, authHeaders);
+          const { matches } = await proofApi.searchText(jobId, item.text, item.page_no, authHeaders, 'line');
           const first = (matches || []).find(
             (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
           );
@@ -545,9 +591,10 @@ export function buildAnnotationTools(context: AnnotationContext) {
         }
 
         try {
-          // [Flow: AI 백엔드는 좌표 변환을 하지 않고 PDF user-space 그대로 전송
-          //       -> 변환은 FastAPI /jobs/{id}/user-annotations에서 JSON으로 저장하며 수행]
-          console.log(`[apply_annotations] job=${jobId} count=${pending.length} input_space=pdf_user`);
+          // [Flow: AI 백엔드는 좌표 변환을 하지 않고 device-space 그대로 전송
+          //       -> search_job_text(search_for + OCR 폴백)는 모두 device-space(y=0 상단)를 반환
+          //       -> FastAPI /jobs/{id}/user-annotations는 input_space='device'일 때 변환 없이 저장]
+          console.log(`[apply_annotations] job=${jobId} count=${pending.length} input_space=device`);
           const annotations = pending.map((pendingAnnotation) => _buildAnnotationItem(pendingAnnotation));
           let saveSourceIndex = sourceIndex;
           let usedFallback = false;
@@ -589,16 +636,16 @@ export function buildAnnotationTools(context: AnnotationContext) {
 }
 
 /**
- * [Flow: Step 1 (PendingAnnotation 수신) -> Step 2 (PDF user-space AnnotationTransferItem 생성) -> Step 3 (반환)]
+ * [Flow: Step 1 (PendingAnnotation 수신) -> Step 2 (device-space AnnotationTransferItem 생성) -> Step 3 (반환)]
  *
- * AI 백엔드는 좌표 변환을 하지 않고 PDF user-space 좌표를 그대로 전달한다.
- * 변환은 FastAPI의 /jobs/{id}/user-annotations 엔드포인트에서 JSON 저장 시
- * 실제 PDF page_height를 기준으로 수행한다.
+ * AI 백엔드는 좌표 변환을 하지 않고 device-space 좌표를 그대로 전달한다.
+ * search_job_text의 search_for 경로와 OCR 폴백 경로는 모두 device-space(y=0 상단)를 반환한다.
+ * FastAPI의 /jobs/{id}/user-annotations 엔드포인트는 input_space='device'일 때 변환 없이 저장한다.
  *
- * PDF user-space rect: origin.y = y0 (페이지 하단 기준), size.height = y1 - y0.
+ * device-space rect: origin.y = y0 (페이지 상단 기준, y↓), size.height = y1 - y0.
  *
  * @param p pending 주석
- * @returns PDF user-space 기반 AnnotationTransferItem
+ * @returns device-space 기반 AnnotationTransferItem
  */
 function _buildAnnotationItem(p: PendingAnnotation): Record<string, unknown> {
   const [x0, y0, x1, y1] = p.target.bbox_pdf;

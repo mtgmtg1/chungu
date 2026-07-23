@@ -6,7 +6,7 @@
 import { memo, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { marked } from "marked";
-import { RefreshCw, Sparkles } from "lucide-react";
+import { Copy, Pencil, RefreshCw, Sparkles } from "lucide-react";
 import AgentActivityIndicator from "./AgentActivityIndicator.jsx";
 import ReasoningBlock from "./ReasoningBlock.jsx";
 import Tool from "./Tool.jsx";
@@ -15,8 +15,10 @@ import Tool from "./Tool.jsx";
 marked.setOptions({ breaks: true, gfm: true });
 
 function sanitizeText(text) {
-  // Vercel 템플릿의 sanitizeText와 동일 — 제어 문자 제거
-  return text.replace(/\u0000/g, "");
+  // Vercel 템플릿의 sanitizeText와 동일 — 제어 문자(NUL) 제거
+  // no-control-regex 회피: 정규식 리터럴 대신 split/join으로 NUL 문자 제거
+  const NULL_CHAR = String.fromCharCode(0);
+  return text.split(NULL_CHAR).join("");
 }
 
 /**
@@ -69,6 +71,11 @@ const MessageContent = memo(function MessageContent({ text, className = "", role
  * @param {() => void} [props.onToolApprove] - 도구 승인 콜백
  * @param {() => void} [props.onToolDeny] - 도구 거부 콜백
  * @param {() => void} [props.onToolAlways] - 항상 승인 콜백
+ * @param {string} [props.jobId] - Job ID (마크다운 diff 승인 시 저장 API 호출용)
+ * @param {boolean} [props.isLastUser] - 마지막 사용자 메시지인지 여부 (프롬프트 복사/수정 버튼 표시)
+ * @param {() => void} [props.onCopyPrompt] - 프롬프트 복사 콜백
+ * @param {() => void} [props.onEditPrompt] - 프롬프트 수정 콜백 (입력창에 로드)
+ * @param {boolean} [props.canShowPromptActions] - 프롬프트 버튼 표시 가능 여부 (스트리밍 중 아닐 때)
  */
 function PreviewMessage({
   message,
@@ -81,6 +88,11 @@ function PreviewMessage({
   onToolApprove,
   onToolDeny,
   onToolAlways,
+  jobId,
+  isLastUser = false,
+  onCopyPrompt,
+  onEditPrompt,
+  canShowPromptActions = false,
 }) {
   const { t } = useTranslation();
   const isUser = message.role === "user";
@@ -119,6 +131,7 @@ function PreviewMessage({
           onApprove={onToolApprove}
           onDeny={onToolDeny}
           onAlways={onToolAlways}
+          jobId={jobId}
         />
       );
     }
@@ -158,7 +171,41 @@ function PreviewMessage({
     >
       {isUser ? (
         // 사용자 메시지: 우측 정렬 풍선
-        <div className="flex flex-col items-end gap-2">{content}</div>
+        <div className="flex flex-col items-end gap-2">
+          {content}
+          {/* 마지막 사용자 메시지 아래에 프롬프트 복사/수정 버튼 표시
+              (스트리밍 중에는 숨김) */}
+          {isLastUser && canShowPromptActions && (onCopyPrompt || onEditPrompt) && (
+            <div className="flex items-center gap-1">
+              {onCopyPrompt && (
+                <button
+                  type="button"
+                  onClick={onCopyPrompt}
+                  className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-on-surface-variant transition-colors hover:bg-surface-container-high"
+                  aria-label={t("page:agent.copyPrompt", "프롬프트 복사")}
+                  data-oid="agent-message-copy-prompt"
+                  data-testid="agent-message-copy-prompt"
+                >
+                  <Copy size={12} />
+                  {t("page:agent.copyPrompt", "프롬프트 복사")}
+                </button>
+              )}
+              {onEditPrompt && (
+                <button
+                  type="button"
+                  onClick={onEditPrompt}
+                  className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-on-surface-variant transition-colors hover:bg-surface-container-high"
+                  aria-label={t("page:agent.editPrompt", "프롬프트 수정")}
+                  data-oid="agent-message-edit-prompt"
+                  data-testid="agent-message-edit-prompt"
+                >
+                  <Pencil size={12} />
+                  {t("page:agent.editPrompt", "프롬프트 수정")}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       ) : (
         // 어시스턴트 메시지: 좌측 아바타 + 전체 폭 콘텐츠
         <div className="flex items-start gap-3">

@@ -39,6 +39,26 @@ import { SkeletonPageResult } from "../components/Skeleton.jsx";
 import { getDisplayProgress } from "../utils/progress.js";
 import { useIsMobile } from "../hooks/useMediaQuery.js";
 
+// [Flow: 패널 보이기/숨기기 상태를 localStorage에 저장하여 새로고침 후에도 유지]
+// 좌·우 패널의 열림/닫힘 상태를 사용자 UI 선호도로 저장한다 (모든 job에 공통 적용).
+const PANEL_STATE_STORAGE_KEY = "proof:panelState";
+
+// localStorage에서 패널 상태를 읽어 초기값으로 사용한다.
+// 파싱 실패·값 없음·SSR 환경에서는 기본값(둘 다 열림)을 반환한다.
+function loadPanelState() {
+  try {
+    const raw = localStorage.getItem(PANEL_STATE_STORAGE_KEY);
+    if (!raw) return { sidebarOpen: true, rightPanelOpen: true };
+    const parsed = JSON.parse(raw);
+    return {
+      sidebarOpen: parsed.sidebarOpen !== false,
+      rightPanelOpen: parsed.rightPanelOpen !== false,
+    };
+  } catch {
+    return { sidebarOpen: true, rightPanelOpen: true };
+  }
+}
+
 function downloadByUrl(url, filename) {
   const a = document.createElement("a");
   a.href = url;
@@ -68,8 +88,8 @@ export default function JobResultPage() {
   const [fileMarkdowns, setFileMarkdowns] = useState([]);
   const [selectedFileIndex, setSelectedFileIndex] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => loadPanelState().sidebarOpen);
+  const [rightPanelOpen, setRightPanelOpen] = useState(() => loadPanelState().rightPanelOpen);
   const [now, setNow] = useState(Date.now());
   const pollRef = useRef(null);
   // [Flow: 중복 loadPreview 방지 — job 완료 상태와 주석 처리 상태의 전이 시점만 추적]
@@ -163,11 +183,13 @@ export default function JobResultPage() {
   }, [job?.status]);
 
   // [Flow: Step 1 (job 상태 조회) -> Step 2 (주석 처리 여부 확인)
-  //       -> Step 3 (job이 done일 때 전이 조건 판단 — 최초 완료 또는 주석 완료 시에만 loadPreview 호출)
+  //       -> Step 3 (job이 done일 때 전이 조건 판단 — 최초 완료, 주석 완료, 또는 forcePreview 시 loadPreview 호출)
   //       -> Step 4 (폴링 재개 또는 중지)]
   // 주석 폴링 중에는 job이 이미 done이므로, 매번 loadPreview를 호출하면 PDF 뷰어가 새로고침됨.
   // prevJobDoneRef/prevAnnotateProcessingRef로 전이 시점을 추적해 불필요한 새로고침을 방지.
-  async function loadJob() {
+  // forcePreview=true이면 전이 조건과 무관하게 항상 loadPreview를 호출하여
+  // 에이전트 도구 완료 후 프리뷰 패널/에디터에 변경사항을 즉시 반영한다.
+  async function loadJob(forcePreview = false) {
     try {
       const data = await api.getJob(jobId);
       setJob(data);
@@ -184,7 +206,7 @@ export default function JobResultPage() {
         // [Flow: loadPreview 호출 조건 — (1) job이 방금 done으로 전이, (2) 주석이 processing → 완료로 전이]
         const jobJustDone = !prevJobDoneRef.current;
         const annotationsJustFinished = prevAnnotateProcessingRef.current && !hasProcessingAnnotations;
-        if (jobJustDone || annotationsJustFinished) {
+        if (jobJustDone || annotationsJustFinished || forcePreview) {
           await loadPreview();
         }
         prevJobDoneRef.current = true;
@@ -285,6 +307,16 @@ export default function JobResultPage() {
     }
   }, [rightPanelHandle, rightPanelOpen]);
 
+  // [Flow: Step 1 (좌·우 패널 상태 변경 감지) -> Step 2 (localStorage에 저장하여 새로고침 후에도 유지)]
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        PANEL_STATE_STORAGE_KEY,
+        JSON.stringify({ sidebarOpen, rightPanelOpen })
+      );
+    } catch { /* quota 초과·비활성 환경은 무시 */ }
+  }, [sidebarOpen, rightPanelOpen]);
+
   async function loadPreview() {
     try {
       // [Flow: Step 1 (항상 페이징 모드 — 첫 페이지만 로드하여 소스/메타정보 획득) -> Step 2 (전체 페이지 메타 로드)]
@@ -293,7 +325,16 @@ export default function JobResultPage() {
       setSourceType(preview.source_type);
       setImageUrls(preview.image_urls || []);
       setSourceFiles(preview.source_files || []);
-      const fms = (preview.source_files || []).map((f) => f.result_markdown || "");
+      // [Flow: preview.markdown(=edited_md 포함)을 파일 마커로 분할하여 fileMarkdowns로 사용]
+      // 이전에는 source_files[].result_markdown(원본)을 사용했으나, 에이전트 편집 내용이
+      // 반영되지 않는 버그의 원인이 되었음. preview.markdown은 _get_markdown_content에서
+      // edited_md를 우선 선택하므로 에이전트 편집 내용이 포함됨.
+      const previewMd = preview.markdown || "";
+      const fileParts = previewMd.split(/\n*<!-- Page \d+ -->\n*/).filter((s) => s.trim());
+      const sourceCount = (preview.source_files || []).length;
+      const fms = sourceCount > 1 && fileParts.length > 1
+        ? fileParts
+        : (preview.source_files || []).map((f) => f.result_markdown || "");
       setFileMarkdowns(fms);
       setSelectedFileIndex(0);
       // [Flow: 추가 파일 증분 변환 중인지 확인 — source_files 중 status=processing인 항목이 있으면 폴링]
@@ -304,7 +345,7 @@ export default function JobResultPage() {
       // [Flow: 항상 페이징 모드 — 전체 페이지 메타 로드]
       const meta = await api.previewJobPages(jobId);
       setPages(meta.pages || []);
-      setMarkdown("");
+      setMarkdown(previewMd);
     } catch (e) {
       setError(e.message || t("page:errors.loadFailed"));
     } finally {
@@ -972,7 +1013,7 @@ export default function JobResultPage() {
             }
             </button>
           }
-          {job?.status === "done" && !isMobile && previewMode !== "markdown" &&
+          {job?.status === "done" && !isMobile &&
           <button
             onClick={() => setRightPanelOpen((v) => !v)}
             title={rightPanelOpen ? t("page:result.hideResultPanel") : t("page:result.showResultPanel")}
@@ -1146,6 +1187,8 @@ export default function JobResultPage() {
         imageUrls={imageUrls}
         onSaveAnnotations={handleSaveAnnotations}
         onUpload={() => setUploadPopupOpen(true)}
+        leftPanelOpen={sidebarOpen}
+        rightPanelOpen={rightPanelOpen}
         data-oid="x.dznfp" />
 
       }
@@ -1288,7 +1331,7 @@ export default function JobResultPage() {
               sandboxId,
             }}
             onRunningCountChange={setAgentRunningCount}
-            onAgentComplete={() => loadJobRef.current()}
+            onAgentComplete={() => loadJobRef.current(true)}
             onFlowDrawingsUpdate={(data) => {
               // [Flow: 에이전트가 save_flow_drawings 완료 → FlowViewer에 즉시 반영]
               flowViewerApiRef.current?.updateFromAgent?.(data);

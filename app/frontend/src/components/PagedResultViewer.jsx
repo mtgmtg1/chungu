@@ -15,7 +15,11 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
   sourceFiles,
   imageUrls,
   onSaveAnnotations,
-  onUpload
+  onUpload,
+  // [Flow: 부모 JobResultPage의 좌·우 패널 보이기/숨기기 토글 상태를 전달받아
+  //       내부 PanelGroup의 각 Panel을 expand/collapse 한다]
+  leftPanelOpen = true,
+  rightPanelOpen = true
 }, ref) {
   const { t } = useTranslation();
   const [currentPage, setCurrentPage] = useState(pages[0]?.page_num || 1);
@@ -27,6 +31,9 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
   const pendingMarkdownRef = useRef(pageMarkdown);
   const autoSaveTimerRef = useRef(null);
   const saveMessageTimerRef = useRef(null);
+  // [Flow: react-resizable-panels Panel의 imperative handle(expand/collapse) 보관]
+  const leftPanelRef = useRef(null);
+  const rightPanelRef = useRef(null);
 
   const pageNumbers = useMemo(() => pages.map((p) => p.page_num), [pages]);
 
@@ -116,6 +123,28 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
     );
   };
 
+  // [Flow: Step 1 (leftPanelOpen prop 변경 감지) -> Step 2 (왼쪽 원본 패널 expand/collapse)]
+  // 마크다운 모드에서도 헤더의 왼쪽 탭 토글이 작동하도록 내부 Panel을 외부에서 제어한다.
+  useEffect(() => {
+    if (!leftPanelRef.current) return;
+    if (leftPanelOpen) {
+      leftPanelRef.current.expand();
+    } else {
+      leftPanelRef.current.collapse();
+    }
+  }, [leftPanelOpen]);
+
+  // [Flow: Step 1 (rightPanelOpen prop 변경 감지) -> Step 2 (오른쪽 마크다운 패널 expand/collapse)]
+  // 마크다운 모드에서도 헤더의 오른쪽 탭 토글이 작동하도록 내부 Panel을 외부에서 제어한다.
+  useEffect(() => {
+    if (!rightPanelRef.current) return;
+    if (rightPanelOpen) {
+      rightPanelRef.current.expand();
+    } else {
+      rightPanelRef.current.collapse();
+    }
+  }, [rightPanelOpen]);
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden" data-oid="9grrz:c">
       {error &&
@@ -139,11 +168,17 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
         data-oid="wbpjin7">
 
         <Panel
+          ref={leftPanelRef}
           defaultSize={45}
           minSize={25}
-          maxSize={70}
+          // [Flow: 오른쪽 패널이 collapse되어 있으면 왼쪽이 100%까지 확장 가능해야 함]
+          // 반대 패널의 maxSize가 collapse를 막지 않도록 동적 maxSize 적용
+          maxSize={rightPanelOpen ? 70 : 100}
+          collapsible
+          collapsedSize={0}
           className="overflow-hidden"
-          data-oid="_4r5fdj">
+          data-oid="_4r5fdj"
+          data-panel-side="left">
 
           <SourcePanel
             sourceFiles={sourceFiles}
@@ -163,11 +198,17 @@ const PagedResultViewer = memo(forwardRef(function PagedResultViewer({
           data-oid="rn4azy0" />
 
         <Panel
+          ref={rightPanelRef}
           defaultSize={55}
           minSize={30}
-          maxSize={75}
+          // [Flow: 왼쪽 패널이 collapse되어 있으면 오른쪽이 100%까지 확장 가능해야 함]
+          // 반대 패널의 maxSize가 collapse를 막지 않도록 동적 maxSize 적용
+          maxSize={leftPanelOpen ? 75 : 100}
+          collapsible
+          collapsedSize={0}
           className="flex flex-col bg-white overflow-hidden"
-          data-oid="ue-8gmm">
+          data-oid="ue-8gmm"
+          data-panel-side="right">
 
           {renderMarkdownArea()}
 

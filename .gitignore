@@ -90,6 +90,9 @@ infra/kata-guest/kata-agent.service.real
 # Test artifacts
 dummy_test.txt
 
+# Local dev database
+app/backend/local_dev.db
+
 # Redis
 dump.rdb
 *.rdb

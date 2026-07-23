@@ -132,6 +132,7 @@ export function createShapePath(start, end, shape) {
 /**
  * 지우개 — 클릭/드래그 위치 근처의 경로를 거리 기반으로 삭제.
  * SVG path d 속성에서 좌표를 추출하여 임계값 내 점이 있으면 해당 경로 제거.
+ * [Flow: Step 1 (d 속성에서 명령어별 좌표 파싱) -> Step 2 (각 점과 지우개 위치 거리 계산) -> Step 3 (임계값 내 점이 있으면 해당 path 제거)]
  * @param {DrawingPath[]} paths - 현재 경로 배열
  * @param {Point} point - 지우개 위치
  * @param {number} threshold - 삭제 임계값 (픽셀)
@@ -139,7 +140,9 @@ export function createShapePath(start, end, shape) {
  */
 export function eraseAtPoint(paths, point, threshold = 15) {
   return paths.filter((path) => {
-    const coords = path.d.match(/[\d.]+/g);
+    // SVG path d에서 모든 좌표 쌍 추출 — 음수 좌표(-)도 매칭하여 외곽 영역 지우개 작동 보장.
+    // 명령어 문자(M/L/Q/A/Z 등)는 건너뛰고 숫자만 추출.
+    const coords = path.d.match(/-?\d*\.?\d+/g);
     if (!coords) return true;
     for (let i = 0; i < coords.length - 1; i += 2) {
       const px = parseFloat(coords[i]);

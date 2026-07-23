@@ -13,7 +13,9 @@ export function enableDevMock(enabled) {
 export async function getToken() {
   // 개발 환경에서 /api/dev/login으로 발급받은 bypass JWT가 있으면 먼저 사용한다.
   // Supabase 엔드포인트가 없는 로컬 개발 환경에서도 API 인증이 정상 동작하게 한다.
-  if (import.meta.env.DEV) {
+  // 디버그 페이지(/dev/debug-*)에서는 production 빌드에서도 dev bypass 토큰을 사용한다.
+  const isDebugPage = typeof window !== 'undefined' && window.location.pathname.startsWith('/dev/debug-')
+  if (import.meta.env.DEV || isDebugPage) {
     const devToken = localStorage.getItem("dev_access_token");
     if (devToken && devToken.startsWith("eyJ")) {
       console.log("[api.js getToken] dev access token 사용");
@@ -333,4 +335,10 @@ export const api = {
     request(`/api/jobs/${jobId}/chat-conversations/${conversationId}`, {
       method: 'DELETE',
     }),
+
+  // 디버그: 하이라이트 좌표 어긋남 진단 (스캔 PDF searchable 텍스트 레이어)
+  debugHighlightCoords: (jobId, { query, page_no, dpi }) => {
+    const params = new URLSearchParams({ query, page_no: String(page_no), dpi: String(dpi), _t: String(Date.now()) })
+    return request(`/api/jobs/${jobId}/debug/highlight-coords?${params.toString()}`)
+  },
 }

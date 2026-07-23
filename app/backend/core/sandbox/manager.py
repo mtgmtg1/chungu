@@ -255,6 +255,9 @@ class SandboxManager:
         sanitized = sanitize_command(command)
 
         # Step 3: nerdctl exec 로 명령 실행
+        # --workdir /workspace/agent_output: 에이전트가 상대경로로 파일을 생성하면
+        # 자동으로 agent_output/ (수집 대상 디렉토리)에 저장되도록 기본 작업 디렉토리 설정.
+        # 절대경로(/workspace/original/... 등)는 그대로 사용 가능.
         cmd_timeout = timeout or 300  # 기본 5분
         cmd = [
             "nerdctl",
@@ -262,6 +265,7 @@ class SandboxManager:
             "k8s.io",
             "exec",
             "--user", "1000:1000",
+            "--workdir", "/workspace/agent_output",
             container_name,
             "/bin/sh", "-c", sanitized,
         ]

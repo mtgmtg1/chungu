@@ -8,6 +8,204 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 디버그 전용 패널 토글 페이지 라우트 추가 — 2026-07-23
+
+- **배경**: 마크다운 결과 페이지에서 좌·우 패널이 완전히 숨겨지는 문제를 진단하기 위해, 로그인을 우회하고 패널 보이기/숨기기를 독립적으로 테스트할 수 있는 디버그 페이지가 필요함.
+- **변경 내용**:
+  - `app/frontend/src/main.jsx`: `DebugPanelTogglePage` import 및 `/dev/debug-panel-toggle` 라우트 추가.
+  - `app/frontend/src/pages/DebugPanelTogglePage.jsx` (신규): 패널 토글 상태를 독립적으로 제어·시각화하는 디버그 페이지.
+- **핵심 파일**: `app/frontend/src/main.jsx`, `app/frontend/src/pages/DebugPanelTogglePage.jsx`.
+
+### 드로잉 도구 키보드 단축키 언어 무관 처리 + 형광펜 설정 분리 + 패널 상태 localStorage 저장 — 2026-07-23
+
+- **배경**: 드로잉 도구 단축키가 한글 입력 모드에서 동작하지 않았고, 펜과 형광펜 색상/굵기가 공유 상태라 전환 시 설정이 초기화됨. 패널 토글 상태도 새로고침 후 유지되지 않았음.
+- **변경 내용**:
+  - `FlowViewer.jsx`: `e.key` → `e.code`로 변경하여 한/영 입력 언어와 무관하게 단축키 동작 (KeyZ/KeyX/KeyV/KeyP/KeyH/KeyS/KeyT/KeyE/KeyN/KeyL/KeyF).
+  - `useFlowDrawing.js`: 펜/형광펜 색상·굵기를 독립 상태로 분리, localStorage 저장하여 새로고침 후에도 유지. 형광펜 기본값 `#eab308`/16px, 펜 `#6366f1`/4px.
+  - `DrawingToolbar.jsx` / `DrawingOverlay.jsx`: 형광펜 굵기 컨트롤 분리, 도구 전환 시 해당 도구의 저장된 설정 로드.
+  - `JobResultPage.jsx` / `PagedResultViewer.jsx`: 패널 토글 상태를 localStorage에 저장하여 새로고침 후에도 유지.
+  - `index.css`: 형광펜 관련 스타일 추가.
+- **테스트**: `PagedResultViewer.test.jsx`에 패널 토글 상태 영속성 테스트 추가.
+- **핵심 파일**: `app/frontend/src/components/FlowViewer.jsx`, `app/frontend/src/hooks/useFlowDrawing.js`, `app/frontend/src/components/flow/DrawingToolbar.jsx`, `app/frontend/src/components/flow/DrawingOverlay.jsx`, `app/frontend/src/pages/JobResultPage.jsx`, `app/frontend/src/components/PagedResultViewer.jsx`.
+
+### .md 파일 업로드 및 파싱 허용 — markdown 타입 전체 파이프라인 지원 — 2026-07-23
+
+- **배경**: 파일 업로드 시 `.md` 확장자가 `MEDIA_EXTENSIONS`와 프론트엔드 `ACCEPT_TYPES`에 없어 업로드가 차단됨. 마크다운은 텍스트가 그대로 결과이므로 OCR/LLM 처리 없이 파싱 가능.
+- **변경 내용**:
+  - `app/backend/core/media_loader.py`: `MEDIA_TYPES`에 `"markdown": (".md",)` 추가. `detect_file_type`이 `.md` 파일을 `"markdown"` 타입으로 감지.
+  - `app/backend/api/jobs/_shared.py`: `MEDIA_EXTENSIONS`에 `.md` 추가 (업로드 허용). `_build_source_file_item`의 허용 타입 목록에 `"markdown"` 추가, `"file"`과 동일하게 다운로드 URL만 생성. `_analyze_extracted_files`에 markdown 분기 추가 (페이지/미디어 비용 없이 `total_files`에만 카운트).
+  - `app/frontend/src/components/UploadWidget.jsx`: `ACCEPT_TYPES`에 `.md` 추가.
+  - `app/backend/workers/tasks/job_tasks.py` (`run_job`): 파일 분류 루프에 `markdown_files` 리스트 추가. md 파일은 텍스트를 `read_text(encoding="utf-8")`로 직접 읽어 `file_markdowns_by_name`에 저장 → `result_markdown`으로 사용. `total_to_process`에 markdown 파일 포함. `extracted_info` 구축 시 md 파일을 Storage에 업로드.
+  - `app/backend/workers/tasks/job_tasks.py` (`run_job_added_files`): 파일 분류 루프에 markdown 분기 추가. md 파일 텍스트를 직접 `result_markdown`으로 설정, 상태 `done`으로 표시.
+  - `app/backend/api/jobs/uploads.py` (`confirm_add_files`): Storage 업로드 섹션에 markdown 분기 추가.
+- **비용 모델**: md 파일은 페이지/이미지/오디오/비디오가 0이므로 `_calculate_work_units`가 0을 반환 — 사용자 비용 발생 없음.
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 295 passed. `detect_file_type(Path("test.md"))` → `"markdown"` 확인.
+- **⚠️ 회귀 방지 경고**:
+  1. `media_loader.detect_file_type`이 `"markdown"`을 반환하므로, 파일 타입 분기에서 `"markdown"`을 명시적으로 처리하지 않으면 "지원하지 않는 파일 타입" 에러가 발생한다. `run_job`과 `run_job_added_files` 모두 markdown 분기를 포함해야 함.
+  2. md 파일은 비용이 0이지만 `total_files`에는 카운트되어야 한다. `_analyze_extracted_files`의 markdown 분기를 제거하면 단일 md 업로드 시 `job.total_files = 0`이 될 수 있음.
+- **핵심 파일**: `app/backend/core/media_loader.py`, `app/backend/api/jobs/_shared.py`, `app/frontend/src/components/UploadWidget.jsx`, `app/backend/workers/tasks/job_tasks.py`, `app/backend/api/jobs/uploads.py`.
+
+### 결과 페이지 파일탭 업로드 500 오류 수정 — confirm_add_files settings 미임포트 — 2026-07-23
+
+- **증상**: 결과 표시 페이지의 파일 탭 업로드 버튼으로 파일 추가 시 `POST /api/jobs/{id}/confirm-add-files` 가 500 반환. `NameError: name 'settings' is not defined` at `uploads.py:671`.
+- **근본 원인**: `app/backend/api/jobs/uploads.py` 의 `confirm_add_files` 가 `settings.data_dir` 을 참조하지만, 해당 모듈은 `from ... import settings_store` 만 임포트하고 `from ...config import settings` 를 임포트하지 않음. `api/jobs.py` 단일 파일에서 패키지로 분할(`api/jobs/`) 시 누락된 임포트. `_shared.py` 에는 `from ...config import settings` 가 있으나 `uploads.py` 로 전파되지 않음.
+- **수정 내용**: `app/backend/api/jobs/uploads.py` 에 `from ...config import settings` 추가.
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q -k "uploads or add_files or confirm"` → 3 passed. a1 dev 재배포 후 200 확인 예정.
+- **⚠️ 회귀 방지 경고**:
+  1. `api/jobs/` 패키지의 각 서브모듈은 자신이 사용하는 심볼을 직접 임포트해야 한다. `_shared.py` 에서 임포트한 심볼이 서브모듈로 전파되지 않는다. 새 서브모듈에서 `settings`, `cache`, `supabase_client` 등을 사용할 때는 반드시 해당 모듈 상단에서 임포트할 것.
+- **핵심 파일**: `app/backend/api/jobs/uploads.py`.
+
+### 로컬 데브 모드 마크다운 에디터 AI "Invalid API key" 해결 — VITE_DEV_API_KEY envDir 불일치 수정 — 2026-07-23
+
+- **증상**: 로컬 데브 모드(`npm run dev`)에서 마크다운 에디터의 AI 기능(AiMenu `useCompletion` → `/api/v1/ai/generate`, 에이전트 채팅 `useChat` → `/api/ai/chat`) 사용 시 백엔드가 401 "Invalid API key" 반환.
+- **근본 원인**: `vite.config.js`의 `envDir: '..'` 설정으로 인해 Vite는 `app/` 디렉토리의 `.env*` 파일만 로드. 그러나 `VITE_DEV_API_KEY`가 `app/frontend/.env.local`에만 있어 Vite가 로드하지 못함. 결과적으로 `import.meta.env.VITE_DEV_API_KEY`가 `undefined`가 되고, `api.js`·`useAgentChat.ts`·`AiMenu.jsx`의 폴백값 `chu_live_testkey12345` (유효하지 않은 더미 키)가 사용되어 백엔드 `api_key_auth.get_current_api_key`가 401 반환.
+- **수정 내용**:
+  - `app/.env.development.local`: `VITE_DEV_API_KEY=chu_live_ff9VN9qmUQajrID2FudLB-sYAYwzGs9_rAwy6mUcKxM` 추가. 다른 `VITE_DEV_*` 변수들과 같은 파일에 배치하여 `envDir: '..'` 로 Vite가 정상 로드.
+  - `app/frontend/.env.local`: 더 이상 로드되지 않음을 안내하는 주석으로 대체. 혼란 방지.
+- **검증**: 잘못된 키 `chu_live_testkey12345` → 401 재현, 올바른 키 → 200 확인. Vite 재시작 후 `import.meta.env.VITE_DEV_API_KEY`에 실제 키 주입 확인.
+- **⚠️ 회귀 방지 경고**:
+  1. **`vite.config.js`의 `envDir`가 `'..'`(= `app/`)이므로, 모든 `VITE_` 변수는 `app/` 디렉토리의 `.env*` 파일에 있어야 한다.** `app/frontend/.env*`는 Vite에 의해 로드되지 않으므로 `VITE_` 변수를 거기에 두지 말 것.
+  2. **`VITE_DEV_API_KEY` 폴백값 `chu_live_testkey12345`는 유효하지 않은 더미 키다.** env 파일에 실제 키가 없으면 마크다운 에디터 AI 및 에이전트 채팅이 401로 실패한다. env 파일 로딩 문제를 의심할 것.
+- **핵심 파일**: `app/.env.development.local`, `app/frontend/.env.local`, `app/frontend/vite.config.js` (참조용, 변경 없음).
+
+### 마크다운 에디터 AI 편집 diff 승인 패널 + 에이전트 채팅 UI 개선 — 2026-07-23
+
+- **배경**: 마크다운 에디터의 AI 메뉴(AiMenu)가 AI 생성 결과를 에디터에 즉시 삽입하여 사용자가 변경사항을 사전 검토할 수 없었음. 에이전트 채팅 메시지/도구 UI도 개선 필요.
+- **변경 내용**:
+  - **`MarkdownDiffApproval.jsx` 신규** (`app/frontend/src/components/ai-chat/`): `diff` 라이브러리의 `diffLines`로 원본·편집본 라인 단위 diff 렌더링 (추가=녹색, 삭제=적색). 수락 시 `api.saveResultPage` 직접 호출 후 승인 콜백, 거부 시 취소. `MarkdownDiffApproval.test.jsx`로 테스트.
+  - **`AiMenu.jsx`**: `useCompletion`의 `onFinish`에서 즉시 `applyResultToEditor` 호출 대신 `pendingDiff` 상태로 diff 승인 패널 표시. 사용자 수락 시에만 에디터에 삽입. `continue` 옵션은 빈 원본 사용.
+  - **`AgentChatModal.jsx`**: 에이전트 채팅 모달 개선 (컨텍스트 표시, 배경 클릭 닫기 등).
+  - **`Message.jsx` / `Messages.jsx` / `Tool.jsx`**: 에이전트 채팅 메시지 렌더링 및 도구 카드 UI 개선. `Messages.test.jsx` 테스트 추가.
+  - **`ai-backend/src/tools/markdown.ts`**: 마크다운 도구 로직 개선, `markdown.test.ts` 테스트 확장.
+  - **`chat/route.ts`**: AI 백엔드 채팅 라우트 minor 수정.
+- **핵심 파일**: `app/frontend/src/components/ai-chat/MarkdownDiffApproval.jsx` (신규), `app/frontend/src/components/AiMenu.jsx`, `app/frontend/src/components/AgentChatModal.jsx`, `app/frontend/src/components/ai-chat/Message.jsx`, `app/frontend/src/components/ai-chat/Messages.jsx`, `app/frontend/src/components/ai-chat/Tool.jsx`, `app/ai-backend/src/tools/markdown.ts`, `app/ai-backend/src/chat/route.ts`.
+
+### PagedResultViewer 패널 토글 — 좌·우 패널 expand/collapse imperative 제어 — 2026-07-23
+
+- **배경**: 마크다운 모드에서 헤더의 좌·우 탭 토글이 내부 `react-resizable-panels` Panel에 전달되지 않아 패널이 열리지/닫히지 않았음.
+- **변경 내용**:
+  - `app/frontend/src/components/PagedResultViewer.jsx`: `leftPanelOpen` / `rightPanelOpen` prop 추가. Panel에 `ref` + `collapsible` + `collapsedSize={0}` 설정. `useEffect`로 prop 변경 시 `panelRef.expand()` / `panelRef.collapse()` 호출.
+  - `app/frontend/src/pages/JobResultPage.jsx`: 패널 토글 상태를 PagedResultViewer에 전달.
+- **핵심 파일**: `app/frontend/src/components/PagedResultViewer.jsx`, `app/frontend/src/pages/JobResultPage.jsx`.
+
+### 코드베이스 리팩토링 및 청소 — 대형 파일 분할 + 프론트엔드 번들 최적화 — 2026-07-23
+
+- **배경**: `api/jobs.py` (5005줄)와 `workers/tasks.py` (1632줄)가 단일 파일로 유지보수 어려움. 루트에 산재한 일회성 스크립트/산물 파일들. 프론트엔드 메인 번들 3,350kB로 초기 로드 지연.
+- **7단계 리팩토링 (브랜치 `refactor/cleanup-and-split` → develop 머지)**:
+  1. **저장소 청소**: 루트 스크립트/산물 20개 삭제, 구 플랜 문서 삭제, `.playwright-mcp/`·`local_dev.db` 추적 해제, `app/backend/` 수동 스크립트를 `scripts/manual/`로 이동. (-7,741줄)
+  2. **공통 헬퍼 추출**: `_parse_columns`, `_convert_format_alias`, `_upload_ocr_layout` 3개 중복 함수를 `core/job_helpers.py`로 통합. Test-First로 검증.
+  3. **`api/jobs.py` 분할**: 5005줄 단일 파일 → `api/jobs/` 패키지 (9개 모듈). 모든 라우터 경로와 응답 스키마 100% 유지.
+  4. **`workers/tasks.py` 분할**: 1632줄 → `workers/tasks/` 패키지 (7개 모듈). Celery `name=` 문자열 100% 유지로 브로커 호환성 보장.
+  5. **PDF 좌표 변환 통합 확인**: `core/pdf_coordinate_transform.py` 기반 통합이 이전 커밋에서 완료됨을 확인. 회귀 테스트 17개 통과.
+  6. **`api/v1/jobs.py` 중복 분석**: v1 API는 v2와 다른 결제 모델(`points_service` vs `subscription_service`)을 사용하므로 의도적으로 다른 구현. 안전한 통합 대상 아님.
+  7. **프론트엔드 청크 최적화**: `vite.config.js`에 `manualChunks` 추가. 메인 청크 3,350kB → 1,361kB (**59% 감소**). PDF 뷰어·3D·TipTap·Supabase 등을 별도 청크로 분리.
+- **패키지 구조**:
+  - `api/jobs/`: `__init__.py` (router 조립 + 테스트 호환성 re-export), `_shared.py` (46개 공유 헬퍼), `uploads.py`, `lifecycle.py`, `download.py`, `result.py`, `preview.py`, `annotations.py`, `admin.py`
+  - `workers/tasks/`: `__init__.py` (태스크 re-export), `_helpers.py` (7개 비-태스크 헬퍼), `job_tasks.py`, `maintenance.py`, `conversion.py`, `annotation_tasks.py`, `ediscovery_tasks.py`
+- **테스트 호환성**: `__init__.py`에서 모든 test-imported 심볼을 re-export. 테스트의 `patch("backend.api.jobs.supabase_client")` 등은 `backend.api.jobs._shared.supabase_client`로 업데이트.
+- **검증**: 295 backend tests pass (리팩토링 전후 제로 회귀). develop의 4개 jobs.py 커밋(line-width expansion, paragraph line assignment, Check 5/6/7 validation, search_job_text line mode)이 분할된 모듈에 정상 포팅됨.
+- **⚠️ 주의사항**:
+  1. `api/jobs.py`와 `workers/tasks.py`는 더 이상 단일 파일이 아님. 새 코드는 적절한 서브모듈에 추가할 것.
+  2. `api/jobs/_shared.py`의 헬퍼를 수정할 때는 여러 서브모듈에 영향이 가는지 확인할 것.
+  3. 테스트에서 `backend.api.jobs.X`를 patch할 때, X가 `_shared.py`에 있으면 `backend.api.jobs._shared.X`로, `annotations.py`에 있으면 `backend.api.jobs.annotations.X`로 patch 경로를 지정할 것.
+  4. Celery 태스크 이름은 `backend.workers.tasks.run_job` 형식을 유지. `@celery.task(name="backend.workers.tasks.xxx")` 데코레이터의 name= 문자열을 변경하지 말 것.
+- **핵심 파일**: `app/backend/api/jobs/` (패키지), `app/backend/workers/tasks/` (패키지), `app/backend/core/job_helpers.py`, `app/frontend/vite.config.js`.
+
+### 스캔 PDF 하이라이트 y좌표 어긋남 근본 원인 해결 — OCR layout 좌표계 반전 + 교차 검증 로직 추가 — 2026-07-23
+
+- **증상**: 스캔 PDF를 searchable PDF로 변환 후 하이라이트가 텍스트와 어긋남. 특히 표 행에서 y좌표가 반전되어 아래쪽 행에 달려야 할 주석이 위쪽에 표시됨.
+- **근본 원인 (2가지)**:
+  1. **`_split_bbox_into_rows` 행 배정 방향 반전** (`app/backend/core/ocr_layout.py`): 표 block_bbox를 행으로 분할할 때 `y0 + i*row_height` (첫 행이 y0에 가깝게)로 배정했으나, 이 bbox는 `_normalize_bbox`에서 y축이 한 번 뒤집힌 "normalized bottom-left" 좌표계이므로, 첫 HTML 행이 y1(큰 값)에 가깝게 배정되어야 변환 후 표의 맨 위에 표시됨. 기존 로직은 표 내부 행 순서가 뒤집히는 버그를 유발.
+  2. **`search_job_text` OCR 폴백 불필요한 y반전** (`app/backend/api/jobs.py`): OCR 폴백 요소의 `bbox_pdf`가 `_normalize_bbox`(1차 y반전) + `_normalized_bbox_to_pdf_user`(2차 y반전)를 거쳐 device-space와 동일한 좌표계가 됨에도 불구하고, 추가로 `pdf_user_to_device`(3차 y반전)를 적용하여 y가 반전됨. 총 3번 뒤집혀 홀수 → 반전.
+- **수정 내용**:
+  - `app/backend/core/ocr_layout.py`: `_split_bbox_into_rows`의 행 배정 공식을 `y0 + i*row_height` → `y1 - (i+1)*row_height` (역순)로 변경. 첫 HTML 행이 raw bbox의 y1(변환 후 표의 맨 위)에 가깝게 배정. `_extract_table_row_items`(`pdf_text_layer.py`)와 동일한 패턴.
+  - `app/backend/api/jobs.py`: `search_job_text`의 OCR 폴백 경로에서 `pdf_user_to_device` 변환 제거. `bbox_pdf`는 이미 device-space이므로 추가 변환 없이 그대로 사용. 교차 검증 로직(`_cross_validate_matches_with_ocr_layout`)에서도 동일하게 변환 제거.
+  - `app/backend/api/jobs.py`: `_cross_validate_matches_with_ocr_layout` 함수 추가 — `search_for` 결과와 OCR layout 좌표를 교차 검증하여 y 차이가 페이지 높이의 10%를 초과하면 OCR layout y로 보정. 수정 전 코드로 생성된 기존 searchable PDF의 반전된 텍스트 레이어 문제를 런타임에 보정.
+- **테스트**:
+  - `app/backend/tests/test_split_bbox_into_rows.py`: 6개 테스트 (첫 행이 y1에 가깝게, 마지막이 y0에 가깝게, y 단조 감소, x 보존, 0행, 1행).
+  - `app/backend/tests/test_search_job_text_cross_validate.py`: 2개 테스트 (y 보정 적용, y 보정 미적용).
+  - `app/backend/tests/test_search_job_text_ocr_fallback_coords.py`: 기존 2개 테스트를 새 좌표계 이해(device-space 직접 반환)에 맞게 업데이트.
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 268 passed. 기존 job(`8c8bef99...`)의 searchable PDF 재생성 후 `search_for` 좌표 확인 — 표 행0(수용기관) y0=178(표 상단), 표 행9(예약일시) y0=562(표 하단)로 HTML 순서와 시각적 위치가 일치. 디버그 페이지(`/dev/debug-highlight-coords`)로 pixel 좌표 시각적 확인.
+- **핵심 파일**: `app/backend/core/ocr_layout.py`, `app/backend/api/jobs.py`, `app/backend/tests/test_split_bbox_into_rows.py`, `app/backend/tests/test_search_job_text_cross_validate.py`, `app/backend/tests/test_search_job_text_ocr_fallback_coords.py`.
+- **⚠️ 회귀 방지 경고**:
+  1. **OCR layout의 `bbox_pdf`는 device-space(y=0 상단)이다.** `_normalize_bbox` + `_normalized_bbox_to_pdf_user`의 이중 y반전 결과이므로, 추가 `pdf_user_to_device` 변환을 적용하면 y가 반전된다. 절대 추가 변환을 적용하지 말 것.
+  2. **`_split_bbox_into_rows`의 행 배정은 역순이어야 한다.** raw bbox가 "normalized bottom-left" 좌표계이므로 첫 HTML 행이 y1(큰 값)에 가깝게 배정되어야 변환 후 표의 맨 위에 표시된다. `y0 + i*row_height`가 아니라 `y1 - (i+1)*row_height`를 사용할 것.
+  3. **교차 검증 로직은 OCR layout이 device-space라는 전제하에 작동한다.** OCR layout 좌표계가 변경되면 교차 검증 로직도 함께 업데이트해야 함.
+
+### 에이전트 마크다운 편집 미반영 근본 원인 해결 — _get_markdown_content 후보 선택 + JobResultPage loadPreview 수정 — 2026-07-23
+
+- **증상**: 에이전트 도구(`insert_text`/`replace_text` + `apply_edits`)로 마크다운을 편집해도 UI(에디터)에 반영되지 않음. `apply_edits`는 `{"saved":true}`를 반환하지만, 이후 `get_markdown` 및 preview에서 변경사항이 보이지 않음.
+- **근본 원인 (2가지)**:
+  1. **백엔드 `_get_markdown_content` 후보 선택 로직 버그** (`app/backend/api/jobs.py`): `_marker_count`가 파일 마커(`<!-- 파일 N -->`) 수가 같을 때 page 마커(`<!-- Page N -->`) 수를 tie-breaker로 사용. `save_result_page`는 저장 시 `_PAGE_MARKER_RE.sub`로 page 마커를 제거하므로, 편집본(edited_md)은 파일 마커만 가지고 원본(md)은 파일+page 마커를 가져 원본이 더 높은 점수를 받아 선택됨 → 편집 내용 무시.
+  2. **프론트엔드 `JobResultPage.loadPreview`가 원본 마크다운 사용** (`app/frontend/src/pages/JobResultPage.jsx`): `fileMarkdowns`를 `preview.source_files[].result_markdown`(변환 시점 원본)에서 가져왔으나, 이 값은 edited_md가 아님. 백엔드 수정만으로는 preview 응답의 `markdown` 필드는 수정되지만, 프론트엔드가 `source_files[].result_markdown`을 우선 사용하므로 여전히 원본 표시.
+- **수정 내용**:
+  - `app/backend/api/jobs.py`: `_marker_count`를 `_file_marker_count`로 단순화 — 파일 마커 수만 비교, 같으면 `candidates` 순서상 먼저 추가된 edited_md 우선. page 마커는 tie-breaker에서 제외.
+  - `app/frontend/src/pages/JobResultPage.jsx`: `loadPreview`에서 `preview.markdown`(=edited_md 포함)을 `<!-- Page N -->` 마커로 분할하여 `fileMarkdowns`로 사용. `source_files[].result_markdown`은 폴백으로만 사용.
+  - `app/backend/tests/test_get_markdown_content_edited_priority.py`: 3개 회귀 테스트 (편집본 우선, 테스트 제목 반영, 원본 우선 조건).
+- **디버그 페이지**: `/dev/debug-markdown-agent?jobId={id}` — dev bypass 자동 로그인, 마크다운 에디터 + 에이전트 채팅, 각 단계별 상세 로그 패널 (API 호출/응답, Tiptap 내용, 상태 변화). `app/frontend/src/pages/DebugMarkdownAgentPage.jsx`.
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 260 passed. `cd app/frontend && npx vitest run` → 66 passed. a1 서버 재배포 후 실제 `JobResultPage`에서 에이전트가 추가한 `# 테스트 제목`이 표시됨을 브라우저로 확인.
+- **⚠️ 회귀 방지 경고**:
+  1. `_get_markdown_content`의 후보 선택 기준을 변경할 때, `save_result_page`가 page 마커를 제거한다는 점을 반드시 고려할 것. page 마커 수를 tie-breaker로 사용하면 편집본이 원본에 우선하지 못함.
+  2. 프론트엔드에서 `source_files[].result_markdown`은 변환 시점 원본이지 edited_md가 아님. 에이전트 편집 반영 여부를 확인하려면 `preview.markdown`(=`_get_markdown_content` 결과)을 사용할 것.
+- **핵심 파일**: `app/backend/api/jobs.py`, `app/frontend/src/pages/JobResultPage.jsx`, `app/backend/tests/test_get_markdown_content_edited_priority.py`, `app/frontend/src/pages/DebugMarkdownAgentPage.jsx`.
+
+### 스캔 PDF 표 내부 행 순서 반전 근본 원인 해결 — _extract_table_row_items 행 배정 방향 수정 — 2026-07-22
+
+- **진짜 근본 원인 (이전 "search_job_text 좌표계 통일" 수정으로도 해결되지 않았던 문제)**:
+  - 사용자 재현: 표에서 아래쪽 행(예: "예약일시")에 달려야 할 주석이 위쪽 행(예: "수용기관") 위치에 표시되고, 그 반대도 발생. 표가 아닌 제목/문단은 정상 표시됨.
+  - PyMuPDF `insert_text`/`search_for`는 실제로 **device-space(y=0 상단, y↓)**를 사용함 (공식 문서로 재확인: `page.rect`, `get_text`, `insert_text` 모두 MuPDF 네이티브 top-left 좌표계). 이전 조사에서 `insert_text`로 삽입 후 `search_for`로 재검색하는 방식은 두 함수가 같은 내부 좌표계를 공유한다는 것만 증명하는 순환 검증이었음 — `get_pixmap()` 렌더링으로 직접 확인하여 이를 정정함.
+  - `pdf_text_layer._convert_bbox_to_pdf_user`(`normalized_top_left_to_pdf_user`)는 "top-left normalized(y=0 상단)" 입력을 "PDF user-space(y=0 하단)"로 뒤집는 변환을 적용하는데, 이 결과값이 `_insert_invisible_text`를 거쳐 그대로 `page.insert_text()`의 device-space y로 사용됨. **단일 블록(제목, 문단, 푸터)은 "잘못된 가정으로 한 번 뒤집고, 그 결과를 다시 device-space로 잘못 해석"하는 두 번의 오류가 우연히 상쇄되어 절대 위치가 정상으로 보임.**
+  - 그러나 `_extract_table_row_items`는 표 bbox를 HTML 행 순서대로 `row_y0 = y0 + i*row_height` (raw y가 작은 쪽부터 첫 행 배정)로 분할하는데, 이 값이 이후 파이프라인을 거치면 **첫 행이 표의 "아래쪽 끝"에, 마지막 행이 표의 "위쪽 끝"에 배치**되어 표 내부에서만 행 순서가 뒤집히는 버그가 발생. 실제 job 데이터로 검증: 표 전체 device-space 범위(165.9~588.6)에서 HTML 첫 행("수용기관")이 546.3(아래쪽 끝)에, 마지막 행이 위쪽에 배치됨을 확인.
+  - 이전 커밋(같은 날)에서 시도한 "search_job_text OCR 폴백 좌표계를 device-space로 통일" 수정은 여전히 유효하지만, 이 특정 "표 내부 행 뒤바뀜" 증상의 근본 원인은 아니었음(그 수정은 search_for가 0건일 때만 발동하는 별개의 OCR 폴백 경로에 대한 것이고, 이번 문제는 searchable PDF 생성 자체에서 발생).
+- **수정 내용**:
+  - `app/backend/core/pdf_text_layer.py`: `_extract_table_row_items`의 행 배정 공식을 `row_y0 = y0 + i*row_height` → `row_y0 = y1 - (i+1)*row_height` (역순)로 변경. 첫 HTML 행이 raw bbox의 `y1`(변환 후 표의 맨 위)에 가깝게 배정되도록 수정.
+  - `app/backend/tests/test_extract_table_row_items_order.py`: 표 전체 device-space 범위 대비 첫/마지막 행의 위치, 10행 표에서 y가 HTML 순서대로 단조 증가하는지 검증하는 회귀 테스트 추가.
+- **검증**: 실제 job(`8c8bef99...`, "변호인 접견예약 확인증") 데이터로 searchable PDF 재생성 후 `search_for` 좌표 확인 — 표 행0(수용기관) y0=178(표 상단), 표 행9(예약일시) y0=562(표 하단)로 HTML 순서와 시각적 위치가 일치함을 확인. `cd app/backend && venv/bin/python -m pytest tests/ -q` → 249 passed. **사용자가 실제 스캔 PDF에서 표 내부 행 뒤바뀜이 해결되었음을 확인함 (2026-07-22).**
+- **핵심 파일**: `app/backend/core/pdf_text_layer.py`, `app/backend/tests/test_extract_table_row_items_order.py`.
+- **⚠️ 회귀 방지 경고 (이 좌표계 버그는 2026-07-20~22 사이 여러 차례 재발한 이력이 있음)**:
+  1. **`insert_text`/`search_for`가 어느 좌표계인지 검증할 때, 같은 함수 쌍으로 삽입 후 재검색하는 방식은 순환 논리다.** 반드시 `page.get_pixmap()`으로 렌더링한 이미지를 육안/자동으로 확인해 절대 위치를 검증할 것.
+  2. **PyMuPDF는 항상 device-space(MuPDF 네이티브, 원점 좌상단, y↓)를 사용한다.** `page.rect`, `get_text()`, `insert_text()`, `search_for()` 전부 동일. "PDF user-space(원점 좌하단, y↑)"로 변환이 필요한 것은 원본 PDF 파일의 `/MediaBox` 등 PDF 스펙 좌표를 직접 다룰 때뿐이다.
+  3. **단일 블록(제목/문단/푸터)의 절대 위치가 정상으로 "보인다"고 해서 좌표 변환 체인이 올바르다고 단정하지 말 것.** 두 번의 독립적인 뒤집힘 오류가 우연히 상쇄되어 절대 위치는 맞아도, 행 분할처럼 "상대적 순서"를 다루는 로직에서는 오류가 그대로 드러난다. 반드시 **다중 행/다중 요소의 순서**까지 함께 검증해야 한다.
+  4. `_extract_table_row_items`를 다시 수정할 경우, `app/backend/tests/test_extract_table_row_items_order.py`의 두 회귀 테스트(첫 행이 표 상단에, 마지막 행이 표 하단에 위치 / 10행 표에서 y가 단조 증가)를 반드시 통과시킬 것.
+
+### 스캔 PDF 표 내부 y좌표 반전 근본 원인 해결 — search_job_text OCR 폴백 좌표계 통일 — 2026-07-22
+
+- **근본 원인**:
+  - `search_job_text` 엔드포인트가 두 경로에서 서로 다른 좌표계를 반환하고 있었음.
+    - `search_for` 경로 (PyMuPDF): **device-space(y=0 상단)** 반환. 비표 텍스트는 대부분 이 경로.
+    - OCR 폴백 경로 (`build_agent_elements_from_ocr_layout`): **PDF user-space(y=0 하단)** 반환. 스캔 PDF에서 `search_for`가 0건일 때(특히 표 텍스트) 이 경로로 빠짐.
+  - 에이전트(`annotations.ts`)는 항상 `input_space='device'`로 저장하므로, OCR 폴백의 PDF user-space 좌표가 device-space로 잘못 해석되어 **y 반전(상하 거울)** 발생.
+  - "표에서만 반전" 현상: 표 텍스트가 `search_for`에서 실패하여 OCR 폴백으로 빠지는 빈도가 비표보다 높기 때문 (파이프 구분자, 단어 분할, 텍스트 레이어 누락 등).
+- **수정 내용**:
+  - `app/backend/api/jobs.py`: `search_job_text`의 OCR 폴백 경로에서 `bbox_pdf`를 `pdf_user_to_device`로 변환하여 device-space로 통일. 응답에 `coordinate_space: "device"` 필드 추가.
+  - `app/ai-backend/src/tools/annotations.ts`: 주석/로그를 "PDF user-space"에서 "device-space"로 정정 (실제 코드는 이미 `'device'` 전송).
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 247 passed. `cd app/ai-backend && npm run build` → 성공. `cd app/ai-backend && npm test` → 64 passed. `cd app/frontend && npm run build` → 성공.
+- **핵심 파일**: `app/backend/api/jobs.py`, `app/ai-backend/src/tools/annotations.ts`, `app/backend/tests/test_search_job_text_ocr_fallback_coords.py`.
+
+### AI 주석 도구 texts 축약 배치 형식 도입 — 토큰 절약 최적화 — 2026-07-22
+
+- **기능 변경**:
+  - `app/ai-backend/src/tools/annotations.ts`: `add_text_highlight` 및 `add_text_callout` 도구에 `texts` (문자열 배열) 파라미터를 추가. 공통 `page_no`/`comment`/`color`/`opacity`를 공유하는 여러 텍스트를 하이라이트할 때 `items` 배열 대신 `texts` 배열 + 공유 파라미터로 호출하여 토큰을 대폭 절약.
+    - 이전: `{ items: [{text:"A", page_no:1, color:"yellow", comment:""}, {text:"B", page_no:1, color:"yellow", comment:""}, ...] }` (반복되는 파라미터로 토큰 낭비)
+    - 이후: `{ texts: ["A", "B", "C"], page_no: 1, color: "yellow", comment: "" }` (공통 파라미터 1회만 전달)
+  - `parseBatchInputs()` 함수의 입력 우선순위를 `texts > items > text[] > text` 순으로 재정의.
+  - `app/ai-backend/src/chat/route.ts`: 시스템 프롬프트의 배치 모드 가이드를 `texts` 축약 형식 우선으로 업데이트. `items`는 각 항목마다 다른 설정이 필요할 때만 사용하도록 가이드.
+- **하위 호환성**: 기존 `items` 배열, `text` 단일/배열 입력은 모두 그대로 작동.
+- **검증**: `cd app/ai-backend && npm run build` → tsc 성공.
+- **핵심 파일**: `app/ai-backend/src/tools/annotations.ts`, `app/ai-backend/src/chat/route.ts`.
+
+### 서처블 PDF 라인/단어 BBox 우선 적용 및 단어 분할 텍스트 레이어 배치 — 2026-07-22
+
+- **기능 및 좌표계 밀착 개선**:
+  - `app/backend/core/pdf_text_layer.py`:
+    1. **[Device-Space 좌표계 100% 보존]**: 검증된 Device-Space(y=0 상단) 좌표계를 전면 보존하여 Y축 반전 회귀 발생 차단.
+    2. **[라인/단어 BBox (`overall_ocr_res`) 우선 파싱 강제]**: 표(`table`) 블록 균등 분할 폴백 대신 PaddleOCR의 정밀 라인/단어 BBox(`rec_boxes`)를 최우선 100% 파싱하여 각 셀("형사", "01035172214" 등) 항목 위치에 핀포인트 1:1 배치.
+    3. **[띄어쓰기 단어 분할 배치]**: 문장의 단어(`words = text.split(" ")`) 단위로 가로 X좌표를 비례 분할 배치하여 자간 누적 이탈(Kerning Drift)을 완벽 차단.
+    4. **[PyMuPDF 글리프 높이 정밀화]**: `fitz.TOOLS.set_small_glyph_heights(True)` 설정 적용.
+  - `app/backend/tests/test_pdf_text_layer_baseline.py`: `TestWordSegmentationAndLinePriority` 유닛 테스트 추가 및 통과.
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 245 passed.
+- **핵심 파일**: `app/backend/core/pdf_text_layer.py`, `app/backend/tests/test_pdf_text_layer_baseline.py`.
+
 ### FreeTextCallout 화살표 리더 라인 연동 및 주석/형광펜 발화 의도 규칙 반영 — 2026-07-22
 
 - **기능 변경**:
@@ -59,21 +257,6 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 241 passed, `cd app/ai-backend && npm run build` → 성공, `cd app/frontend && npm run build` → 성공.
 - **핵심 파일**: `app/backend/api/jobs.py`, `app/backend/core/pdf_annotator.py`, `app/backend/core/pdf_user_annotator.py`, `app/ai-backend/src/lib/proof-api.ts`, `app/backend/tests/test_pdf_text_layer_baseline.py`, `app/backend/tests/test_jobs_result_json_annotations.py`.
 
-### AI 주석 y좌표 반전 재발 수정 — canonical 좌표계 도입 시점(c9e3c9c)으로 복구 — 2026-07-22
-
-- **원인**: 2026-07-21에 canonical 좌표계를 further 발전시킨 일련의 커밋들(4086288, 414107a, 9369ace, deb1689, 78cf1bd, 588cbb9, d4364c3, 9733b5d, 625c115, e7e2bf3, 1455164, 0ba16d9, 2f994ea, 5dca4b1, f5634f2, d883dea, bdf7126, 7564820, af5deba/602676a)이 device-space ↔ pdf_user-space 직접 변환을 canonical 경유 변환으로 교체하면서 y-flip이 재발. job 46557a21a74547518da300dc6de96b75(2026-07-20 19:13 생성) 시점에는 정상 작동했으나, 이후 변경으로 AI 에이전트가 추가한 주석의 y좌표가 다시 반전되어 표시됨.
-- **수정**: canonical 좌표 도입 직후 안정 시점인 `c9e3c9c`(2026-07-20 13:14)로 7개 핵심 파일을 checkout.
-  - `app/backend/core/pdf_annotator.py`: `_rect_to_canonical_rect`/`_device_annotation_to_canonical` 대신 `_rect_to_embedpdf_rect`(device-space 직접 변환) 사용.
-  - `app/backend/core/pdf_user_annotator.py`: `_convert_annotations_to_canonical`/`_convert_annotation_item` 등 canonical 경유 변환 함수 제거, `_convert_annotation_to_pdf_user`/`_convert_annotation_to_device_space` 직접 변환 복원.
-  - `app/backend/core/pdf_annotate_converter.py`: `_build_canonical_annotations_document`/`_extract_annotations_from_document`/`_page_dimensions` 제거, flat list 저장 복원.
-  - `app/backend/api/jobs.py`: `save_user_annotations`/`_merge_annotation_jsons`/`_load_all_annotations`/`get_job_annotations`/`get_job_result_json`/`update_job_annotation`/`_initialize_user_annotations_json`/`preview_job`를 c9e3c9c 버전으로 복원. canonical document 처리 제거, device-space ↔ pdf_user-space 직접 변환 사용.
-  - `app/frontend/src/components/SourcePanel.jsx`: `canonicalToDeviceAnnotation`/`canonicalToDeviceRect`/`canonicalToDevicePoint`/`normalizeAnnotationsJson`(canonical 분기) 제거, flat list 그대로 렌더링 복원.
-  - `app/frontend/src/components/PdfViewer.jsx`: c9e3c9c 버전으로 복원.
-  - `app/ai-backend/src/tools/annotations.ts`: c9e3c9c 버전으로 복원. 배치 주석, sticky note, line highlight 도구 제거, 단일 주석 도구 복원.
-- **손실 기능**: c9e3c9c 이후 추가된 기능(배치 주석 배열 입력, per-file searchable PDF, merged_annotations.json 자동 재생성, sticky note/line highlight 도구, callout→sticky note 변경, 다중 매개변수 목록 지원)은 모두 제거됨. 필요한 경우 별도 재개발 필요.
-- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 240 passed. `cd app/ai-backend && npm run build` → 성공. `cd app/frontend && npm run build` → 성공.
-- **핵심 파일**: `app/backend/core/pdf_annotator.py`, `app/backend/core/pdf_user_annotator.py`, `app/backend/core/pdf_annotate_converter.py`, `app/backend/api/jobs.py`, `app/frontend/src/components/SourcePanel.jsx`, `app/frontend/src/components/PdfViewer.jsx`, `app/ai-backend/src/tools/annotations.ts`.
-- **주의**: 기존 job의 `merged_annotations.json`/`user_annotations_*.json`이 canonical document 형식(dict with coordinate_system/page_dimensions)으로 저장되어 있는 경우, c9e3c9c 코드는 이를 list로 간주하지 않으므로 주석이 표시되지 않을 수 있음. 해당 job은 주석을 다시 추가하거나 JSON을 flat list로 변환해야 함.
 
 ### 프로 요금제 크레딧 혜택 상향 및 충전 크레딧 일치화 — 2026-07-21
 
@@ -201,34 +384,25 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **배포 시 주의**: 프론트엔드 전용 변경. 백엔드/DB 변경 없음.
 - **핵심 파일**: `app/frontend/src/components/timeline/EdiscoveryTimelinePanel.jsx`, `app/frontend/src/components/timeline/EdiscoveryDetailCard.jsx`, `app/frontend/src/components/timeline/TimelinePreviewCard.jsx`, `app/frontend/src/components/EDiscoveryViewer.jsx`, `app/frontend/src/pages/DevEdiscoveryTimelinePage.jsx`, `app/frontend/src/pages/DevEdiscoveryPage.jsx`, `app/frontend/src/index.css`, `app/frontend/package.json`.
 
-### SimpleEditor 고도화 — 노션 스타일 토글 헤딩 + TOC 미니맵 사이드바
+### SimpleEditor 고도화 — TOC 미니맵 사이드바 (토글 헤딩은 미구현)
 
-- **목표**: TipTap 에디터에 노션 스타일 "제목 토글로 아래 본문 숨기기/보이기" 기능과 우측 TOC(목차) 미니맵 사이드바를 추가. 긴 문서 작성 시 탐색성 개선.
+- **목표**: TipTap 에디터에 우측 TOC(목차) 미니맵 사이드바를 추가. 긴 문서 작성 시 탐색성 개선. (원래 노션 스타일 "제목 토글로 아래 본문 숨기기/보이기" 기능도 계획했으나 **현재 미구현** — `CollapsibleHeading.jsx`가 생성되지 않았고 `expandAllHeadings`/`collapseAllHeadings` 헬퍼, `ChevronsDownUp`/`ChevronsUpDown` 툴바 버튼, `.collapsible-heading-wrapper` CSS도 없음.)
 - **의존성 추가** (`app/frontend/package.json`):
   - `@tiptap/extension-heading@^3.27.1` — 커스텀 헤딩 확장 베이스.
   - `@tiptap/extension-table-of-contents@^3.27.1` — TOC anchor 수집.
   - `@tiptap/extension-unique-id@^3.27.1` — 헤딩에 고유 id 부여(TOC 스크롤 대상).
-- **Phase 1: CollapsibleHeading 확장** (`app/frontend/src/components/editor/CollapsibleHeading.jsx` 신규):
-  - `heading` 노드에 `collapsed` boolean attribute 추가. `ReactNodeViewRenderer`로 토글 버튼 + 본문 렌더링.
-  - ProseMirror plugin으로 `view.update` 후 같거나 상위 레벨의 다음 헤딩이 나올 때까지 형제 블록 DOM을 숨김.
-  - doc 구조는 변경하지 않고 view 레이어에서만 숨김 → `marked`/`turndown` 마크다운 라운드트립에 영향 없음.
-- **Phase 2: TocSidebar 컴포넌트** (`app/frontend/src/components/editor/TocSidebar.jsx` 신규):
+- **구현됨 — TocSidebar 컴포넌트** (`app/frontend/src/components/editor/TocSidebar.jsx`):
   - `TableOfContents` 확장의 `onUpdate`에서 anchors 배열 수신.
   - heading depth별 들여쓰기 + 활성 heading 하이라이트. 클릭 시 해당 heading id로 `scrollIntoView`.
   - 펼침/접힘 토글 버튼.
-- **Phase 3: SimpleEditor 통합** (`app/frontend/src/components/SimpleEditor.jsx`):
-  - `StarterKit.configure({ heading: false })` 후 `CollapsibleHeading.configure({ levels: [1,2,3,4] })` + `UniqueID` + `TableOfContents` 확장 추가.
-  - `expandAllHeadings`/`collapseAllHeadings` 헬퍼 — doc 내 모든 heading 노드 순회하며 `collapsed` 일괄 트랜잭션.
-  - 툴바에 `ChevronsDownUp`/`ChevronsUpDown` 버튼 추가.
+- **구현됨 — SimpleEditor 통합** (`app/frontend/src/components/SimpleEditor.jsx`):
+  - `TableOfContents.configure({...})` + `UniqueID` 확장 추가.
   - 레이아웃을 `flex`로 변경 — 좌측 에디터 콘텐츠 + 우측 `TocSidebar`.
-- **Phase 4: index.css 스타일** (`app/frontend/src/index.css`):
-  - `.collapsible-heading-wrapper`/`.collapsible-heading-toggle` — 토글 버튼 절대 위치 + 회전 애니메이션.
-  - `.toc-sidebar`/`.toc-sidebar-collapsed` — 사이드바 레이아웃.
-- **Phase 5: 테스트** (`app/frontend/src/components/editor/__tests__/collapsibleHeading.test.jsx`): `getHeadingLevel` 헬퍼 단위 테스트.
+- **미구현 — CollapsibleHeading**: `app/frontend/src/components/editor/CollapsibleHeading.jsx`가 생성되지 않았음. `heading` 노드의 `collapsed` attribute, ProseMirror plugin 형제 블록 숨김, `expandAllHeadings`/`collapseAllHeadings` 헬퍼, 토글 버튼, `.collapsible-heading-wrapper` CSS 모두 미구현.
 - **Phase 6: 신규 에셋** (`app/frontend/public/assets/`): `audio-thumbnail.svg`, `pdf-thumbnail.svg` — 미디어 타입 썸네일.
 - **검증**: 프론트엔드 `npm run build` 성공, `npm run test` 14 passed.
 - **배포 시 주의**: 프론트엔드 전용 변경. 백엔드/DB 변경 없음.
-- **핵심 파일**: `app/frontend/src/components/editor/CollapsibleHeading.jsx`, `app/frontend/src/components/editor/TocSidebar.jsx`, `app/frontend/src/components/SimpleEditor.jsx`, `app/frontend/src/index.css`, `app/frontend/package.json`, `app/frontend/public/assets/audio-thumbnail.svg`, `app/frontend/public/assets/pdf-thumbnail.svg`.
+- **핵심 파일**: `app/frontend/src/components/editor/TocSidebar.jsx`, `app/frontend/src/components/SimpleEditor.jsx`, `app/frontend/src/index.css`, `app/frontend/package.json`, `app/frontend/public/assets/audio-thumbnail.svg`, `app/frontend/public/assets/pdf-thumbnail.svg`.
 
 ### 통합 크레딧(포인트) 시스템 마이그레이션 — 페이지/오디오/비디오/에이전트 스텝 통합 과금
 
@@ -361,7 +535,7 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **Phase 4: Celery 태스크** (`app/backend/workers/tasks.py`):
   - `@celery.task run_ediscovery(job_id, chunk_size, threshold, page_range, max_chunks, query)` 등록 → `pipeline_ediscovery.run` 호출.
 - **Phase 5: FastAPI 엔드포인트** (`app/backend/api/jobs.py`):
-  - `POST /api/jobs/{job_id}/ediscovery/extract`: Celery 백그라운드 큐잉. 파라미터: chunk_size, threshold, max_chunks, query, page_range. 관리자 무료 / 일반 사용자 `premium_pages` 차감 + 환불 가능. 같은 파라미터 재사용 시 캐시 반환.
+  - `POST /api/jobs/{job_id}/ediscovery/extract`: Celery 백그라운드 큐잉. 파라미터: chunk_size, threshold, max_chunks, query, page_range. 관리자 무료 / 일반 사용자 포인트(`ediscovery_cost_points`) 차감 + 환불 가능. 같은 파라미터 재사용 시 캐시 반환.
   - `GET /api/jobs/{job_id}/ediscovery`: 상태/그래프/메트릭 반환 (폴링용).
   - `POST /api/jobs/{job_id}/ediscovery/threshold`: 저장된 그래프에서 confidence 기준 재필터링 (재추출 없이 엣지/노드만 재구성).
   - `_job_summary()`에 `ediscovery_status`, `ediscovery_graphs`, `ediscovery_metrics`, `ediscovery_refundable` 필드 추가.
@@ -638,20 +812,6 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **테스트 파일**: `test_annotate_compare.py`를 `build_embedpdf_annotations` 기반으로 업데이트 — PDF + annotations JSON을 분리 저장.
 - **핵심 파일**: `pdf_annotator.py`, `pdf_annotate_converter.py`, `test_annotate_compare.py`.
 
-### 브랜딩 (로고)
-
-- **공식 로고 적용**: `proof-logo.png`(가로형, 16:9)를 앱 전반의 공식 로고로 사용. 원본(800×450, 77KB)을 400×225(32KB)로 리사이즈하여 `app/frontend/public/proof-logo.png`에 배치 — Vite가 루트 경로(`/proof-logo.png`)로 서빙.
-- **재사용 가능한 Logo 컴포넌트**: `app/frontend/src/components/Logo.jsx` — `height`, `toHome`(Link 래핑 토글), `className` 등의 prop 제공. 모든 주요 브랜드 노출 위치에서 재사용.
-- **적용 위치**:
-  - 랜딩페이지(`UploadPage.jsx`) 네비게이션: 54px
-  - 작업 확인 페이지(`JobConfirmPage.jsx`) 네비게이션: 54px
-  - 사이드바(`SidebarLayout.jsx`): 펼침 48px, 접힘 42px
-- **Favicon**: `app/frontend/index.html`에 `<link rel="icon">` 및 `apple-touch-icon` 추가.
-- **원본 백업**: `proof-logo.original.png`를 루트에 보관(public 밖이므로 서빙되지 않음).
-- **회사 로고(teamcat)**: `teamcat-logo.png`(정사각형, 64×64, 6KB)를 `app/frontend/public/`에 배치. `GlobalFooter.jsx`의 copyright 텍스트(`© 2026 TeamCat`) 앞에 18×18px로 작게 표시.
-- **PoetryProgress guard clause**: `app/frontend/src/components/PoetryProgress.jsx`에서 `poems[slideIdx]`가 undefined일 때 `.title` 접근으로 발생하던 `TypeError` 수정 — `if (!poem) return null;` 추가 (i18n 로딩 중 빈 배열일 때 크래시 방지).
-- **tasks.py import 경로 수정**: `app/backend/workers/tasks.py`의 `_build_and_upload_searchable_pdf()`와 `_image_to_searchable_pdf()`에서 `from .core.*`을 `from ..core.*`로 수정 (workers 패키지 내부에서 core로의 상대 임포트 경로 오류).
-
 ### Searchable PDF (텍스트 레이어)
 
 - **업로드 시점 텍스트 레이어 생성**: PaddleOCR이 반환한 `overall_ocr_res`의 `rec_texts`/`rec_boxes`를 사용해 원본 PDF/이미지에 투명 텍스트 레이어를 추가. `app/backend/core/pdf_text_layer.py`의 `add_text_layer_from_ocr()`가 핵심.
@@ -709,25 +869,98 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 ```
 app/
   backend/          FastAPI app, workers, DB models, API endpoints
-    api/v1/         Public API v1 (jobs, account, keys)
-    auth/           JWT auth, API key auth
-    core/           OCR pipeline, media loader, rate limit
-      docling_client.py           Docling 서비스 클라이언트
-      paddleocr_client.py         PaddleOCR 클라이언트
-      paddleocr_fallback.py       PaddleOCR 폴백 제어 (회로 차단기)
+    api/            Internal API routers
+      v1/           Public API v1 (jobs, account, keys, agent, ai)
+      admin.py, auth.py, chat_conversations.py, dev_auth.py,
+      ediscovery.py, flow_drawings.py, gdpr.py,
+      on_premise.py, payments.py, sandboxes.py, subscriptions.py,
+      supabase_proxy.py
+      jobs/           Job 라우터 패키지 (api/jobs.py에서 분할)
+        __init__.py     router 조립 + 테스트 호환성 re-export
+        _shared.py      46개 공유 헬퍼 + 상수
+        uploads.py      업로드/생성 엔드포인트
+        lifecycle.py    confirm/list/get/delete 엔드포인트
+        download.py     다운로드/XLSX 변환 엔드포인트
+        result.py       결과 저장/페이지 수정 엔드포인트
+        preview.py      미리보기/페이지 이미지 엔드포인트
+        annotations.py  주석/검색/요소 조회 엔드포인트
+        admin.py        관리자 Job 목록 엔드포인트
+    auth/           JWT auth, API key auth (supabase_auth.py, api_key_auth.py, security.py, crypto.py)
+    core/           비즈니스 로직, OCR/변환 파이프라인, 과금, 주석
+      ai_client.py                 OpenAI 호환 LLM 스트리밍 클라이언트
+      archive_handler.py           아카이브 처리
+      cache.py                     Redis 캐시 유틸
+      canonical_annotation_coords.py  주석 좌표 정규화
+      converter.py                 공통 변환 유틸
+      docling_client.py            Docling 서비스 클라이언트
+      excel_writer.py              Excel 출력
+      hwp_converter.py             HWP 변환
+      job_helpers.py               Job 공통 헬퍼 (parse_columns, convert_format_alias, upload_ocr_layout)
+      image_deskew.py              이미지 기울기 보정
+      legal_case_profile.py        법률 사건 프로파일
+      legal_elements.py            요건 사실 정의
+      legal_issue_tree.py          쟁점 트리
+      llm_utils.py                 LLM 공통 유틸 (chat_template, thinking budget)
+      llm_xlsx_converter.py        LLM 기반 XLSX 변환
+      markdown_image_rewriter.py   마크다운 이미지 경로 재작성
+      markdown_sanitizer.py        마크다운 새니타이저
+      media_loader.py              오디오/비디오 로더
+      merge.py                     다중 파일 병합
+      ocr_client.py                OCR 클라이언트 (has_pdf_text_layer, tile_large_image)
+      ocr_layout.py                OCR 레이아웃 파싱
+      office_converter.py          DOCX/PPTX 변환
+      paddleocr_client.py          PaddleOCR 클라이언트
+      paddleocr_fallback.py        PaddleOCR 폴백 제어 (회로 차단기)
       paddleocr_parameter_recommender.py  Vision LLM 샘플 기반 파라미터 추천
-      pdf_annotate_converter.py   PDF 하이라이트/여백 주석 오케스트레이터
-      pdf_annotator.py            PDF 주석 적용
-      pdf_coords.py               좌표 변환
-      ocr_layout.py               OCR 레이아웃 파싱
-      xlsx_advanced_converter.py  마크다운에서 고급 XLSX 변환
-      pipeline_docling.py         Docling 파이프라인
-      pipeline_vision.py          Vision 파이프라인
-      pipeline_media.py           Media 파이프라인
-      pipeline_hybrid.py          Hybrid 파이프라인 (사용하지 않음)
-    db/             SQLAlchemy models and migrations
+      password_security.py         비밀번호 해시
+      pdf_annotate_converter.py    PDF 하이라이트/여백 주석 오케스트레이터
+      pdf_annotator.py             PDF 주석 적용
+      pdf_coordinate_transform.py  좌표계 변환
+      pdf_coords.py                좌표 유틸
+      pdf_optimizer.py             PDF 최적화
+      pdf_preview_converter.py     PDF 미리보기 변환
+      pdf_text_layer.py            서처블 PDF 텍스트 레이어 생성
+      pdf_user_annotator.py        PDF user-space 주석
+      pipeline_docling.py          Docling 파이프라인
+      pipeline_ediscovery.py       e-Discovery GraphRAG 파이프라인
+      pipeline_hybrid.py           Hybrid 파이프라인 (사용하지 않음)
+      pipeline_media.py            Media 파이프라인 (오디오/비디오/이미지 라우팅)
+      pipeline_vision.py           Vision 파이프라인 (PaddleOCR 우선 + vLLM fallback)
+      points_service.py            포인트 비용 계산
+      prompts.py                   LLM 프롬프트
+      rate_limit.py                요청 속도 제한
+      sandbox/                     Kata Containers 샌드박스 관리
+        collector.py, communicator.py, manager.py, security.py, workspace.py
+      subscription_service.py      구독/크레딧 관리 (PLAN_MONTHLY_CREDITS)
+      supabase_client.py           Supabase Storage 클라이언트
+      turnstile.py                 Cloudflare Turnstile 검증
+      xlsx_advanced_converter.py   마크다운에서 고급 XLSX 변환
+    db/             SQLAlchemy models and migrations (38 SQL files)
     workers/        Celery tasks
-    docling_service/ Docling 서비스 (별도 Docker 컨테이너)
+      tasks/         태스크 패키지 (tasks.py에서 분할)
+        __init__.py     태스크 re-export + 테스트 호환성
+        _helpers.py     비-태스크 헬퍼 (상태 설정, 구독 해제 등)
+        job_tasks.py    run_job, run_job_added_files, recover_stuck_jobs
+        maintenance.py  cleanup, auto_recharge, grant_credits
+        conversion.py   convert_xlsx_advanced
+        annotation_tasks.py  annotate_pdf_job, annotate_edit_job
+        ediscovery_tasks.py  run_ediscovery
+    docling_service/ Docling 서비스 (별도 Docker 컨테이너, main.py, Dockerfile, requirements.txt)
+    paddleocr_service/ PaddleOCR 서비스 (별도 Docker 컨테이너, main.py, Dockerfile.*)
+    unoserver/      LibreOffice headless 서비스 (Dockerfile)
+  ai-backend/       Express + TypeScript AI 에이전트 백엔드
+    src/chat/route.ts          AI 채팅 라우터 (Vercel AI SDK 5.x)
+    src/lib/proof-api.ts       PROOF 백엔드 API 클라이언트
+    src/server.ts              Express 서버 진입점
+    src/tools/                 AI 에이전트 도구
+      annotations.ts           PDF 주석 도구 (highlight, callout, batch)
+      browserless.ts           원격 브라우저 도구
+      ediscovery.ts            e-Discovery 도구
+      flow.ts                  Flow drawing 도구
+      mapper.ts                Element mapper 도구
+      markdown.ts              마크다운 도구
+      sandbox.ts               샌드박스 도구
+      spreadsheet.ts           스프레드시트 도구
   frontend/         React SPA
     src/locales/   i18n translation files (en/ko/ja × common/page)
     src/i18n.js     i18next configuration
@@ -739,11 +972,16 @@ app/
     static/img/      PROOF logo & favicon SVGs
     docusaurus.config.js
     build/           Generated static site (gitignored)
+  llmlingua-service/  LLMLingua-2 프롬프트 압축 서비스 (별도 Docker 컨테이너)
   Dockerfile.backend
   docker-compose.yml
+  docker-compose.docling.yml
+  docker-compose.paddleocr.yml
   .env.example
 infra/
   mailu/            Mailu mail server deployment
+  kata-guest/       Kata Containers guest 설정
+  kata-host/        Kata Containers host 설정
 ocr_output/         OCR output artifacts (ignored in git)
 *.py                Standalone scripts and test helpers
 ```
@@ -753,22 +991,22 @@ ocr_output/         OCR output artifacts (ignored in git)
 Copy `app/.env.example` to `app/.env` and fill in:
 
 - `DATABASE_URL`
-- `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`, `SUPABASE_JWT_SECRET`
 - `REDIS_URL`
 - `DEFAULT_LLM_ENDPOINT`, `DEFAULT_LLM_MODEL` (vLLM for images/PDF)
-- `MEDIA_LLM_ENDPOINT`, `MEDIA_LLM_MODEL` (llama.cpp for audio/video + image share)
+- `MEDIA_LLM_ENDPOINT`, `MEDIA_LLM_MODEL` (llama.cpp E4B for audio/video + image share) — **선택값**. `config.py`에 기본값 `http://192.168.1.82:18080/v1`이 하드코딩되어 있으나, E4B 서버가 현재 다운/비활성화 상태이므로 빈 값으로 두면 `pipeline_media.py:_resolve()`가 자동으로 vLLM만 사용하도록 폴백함. E4B를 비활성화하려면 `.env`에서 빈 값으로 설정하거나 관리자 페이지에서 `media_llm_endpoint`를 비우면 됨.
 - `PUBLIC_BASE_URL` (external URL for download links)
-- `SUPABASE_URL` (internal), `SUPABASE_PUBLIC_URL` (external proxied URL)
-- `JWT_SECRET_KEY` (for Supabase token verification)
-- `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH`
+- `SUPABASE_PUBLIC_URL` (external proxied URL; 빈 값이면 `SUPABASE_URL` 사용)
+- `SECRET_KEY` (민감 설정 암호화/세션 서명용)
+- `ADMIN_EMAIL`, `ADMIN_INITIAL_PASSWORD`
 - Turnstile: `TURNSTILE_SITE_KEY`, `TURNSTILE_WORKER_URL`, `VITE_TURNSTILE_SITE_KEY`, `VITE_TURNSTILE_WORKER_URL`
-- Toss/Paddle keys for payments
+- Paddle: `PADDLE_API_KEY` (결제)
 - PaddleOCR: `PADDLEOCR_SERVICE_URL`, `PADDLEOCR_API_TOKEN`, `PADDLEOCR_API_URL`, `PADDLEOCR_FALLBACK_ENABLED`
 - Docling: `DOCLING_ENABLED`, `DOCLING_SERVICE_URL`, `DOCLING_REFINEMENT_ENABLED`
 
 ## Local Development
 
-### Full Local Stack (backend + frontend + worker)
+### Full Local Stack (backend + frontend + worker + ai-backend)
 
 ```bash
 cd app
@@ -785,6 +1023,12 @@ npm run dev
 # Worker
 cd ../backend
 celery -A backend.celery_app.celery worker --loglevel=info
+
+# AI Backend (Express + TypeScript, Vercel AI SDK)
+cd ../ai-backend
+npm install
+npm run dev          # 개발 모드 (ts-node)
+# 또는 npm run build && npm start
 
 # Docs (Docusaurus)
 cd ../docs
@@ -805,11 +1049,12 @@ a1 서버에서 백엔드/워커/Supabase가 이미 실행 중일 때, 로컬 �
 cp app/.env.development.example app/.env.development
 ```
 
-핵심 변수:
+핵심 변수 (모두 `app/` 디렉토리의 `.env*` 파일에 작성 — `vite.config.js`의 `envDir: '..'` 설정 때문에 `app/frontend/.env*`는 로드되지 않음):
 
 - `VITE_DEV_BACKEND_URL`: a1 백엔드 주소
   - 내부망 직접 연결: `http://192.168.1.50:28181`
   - SSH 터널링 사용: `http://localhost:28181`
+- `VITE_DEV_API_KEY`: 로컬 데브 모드에서 마크다운 에디터 AI 및 에이전트 채팅 인증용 dev API key (a1에서 발급, `chu_live_` 접두사). 없으면 폴백값 `chu_live_testkey12345`가 사용되어 401 "Invalid API key" 발생.
 - `VITE_SUPABASE_ANON_KEY`: a1 Supabase anon key
 - `VITE_TURNSTILE_SITE_KEY` / `VITE_TURNSTILE_WORKER_URL`: CAPTCHA 사용 시 (비워두면 미사용)
 
@@ -851,11 +1096,12 @@ a1 Supabase의 `SUPABASE_PUBLIC_URL`이 `https://proof.teamcat.app/supabase`로 
 
 - **Audio/Video**: E4B (llama.cpp, `192.168.1.82:18080`) — **현재 서버 다운, 비활성화**
 - **PDF routing** (임시 정책 — vLLM/Docling 서버 개선 전까지):
-  - **기본변환** (`ocr_model == "basic"`): `has_pdf_text_layer()` → True면 Docling, False면 `run_vision`(PaddleOCR 우선)
-  - **고급변환** (`ocr_model == "premium"`): 무조건 `run_vision` — 모든 페이지 PaddleOCR 우선, 실패 시 vLLM fallback
+  - **라우팅 결정 단위 = 전체 PDF(작업 단위)**. `tasks.py`에서 PDF 파일 전체에 대해 `has_pdf_text_layer()`를 1회 호출해 라우팅 경로를 결정. 페이지별 개별 라우팅 분기는 없음.
+  - **기본변환** (`ocr_model == "basic"`): `has_pdf_text_layer()` → True면 Docling 파이프라인(`run_docling`) + `_register_searchable_pdf_if_text_layer`로 원본 텍스트 레이어를 searchable PDF로 등록(OCR 재생성 방지). False면 `run_vision`(PaddleOCR 우선).
+  - **고급변환** (`ocr_model == "premium"`): 무조건 `run_vision` — 모든 페이지 PaddleOCR 우선, 실패 시 vLLM fallback.
   - **이미지 파일**: `run_media` → PaddleOCR 우선 (`is_fallback_preferred() == True`)
   - 라우팅 분기 순서: `tasks.py`에서 `ocr_model == "basic" and has_pdf_text_layer()` → True면 Docling, 그 외 PDF는 `run_vision`
-  - `run_vision` 내에서 개별 페이지 텍스트 레이어 검사 없음 — 모든 페이지 동일하게 PaddleOCR 우선 처리
+  - **`run_vision` 내부 동작 (페이지 단위 처리)**: `pipeline_vision.py:run_vision`은 위에서 결정된 단일 경로를 모든 페이지에 동일하게 적용. `run_vision` 자체는 개별 페이지 텍스트 레이어를 재검사하지 않고, 전체 페이지를 PaddleOCR 우선 → (실패 시) vLLM fallback 순으로 처리. 즉 "텍스트 레이어 검사"는 작업 단위 분기에서만 발생하고 `run_vision` 진입 후에는 페이지별 분기가 없음.
 - **PDF pages (pipeline=vision)**: rendered to PNG by PyMuPDF and sent page-by-page to the vLLM proxy (`192.168.1.69:18080`). The proxy round-robins between two Gemma-4 26B A4B AWQ 4bit instances (`18000` on GPU 1/2, `18001` on GPU 0/3). `run_vision`은 항상 vLLM endpoint로 라우팅 (E4B media endpoint 라우팅 제거됨).
 - **Mixed media batches** (images/audio/video): `pipeline_media.py:_resolve()`에서 동적 라우팅 — E4B 서버 다운 시 media_endpoint 없이 vLLM만 사용
 - Routing logic in `pipeline_media.py:_resolve()` and `pipeline_vision.py:resolve_endpoint()`
@@ -1084,7 +1330,7 @@ bash deploy_a1.sh
 
 1. LAN(a1) 또는 WAN(wan-1)으로 SSH 연결
 2. `rsync`로 로컬 `app/` 디렉토리를 서버 `~/chungu-app/`에 동기화 (`.env` 제외)
-3. 서버에서 `docker compose down && docker compose up --build -d` 실행 (이미지 빌드 + 컨테이너 재시작)
+3. 서버에서 `COMPOSE_PROJECT_NAME=chungu-app docker compose down && COMPOSE_PROJECT_NAME=chungu-app docker compose up --build -d` 실행 (이미지 빌드 + 컨테이너 재시작). `COMPOSE_PROJECT_NAME=chungu-app` 환경변수는 컨테이너/네트워크 이름 접두사를 고정하므로 생략하면 안 됨.
 4. 컨테이너 상태 확인
 
 서버 `.env`는 rsync로 덮어쓰지 않으므로 수동으로 관리해야 한다.
@@ -1096,17 +1342,17 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 
 ## Storage Retention & Source Cleanup
 
-- OCR 원본 업로드 파일은 `Job.created_at` 기준 **48시간** 후 Supabase Storage `pdfs` 버킷에서 자동 삭제된다.
+- OCR 원본 업로드 파일의 Supabase Storage `pdfs` 버킷 보관 기간은 `RETENTION_DAYS = 30` (30일)로 설정되어 있다 (`app/backend/workers/tasks.py`).
+- **현재 실제 삭제는 보류 중** — `cleanup_expired_uploads` Celery 태스크가 30일 이상 경과한 job을 조회하되, 아카이빙 스토리지 구성 전까지 로그만 기록하고 Storage 파일을 삭제하지 않는다. Celery beat의 `cleanup-expired-uploads` 스케줄도 주석 처리되어 비활성화 상태 (`app/backend/celery_app.py`).
 - 변환 결과 파일(`results` 버킷)은 별도 보관 정책을 유지하며, 원본 삭제와 무관하게 다운로드 가능하다.
 - DB의 `jobs` 레코드는 유지되며, 삭제 후 `pdf_storage_path` 및 `extracted_files` 내 `storage_path` 참조만 제거된다.
-- 삭제 스케줄링: Celery beat가 1시간마다 `cleanup_expired_uploads` 태스크를 실행한다.
 - 사용자가 수동으로 작업을 삭제하면 DB 레코드 삭제 전에 `pdfs` 버킷 원본 파일도 함께 삭제된다.
 - jobs 리스트에는 `source_expires_at`를 기준으로 남은 시간(일/시간/분)이 표시된다.
 - Key files:
   - `app/backend/api/jobs.py` — `_source_expires_at()`, `delete_job` Storage 정리
   - `app/backend/core/supabase_client.py` — `delete_source_files()`, `clear_source_paths()`
-  - `app/backend/workers/tasks.py` — `cleanup_expired_uploads` periodic task
-  - `app/backend/celery_app.py` — Celery beat schedule
+  - `app/backend/workers/tasks.py` — `cleanup_expired_uploads` 태스크 (현재 삭제 보류)
+  - `app/backend/celery_app.py` — Celery beat schedule (`cleanup-expired-uploads` 비활성화, `cleanup-expired-sandboxes` 10분 간격 활성, `grant-monthly-subscription-credits` 1일 간격 활성)
   - `app/frontend/src/pages/JobsPage.jsx` — 남은 시간 표시
   - `app/docker-compose.yml` — `beat` 서비스
 
@@ -1311,18 +1557,20 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 
 ## Subscription Service
 
-- **기능 개요**: 구독 기반 사용량 관리 — 플랜별 월간 한도, 기간별 사용량 추적, 예약/차감/환불
-- **플랜별 한도**:
-  - `free`: basic_pages=1000, premium_pages=500, media_seconds=150분
-  - `pro`: basic_pages=10000, premium_pages=5000, media_seconds=1500분
-  - `max`: basic_pages=60000, premium_pages=30000, media_seconds=9000분
-- **기간 계산**: 사용자의 `subscription_period_start` 기준 월간 기간, 없으면 달력월 시작일 사용
-- **사용량 관리**:
-  - `reserve_usage()`: 작업 시작 전 사용량 예약
-  - `consume_usage()`: 작업 완료 후 실제 사용량 차감
-  - `release_usage()`: 작업 실패 시 예약된 사용량 환불
+- **기능 개요**: 구독 기반 사용량 관리 — 통합 크레딧(`points_balance`) 잔액 기반 과금, 월간 크레딧 지급, 예약/차감/환불. 페이지/오디오/비디오/AI 에이전트 스텝이 모두 포인트에서 차감됨.
+- **플랜별 월간 크레딧** (`PLAN_MONTHLY_CREDITS` in `subscription_service.py`):
+  - `free`: 1,000pt
+  - `pro`: 30,000pt
+  - `max`: 100,000pt
+- **크레딧 비율** (`points_service.py`): 기본 모델 페이지 1pt, 프리미엄 모델 페이지 5pt, 오디오 1pt/초, 비디오 10pt/초, Docling 후처리 페이지 3pt, AI 에이전트 스텝 1pt/스텝.
+- **기간 계산**: 사용자의 `subscription_period_start` 기준 월간 기간, 없으면 달력월 시작일 사용. `grant_monthly_credits()`가 Celery beat 태스크로 월간 크레딧을 지급 (중복 지급 방지용 `subscription_credits_granted_at` 컬럼 사용).
+- **사용량 관리** (`points_balance` 기반):
+  - `check_enough()`: 잔액 충분 여부 확인
+  - `reserve_usage()`: 작업 시작 전 포인트 예약
+  - `release_usage()`: 작업 실패 시 예약된 포인트 환불
 - **구독 상태**: `is_subscription_active()`로 활성 여부 확인
-- **Key files**: `app/backend/core/subscription_service.py`
+- **레거시 컬럼 참고**: `subscription_usages` 테이블의 `basic_pages`/`premium_pages`/`media_seconds`와 `jobs` 테이블의 `reserved_*` 컬럼은 마이그레이션 036 이전 개별 한도 방식의 잔재로 DB에 남아 있으나, 현재는 통계/사용량 계산 보조용이며 실제 한도 체크는 `points_balance`로만 이루어짐.
+- **Key files**: `app/backend/core/subscription_service.py`, `app/backend/core/points_service.py`, `app/backend/db/migrations/036_credit_system_subscription.sql`
 
 ## API Notes
 
@@ -1558,17 +1806,20 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 
 ## Subscription Plans (Free / Pro / Max)
 
-- **UI users** (web app) use subscription plans only. API users continue to use the pay-as-you-go credit system (`points_balance`).
-- **Plans**:
-  - Free: 1,000 basic pages + 500 premium pages + 150 min media/month
-  - Pro: $20/month or $200/year — 10,000 basic + 5,000 premium + 1,500 min media/month
-  - Max: $100/month or $1,000/year — 60,000 basic + 30,000 premium + 9,000 min media/month
+- **과금 모델**: UI 사용자(웹 앱)와 API 사용자 모두 동일한 통합 크레딧 시스템(`points_balance`)을 사용. 페이지/오디오/비디오/AI 에이전트 스텝이 포인트에서 차감됨. 이전 개별 한도 방식(basic_pages/premium_pages/media_seconds)은 마이그레이션 036으로 폐지됨.
+- **Plans** (월간 지급 크레딧, `PLAN_MONTHLY_CREDITS`):
+  - Free: 1,000pt/month
+  - Pro: $20/month or $200/year — 30,000pt/month
+  - Max: $100/month or $1,000/year — 100,000pt/month
+- **크레딧 비율**: 기본 모델 페이지 1pt, 프리미엄 모델 페이지 5pt, 오디오 1pt/초, 비디오 10pt/초, Docling 후처리 페이지 3pt, AI 에이전트 스텝 1pt/스텝. (상세 비용 계산은 `app/backend/core/points_service.py`)
 - **Key files**:
-  - `app/backend/core/subscription_service.py` — monthly quota tracking and reservation.
+  - `app/backend/core/subscription_service.py` — `PLAN_MONTHLY_CREDITS` 정의, 월간 크레딧 지급 및 포인트 기반 예약/환불.
+  - `app/backend/core/points_service.py` — 리소스별 포인트 비용 계산.
   - `app/backend/api/subscriptions.py` — public plan listing, checkout, and cancel endpoints.
   - `app/backend/api/payments.py` — Paddle webhook handling for `subscription.*` events.
-  - `app/backend/db/migrations/018_add_subscription_plan.sql` — schema migration.
-  - `app/frontend/src/pages/PlansPage.jsx` — subscription plan UI.
+  - `app/backend/db/migrations/036_credit_system_subscription.sql` — 통합 크레딧 시스템 전환 마이그레이션.
+  - `app/frontend/src/pages/PlansPage.jsx` / `app/frontend/src/pages/PricePage.jsx` — subscription plan UI (월간 크레딧 표시).
+  - `app/frontend/src/components/PlanCard.jsx` — 플랜 카드 (크레딧 기준 예상 사용 가이드 포함).
   - `scripts/create_paddle_subscription_catalog.py` — automated Paddle product/price creation.
 - **Paddle API key**: store in `app/.env` as `PADDLE_API_KEY`. It is seeded into `app_settings` via `settings_store.py` and `config.py`.
 - **Creating catalog**: run `PADDLE_API_KEY=... DATABASE_URL=... python scripts/create_paddle_subscription_catalog.py`. This creates products and monthly/yearly prices for Free/Pro/Max and saves the resulting `price_id`s into `app_settings`.
@@ -1598,7 +1849,7 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
   - `app/frontend/src/pages/JobResultPage.jsx`의 `startAnnotate(instruction)` 함수가 API를 호출하고, 에러 메시지에 "구독이 필요" 또는 "subscription"이 포함되면 2초 후 price 페이지로 자동 이동합니다.
   - `app/frontend/src/components/SourcePanel.jsx`의 `AiAnnotationFab` 컴포넌트가 PDF 소스 패널 하단 중앙에 작은 FAB으로 표시됩니다. 클릭하면 `scale`/`opacity`/`translate` 트랜지션으로 입력 카드 팝업이 부드럽게 펼쳐지며, instruction을 입력하고 생성할 수 있습니다.
   - i18n 키 `page:errors.subscriptionRequired` 사용 (ko/en/ja 모두 추가)
-- **주석 생성 비용**: 프리미엄 페이지 수(`premium_pages`)로 차감됩니다. 관리자는 차감되지 않습니다.
+- **주석 생성 비용**: 포인트(`annotate_cost_points`)로 차감됩니다. 관리자는 차감되지 않습니다.
 - **재시도 액션** (`annotate_action` 엔드포인트): 주석 생성이 `error` 상태로 실패한 경우 사용자가 재시도(retry)할 수 있습니다. 구독제이므로 환불(refund) 기능은 제공하지 않습니다. 비회원 사용자는 이 액션 엔드포인트에서도 402 에러를 받습니다.
 - **결과 파일 노출**: 주석 생성이 완료되면 `JobResultPage.jsx`의 파일 탭에 `<원본파일명>_annotation1.pdf`, `_annotation2.pdf` … 형식으로 누적 추가됩니다. 별도의 ‘주석 PDF 다운로드’ 버튼은 생성되지 않으며, AI 주석 FAB은 PDF 패널 하단에 계속 떠 있는 작은 트리거로 유지됩니다.
 - **결과 저장**: `app/backend/core/pdf_annotate_converter.py`는 각 주석을 `results/{job_id}/annotated_{N}.pdf`로 저장하고, `Job.annotated_pdf_files` JSONB 목록에 `storage_path`, `filename`, `instruction`, `mode`, `comment_mode`, `created_at`을 기록합니다. 동일한 `(instruction, mode, comment_mode)`로 재요청하면 기존 파일을 반환합니다.

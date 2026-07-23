@@ -227,15 +227,15 @@ export default function DrawingToolbar({
               <span className="text-xs font-bold">{strokeWidth}</span>
             </button>
 
-            {/* 굵기 팝오버 */}
+            {/* 굵기 팝오버 — 형광펜은 더 큰 범위(max=40) 지원 */}
             {showWidth && (
               <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-surface-container-lowest rounded-lg shadow-lg border border-outline-variant p-3 z-50">
                 <div className="flex flex-col gap-2 w-32">
                   <span className="text-xs text-on-surface-variant">{strokeWidth}px</span>
                   <input
                     type="range"
-                    min={1}
-                    max={20}
+                    min={tool === "highlighter" ? 4 : 1}
+                    max={tool === "highlighter" ? 40 : 20}
                     step={1}
                     value={strokeWidth}
                     onChange={(e) => onStrokeWidthChange(Number(e.target.value))}

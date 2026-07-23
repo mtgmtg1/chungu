@@ -75,12 +75,17 @@ function ChatSession({
   );
 
   // [Flow: 최신 messages와 콜백을 ref에 보관하여 effect 재실행 최소화]
+  // render 중 ref.current 접근을 피하기 위해 useEffect에서 동기화
   const messagesRef = useRef(messages);
-  messagesRef.current = messages;
   const onMessagesChangeRef = useRef(onMessagesChange);
-  onMessagesChangeRef.current = onMessagesChange;
   const onStatusChangeRef = useRef(onStatusChange);
-  onStatusChangeRef.current = onStatusChange;
+  const onFlowDrawingsUpdateRef = useRef(onFlowDrawingsUpdate);
+  useEffect(() => {
+    messagesRef.current = messages;
+    onMessagesChangeRef.current = onMessagesChange;
+    onStatusChangeRef.current = onStatusChange;
+    onFlowDrawingsUpdateRef.current = onFlowDrawingsUpdate;
+  });
 
   // [Flow: status가 변경될 때마다 상위에 보고 — 백그라운드 세션 포함]
   useEffect(() => {
@@ -88,8 +93,6 @@ function ChatSession({
   }, [status]);
 
   // [Flow: 채팅 메시지에서 save_flow_drawings 도구 결과 감지 → 플로우뷰 즉시 동기화]
-  const onFlowDrawingsUpdateRef = useRef(onFlowDrawingsUpdate);
-  onFlowDrawingsUpdateRef.current = onFlowDrawingsUpdate;
   useEffect(() => {
     if (!onFlowDrawingsUpdateRef.current) return;
     for (const message of messages) {
@@ -204,6 +207,40 @@ function ChatSession({
   const showSuggestions = visibleMessages.length === 0 && status === "ready";
   const canRegenerate = status === "ready" || status === "error";
 
+  // [Flow: 마지막 사용자 메시지의 텍스트를 추출 — parts의 text 파트를 결합]
+  const getLastUserPromptText = () => {
+    for (let i = visibleMessages.length - 1; i >= 0; i -= 1) {
+      const m = visibleMessages[i];
+      if (m.role !== "user") continue;
+      const parts = m.parts || [];
+      const text = parts
+        .filter((p) => p.type === "text" && typeof p.text === "string")
+        .map((p) => p.text)
+        .join("\n")
+        .trim();
+      return text;
+    }
+    return "";
+  };
+
+  // [Flow: 프롬프트 복사 — 마지막 사용자 메시지를 클립보드에 복사]
+  const handleCopyPrompt = () => {
+    const text = getLastUserPromptText();
+    if (!text) return;
+    try {
+      navigator.clipboard?.writeText(text);
+    } catch {
+      // 클립보드 API 미지원 환경에서는 조용히 무시
+    }
+  };
+
+  // [Flow: 프롬프트 수정 — 마지막 사용자 메시지를 입력창에 로드하여 사용자가 수정 후 재전송]
+  const handleEditPrompt = () => {
+    const text = getLastUserPromptText();
+    if (!text) return;
+    setInput(text);
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-0 md:p-4"
@@ -310,6 +347,9 @@ function ChatSession({
             onToolApprove={handleToolApprove}
             onToolDeny={handleToolDeny}
             onToolAlways={handleToolAlways}
+            jobId={context?.jobId}
+            onCopyPrompt={handleCopyPrompt}
+            onEditPrompt={handleEditPrompt}
           />
 
           {/* 입력 영역 */}
@@ -394,12 +434,14 @@ export default function AgentChatModal({ isOpen, onClose, context, onRunningCoun
   const [streamingIds, setStreamingIds] = useState(() => new Set());
 
   // [Flow: onRunningCountChange를 ref에 보관하여 effect 안정화]
-  const onRunningCountChangeRef = useRef(onRunningCountChange);
-  onRunningCountChangeRef.current = onRunningCountChange;
-
   // [Flow: onAgentComplete를 ref에 보관 — 에이전트 완료 시 상위에서 job/preview 재로드]
+  // render 중 ref.current 접근을 피하기 위해 useEffect에서 동기화
+  const onRunningCountChangeRef = useRef(onRunningCountChange);
   const onAgentCompleteRef = useRef(onAgentComplete);
-  onAgentCompleteRef.current = onAgentComplete;
+  useEffect(() => {
+    onRunningCountChangeRef.current = onRunningCountChange;
+    onAgentCompleteRef.current = onAgentComplete;
+  });
 
   // [Flow: 실행 중 에이전트 수를 상위에 보고]
   useEffect(() => {

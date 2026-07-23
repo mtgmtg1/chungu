@@ -283,6 +283,34 @@ describe('replaceTextFuzzy', () => {
     assert.equal(success, false);
     assert.equal(markdown, md);
   });
+
+  it('한국어 표 행에서 정확 매칭 교체에 성공한다 (Pattern too long 회피)', () => {
+    const md = '| 수용기관 | 수원구치소 | 수용번호 | 5839 |\n| --- | --- | --- | --- |';
+    const old_text = '| 수용기관 | 수원구치소 | 수용번호 | 5839 |';
+    const new_text = '| 수용기관 | 수원구치소 (중요: 수용기관) | 수용번호 | 5839 (중요: 수용번호) |';
+    const { markdown, success } = replaceTextFuzzy(md, old_text, new_text);
+    assert.equal(success, true);
+    assert.ok(markdown.includes('수원구치소 (중요: 수용기관)'));
+    assert.ok(markdown.includes('5839 (중요: 수용번호)'));
+  });
+
+  it('한국어 표 행에서 퍼지 매칭(줄바꿈 drift) 교체에 성공한다', () => {
+    const md = '| 수용자명 | 응우옌안뚜안 | 소송사건 대리인 변호사접견 횟수(월) | 0/4 |\n| --- | --- | --- | --- |';
+    const old_text = '| 수용자명 | 응우옌안뚜안 | 소송사건 대리인 변호사접견 횟수(월) | 0/4 |';
+    const new_text = '| 수용자명 | 응우옌안뚜안 (중요: 수용자명) | 소송사건 대리인 변호사접견 횟수(월) | 0/4 |';
+    const { markdown, success } = replaceTextFuzzy(md, old_text, new_text);
+    assert.equal(success, true);
+    assert.ok(markdown.includes('응우옌안뚜안 (중요: 수용자명)'));
+  });
+
+  it('긴 한국어 문단(32자 초과)에서 교체에 성공한다', () => {
+    const md = '이것은 매우 긴 한국어 문단입니다. 비트패 알고리즘이 패턴 길이 제한으로 실패하는 경우를 테스트합니다.';
+    const old_text = '이것은 매우 긴 한국어 문단입니다. 비트패 알고리즘이 패턴 길이 제한으로 실패하는 경우를 테스트합니다.';
+    const new_text = '교체된 문단입니다.';
+    const { markdown, success } = replaceTextFuzzy(md, old_text, new_text);
+    assert.equal(success, true);
+    assert.ok(markdown.includes('교체된 문단입니다.'));
+  });
 });
 
 describe('insertTextAt', () => {

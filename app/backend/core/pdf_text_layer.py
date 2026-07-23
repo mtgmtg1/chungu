@@ -12,6 +12,12 @@ from typing import Any
 
 import fitz  # PyMuPDF
 
+# PyMuPDF 텍스트 검색 하이라이트 세로 높이 정밀화 설정
+try:
+    fitz.TOOLS.set_small_glyph_heights(True)
+except Exception:
+    pass
+
 from .ocr_layout import BBox
 from .pdf_coordinate_transform import normalized_top_left_to_pdf_user
 
@@ -92,6 +98,109 @@ def _strip_html_tags(content: str) -> str:
     return " ".join(text.split())
 
 
+def _split_paragraph_into_lines(
+    text: str,
+    bbox: BBox,
+    font_name: str = "helv",
+) -> list[tuple[str, BBox]]:
+    """[Flow: Step 1 (텍스트의 \\n 기준 줄 분할) -> Step 2 (\\n이 없으면 단어 단위 줄바꿈 추정)
+          -> Step 3 (블록 bbox를 줄 수만큼 세로로 균등 분할) -> Step 4 (각 줄의 텍스트와 분할된 bbox 반환)]
+
+    문단 텍스트가 여러 줄인 경우, 전체 텍스트를 하나의 bbox에 한 줄로 배치하면
+    폰트 크기가 너무 작아져 (예: fontsize=2.61) 텍스트 검색/선택이 불가능해진다.
+    이 함수는 문단을 줄 단위로 분할하여 각 줄에 블록 bbox의 세로 영역을 분할한
+    bbox를 할당한다. 이렇게 하면 각 줄이 적절한 폰트 크기로 올바른 y 위치에 배치된다.
+
+    Args:
+        text: 문단 텍스트 (\\n 포함 가능)
+        bbox: 블록 전체 bbox (x0, y0, x1, y1)
+        font_name: 줄바꿈 추정 시 텍스트 폭 계산에 사용할 폰트 이름
+
+    Returns:
+        [(line_text, line_bbox), ...]. 빈 텍스트면 빈 리스트.
+    """
+    if not text or not text.strip():
+        return []
+
+    x0, y0, x1, y1 = bbox
+    block_width = x1 - x0
+    block_height = y1 - y0
+    if block_width <= 0 or block_height <= 0:
+        return [(text, bbox)]
+
+    # Step 1: \n이 포함된 경우 줄바꿈 문자 기준으로 분할
+    if "\n" in text:
+        raw_lines = text.split("\n")
+        lines = [ln.strip() for ln in raw_lines if ln.strip()]
+        if not lines:
+            return []
+    else:
+        # Step 2: \n이 없으면 문자 수 기반으로 줄 수 추정
+        # 한글은 정사각형 글자이므로, 글자 폭 ≈ 폰트 크기, 줄 높이 ≈ 폰트 크기 * 1.4
+        # 줄당 글자 수 = 너비 / 폰트 크기 = 너비 / (줄 높이 / 1.4)
+        # 줄 수 = 총 글자 수 / 줄당 글자 수
+        # 줄 높이 = 블록 높이 / 줄 수
+        # 이를 정리하면: 줄 수 ≈ sqrt(총 글자 수 * 1.4 * 블록 높이 / 너비)
+        words = text.split(" ")
+        if len(words) <= 1:
+            return [(text, bbox)]
+
+        total_chars = len(text.replace(" ", ""))
+        if total_chars == 0:
+            return [(text, bbox)]
+
+        # 줄 수 추정 (최소 1, 최대 20)
+        import math
+        estimated_line_count = max(1, min(20, round(math.sqrt(total_chars * 1.4 * block_height / block_width))))
+
+        if estimated_line_count <= 1:
+            return [(text, bbox)]
+
+        # 추정된 줄 수로 줄 높이 계산
+        line_height_est = block_height / estimated_line_count
+        font_size_est = line_height_est / 1.4
+        # 줄당 예상 글자 수 (한글 기준, 글자 폭 ≈ 폰트 크기)
+        chars_per_line = max(1, int(block_width / font_size_est))
+
+        # 단어를 줄에 추가하다가 줄당 글자 수를 초과하면 다음 줄로
+        lines = []
+        current_line_words = []
+        current_char_count = 0
+        for word in words:
+            word_chars = len(word)
+            # 공백 1자 추가
+            if current_line_words:
+                word_chars_with_space = word_chars + 1
+            else:
+                word_chars_with_space = word_chars
+
+            if current_char_count + word_chars_with_space > chars_per_line and current_line_words:
+                lines.append(" ".join(current_line_words))
+                current_line_words = [word]
+                current_char_count = word_chars
+            else:
+                current_line_words.append(word)
+                current_char_count += word_chars_with_space
+        if current_line_words:
+            lines.append(" ".join(current_line_words))
+
+        if len(lines) <= 1:
+            return [(text, bbox)]
+
+    # Step 3: 블록 bbox를 줄 수만큼 세로로 역순 분할
+    # [주의] 이 bbox는 normalized(0~1, y=0 상단)에서 변환된 좌표이다.
+    # _convert_bbox_to_pdf_user가 y를 뒤집으므로, 첫 줄이 y1(큰 값)에 가깝게
+    # 배정되어야 변환 후 device-space 상단에 표시된다.
+    # 이것은 _split_bbox_into_rows와 동일한 역순 배정 패턴이다.
+    line_height = block_height / len(lines)
+    result = []
+    for i, line_text in enumerate(lines):
+        line_bbox = (x0, y1 - (i + 1) * line_height, x1, y1 - i * line_height)
+        result.append((line_text, line_bbox))
+
+    return result
+
+
 def _extract_table_row_items(content: str, bbox: BBox) -> list[tuple[str, BBox]]:
     """table 블록의 HTML을 행(<tr>) 단위로 파싱하여 (text, row_bbox) 목록을 반환한다.
 
@@ -131,12 +240,27 @@ def _extract_table_row_items(content: str, bbox: BBox) -> list[tuple[str, BBox]]
         return []
 
     # 표 bbox를 행 수만큼 y축으로 균등 분할한다.
+    #
+    # [주의] 이 bbox는 이후 normalized_top_left_to_pdf_user(_convert_bbox_to_pdf_user)를 거쳐
+    # 그대로 page.insert_text()의 device-space 좌표로 쓰인다. 이 변환은 y값을 뒤집으므로
+    # (raw y가 작을수록 변환 후 device y가 커짐/아래쪽), HTML의 첫 번째 행(시각적으로 표의
+    # 맨 위)은 raw bbox에서 y1(큰 값)에 가까운 구간을 받아야 변환 후 device-space에서
+    # 표의 맨 위(작은 y)에 위치하게 된다. 반대로 y0(작은 값)에 첫 행을 배정하면 변환 후
+    # 표의 맨 아래에 배치되어, 위/아래 행의 주석이 서로 뒤바뀌는 반전 버그가 발생한다.
     x0, y0, x1, y1 = bbox[:4]
     row_height = (y1 - y0) / len(row_texts)
+    logger.info(
+        f"[TABLE_DEBUG] _extract_table_row_items: 원본 table bbox=({x0:.1f}, {y0:.1f}, {x1:.1f}, {y1:.1f}), "
+        f"행 수={len(row_texts)}, row_height={row_height:.1f}, y방향={'y↓(top-left)' if y0 < y1 else 'y↑(bottom-left)'}"
+    )
     items: list[tuple[str, BBox]] = []
     for i, text in enumerate(row_texts):
-        row_y0 = y0 + i * row_height
-        row_y1 = y0 + (i + 1) * row_height
+        # 첫 행(i=0)이 y1(변환 후 표의 맨 위)에 가장 가깝도록 역순으로 배정한다.
+        row_y0 = y1 - (i + 1) * row_height
+        row_y1 = y1 - i * row_height
+        logger.info(
+            f"[TABLE_DEBUG]   행[{i}] text='{text[:40]}' → row_bbox=({x0:.1f}, {row_y0:.1f}, {x1:.1f}, {row_y1:.1f})"
+        )
         items.append((text, (x0, row_y0, x1, row_y1)))
     return items
 
@@ -218,11 +342,10 @@ def _insert_invisible_text(
 ) -> None:
     """주어진 bbox 안에 투명 텍스트를 삽입한다.
 
-    [Flow: Step 1 (bbox 크기 확인) -> Step 2 (폰트 메트릭 획득: ascender/descender)
-          -> Step 3 (폰트 크기 산정: bbox 높이를 ascender-descender로 나누어 정확히 맞춤)
-          -> Step 4 (fitz.get_text_length로 정확한 텍스트 폭 측정 후 필요시 축소)
-          -> Step 5 (baseline 산정: bbox 중앙에 텍스트가 오도록 ascender/descender 보정)
-          -> Step 6 (insert_text로 render_mode=3 투명 삽입)]
+    [Flow: Step 1 (bbox 크기 및 폰트 메트릭 확인) -> Step 2 (폰트 크기 산정)
+          -> Step 3 (baseline 계산)
+          -> Step 4 (띄어쓰기가 포함된 문장은 단어별 가로 비율 위치로 분할 배치하여 자간 이탈 방지)
+          -> Step 5 (insert_text로 render_mode=3 투명 삽입)]
 
     Args:
         page: PyMuPDF Page 객체
@@ -233,12 +356,10 @@ def _insert_invisible_text(
     x0, y0, x1, y1 = rect
     width = x1 - x0
     height = y1 - y0
-    if width <= 0 or height <= 0:
+    if width <= 0 or height <= 0 or not text:
         return
 
     # 폰트 메트릭을 통해 bbox 높이에 정확히 맞는 폰트 크기를 계산한다.
-    # 폰트의 전체 높이 = (ascender - descender) * font_size 이므로,
-    # font_size = height / (ascender - descender) 로 설정하면 텍스트가 bbox에 꽉 찬다.
     ascender, descender = _get_font_metrics(font_name)
     font_total_height_ratio = ascender - descender
     if font_total_height_ratio <= 0:
@@ -246,28 +367,44 @@ def _insert_invisible_text(
 
     font_size = max(1.0, height * FONT_SIZE_RATIO / font_total_height_ratio)
 
-    # fitz.get_text_length로 정확한 텍스트 폭을 측정하여 폰트 크기를 조정한다.
-    # CHAR_WIDTH_RATIO 추정 대신 실제 폰트 메트릭스를 사용하므로 CJK/영문 모두 정확.
+    # fitz.get_text_length로 정확한 텍스트 폭을 측정하여 필요 시 폰트 크기 조절
     try:
         text_width = fitz.get_text_length(text, fontname=font_name, fontsize=font_size)
     except Exception:
         text_width = max(1, len(text)) * font_size * 0.6
 
-    # 텍스트가 bbox 가로 폭을 넘으면 폰트 크기를 비례 축소한다.
     safe_width = width * 0.95
     if text_width > safe_width and text_width > 0:
         font_size = max(1.0, font_size * safe_width / text_width)
 
-    # baseline을 bbox 중앙에 텍스트가 오도록 계산한다.
-    # insert_text의 point.y는 baseline이며, search_for 결과는:
-    #   search_for bottom = baseline - ascender * font_size
-    #   search_for top    = baseline - descender * font_size (descender < 0 이므로 위로 확장)
-    # search_for 중앙 = baseline - (ascender + descender) / 2 * font_size
-    # bbox 중앙 = (y0 + y1) / 2
-    # 따라서 baseline = bbox_center + (ascender + descender) / 2 * font_size
+    # baseline 계산 (bbox 수직 중앙 기준)
     bbox_center = (y0 + y1) / 2.0
     baseline_y = bbox_center + (ascender + descender) / 2.0 * font_size
 
+    # 띄어쓰기가 있는 긴 문장은 단어(word) 단위로 가로 위치를 비례 분할 배치하여 자간 누적 이탈을 방지한다.
+    words = text.split(" ")
+    if len(words) > 1:
+        total_len = max(1, len(text))
+        current_x = x0
+        for idx, word in enumerate(words):
+            if word:
+                try:
+                    page.insert_text(
+                        fitz.Point(current_x, baseline_y),
+                        word,
+                        fontsize=font_size,
+                        fontname=font_name,
+                        render_mode=INVISIBLE_RENDER_MODE,
+                        overlay=True,
+                    )
+                except Exception as e:
+                    logger.warning(f"[pdf_text_layer] 단어 레이어 삽입 실패 '{word[:10]}': {e}")
+            # 다음 단어의 X 좌표 이동 (단어 길이에 띄어쓰기 1자 추가 포함)
+            char_step = len(word) + 1 if idx < len(words) - 1 else len(word)
+            current_x += (char_step / total_len) * width
+        return
+
+    # 띄어쓰기가 없는 단일 단어/텍스트는 통째로 삽입
     try:
         page.insert_text(
             fitz.Point(x0, baseline_y),
@@ -386,6 +523,17 @@ def _insert_text_layer_into_doc(
             clamped_rect = ocr_rect & page_rect
             if not clamped_rect or clamped_rect.is_empty or clamped_rect.is_infinite:
                 continue
+
+            # [TABLE_DEBUG] 표 행 텍스트(| 구분자 포함)의 좌표 변환 과정 추적
+            is_table_row_text = "|" in text
+            if is_table_row_text:
+                logger.info(
+                    f"[TABLE_DEBUG] _insert_text_layer page={page_no}: text='{text[:40]}' "
+                    f"원본 bbox=({bbox_pdf[0]:.1f}, {bbox_pdf[1]:.1f}, {bbox_pdf[2]:.1f}, {bbox_pdf[3]:.1f}) "
+                    f"→ pdf_user=({ocr_rect.x0:.1f}, {ocr_rect.y0:.1f}, {ocr_rect.x1:.1f}, {ocr_rect.y1:.1f}) "
+                    f"→ clamped=({clamped_rect.x0:.1f}, {clamped_rect.y0:.1f}, {clamped_rect.x1:.1f}, {clamped_rect.y1:.1f}) "
+                    f"page_rect=({page_rect.x0:.1f}, {page_rect.y0:.1f}, {page_rect.x1:.1f}, {page_rect.y1:.1f})"
+                )
 
             # 텍스트 내용에 따라 폰트 선택: CJK 문자가 없으면 helv(영문), 있으면 언어별 CJK 폰트
             font_name = _pick_font_for_text(text, language)
@@ -507,7 +655,10 @@ def _extract_items_from_parsing_res_list(layout: dict) -> list[tuple[str, BBox]]
         text = content.strip()
         if not text:
             continue
-        items.append((text, bbox_px))
+        # 문단 텍스트가 여러 줄인 경우, 줄 단위로 분할하여 각 줄에 세로 분할된 bbox를 할당한다.
+        # 전체 텍스트를 한 줄로 배치하면 fontsize가 너무 작아져 텍스트 검색/선택이 불가능해진다.
+        paragraph_items = _split_paragraph_into_lines(text, bbox_px)
+        items.extend(paragraph_items)
     return items
 
 
@@ -531,9 +682,17 @@ def extract_page_ocr_results_from_layout(
             continue
         # 구 스키마: overall_ocr_res에서 단어 단위 추출 (좀 더 정밀한 bbox)
         page_items = _extract_items_from_overall_ocr_res(layout)
+        used_source = "overall_ocr_res"
         # 신 스키마 폴백: overall_ocr_res가 없으면 parsing_res_list에서 블록 단위 추출
         if not page_items:
             page_items = _extract_items_from_parsing_res_list(layout)
+            used_source = "parsing_res_list"
+        # [TABLE_DEBUG] 어떤 소스에서 텍스트 레이어 데이터를 가져왔는지 로깅
+        table_items_count = sum(1 for _text, _bbox in page_items if "|" in _text)
+        logger.info(
+            f"[TABLE_DEBUG] extract_page_ocr_results page={page_no}: "
+            f"source={used_source}, total_items={len(page_items)}, table_row_items={table_items_count}"
+        )
         if page_items:
             results[page_no] = page_items
     return results

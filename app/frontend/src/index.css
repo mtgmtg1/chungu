@@ -3,6 +3,28 @@
 @tailwind components;
 @tailwind utilities;
 
+/* [Flow: 드로잉 모드일 때 노드/엣지/pane의 pointer events 비활성화 + 커서 강제]
+   - DrawingOverlay가 캔버스 모든 영역에서 pointer 이벤트를 수신하도록 함.
+   - 노드 위에서도 드로잉 도구(펜/형광펜/도형/지우개)가 작동하고 커서가 변하지 않음.
+   - React Flow가 pane/node에 인라인 cursor를 설정하므로 !important로 덮어씀. */
+.react-flow.drawing-active,
+.react-flow.drawing-active .react-flow__pane,
+.react-flow.drawing-active .react-flow__viewport,
+.react-flow.drawing-active .react-flow__nodes,
+.react-flow.drawing-active .react-flow__edges,
+.react-flow.drawing-active .react-flow__edge,
+.react-flow.drawing-active .react-flow__node {
+  cursor: crosshair !important;
+}
+
+.react-flow.drawing-active .react-flow__nodes,
+.react-flow.drawing-active .react-flow__edges,
+.react-flow.drawing-active .react-flow__edge,
+.react-flow.drawing-active .react-flow__node,
+.react-flow.drawing-active .react-flow__pane {
+  pointer-events: none !important;
+}
+
 body {
   font-family: 'Geist', sans-serif;
   @apply bg-background text-on-background;

@@ -25,6 +25,7 @@ function useMessages({ status }) {
   // [Flow: status가 submitted/streaming이면 사용자가 메시지를 보냈다고 간주]
   useEffect(() => {
     if (status === "submitted" || status === "streaming") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- useChat status(외부 상태) 변화에 맞춰 hasSentMessage 래치 설정
       setHasSentMessage(true);
     }
   }, [status]);
@@ -71,6 +72,9 @@ function useMessages({ status }) {
  * @param {() => void} [props.onToolApprove] - 도구 승인 콜백
  * @param {() => void} [props.onToolDeny] - 도구 거부 콜백
  * @param {() => void} [props.onToolAlways] - 항상 승인 콜백
+ * @param {string} [props.jobId] - Job ID (마크다운 diff 승인 시 저장 API 호출용)
+ * @param {() => void} [props.onCopyPrompt] - 마지막 사용자 프롬프트 복사 콜백
+ * @param {() => void} [props.onEditPrompt] - 마지막 사용자 프롬프트 수정 콜백
  */
 export default function Messages({
   messages,
@@ -83,6 +87,9 @@ export default function Messages({
   onToolApprove,
   onToolDeny,
   onToolAlways,
+  jobId,
+  onCopyPrompt,
+  onEditPrompt,
 }) {
   const { containerRef, endRef, isAtBottom, scrollToBottom, handleScroll } = useMessages({ status });
 
@@ -90,6 +97,10 @@ export default function Messages({
   const isAgentActive = status === "submitted" || status === "streaming";
 
   const lastAssistantIndex = messages.map((m) => m.role).lastIndexOf("assistant");
+  // [Flow: 마지막 사용자 메시지 인덱스 — 프롬프트 복사/수정 버튼 표시 대상]
+  const lastUserIndex = messages.map((m) => m.role).lastIndexOf("user");
+  // [Flow: 프롬프트 버튼은 에이전트가 활동 중이 아닐 때만 표시]
+  const canShowPromptActions = !isAgentActive;
 
   return (
     <div className="relative flex-1 bg-background">
@@ -115,6 +126,10 @@ export default function Messages({
               message={message}
               isLoading={status === "streaming" && messages.length - 1 === index}
               isLastAssistant={index === lastAssistantIndex}
+              isLastUser={index === lastUserIndex}
+              canShowPromptActions={canShowPromptActions}
+              onCopyPrompt={onCopyPrompt}
+              onEditPrompt={onEditPrompt}
               onRegenerate={onRegenerate}
               canRegenerate={canRegenerate}
               approvalMode={approvalMode}
@@ -122,6 +137,7 @@ export default function Messages({
               onToolApprove={onToolApprove}
               onToolDeny={onToolDeny}
               onToolAlways={onToolAlways}
+              jobId={jobId}
             />
           ))}
 

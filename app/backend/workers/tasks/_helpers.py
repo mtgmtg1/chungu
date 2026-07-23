@@ -120,7 +120,9 @@ def _handle_job_failure(db, job: Job, error_detail: str) -> dict:
     if job.retry_count < MAX_RETRY_COUNT:
         job.status = "retrying"
         db.commit()
-        run_job.delay(job.id)
+        # [순환 import 방지: run_job은 job_tasks.py에 정의되어 있으므로 lazy import]
+        from .job_tasks import run_job as _run_job
+        _run_job.delay(job.id)
         logger.info(f"[run_job:{job.id}] 재시도 예약 ({job.retry_count}/{MAX_RETRY_COUNT})")
         return {"job_id": job.id, "status": "retrying", "retry_count": job.retry_count}
 

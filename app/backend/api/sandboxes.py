@@ -502,6 +502,7 @@ async def collect_results(
         workspace_path=workspace_path,
         job_id=sandbox.job_id or "",
         supabase_client=supabase,
+        since_timestamp=sandbox.created_at.timestamp() if sandbox.created_at else None,
     )
 
     # [Flow: 업로드된 파일을 job.extracted_files 에 추가하여 파일 탭에 표시]

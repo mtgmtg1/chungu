@@ -164,11 +164,6 @@ ref)
     onChangeRef.current = onChange;
   }, [onChange]);
 
-  // [Flow: 마크다운 prop이 변경될 때 (저장 성공 후 부모가 업데이트) lastMarkdownRef도 동기화하여 중복 onChange 방지]
-  useEffect(() => {
-    lastMarkdownRef.current = markdown;
-  }, [markdown]);
-
   const editor = useEditor({
     extensions: [
     StarterKit,
@@ -195,6 +190,21 @@ ref)
     content: injectPageMarkers(marked.parse(markdown || "")),
     editable
   });
+
+  // [Flow: Step 1 (markdown prop 변경 감지) -> Step 2 (lastMarkdownRef와 비교하여 실제 변경인지 판별)
+  //       -> Step 3 (진행 중 debounce 타이머 취소로 에이전트 변경사항 덮어쓰기 방지)
+  //       -> Step 4 (Tiptap setContent로 에디터 내용 동기화, emitUpdate:false로 update 이벤트 억제)]
+  // 에이전트 도구(apply_edits)가 백엔드에 저장 후 부모가 markdown prop을 갱신해도
+  // Tiptap 내용을 동기화하지 않으면 화면에 반영되지 않는 문제를 해결한다.
+  useEffect(() => {
+    if (!editor) return;
+    if (lastMarkdownRef.current === markdown) return;
+    // 진행 중인 사용자 편집 debounce 타이머 취소 — 로컬 편집이 에이전트 변경사항을 덮어쓰는 것을 방지
+    clearTimeout(onChangeTimerRef.current);
+    lastMarkdownRef.current = markdown;
+    // emitUpdate: false — setContent가 update 이벤트를 발생시키지 않아 debounce 재발생 차단
+    editor.commands.setContent(injectPageMarkers(marked.parse(markdown || "")), { emitUpdate: false });
+  }, [editor, markdown]);
 
   // [Flow: Step 1 (사용자 입력으로 Tiptap 업데이트 이벤트 발생) -> Step 2 (1초 debounce 타이머 설정) -> Step 3 (타이머 완료 시 getMarkdown으로 변환) -> Step 4 (prop 마크다운과 다를 때만 onChange 콜백 호출)]
   useEffect(() => {

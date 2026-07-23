@@ -15,8 +15,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# 수집 대상 디렉토리 (workspace 하위)
+# 수집 대상 디렉토리 (workspace 하위) — 과거 호환용 참조.
+# 실제 scan_workspace 는 workspace 전체를 스캔하되 EXCLUDE_DIRS/EXCLUDE_FILES 를 제외한다.
 COLLECT_DIRS = ["agent_output", "extracted", "annotations"]
+
+# 스캔 제외 디렉토리 (입력 파일, 버전 관리, 에이전트 로그 등)
+EXCLUDE_DIRS = {".git", ".agent_log", "original", "__pycache__", "node_modules"}
+# 스캔 제외 파일 (메타데이터, 설정 파일)
+EXCLUDE_FILES = {"_file_mapping.json", ".gitignore"}
+
 # 수집 대상 파일 확장자
 COLLECT_EXTENSIONS = {
     ".csv", ".md", ".xlsx", ".json", ".txt", ".html",
@@ -27,6 +34,8 @@ COLLECT_EXTENSIONS = {
     ".pptx", ".ppt", ".ppsx", ".pps",
     ".docx", ".doc",
     ".hwp", ".hwpx",
+    # 코드/스크립트 (에이전트가 생성한 스크립트도 수집 대상에 포함)
+    ".py", ".js", ".ts", ".sh",
 }
 
 
@@ -45,37 +54,53 @@ class ResultCollector:
         self.workspace_root = workspace_root
 
     def scan_workspace(self, workspace_path: Path) -> list[dict[str, Any]]:
-        """workspace 내 수집 대상 파일을 스캔한다.
+        """workspace 내 수집 대상 파일을 전체 스캔한다.
 
-        [Flow: COLLECT_DIRS 순회 -> 확장자 필터 -> 파일 정보 수집]
+        [Flow: workspace 전체 rglob -> EXCLUDE_DIRS/EXCLUDE_FILES 필터
+          -> 확장자 필터 -> 파일 정보 수집]
+
+        기존에는 COLLECT_DIRS (agent_output/extracted/annotations) 하위만 스캔했으나,
+        에이전트가 임의의 경로에 파일을 생성하는 경우 수집되지 않는 문제가 있어
+        workspace 전체를 스캔하도록 변경. 단, original/ (입력 파일), .git/,
+        .agent_log/ 등은 제외한다.
 
         매개변수:
             workspace_path: workspace 루트 경로
 
         반환값:
-            [{"path": str, "relative_path": str, "size": int, "extension": str}]
+            [{"path": str, "relative_path": str, "size": int, "extension": str, "modified_at": float}]
         """
         files = []
 
-        for subdir in COLLECT_DIRS:
-            dir_path = workspace_path / subdir
-            if not dir_path.exists():
+        for file_path in workspace_path.rglob("*"):
+            if not file_path.is_file():
                 continue
 
-            for file_path in dir_path.rglob("*"):
-                if not file_path.is_file():
-                    continue
-                if file_path.suffix.lower() not in COLLECT_EXTENSIONS:
-                    continue
+            # 제외 디렉토리 하위 파일 스킵
+            try:
+                relative = file_path.relative_to(workspace_path)
+            except ValueError:
+                continue
+            parts = relative.parts
+            if any(part in EXCLUDE_DIRS for part in parts):
+                continue
 
-                stat = file_path.stat()
-                files.append({
-                    "path": str(file_path),
-                    "relative_path": str(file_path.relative_to(workspace_path)),
-                    "size": stat.st_size,
-                    "extension": file_path.suffix.lower(),
-                    "modified_at": stat.st_mtime,
-                })
+            # 제외 파일 스킵
+            if file_path.name in EXCLUDE_FILES:
+                continue
+
+            # 확장자 필터
+            if file_path.suffix.lower() not in COLLECT_EXTENSIONS:
+                continue
+
+            stat = file_path.stat()
+            files.append({
+                "path": str(file_path),
+                "relative_path": str(relative),
+                "size": stat.st_size,
+                "extension": file_path.suffix.lower(),
+                "modified_at": stat.st_mtime,
+            })
 
         logger.info("workspace 스캔 완료: %d개 파일 (%s)", len(files), workspace_path)
         return files
@@ -162,7 +187,10 @@ class ResultCollector:
                 with open(file_path, "rb") as fp:
                     supabase_client.storage.from_(bucket).upload(
                         storage_path, fp.read(),
-                        {"content-type": _guess_content_type(file_path.suffix)},
+                        {
+                            "content-type": _guess_content_type(file_path.suffix),
+                            "upsert": True,
+                        },
                     )
                 result["uploaded"] += 1
                 result["files"].append({
@@ -187,35 +215,35 @@ class ResultCollector:
         job_id: str,
         supabase_client: Any | None = None,
         since_commit: str | None = None,
+        since_timestamp: float | None = None,
     ) -> dict[str, Any]:
         """전체 수집 파이프라인을 실행한다.
 
-        [Flow: 스캔 -> 변경 파일 식별 -> 업로드 -> 결과 반환]
+        [Flow: 스캔 -> mtime 기반 변경 파일 필터링 -> 업로드 -> 결과 반환]
 
         매개변수:
             workspace_path: workspace 루트 경로
             job_id: Job ID
             supabase_client: Supabase 클라이언트
-            since_commit: 이 커밋 이후 변경된 파일만
+            since_commit: (사용 중단) 이 커밋 이후 변경된 파일만 — 호환성 유지
+            since_timestamp: 이 시각(Unix timestamp) 이후에 수정된 파일만 업로드.
+                None 이면 모든 스캔 파일을 업로드한다.
 
         반환값:
-            {"files": [...], "uploaded": int, "failed": int}
+            {"files": [...], "uploaded": int, "failed": int, "total_scanned": int}
         """
-        # Step 1: workspace 스캔
+        # Step 1: workspace 전체 스캔
         all_files = self.scan_workspace(workspace_path)
 
-        # Step 2: 변경 파일 식별
-        changed_paths = set(self.identify_changed_files(workspace_path, since_commit))
-
-        # 변경된 파일만 필터링 (since_commit 이 None 이면 모든 파일)
-        if changed_paths:
+        # Step 2: mtime 기반 필터링 — since_timestamp 이후 수정된 파일만
+        if since_timestamp is not None:
             files_to_upload = [
-                f for f in all_files if f["relative_path"] in changed_paths
+                f for f in all_files if f["modified_at"] > since_timestamp
             ]
         else:
             files_to_upload = all_files
 
-        # Step 3: Storage 업로드
+        # Step 3: Storage 업로드 (upsert=True 로 기존 파일 덮어쓰기)
         upload_result = self.upload_to_storage(files_to_upload, job_id, supabase_client)
 
         return {

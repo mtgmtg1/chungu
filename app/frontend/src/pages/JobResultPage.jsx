@@ -163,11 +163,13 @@ export default function JobResultPage() {
   }, [job?.status]);
 
   // [Flow: Step 1 (job 상태 조회) -> Step 2 (주석 처리 여부 확인)
-  //       -> Step 3 (job이 done일 때 전이 조건 판단 — 최초 완료 또는 주석 완료 시에만 loadPreview 호출)
+  //       -> Step 3 (job이 done일 때 전이 조건 판단 — 최초 완료, 주석 완료, 또는 forcePreview 시 loadPreview 호출)
   //       -> Step 4 (폴링 재개 또는 중지)]
   // 주석 폴링 중에는 job이 이미 done이므로, 매번 loadPreview를 호출하면 PDF 뷰어가 새로고침됨.
   // prevJobDoneRef/prevAnnotateProcessingRef로 전이 시점을 추적해 불필요한 새로고침을 방지.
-  async function loadJob() {
+  // forcePreview=true이면 전이 조건과 무관하게 항상 loadPreview를 호출하여
+  // 에이전트 도구 완료 후 프리뷰 패널/에디터에 변경사항을 즉시 반영한다.
+  async function loadJob(forcePreview = false) {
     try {
       const data = await api.getJob(jobId);
       setJob(data);
@@ -184,7 +186,7 @@ export default function JobResultPage() {
         // [Flow: loadPreview 호출 조건 — (1) job이 방금 done으로 전이, (2) 주석이 processing → 완료로 전이]
         const jobJustDone = !prevJobDoneRef.current;
         const annotationsJustFinished = prevAnnotateProcessingRef.current && !hasProcessingAnnotations;
-        if (jobJustDone || annotationsJustFinished) {
+        if (jobJustDone || annotationsJustFinished || forcePreview) {
           await loadPreview();
         }
         prevJobDoneRef.current = true;
@@ -293,7 +295,16 @@ export default function JobResultPage() {
       setSourceType(preview.source_type);
       setImageUrls(preview.image_urls || []);
       setSourceFiles(preview.source_files || []);
-      const fms = (preview.source_files || []).map((f) => f.result_markdown || "");
+      // [Flow: preview.markdown(=edited_md 포함)을 파일 마커로 분할하여 fileMarkdowns로 사용]
+      // 이전에는 source_files[].result_markdown(원본)을 사용했으나, 에이전트 편집 내용이
+      // 반영되지 않는 버그의 원인이 되었음. preview.markdown은 _get_markdown_content에서
+      // edited_md를 우선 선택하므로 에이전트 편집 내용이 포함됨.
+      const previewMd = preview.markdown || "";
+      const fileParts = previewMd.split(/\n*<!-- Page \d+ -->\n*/).filter((s) => s.trim());
+      const sourceCount = (preview.source_files || []).length;
+      const fms = sourceCount > 1 && fileParts.length > 1
+        ? fileParts
+        : (preview.source_files || []).map((f) => f.result_markdown || "");
       setFileMarkdowns(fms);
       setSelectedFileIndex(0);
       // [Flow: 추가 파일 증분 변환 중인지 확인 — source_files 중 status=processing인 항목이 있으면 폴링]
@@ -304,7 +315,7 @@ export default function JobResultPage() {
       // [Flow: 항상 페이징 모드 — 전체 페이지 메타 로드]
       const meta = await api.previewJobPages(jobId);
       setPages(meta.pages || []);
-      setMarkdown("");
+      setMarkdown(previewMd);
     } catch (e) {
       setError(e.message || t("page:errors.loadFailed"));
     } finally {
@@ -1288,7 +1299,7 @@ export default function JobResultPage() {
               sandboxId,
             }}
             onRunningCountChange={setAgentRunningCount}
-            onAgentComplete={() => loadJobRef.current()}
+            onAgentComplete={() => loadJobRef.current(true)}
             onFlowDrawingsUpdate={(data) => {
               // [Flow: 에이전트가 save_flow_drawings 완료 → FlowViewer에 즉시 반영]
               flowViewerApiRef.current?.updateFromAgent?.(data);

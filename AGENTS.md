@@ -19,8 +19,13 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **수정 내용**:
   - `app/backend/core/pdf_text_layer.py`: `_extract_table_row_items`의 행 배정 공식을 `row_y0 = y0 + i*row_height` → `row_y0 = y1 - (i+1)*row_height` (역순)로 변경. 첫 HTML 행이 raw bbox의 `y1`(변환 후 표의 맨 위)에 가깝게 배정되도록 수정.
   - `app/backend/tests/test_extract_table_row_items_order.py`: 표 전체 device-space 범위 대비 첫/마지막 행의 위치, 10행 표에서 y가 HTML 순서대로 단조 증가하는지 검증하는 회귀 테스트 추가.
-- **검증**: 실제 job(`8c8bef99...`, "변호인 접견예약 확인증") 데이터로 searchable PDF 재생성 후 `search_for` 좌표 확인 — 표 행0(수용기관) y0=178(표 상단), 표 행9(예약일시) y0=562(표 하단)로 HTML 순서와 시각적 위치가 일치함을 확인. `cd app/backend && venv/bin/python -m pytest tests/ -q` → 249 passed.
+- **검증**: 실제 job(`8c8bef99...`, "변호인 접견예약 확인증") 데이터로 searchable PDF 재생성 후 `search_for` 좌표 확인 — 표 행0(수용기관) y0=178(표 상단), 표 행9(예약일시) y0=562(표 하단)로 HTML 순서와 시각적 위치가 일치함을 확인. `cd app/backend && venv/bin/python -m pytest tests/ -q` → 249 passed. **사용자가 실제 스캔 PDF에서 표 내부 행 뒤바뀜이 해결되었음을 확인함 (2026-07-22).**
 - **핵심 파일**: `app/backend/core/pdf_text_layer.py`, `app/backend/tests/test_extract_table_row_items_order.py`.
+- **⚠️ 회귀 방지 경고 (이 좌표계 버그는 2026-07-20~22 사이 여러 차례 재발한 이력이 있음)**:
+  1. **`insert_text`/`search_for`가 어느 좌표계인지 검증할 때, 같은 함수 쌍으로 삽입 후 재검색하는 방식은 순환 논리다.** 반드시 `page.get_pixmap()`으로 렌더링한 이미지를 육안/자동으로 확인해 절대 위치를 검증할 것.
+  2. **PyMuPDF는 항상 device-space(MuPDF 네이티브, 원점 좌상단, y↓)를 사용한다.** `page.rect`, `get_text()`, `insert_text()`, `search_for()` 전부 동일. "PDF user-space(원점 좌하단, y↑)"로 변환이 필요한 것은 원본 PDF 파일의 `/MediaBox` 등 PDF 스펙 좌표를 직접 다룰 때뿐이다.
+  3. **단일 블록(제목/문단/푸터)의 절대 위치가 정상으로 "보인다"고 해서 좌표 변환 체인이 올바르다고 단정하지 말 것.** 두 번의 독립적인 뒤집힘 오류가 우연히 상쇄되어 절대 위치는 맞아도, 행 분할처럼 "상대적 순서"를 다루는 로직에서는 오류가 그대로 드러난다. 반드시 **다중 행/다중 요소의 순서**까지 함께 검증해야 한다.
+  4. `_extract_table_row_items`를 다시 수정할 경우, `app/backend/tests/test_extract_table_row_items_order.py`의 두 회귀 테스트(첫 행이 표 상단에, 마지막 행이 표 하단에 위치 / 10행 표에서 y가 단조 증가)를 반드시 통과시킬 것.
 
 ### 스캔 PDF 표 내부 y좌표 반전 근본 원인 해결 — search_job_text OCR 폴백 좌표계 통일 — 2026-07-22
 
@@ -398,7 +403,7 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **Phase 4: Celery 태스크** (`app/backend/workers/tasks.py`):
   - `@celery.task run_ediscovery(job_id, chunk_size, threshold, page_range, max_chunks, query)` 등록 → `pipeline_ediscovery.run` 호출.
 - **Phase 5: FastAPI 엔드포인트** (`app/backend/api/jobs.py`):
-  - `POST /api/jobs/{job_id}/ediscovery/extract`: Celery 백그라운드 큐잉. 파라미터: chunk_size, threshold, max_chunks, query, page_range. 관리자 무료 / 일반 사용자 `premium_pages` 차감 + 환불 가능. 같은 파라미터 재사용 시 캐시 반환.
+  - `POST /api/jobs/{job_id}/ediscovery/extract`: Celery 백그라운드 큐잉. 파라미터: chunk_size, threshold, max_chunks, query, page_range. 관리자 무료 / 일반 사용자 포인트(`ediscovery_cost_points`) 차감 + 환불 가능. 같은 파라미터 재사용 시 캐시 반환.
   - `GET /api/jobs/{job_id}/ediscovery`: 상태/그래프/메트릭 반환 (폴링용).
   - `POST /api/jobs/{job_id}/ediscovery/threshold`: 저장된 그래프에서 confidence 기준 재필터링 (재추출 없이 엣지/노드만 재구성).
   - `_job_summary()`에 `ediscovery_status`, `ediscovery_graphs`, `ediscovery_metrics`, `ediscovery_refundable` 필드 추가.
@@ -675,20 +680,6 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 - **테스트 파일**: `test_annotate_compare.py`를 `build_embedpdf_annotations` 기반으로 업데이트 — PDF + annotations JSON을 분리 저장.
 - **핵심 파일**: `pdf_annotator.py`, `pdf_annotate_converter.py`, `test_annotate_compare.py`.
 
-### 브랜딩 (로고)
-
-- **공식 로고 적용**: `proof-logo.png`(가로형, 16:9)를 앱 전반의 공식 로고로 사용. 원본(800×450, 77KB)을 400×225(32KB)로 리사이즈하여 `app/frontend/public/proof-logo.png`에 배치 — Vite가 루트 경로(`/proof-logo.png`)로 서빙.
-- **재사용 가능한 Logo 컴포넌트**: `app/frontend/src/components/Logo.jsx` — `height`, `toHome`(Link 래핑 토글), `className` 등의 prop 제공. 모든 주요 브랜드 노출 위치에서 재사용.
-- **적용 위치**:
-  - 랜딩페이지(`UploadPage.jsx`) 네비게이션: 54px
-  - 작업 확인 페이지(`JobConfirmPage.jsx`) 네비게이션: 54px
-  - 사이드바(`SidebarLayout.jsx`): 펼침 48px, 접힘 42px
-- **Favicon**: `app/frontend/index.html`에 `<link rel="icon">` 및 `apple-touch-icon` 추가.
-- **원본 백업**: `proof-logo.original.png`를 루트에 보관(public 밖이므로 서빙되지 않음).
-- **회사 로고(teamcat)**: `teamcat-logo.png`(정사각형, 64×64, 6KB)를 `app/frontend/public/`에 배치. `GlobalFooter.jsx`의 copyright 텍스트(`© 2026 TeamCat`) 앞에 18×18px로 작게 표시.
-- **PoetryProgress guard clause**: `app/frontend/src/components/PoetryProgress.jsx`에서 `poems[slideIdx]`가 undefined일 때 `.title` 접근으로 발생하던 `TypeError` 수정 — `if (!poem) return null;` 추가 (i18n 로딩 중 빈 배열일 때 크래시 방지).
-- **tasks.py import 경로 수정**: `app/backend/workers/tasks.py`의 `_build_and_upload_searchable_pdf()`와 `_image_to_searchable_pdf()`에서 `from .core.*`을 `from ..core.*`로 수정 (workers 패키지 내부에서 core로의 상대 임포트 경로 오류).
-
 ### Searchable PDF (텍스트 레이어)
 
 - **업로드 시점 텍스트 레이어 생성**: PaddleOCR이 반환한 `overall_ocr_res`의 `rec_texts`/`rec_boxes`를 사용해 원본 PDF/이미지에 투명 텍스트 레이어를 추가. `app/backend/core/pdf_text_layer.py`의 `add_text_layer_from_ocr()`가 핵심.
@@ -790,16 +781,16 @@ ocr_output/         OCR output artifacts (ignored in git)
 Copy `app/.env.example` to `app/.env` and fill in:
 
 - `DATABASE_URL`
-- `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`, `SUPABASE_JWT_SECRET`
 - `REDIS_URL`
 - `DEFAULT_LLM_ENDPOINT`, `DEFAULT_LLM_MODEL` (vLLM for images/PDF)
-- `MEDIA_LLM_ENDPOINT`, `MEDIA_LLM_MODEL` (llama.cpp for audio/video + image share)
+- `MEDIA_LLM_ENDPOINT`, `MEDIA_LLM_MODEL` (llama.cpp E4B for audio/video + image share) — **선택값**. `config.py`에 기본값 `http://192.168.1.82:18080/v1`이 하드코딩되어 있으나, E4B 서버가 현재 다운/비활성화 상태이므로 빈 값으로 두면 `pipeline_media.py:_resolve()`가 자동으로 vLLM만 사용하도록 폴백함. E4B를 비활성화하려면 `.env`에서 빈 값으로 설정하거나 관리자 페이지에서 `media_llm_endpoint`를 비우면 됨.
 - `PUBLIC_BASE_URL` (external URL for download links)
-- `SUPABASE_URL` (internal), `SUPABASE_PUBLIC_URL` (external proxied URL)
-- `JWT_SECRET_KEY` (for Supabase token verification)
-- `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH`
+- `SUPABASE_PUBLIC_URL` (external proxied URL; 빈 값이면 `SUPABASE_URL` 사용)
+- `SECRET_KEY` (민감 설정 암호화/세션 서명용)
+- `ADMIN_EMAIL`, `ADMIN_INITIAL_PASSWORD`
 - Turnstile: `TURNSTILE_SITE_KEY`, `TURNSTILE_WORKER_URL`, `VITE_TURNSTILE_SITE_KEY`, `VITE_TURNSTILE_WORKER_URL`
-- Toss/Paddle keys for payments
+- Paddle: `PADDLE_API_KEY` (결제)
 - PaddleOCR: `PADDLEOCR_SERVICE_URL`, `PADDLEOCR_API_TOKEN`, `PADDLEOCR_API_URL`, `PADDLEOCR_FALLBACK_ENABLED`
 - Docling: `DOCLING_ENABLED`, `DOCLING_SERVICE_URL`, `DOCLING_REFINEMENT_ENABLED`
 
@@ -888,11 +879,12 @@ a1 Supabase의 `SUPABASE_PUBLIC_URL`이 `https://proof.teamcat.app/supabase`로 
 
 - **Audio/Video**: E4B (llama.cpp, `192.168.1.82:18080`) — **현재 서버 다운, 비활성화**
 - **PDF routing** (임시 정책 — vLLM/Docling 서버 개선 전까지):
-  - **기본변환** (`ocr_model == "basic"`): `has_pdf_text_layer()` → True면 Docling, False면 `run_vision`(PaddleOCR 우선)
-  - **고급변환** (`ocr_model == "premium"`): 무조건 `run_vision` — 모든 페이지 PaddleOCR 우선, 실패 시 vLLM fallback
+  - **라우팅 결정 단위 = 전체 PDF(작업 단위)**. `tasks.py`에서 PDF 파일 전체에 대해 `has_pdf_text_layer()`를 1회 호출해 라우팅 경로를 결정. 페이지별 개별 라우팅 분기는 없음.
+  - **기본변환** (`ocr_model == "basic"`): `has_pdf_text_layer()` → True면 Docling 파이프라인(`run_docling`) + `_register_searchable_pdf_if_text_layer`로 원본 텍스트 레이어를 searchable PDF로 등록(OCR 재생성 방지). False면 `run_vision`(PaddleOCR 우선).
+  - **고급변환** (`ocr_model == "premium"`): 무조건 `run_vision` — 모든 페이지 PaddleOCR 우선, 실패 시 vLLM fallback.
   - **이미지 파일**: `run_media` → PaddleOCR 우선 (`is_fallback_preferred() == True`)
   - 라우팅 분기 순서: `tasks.py`에서 `ocr_model == "basic" and has_pdf_text_layer()` → True면 Docling, 그 외 PDF는 `run_vision`
-  - `run_vision` 내에서 개별 페이지 텍스트 레이어 검사 없음 — 모든 페이지 동일하게 PaddleOCR 우선 처리
+  - **`run_vision` 내부 동작 (페이지 단위 처리)**: `pipeline_vision.py:run_vision`은 위에서 결정된 단일 경로를 모든 페이지에 동일하게 적용. `run_vision` 자체는 개별 페이지 텍스트 레이어를 재검사하지 않고, 전체 페이지를 PaddleOCR 우선 → (실패 시) vLLM fallback 순으로 처리. 즉 "텍스트 레이어 검사"는 작업 단위 분기에서만 발생하고 `run_vision` 진입 후에는 페이지별 분기가 없음.
 - **PDF pages (pipeline=vision)**: rendered to PNG by PyMuPDF and sent page-by-page to the vLLM proxy (`192.168.1.69:18080`). The proxy round-robins between two Gemma-4 26B A4B AWQ 4bit instances (`18000` on GPU 1/2, `18001` on GPU 0/3). `run_vision`은 항상 vLLM endpoint로 라우팅 (E4B media endpoint 라우팅 제거됨).
 - **Mixed media batches** (images/audio/video): `pipeline_media.py:_resolve()`에서 동적 라우팅 — E4B 서버 다운 시 media_endpoint 없이 vLLM만 사용
 - Routing logic in `pipeline_media.py:_resolve()` and `pipeline_vision.py:resolve_endpoint()`
@@ -1348,18 +1340,20 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 
 ## Subscription Service
 
-- **기능 개요**: 구독 기반 사용량 관리 — 플랜별 월간 한도, 기간별 사용량 추적, 예약/차감/환불
-- **플랜별 한도**:
-  - `free`: basic_pages=1000, premium_pages=500, media_seconds=150분
-  - `pro`: basic_pages=10000, premium_pages=5000, media_seconds=1500분
-  - `max`: basic_pages=60000, premium_pages=30000, media_seconds=9000분
-- **기간 계산**: 사용자의 `subscription_period_start` 기준 월간 기간, 없으면 달력월 시작일 사용
-- **사용량 관리**:
-  - `reserve_usage()`: 작업 시작 전 사용량 예약
-  - `consume_usage()`: 작업 완료 후 실제 사용량 차감
-  - `release_usage()`: 작업 실패 시 예약된 사용량 환불
+- **기능 개요**: 구독 기반 사용량 관리 — 통합 크레딧(`points_balance`) 잔액 기반 과금, 월간 크레딧 지급, 예약/차감/환불. 페이지/오디오/비디오/AI 에이전트 스텝이 모두 포인트에서 차감됨.
+- **플랜별 월간 크레딧** (`PLAN_MONTHLY_CREDITS` in `subscription_service.py`):
+  - `free`: 1,000pt
+  - `pro`: 30,000pt
+  - `max`: 100,000pt
+- **크레딧 비율** (`points_service.py`): 기본 모델 페이지 1pt, 프리미엄 모델 페이지 5pt, 오디오 1pt/초, 비디오 10pt/초, Docling 후처리 페이지 3pt, AI 에이전트 스텝 1pt/스텝.
+- **기간 계산**: 사용자의 `subscription_period_start` 기준 월간 기간, 없으면 달력월 시작일 사용. `grant_monthly_credits()`가 Celery beat 태스크로 월간 크레딧을 지급 (중복 지급 방지용 `subscription_credits_granted_at` 컬럼 사용).
+- **사용량 관리** (`points_balance` 기반):
+  - `check_enough()`: 잔액 충분 여부 확인
+  - `reserve_usage()`: 작업 시작 전 포인트 예약
+  - `release_usage()`: 작업 실패 시 예약된 포인트 환불
 - **구독 상태**: `is_subscription_active()`로 활성 여부 확인
-- **Key files**: `app/backend/core/subscription_service.py`
+- **레거시 컬럼 참고**: `subscription_usages` 테이블의 `basic_pages`/`premium_pages`/`media_seconds`와 `jobs` 테이블의 `reserved_*` 컬럼은 마이그레이션 036 이전 개별 한도 방식의 잔재로 DB에 남아 있으나, 현재는 통계/사용량 계산 보조용이며 실제 한도 체크는 `points_balance`로만 이루어짐.
+- **Key files**: `app/backend/core/subscription_service.py`, `app/backend/core/points_service.py`, `app/backend/db/migrations/036_credit_system_subscription.sql`
 
 ## API Notes
 
@@ -1595,17 +1589,20 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 
 ## Subscription Plans (Free / Pro / Max)
 
-- **UI users** (web app) use subscription plans only. API users continue to use the pay-as-you-go credit system (`points_balance`).
-- **Plans**:
-  - Free: 1,000 basic pages + 500 premium pages + 150 min media/month
-  - Pro: $20/month or $200/year — 10,000 basic + 5,000 premium + 1,500 min media/month
-  - Max: $100/month or $1,000/year — 60,000 basic + 30,000 premium + 9,000 min media/month
+- **과금 모델**: UI 사용자(웹 앱)와 API 사용자 모두 동일한 통합 크레딧 시스템(`points_balance`)을 사용. 페이지/오디오/비디오/AI 에이전트 스텝이 포인트에서 차감됨. 이전 개별 한도 방식(basic_pages/premium_pages/media_seconds)은 마이그레이션 036으로 폐지됨.
+- **Plans** (월간 지급 크레딧, `PLAN_MONTHLY_CREDITS`):
+  - Free: 1,000pt/month
+  - Pro: $20/month or $200/year — 30,000pt/month
+  - Max: $100/month or $1,000/year — 100,000pt/month
+- **크레딧 비율**: 기본 모델 페이지 1pt, 프리미엄 모델 페이지 5pt, 오디오 1pt/초, 비디오 10pt/초, Docling 후처리 페이지 3pt, AI 에이전트 스텝 1pt/스텝. (상세 비용 계산은 `app/backend/core/points_service.py`)
 - **Key files**:
-  - `app/backend/core/subscription_service.py` — monthly quota tracking and reservation.
+  - `app/backend/core/subscription_service.py` — `PLAN_MONTHLY_CREDITS` 정의, 월간 크레딧 지급 및 포인트 기반 예약/환불.
+  - `app/backend/core/points_service.py` — 리소스별 포인트 비용 계산.
   - `app/backend/api/subscriptions.py` — public plan listing, checkout, and cancel endpoints.
   - `app/backend/api/payments.py` — Paddle webhook handling for `subscription.*` events.
-  - `app/backend/db/migrations/018_add_subscription_plan.sql` — schema migration.
-  - `app/frontend/src/pages/PlansPage.jsx` — subscription plan UI.
+  - `app/backend/db/migrations/036_credit_system_subscription.sql` — 통합 크레딧 시스템 전환 마이그레이션.
+  - `app/frontend/src/pages/PlansPage.jsx` / `app/frontend/src/pages/PricePage.jsx` — subscription plan UI (월간 크레딧 표시).
+  - `app/frontend/src/components/PlanCard.jsx` — 플랜 카드 (크레딧 기준 예상 사용 가이드 포함).
   - `scripts/create_paddle_subscription_catalog.py` — automated Paddle product/price creation.
 - **Paddle API key**: store in `app/.env` as `PADDLE_API_KEY`. It is seeded into `app_settings` via `settings_store.py` and `config.py`.
 - **Creating catalog**: run `PADDLE_API_KEY=... DATABASE_URL=... python scripts/create_paddle_subscription_catalog.py`. This creates products and monthly/yearly prices for Free/Pro/Max and saves the resulting `price_id`s into `app_settings`.
@@ -1635,7 +1632,7 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
   - `app/frontend/src/pages/JobResultPage.jsx`의 `startAnnotate(instruction)` 함수가 API를 호출하고, 에러 메시지에 "구독이 필요" 또는 "subscription"이 포함되면 2초 후 price 페이지로 자동 이동합니다.
   - `app/frontend/src/components/SourcePanel.jsx`의 `AiAnnotationFab` 컴포넌트가 PDF 소스 패널 하단 중앙에 작은 FAB으로 표시됩니다. 클릭하면 `scale`/`opacity`/`translate` 트랜지션으로 입력 카드 팝업이 부드럽게 펼쳐지며, instruction을 입력하고 생성할 수 있습니다.
   - i18n 키 `page:errors.subscriptionRequired` 사용 (ko/en/ja 모두 추가)
-- **주석 생성 비용**: 프리미엄 페이지 수(`premium_pages`)로 차감됩니다. 관리자는 차감되지 않습니다.
+- **주석 생성 비용**: 포인트(`annotate_cost_points`)로 차감됩니다. 관리자는 차감되지 않습니다.
 - **재시도 액션** (`annotate_action` 엔드포인트): 주석 생성이 `error` 상태로 실패한 경우 사용자가 재시도(retry)할 수 있습니다. 구독제이므로 환불(refund) 기능은 제공하지 않습니다. 비회원 사용자는 이 액션 엔드포인트에서도 402 에러를 받습니다.
 - **결과 파일 노출**: 주석 생성이 완료되면 `JobResultPage.jsx`의 파일 탭에 `<원본파일명>_annotation1.pdf`, `_annotation2.pdf` … 형식으로 누적 추가됩니다. 별도의 ‘주석 PDF 다운로드’ 버튼은 생성되지 않으며, AI 주석 FAB은 PDF 패널 하단에 계속 떠 있는 작은 트리거로 유지됩니다.
 - **결과 저장**: `app/backend/core/pdf_annotate_converter.py`는 각 주석을 `results/{job_id}/annotated_{N}.pdf`로 저장하고, `Job.annotated_pdf_files` JSONB 목록에 `storage_path`, `filename`, `instruction`, `mode`, `comment_mode`, `created_at`을 기록합니다. 동일한 `(instruction, mode, comment_mode)`로 재요청하면 기존 파일을 반환합니다.

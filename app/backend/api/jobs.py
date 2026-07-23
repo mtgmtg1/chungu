@@ -1336,16 +1336,15 @@ def _get_markdown_content(job: Job) -> str:
     if not candidates:
         return ""
 
-    # 페이지 마커가 가장 많은 후보를 선택 (편집 손실 방지)
-    # 파일 마커가 있으면 편집본으로 간주하여 무조건 우선한다.
-    def _marker_count(md: str) -> int:
-        file_count = len(_FILE_MARKER_RE.findall(md))
-        page_count = len(_PAGE_MARKER_RE.findall(md))
-        if file_count:
-            return 1_000_000 * file_count + page_count
-        return page_count
+    # 파일 마커(`<!-- 파일 N -->`)가 있는 후보를 우선 선택한다.
+    # 파일 마커 수가 같으면 edited_md(후보 순서상 먼저 추가됨)를 우선한다.
+    # page 마커(`<!-- Page N -->`) 수는 tie-breaker로 사용하지 않는다 —
+    # save_result_page가 page 마커를 제거하므로, page 마커가 더 많은 원본이
+    # 편집본보다 높은 점수를 받아 편집 내용이 무시되는 버그를 방지한다.
+    def _file_marker_count(md: str) -> int:
+        return len(_FILE_MARKER_RE.findall(md))
 
-    best = max(candidates, key=_marker_count, default=candidates[0])
+    best = max(candidates, key=_file_marker_count, default=candidates[0])
     return best
 
 

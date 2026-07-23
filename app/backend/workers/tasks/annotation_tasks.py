@@ -11,6 +11,7 @@ from ...db.session import SessionLocal
 logger = logging.getLogger(__name__)
 
 
+@celery.task(name="backend.workers.tasks.annotate_pdf_job")
 def annotate_pdf_job(
     job_id: str, instruction: str, mode: str, comment_mode: str, advanced: bool = False,
     annotation_index: int = 0, page_range: list[int] | None = None,
@@ -29,6 +30,7 @@ def annotate_pdf_job(
 
 
 
+@celery.task(name="backend.workers.tasks.annotate_edit_job")
 def annotate_edit_job(
     job_id: str, instruction: str, page_range: list[int] | None, annotation_index: int,
 ) -> dict:

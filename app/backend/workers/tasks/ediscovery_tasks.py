@@ -11,6 +11,7 @@ from ...db.session import SessionLocal
 logger = logging.getLogger(__name__)
 
 
+@celery.task(name="backend.workers.tasks.run_ediscovery")
 def run_ediscovery(
     job_id: str,
     chunk_size: int | None = None,

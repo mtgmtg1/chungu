@@ -21,6 +21,7 @@ from ._helpers import _handle_job_failure, _release_subscription_usage, _set_sta
 logger = logging.getLogger(__name__)
 
 
+@celery.task(name="backend.workers.tasks.cleanup_expired_uploads")
 def cleanup_expired_uploads() -> dict:
     """created_at 기준 30일이 지난 job의 원본 업로드 파일 삭제를 보류한다. (아카이빙 스토리지 구성 전까지)"""
     db = SessionLocal()
@@ -56,6 +57,7 @@ def cleanup_expired_uploads() -> dict:
 
 
 
+@celery.task(name="backend.workers.tasks.auto_recharge_retry")
 def auto_recharge_retry() -> dict:
     """자동 충전 실패 사용자를 찾아 1일 간격으로 재시도한다.
     auto_recharge_retries > 0 && < 3 && auto_recharge_enabled == True인 사용자 대상."""
@@ -97,6 +99,7 @@ def auto_recharge_retry() -> dict:
 
 
 
+@celery.task(name="backend.workers.tasks.cleanup_expired_sandboxes")
 def cleanup_expired_sandboxes() -> dict:
     """[Flow: Step 1 (만료된 sandbox 조회·종료) -> Step 2 (결과 수집) -> Step 3 (오래된 workspace 디스크 정리)]
 
@@ -230,6 +233,7 @@ def cleanup_expired_sandboxes() -> dict:
 
 
 
+@celery.task(name="backend.workers.tasks.grant_monthly_subscription_credits")
 def grant_monthly_subscription_credits() -> dict[str, Any]:
     """Celery beat로 매일 실행되어 월간 구독 크레딧을 지급한다.
 

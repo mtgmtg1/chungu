@@ -52,6 +52,7 @@ from ._helpers import (
 logger = logging.getLogger(__name__)
 
 
+@worker_ready.connect
 def recover_stuck_jobs(sender=None, **kwargs):
     """Worker 시작 시 중단된 job(queued/rendering/ocr/merging)을 자동으로 재시도한다."""
     time.sleep(3)
@@ -107,6 +108,7 @@ def recover_stuck_jobs(sender=None, **kwargs):
 
 
 
+@celery.task(name="backend.workers.tasks.run_job")
 def run_job(job_id: str) -> dict:
     """업로드된 파일(단일 PDF 또는 멀티미디어)을 변환하는 메인 워커 태스크."""
     db = SessionLocal()
@@ -744,6 +746,7 @@ def run_job(job_id: str) -> dict:
 
 
 
+@celery.task(name="backend.workers.tasks.run_job_added_files")
 def run_job_added_files(job_id: str) -> dict:
     """기존 완료된 Job에 새로 추가된 파일(is_new=true)만 변환하여 결과에 추가한다.
 

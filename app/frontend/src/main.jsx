@@ -30,6 +30,7 @@ import DevEdiscoveryPage from "./pages/DevEdiscoveryPage.jsx";
 import DevEdiscoveryTimelinePage from "./pages/DevEdiscoveryTimelinePage.jsx";
 import DebugMarkdownAgentPage from "./pages/DebugMarkdownAgentPage.jsx";
 import DebugHighlightCoordsPage from "./pages/DebugHighlightCoordsPage.jsx";
+import DebugPanelTogglePage from "./pages/DebugPanelTogglePage.jsx";
 
 // 개발 환경에서 전역 dev mock 활성화 — /dev/* 및 /jobs/:jobId 경로 모두 샘플 데이터로 UI 테스트 가능.
 // production 빌드에서는 import.meta.env.DEV가 false이므로 무시된다.
@@ -188,6 +189,12 @@ ReactDOM.createRoot(rootEl).render(
                 path="/dev/debug-highlight-coords"
                 element={<DebugHighlightCoordsPage data-oid="debug-highlight-coords-route" />}
                 data-oid="debug-highlight-coords-route-r" />
+
+              {/* 디버그 전용 라우트 — 마크다운 페이지 패널 보이기/숨기기 완전 숨김 문제 진단 (로그인 우회) */}
+              <Route
+                path="/dev/debug-panel-toggle"
+                element={<DebugPanelTogglePage data-oid="debug-panel-toggle-route" />}
+                data-oid="debug-panel-toggle-route-r" />
 
             </Routes>
           <CookieConsent data-oid="cookie_consent" />

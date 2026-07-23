@@ -42,6 +42,49 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       outDir: 'dist',
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            // React 코어 (모든 페이지에서 사용)
+            'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+            // 3D 그래픽 (GridScan에서만 사용)
+            'three-vendor': ['three', 'postprocessing', 'ogl'],
+            // PDF 뷰어 (JobResultPage에서만 사용)
+            'pdf-viewer': ['@embedpdf/react-pdf-viewer', 'pdfjs-dist'],
+            // 플로우 다이어그램 (DevEdiscoveryPage에서만 사용)
+            'flow-vendor': ['@xyflow/react'],
+            // TipTap 에디터 (여러 컴포넌트에서 사용)
+            'tiptap-vendor': [
+              '@tiptap/react',
+              '@tiptap/starter-kit',
+              '@tiptap/extension-bubble-menu',
+              '@tiptap/extension-heading',
+              '@tiptap/extension-highlight',
+              '@tiptap/extension-image',
+              '@tiptap/extension-link',
+              '@tiptap/extension-placeholder',
+              '@tiptap/extension-table',
+              '@tiptap/extension-table-cell',
+              '@tiptap/extension-table-header',
+              '@tiptap/extension-table-of-contents',
+              '@tiptap/extension-table-row',
+              '@tiptap/extension-task-item',
+              '@tiptap/extension-task-list',
+              '@tiptap/extension-text-align',
+              '@tiptap/extension-underline',
+              '@tiptap/extension-unique-id',
+            ],
+            // AI SDK
+            'ai-vendor': ['ai', '@ai-sdk/react'],
+            // Supabase
+            'supabase-vendor': ['@supabase/supabase-js'],
+            // DnD
+            'dnd-vendor': ['@dnd-kit/core', '@dnd-kit/utilities'],
+            // 기타 유틸
+            'utils-vendor': ['dayjs', 'moment', 'marked', 'turndown', 'i18next', 'react-i18next', 'i18next-browser-languagedetector', 'lucide-react'],
+          },
+        },
+      },
     },
   }
 })

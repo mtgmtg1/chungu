@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 MAX_PAGE_SIDE_MM = 350
 MM_PER_PT = 0.3528
+MAX_RETRY_COUNT = 3
 
 
 def _set_status(db, job: Job, status: str) -> None:

@@ -187,11 +187,15 @@ def _split_paragraph_into_lines(
         if len(lines) <= 1:
             return [(text, bbox)]
 
-    # Step 3: 블록 bbox를 줄 수만큼 세로로 균등 분할
+    # Step 3: 블록 bbox를 줄 수만큼 세로로 역순 분할
+    # [주의] 이 bbox는 normalized(0~1, y=0 상단)에서 변환된 좌표이다.
+    # _convert_bbox_to_pdf_user가 y를 뒤집으므로, 첫 줄이 y1(큰 값)에 가깝게
+    # 배정되어야 변환 후 device-space 상단에 표시된다.
+    # 이것은 _split_bbox_into_rows와 동일한 역순 배정 패턴이다.
     line_height = block_height / len(lines)
     result = []
     for i, line_text in enumerate(lines):
-        line_bbox = (x0, y0 + i * line_height, x1, y0 + (i + 1) * line_height)
+        line_bbox = (x0, y1 - (i + 1) * line_height, x1, y1 - i * line_height)
         result.append((line_text, line_bbox))
 
     return result

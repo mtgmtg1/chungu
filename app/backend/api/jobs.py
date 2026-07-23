@@ -4262,6 +4262,69 @@ def _compute_coordinate_validation(
                 "detail": detail_6,
             })
 
+    # Check 7: 문단 줄 순서 (text_blocks y 순서 vs OCR 텍스트 순서)
+    # 같은 문단(ocr_element)에 속하는 text_blocks를 y 오름차순(상단→하단)으로 정렬했을 때,
+    # 첫 text_block의 텍스트가 OCR 텍스트의 첫 부분과 일치해야 한다.
+    # 반전된 경우: 첫 text_block(상단)이 OCR 텍스트의 마지막 부분을 포함하게 된다.
+    if text_blocks and paragraph_ocr:
+        para_text_blocks_all = [b for b in text_blocks if "|" not in b.get("text", "") and b["text"].strip() and 100 < b["device"][1] < 700]
+        if para_text_blocks_all and paragraph_ocr:
+            order_fail_count = 0
+            order_checks = 0
+            worst_order_mismatch = None
+            for ocr in paragraph_ocr:
+                ocr_y0 = ocr["device"][1]
+                ocr_y1 = ocr["device"][3]
+                ocr_text = ocr.get("text", "").strip()
+                if not ocr_text:
+                    continue
+                # 이 ocr_element의 y 범위 안에 있는 text_blocks 찾기 (y 오름차순 정렬)
+                overlapping_tbs = [
+                    b for b in para_text_blocks_all
+                    if b["device"][1] >= ocr_y0 - 5 and b["device"][3] <= ocr_y1 + 5
+                ]
+                if len(overlapping_tbs) < 2:
+                    continue
+                # y 오름차순 (상단→하단, device-space y=0 상단)
+                overlapping_tbs_sorted = sorted(overlapping_tbs, key=lambda b: b["device"][1])
+                # OCR 텍스트의 첫 단어
+                ocr_first_word = ocr_text.split(" ")[0].strip() if ocr_text else ""
+                if not ocr_first_word:
+                    continue
+                # 첫 text_block(상단)의 텍스트에 OCR 첫 단어가 포함되어야 함
+                first_tb_text = overlapping_tbs_sorted[0].get("text", "").strip()
+                order_checks += 1
+                if ocr_first_word not in first_tb_text:
+                    # 반대로 마지막 text_block(하단)에 OCR 첫 단어가 있으면 반전
+                    last_tb_text = overlapping_tbs_sorted[-1].get("text", "").strip()
+                    if ocr_first_word in last_tb_text:
+                        order_fail_count += 1
+                        worst_order_mismatch = (
+                            ocr_first_word[:15],
+                            first_tb_text[:20],
+                            overlapping_tbs_sorted[0]["device"][1],
+                            last_tb_text[:20],
+                            overlapping_tbs_sorted[-1]["device"][1],
+                        )
+            if order_checks > 0 and order_fail_count > 0:
+                status_7 = "fail"
+                detail_7 = (
+                    f"문단 줄 순서 반전: OCR 첫 단어 '{worst_order_mismatch[0]}'가 "
+                    f"상단(y={worst_order_mismatch[2]:.1f}, '{worst_order_mismatch[1]}')이 아닌 "
+                    f"하단(y={worst_order_mismatch[4]:.1f}, '{worst_order_mismatch[3]}')에 있음"
+                )
+            elif order_checks > 0:
+                status_7 = "pass"
+                detail_7 = f"문단 줄 순서: {order_checks}개 문단 검사, 모두 정상 (첫 단어가 상단에 위치)"
+            else:
+                status_7 = "warn"
+                detail_7 = "문단 줄 순서: 검사할 다중 줄 문단이 없음"
+            checks.append({
+                "name": "문단 줄 순서 (text_blocks y 순서 vs OCR 텍스트 순서)",
+                "status": status_7,
+                "detail": detail_7,
+            })
+
     # 종합 판정
     if not checks:
         return {"status": "warn", "checks": [], "summary": "검사할 데이터가 부족함"}

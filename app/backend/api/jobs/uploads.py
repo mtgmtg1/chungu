@@ -8,7 +8,7 @@ import zipfile
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, List
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile, status
 from pypdf import PdfReader
@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix='/api', tags=['jobs'])
 
+@router.post("/jobs/upload")
 async def upload_job(
     files: List[UploadFile] = File(...),
     pipeline: str = Form("vision"),
@@ -264,6 +265,7 @@ async def upload_job(
 
 
 
+@router.post("/jobs/init")
 async def init_job(
     payload: dict = Body(...),
     user: CurrentUser = Depends(get_current_user_or_api_key),
@@ -330,6 +332,7 @@ async def init_job(
 
 
 
+@router.post("/jobs/{job_id}/create")
 async def create_job(
     job_id: str,
     payload: dict = Body(...),
@@ -522,6 +525,7 @@ async def create_job(
 
 
 
+@router.post("/jobs/{job_id}/init-add-files")
 async def init_add_files(
     job_id: str,
     payload: dict = Body(...),
@@ -574,6 +578,7 @@ async def init_add_files(
 
 
 
+@router.post("/jobs/{job_id}/confirm-add-files")
 async def confirm_add_files(
     job_id: str,
     payload: dict = Body(...),
@@ -735,6 +740,7 @@ async def confirm_add_files(
 
 
 
+@router.put("/jobs/{job_id}")
 def update_job(
     job_id: str,
     payload: dict,

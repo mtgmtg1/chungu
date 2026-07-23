@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix='/api', tags=['jobs'])
 
+@router.post("/jobs/{job_id}/confirm")
 def confirm_job(
     job_id: str,
     user: CurrentUser = Depends(get_current_user_or_api_key),
@@ -77,6 +78,7 @@ def confirm_job(
 
 
 
+@router.get("/jobs")
 def list_jobs(
     user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
@@ -91,6 +93,7 @@ def list_jobs(
 
 
 
+@router.get("/jobs/{job_id}")
 def get_job(job_id: str, user: CurrentUser = Depends(get_current_user_or_api_key), db: Session = Depends(get_db)):
     job = db.get(Job, job_id)
     _require_job_access(job, user)
@@ -149,6 +152,7 @@ def get_job(job_id: str, user: CurrentUser = Depends(get_current_user_or_api_key
 
 
 
+@router.delete("/jobs/{job_id}")
 def delete_job(job_id: str, user: CurrentUser = Depends(get_current_user_or_api_key), db: Session = Depends(get_db)):
     job = db.get(Job, job_id)
     _require_job_access(job, user)
@@ -162,6 +166,7 @@ def delete_job(job_id: str, user: CurrentUser = Depends(get_current_user_or_api_
 
 
 
+@router.delete("/jobs/{job_id}/source-files/{source_kind}/{source_index}")
 def delete_source_file(
     job_id: str,
     source_kind: str,

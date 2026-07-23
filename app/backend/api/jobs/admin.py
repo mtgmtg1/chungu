@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix='/api', tags=['jobs'])
 
+@router.get("/admin/jobs")
 def admin_list_jobs(
     admin: CurrentUser = Depends(get_current_admin),
     db: Session = Depends(get_db),

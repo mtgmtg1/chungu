@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix='/api', tags=['jobs'])
 
+@router.get("/jobs/{job_id}/download")
 def download_job(
     job_id: str,
     type: str = "xlsx",
@@ -67,6 +68,7 @@ def download_job(
 
 
 
+@router.post("/jobs/{job_id}/convert")
 def convert_job(
     job_id: str,
     payload: dict = Body(...),
@@ -186,6 +188,7 @@ def convert_job(
 
 
 
+@router.post("/jobs/{job_id}/save-edited-xlsx")
 async def save_edited_xlsx(
     job_id: str,
     file: UploadFile = File(...),
@@ -216,6 +219,7 @@ async def save_edited_xlsx(
 
 
 
+@router.get("/jobs/{job_id}/edited-xlsx-url")
 def get_edited_xlsx_url(
     job_id: str,
     user: CurrentUser = Depends(get_current_user_or_api_key),
@@ -235,6 +239,7 @@ def get_edited_xlsx_url(
 
 
 
+@router.post("/jobs/{job_id}/xlsx-advanced-action")
 def xlsx_advanced_action(
     job_id: str,
     payload: dict = Body(...),
@@ -290,6 +295,7 @@ def xlsx_advanced_action(
 
 
 
+@router.get("/download/{token}")
 def legacy_download(token: str, type: str = "csv", db: Session = Depends(get_db)):
     job = db.get(Job, token)
     if job is None or job.download_token != token:
@@ -320,6 +326,7 @@ def legacy_download(token: str, type: str = "csv", db: Session = Depends(get_db)
 
 
 
+@router.get("/dl/{token}")
 def email_download_redirect(token: str, type: str = "xlsx_basic", db: Session = Depends(get_db)):
     """이메일 다운로드 버튼용 redirect 엔드포인트 (auth 없이 download_token으로 직접 다운로드)."""
     job = db.get(Job, token)

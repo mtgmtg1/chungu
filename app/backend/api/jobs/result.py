@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix='/api', tags=['jobs'])
 
+@router.put("/jobs/{job_id}/result")
 def save_result_markdown(
     job_id: str,
     payload: dict = Body(...),
@@ -68,6 +69,7 @@ def save_result_markdown(
 
 
 
+@router.patch("/jobs/{job_id}/result/pages/{page_num}")
 def save_result_page(
     job_id: str,
     page_num: int,
@@ -120,6 +122,7 @@ def save_result_page(
 
 
 
+@router.post("/jobs/{job_id}/action")
 def job_action(
     job_id: str,
     payload: dict = Body(...),

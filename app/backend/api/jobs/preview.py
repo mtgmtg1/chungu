@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix='/api', tags=['jobs'])
 
+@router.get("/jobs/{job_id}/preview")
 def preview_job(
     job_id: str,
     start_page: int = Query(1, ge=1, description="시작 페이지 번호"),
@@ -154,6 +155,7 @@ def preview_job(
 
 
 
+@router.get("/jobs/{job_id}/preview/pages")
 def preview_job_pages(
     job_id: str,
     user: CurrentUser = Depends(get_current_user_or_api_key),
@@ -199,6 +201,7 @@ def preview_job_pages(
 
 
 
+@router.get("/jobs/{job_id}/page-image")
 def get_job_page_image(
     job_id: str,
     page_no: int = Query(..., description="1-based 페이지 번호", ge=1),
@@ -281,6 +284,7 @@ def get_job_page_image(
 
 
 
+@router.get("/jobs/{job_id}/ocr-images/{storage_path:path}")
 def get_job_ocr_image(
     job_id: str,
     storage_path: str,

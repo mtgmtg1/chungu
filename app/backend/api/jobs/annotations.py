@@ -55,6 +55,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix='/api', tags=['jobs'])
 
+@router.post("/jobs/{job_id}/annotate")
 def annotate_job(
     job_id: str,
     payload: dict = Body(...),
@@ -249,6 +250,7 @@ def annotate_job(
 
 
 
+@router.post("/jobs/{job_id}/annotate-action")
 def annotate_action(
     job_id: str,
     payload: dict = Body(...),
@@ -391,6 +393,7 @@ def annotate_action(
 
 
 
+@router.post("/jobs/{job_id}/annotate-cancel")
 def cancel_annotation_job(
     job_id: str,
     payload: dict = Body(...),
@@ -439,6 +442,7 @@ def cancel_annotation_job(
 
 
 
+@router.post("/jobs/{job_id}/annotate-edit")
 def annotate_edit_job_endpoint(
     job_id: str,
     payload: dict = Body(...),
@@ -588,6 +592,7 @@ def annotate_edit_job_endpoint(
 
 
 
+@router.post("/jobs/{job_id}/user-annotations")
 def save_user_annotations(
     job_id: str,
     payload: dict = Body(...),
@@ -726,6 +731,7 @@ def save_user_annotations(
 
 
 
+@router.get("/jobs/{job_id}/elements")
 def get_job_elements(
     job_id: str,
     page_no: int | None = None,
@@ -881,6 +887,7 @@ def get_job_elements(
 
 
 
+@router.get("/jobs/{job_id}/search-text")
 def search_job_text(
     job_id: str,
     query: str = Query(..., description="검색어 또는 정규식"),
@@ -1109,6 +1116,7 @@ def search_job_text(
 
 
 
+@router.get("/jobs/{job_id}/debug/highlight-coords")
 def debug_highlight_coords(
     job_id: str,
     query: str = Query(..., description="검색어"),
@@ -1310,6 +1318,7 @@ def debug_highlight_coords(
 
 
 
+@router.get("/jobs/{job_id}/annotations")
 def get_job_annotations(
     job_id: str,
     source_index: int = Query(0, description="주석 파일 인덱스"),
@@ -1342,6 +1351,7 @@ def get_job_annotations(
 
 
 
+@router.patch("/jobs/{job_id}/annotations/{annotation_id}")
 def update_job_annotation(
     job_id: str,
     annotation_id: str,
@@ -1451,6 +1461,7 @@ def update_job_annotation(
 
 
 
+@router.get("/jobs/{job_id}/result-json")
 def get_job_result_json(
     job_id: str,
     kind: str = Query(..., description="읽을 결과 JSON 종류: annotations|ocr_layout|extracted_files|annotated_pdf_files|job_meta"),

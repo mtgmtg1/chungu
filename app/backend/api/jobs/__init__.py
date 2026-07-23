@@ -7,7 +7,7 @@ from fastapi import APIRouter
 
 from . import admin, annotations, download, lifecycle, preview, result, uploads
 
-router = APIRouter(prefix="/api", tags=["jobs"])
+router = APIRouter(tags=["jobs"])
 
 router.include_router(uploads.router)
 router.include_router(lifecycle.router)

@@ -8,6 +8,29 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 코드베이스 리팩토링 및 청소 — 대형 파일 분할 + 프론트엔드 번들 최적화 — 2026-07-23
+
+- **배경**: `api/jobs.py` (5005줄)와 `workers/tasks.py` (1632줄)가 단일 파일로 유지보수 어려움. 루트에 산재한 일회성 스크립트/산물 파일들. 프론트엔드 메인 번들 3,350kB로 초기 로드 지연.
+- **7단계 리팩토링 (브랜치 `refactor/cleanup-and-split` → develop 머지)**:
+  1. **저장소 청소**: 루트 스크립트/산물 20개 삭제, 구 플랜 문서 삭제, `.playwright-mcp/`·`local_dev.db` 추적 해제, `app/backend/` 수동 스크립트를 `scripts/manual/`로 이동. (-7,741줄)
+  2. **공통 헬퍼 추출**: `_parse_columns`, `_convert_format_alias`, `_upload_ocr_layout` 3개 중복 함수를 `core/job_helpers.py`로 통합. Test-First로 검증.
+  3. **`api/jobs.py` 분할**: 5005줄 단일 파일 → `api/jobs/` 패키지 (9개 모듈). 모든 라우터 경로와 응답 스키마 100% 유지.
+  4. **`workers/tasks.py` 분할**: 1632줄 → `workers/tasks/` 패키지 (7개 모듈). Celery `name=` 문자열 100% 유지로 브로커 호환성 보장.
+  5. **PDF 좌표 변환 통합 확인**: `core/pdf_coordinate_transform.py` 기반 통합이 이전 커밋에서 완료됨을 확인. 회귀 테스트 17개 통과.
+  6. **`api/v1/jobs.py` 중복 분석**: v1 API는 v2와 다른 결제 모델(`points_service` vs `subscription_service`)을 사용하므로 의도적으로 다른 구현. 안전한 통합 대상 아님.
+  7. **프론트엔드 청크 최적화**: `vite.config.js`에 `manualChunks` 추가. 메인 청크 3,350kB → 1,361kB (**59% 감소**). PDF 뷰어·3D·TipTap·Supabase 등을 별도 청크로 분리.
+- **패키지 구조**:
+  - `api/jobs/`: `__init__.py` (router 조립 + 테스트 호환성 re-export), `_shared.py` (46개 공유 헬퍼), `uploads.py`, `lifecycle.py`, `download.py`, `result.py`, `preview.py`, `annotations.py`, `admin.py`
+  - `workers/tasks/`: `__init__.py` (태스크 re-export), `_helpers.py` (7개 비-태스크 헬퍼), `job_tasks.py`, `maintenance.py`, `conversion.py`, `annotation_tasks.py`, `ediscovery_tasks.py`
+- **테스트 호환성**: `__init__.py`에서 모든 test-imported 심볼을 re-export. 테스트의 `patch("backend.api.jobs.supabase_client")` 등은 `backend.api.jobs._shared.supabase_client`로 업데이트.
+- **검증**: 295 backend tests pass (리팩토링 전후 제로 회귀). develop의 4개 jobs.py 커밋(line-width expansion, paragraph line assignment, Check 5/6/7 validation, search_job_text line mode)이 분할된 모듈에 정상 포팅됨.
+- **⚠️ 주의사항**:
+  1. `api/jobs.py`와 `workers/tasks.py`는 더 이상 단일 파일이 아님. 새 코드는 적절한 서브모듈에 추가할 것.
+  2. `api/jobs/_shared.py`의 헬퍼를 수정할 때는 여러 서브모듈에 영향이 가는지 확인할 것.
+  3. 테스트에서 `backend.api.jobs.X`를 patch할 때, X가 `_shared.py`에 있으면 `backend.api.jobs._shared.X`로, `annotations.py`에 있으면 `backend.api.jobs.annotations.X`로 patch 경로를 지정할 것.
+  4. Celery 태스크 이름은 `backend.workers.tasks.run_job` 형식을 유지. `@celery.task(name="backend.workers.tasks.xxx")` 데코레이터의 name= 문자열을 변경하지 말 것.
+- **핵심 파일**: `app/backend/api/jobs/` (패키지), `app/backend/workers/tasks/` (패키지), `app/backend/core/job_helpers.py`, `app/frontend/vite.config.js`.
+
 ### 스캔 PDF 하이라이트 y좌표 어긋남 근본 원인 해결 — OCR layout 좌표계 반전 + 교차 검증 로직 추가 — 2026-07-23
 
 - **증상**: 스캔 PDF를 searchable PDF로 변환 후 하이라이트가 텍스트와 어긋남. 특히 표 행에서 y좌표가 반전되어 아래쪽 행에 달려야 할 주석이 위쪽에 표시됨.
@@ -769,9 +792,19 @@ app/
     api/            Internal API routers
       v1/           Public API v1 (jobs, account, keys, agent, ai)
       admin.py, auth.py, chat_conversations.py, dev_auth.py,
-      ediscovery.py, flow_drawings.py, gdpr.py, jobs.py,
+      ediscovery.py, flow_drawings.py, gdpr.py,
       on_premise.py, payments.py, sandboxes.py, subscriptions.py,
       supabase_proxy.py
+      jobs/           Job 라우터 패키지 (api/jobs.py에서 분할)
+        __init__.py     router 조립 + 테스트 호환성 re-export
+        _shared.py      46개 공유 헬퍼 + 상수
+        uploads.py      업로드/생성 엔드포인트
+        lifecycle.py    confirm/list/get/delete 엔드포인트
+        download.py     다운로드/XLSX 변환 엔드포인트
+        result.py       결과 저장/페이지 수정 엔드포인트
+        preview.py      미리보기/페이지 이미지 엔드포인트
+        annotations.py  주석/검색/요소 조회 엔드포인트
+        admin.py        관리자 Job 목록 엔드포인트
     auth/           JWT auth, API key auth (supabase_auth.py, api_key_auth.py, security.py, crypto.py)
     core/           비즈니스 로직, OCR/변환 파이프라인, 과금, 주석
       ai_client.py                 OpenAI 호환 LLM 스트리밍 클라이언트
@@ -782,6 +815,7 @@ app/
       docling_client.py            Docling 서비스 클라이언트
       excel_writer.py              Excel 출력
       hwp_converter.py             HWP 변환
+      job_helpers.py               Job 공통 헬퍼 (parse_columns, convert_format_alias, upload_ocr_layout)
       image_deskew.py              이미지 기울기 보정
       legal_case_profile.py        법률 사건 프로파일
       legal_elements.py            요건 사실 정의
@@ -822,7 +856,15 @@ app/
       turnstile.py                 Cloudflare Turnstile 검증
       xlsx_advanced_converter.py   마크다운에서 고급 XLSX 변환
     db/             SQLAlchemy models and migrations (38 SQL files)
-    workers/        Celery tasks (tasks.py)
+    workers/        Celery tasks
+      tasks/         태스크 패키지 (tasks.py에서 분할)
+        __init__.py     태스크 re-export + 테스트 호환성
+        _helpers.py     비-태스크 헬퍼 (상태 설정, 구독 해제 등)
+        job_tasks.py    run_job, run_job_added_files, recover_stuck_jobs
+        maintenance.py  cleanup, auto_recharge, grant_credits
+        conversion.py   convert_xlsx_advanced
+        annotation_tasks.py  annotate_pdf_job, annotate_edit_job
+        ediscovery_tasks.py  run_ediscovery
     docling_service/ Docling 서비스 (별도 Docker 컨테이너, main.py, Dockerfile, requirements.txt)
     paddleocr_service/ PaddleOCR 서비스 (별도 Docker 컨테이너, main.py, Dockerfile.*)
     unoserver/      LibreOffice headless 서비스 (Dockerfile)

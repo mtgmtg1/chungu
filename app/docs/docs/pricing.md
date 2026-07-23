@@ -11,9 +11,11 @@ PROOF uses a prepaid credit system. Credits are measured in **milli-USD** (1,000
 | Input type | Basic model | Premium model |
 |------------|-------------|---------------|
 | PDF page | $0.001 (1 md) | $0.005 (5 md) |
+| Office/HWP page | $0.001 (1 md) | $0.005 (5 md) |
 | Image | $0.001 (1 md) | $0.005 (5 md) |
 | Audio (per second) | — | $0.001 (1 md) |
 | Video (per second) | — | $0.005 (5 md) |
+| Markdown (`.md`) | Free (0 md) | Free (0 md) |
 | Docling refinement (per page) | — | $0.003 (3 md) |
 
 :::info

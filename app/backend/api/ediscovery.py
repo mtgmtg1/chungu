@@ -18,6 +18,7 @@ from ..config import settings
 from ..core import legal_case_profile, legal_elements, legal_issue_tree, pipeline_ediscovery
 from ..db.models import Job, User
 from ..db.session import get_db
+from .jobs._shared import _require_job_not_expired as _shared_require_job_not_expired
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +46,13 @@ def _require_job_access(job: Job | None, user: CurrentUser) -> None:
 
 
 def _require_job_not_expired(job: Job) -> None:
-    """[Flow: Step 1 (만료 시각 확인) -> Step 2 (timezone-naive 처리) -> Step 3 (만료되었으면 404)]"""
-    if job.expires_at:
-        expires = job.expires_at
-        if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        if expires < datetime.now(timezone.utc):
-            raise HTTPException(status_code=404, detail="Job expired")
+    """[Flow: Step 1 (공유 만료 판정 호출) -> Step 2 (만료되었으면 404)]
+
+    api/jobs/_shared.py의 공유 만료 판정(created_at + RETENTION_DAYS=30일)을 사용한다.
+    과거에는 job.expires_at(완료 후 7일)을 확인했으나, 이는 다운로드 링크 만료 시각이며
+    job 접근 권한의 만료 기준과 불일치해 타임라인 뷰/재분석이 조기에 "Job expired"를 반환했다.
+    """
+    _shared_require_job_not_expired(job)
 
 
 def _require_job_done(job: Job) -> None:

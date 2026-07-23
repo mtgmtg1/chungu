@@ -562,6 +562,7 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
                         logger.warning(f"[source_files] 개별 searchable PDF URL 생성 실패: {e}")
             return item
         # file 타입 (csv, md, xlsx, txt, html 등) — 다운로드용 signed URL만 생성
+        # markdown 타입은 원본 type을 유지하여 프론트엔드에서 마크다운 전용 job 여부를 판단할 수 있게 함
         if ftype in ("file", "markdown"):
             try:
                 download_url = supabase_client.get_signed_download_url(storage_path, bucket=bucket, expires_in=3600)
@@ -571,7 +572,7 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
                 return None
             return {
                 "name": _normalize_display_name(info.get("path", info.get("storage_path", ""))),
-                "type": "file",
+                "type": ftype,
                 "url": download_url,
                 "storage_path": storage_path,
                 "bucket": bucket,
@@ -2074,7 +2075,6 @@ MEDIA_EXTENSIONS = {
     ".docx", ".doc", ".dotx", ".docm",
     ".pptx", ".ppt", ".potx", ".ppsx", ".pptm", ".potm", ".ppsm",
     ".xlsx", ".xls", ".xlsm",
-    ".html", ".htm", ".xhtml",
     ".hwp", ".hwpx",
     ".md",
 }

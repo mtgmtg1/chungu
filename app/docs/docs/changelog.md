@@ -4,6 +4,17 @@ sidebar_position: 100
 
 # Changelog
 
+## 2026-07-23
+
+- Added **Office formats** (`.docx`, `.doc`, `.pptx`, `.ppt`, `.xlsx`, `.xls`) upload support — routed through Docling preprocessing pipeline
+- Added **HWP formats** (`.hwp`, `.hwpx`) upload support — converted via pyhwp
+- Added `docling_refinement` form parameter to `POST /jobs/upload` — enables LLM layout refinement for PDF/Office/HWP at 3 md/page
+- Added **Markdown (`.md`)** file upload support — text content is used directly as the result at no cost (0 credits)
+- Added `PATCH /jobs/{id}/title` endpoint to rename a job's display title in any state
+- Added `GET /account/subscription` endpoint to query subscription plan, status, and monthly usage
+- Corrected DPI default to **300** (was incorrectly documented as 150)
+- Corrected pricing table to milli-USD (was stale "P" unit)
+
 ## 2026-07
 
 - Migrated billing system from KRW points to **USD credits (milli-USD)**

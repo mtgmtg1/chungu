@@ -8,6 +8,85 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### e-Discovery 타임라인 뷰 "Job expired" 조기 만료 수정 — 2026-07-23
+
+- **배경**: 타임라인 뷰와 재분석 버튼이 완료 후 7일이 지나면 "Job expired" 404를 반환했다. `api/ediscovery.py`의 로컬 `_require_job_not_expired`가 `job.expires_at`(완료 후 `download_expire_days=7`일)를 확인한 반면, 나머지 모든 job 엔드포인트는 `api/jobs/_shared.py`의 공유 함수로 `created_at + RETENTION_DAYS(30일)`를 확인했다. 완료 후 7~30일 사이 job은 결과 페이지는 열리지만 타임라인/재분석은 차단되는 불일치가 발생.
+- **변경 내용**:
+  - `api/ediscovery.py`: 로컬 `_require_job_not_expired`를 공유 `_shared_require_job_not_expired`(`api.jobs._shared._require_job_not_expired`)의 얇은 래퍼로 변경. `created_at + 30일` 기준으로 통일.
+  - 테스트 픽스처(`test_api_ediscovery_graph.py`, `test_api_ediscovery_profile.py`): `_make_job`에 `created_at = datetime.now(timezone.utc)` 추가 (공유 만료 판정이 MagicMock 대신 실제 datetime으로 비교하도록).
+- **검증**: 백엔드 305 tests pass.
+- **⚠️ 회귀 방지 경고**:
+  1. `api/ediscovery.py`의 `_require_job_not_expired`는 이제 `created_at + 30일`을 사용한다. `expires_at`(다운로드 링크 만료, 7일)는 더 이상 e-Discovery 접근 제한에 사용되지 않는다. 다운로드 엔드포인드는 여전히 공유 함수를 사용하므로 30일 기준이 일관됨.
+  2. ediscovery 테스트에서 `job.created_at`을 반드시 실제 datetime으로 설정해야 한다. MagicMock을 그대로 두면 `datetime.now() >= MagicMock` 비교에서 TypeError 발생.
+- **핵심 파일**: `app/backend/api/ediscovery.py`, `app/backend/tests/test_api_ediscovery_graph.py`, `app/backend/tests/test_api_ediscovery_profile.py`.
+
+### v1 개발자 API Office/HWP + docling_refinement 백포트 — 2026-07-23
+
+- **배경**: v1 API가 Office/HWP 형식과 docling_refinement를 지원하지 않아 개발자가 웹 앱 전용 기능에 의존해야 했음. v2의 Office 처리 로직을 v1 결제 모델(points_service)에 맞춰 백포트.
+- **변경 내용**:
+  - **v1 MEDIA_EXTENSIONS 확장**: `.docx`, `.doc`, `.dotx`, `.docm`, `.pptx`, `.ppt`, `.potx`, `.ppsx`, `.pptm`, `.potm`, `.ppsm`, `.xlsx`, `.xls`, `.xlsm`, `.hwp`, `.hwpx` 추가.
+  - **v1 upload_job Office/HWP 처리**: 단일 파일 시 `media_loader.detect_file_type`으로 파일 유형 파악. `DOCLING_TYPES`(PDF/Office)는 `_count_pages_with_docling`으로 페이지 추정 (Docling 비활성화 시 1페이지). `HWP_TYPES`는 `hwp_converter.get_page_count`로 페이지 추정. 멀티파일/아카이브 시에도 DOCLING_TYPES/HWP_TYPES 분기 추가.
+  - **v1 `_count_pages_with_docling` 헬퍼 추가**: v2의 동명 헬퍼를 v1에 백포트. Docling 서비스로 페이지 수 추정, 실패 시 1 반환.
+  - **v1 `docling_refinement` Form 파라미터 추가**: `upload_job` 시그니처에 `docling_refinement: bool = Form(False)` 추가. `Job.use_docling_refinement` 필드에 저장. `docling_refinement_pages = pages if docling_refinement else 0`로 비용 계산.
+  - **v1 confirm_job 비용 계산 수정**: `docling_refinement_pages`를 `calculate_cost`에 전달. `job.file_type in DOCLING_TYPES or HWP_TYPES` 조건으로 단일 문서 시 image/media 카운트 초기화 (v2 `_calculate_media_info`와 동일 로직).
+  - **imports 추가**: `asyncio`, `logging`, `docling_client`, `hwp_converter`를 v1 jobs.py에 추가.
+  - **문서 갱신**: API.md/API.ko.md/API.ja.md에서 Office/HWP 지원으로 변경, docling_refinement 지원 명시, 가격표에 Office/HWP 페이지 및 Docling refinement 행 추가. file-formats.md, extraction-options.md, pricing.md, upload.md, changelog.md 갱신.
+  - **테스트**: `test_v1_jobs_markdown_title_subscription.py`에 4개 테스트 추가 (Office 확장자 포함 확인, .docx 업로드, .hwp 업로드, docling_refinement=true 비용 계산). 총 10개 테스트.
+- **검증**: 백엔드 305 tests pass (기존 301 + 신규 4), docs 빌드 3개 언어(en/ko/ja) 모두 성공.
+- **⚠️ 회귀 방지 경고**:
+  1. v1 `_count_pages_with_docling`은 Docling 서비스가 비활성화되어 있으면 항상 1을 반환한다. 프로덕션에서 Docling 서비스가 활성화되어 있지 않으면 Office 파일이 모두 1페이지로 청구되므로, 실제 페이지 수와 다를 수 있음. v2도 동일한 동작이므로 일관성 유지.
+  2. v1 `docling_refinement`는 `Job.use_docling_refinement` 필드에 저장된다. 이 필드는 v2와 공유되므로 v1에서 업로드한 job을 v2 웹 앱에서 확인할 때 docling_refinement 상태가 올바르게 표시됨.
+  3. v1 confirm_job의 비용 계산은 v2의 `_subscription_units_from_job` 대신 `points_service.calculate_cost`를 직접 호출한다. v1은 points 기반, v2는 subscription 기반이므로 의도적으로 다른 구현 유지.
+  4. v1 upload_job의 `is_single_pdf` 변수명이 `is_single_file` + `single_file_type` 분류로 변경되었다. 단일 PDF뿐 아니라 단일 Office/HWP도 직접 처리 경로로 진입함.
+- **핵심 파일**: `app/backend/api/v1/jobs.py`, `app/backend/tests/test_v1_jobs_markdown_title_subscription.py`, `app/API.md`, `app/API.ko.md`, `app/API.ja.md`, `app/docs/docs/core-concepts/file-formats.md`, `app/docs/docs/core-concepts/extraction-options.md`, `app/docs/docs/pricing.md`, `app/docs/docs/api-reference/jobs/upload.md`, `app/docs/docs/changelog.md`.
+
+### v1 개발자 API 동기화 — Markdown 지원 + title rename + subscription 조회 + 문서 정합성 — 2026-07-23
+
+- **배경**: 앱 기능 변화(markdown 업로드, 구독 시스템, title 수정 등)가 v1 개발자 API와 docs에 반영되지 않아 문서-코드 불일치로 개발자가 에러를 만남. API.md가 stale(구식 "P" 단위, 잘못된 가격, Office/HTML 지원 명시하나 v1은 거부, DPI 기본값 150이나 코드는 300).
+- **변경 내용**:
+  - **v1 Markdown 업로드 지원**: `api/v1/jobs.py`의 `MEDIA_EXTENSIONS`에 `.md` 추가. `upload_job` 파일 분류 루프에 markdown 분기 추가 (페이지/미디어 비용 없이 `total_files`에만 카운트). `run_job`은 이미 markdown 분기가 있으므로 worker 측 변경 불필요. 비용 0.
+  - **v1 `PATCH /jobs/{job_id}/title` 추가**: 모든 상태에서 job 표시 이름 수정 가능 (1~200자). `_normalize_display_name` 헬퍼 로컬 추가 (NFC 정규화). `_job_summary` 응답 반환.
+  - **v1 `GET /account/subscription` 추가**: `account.py`에 subscription status 조회 엔드포인트 추가. `subscription_service.get_subscription_status` 호출.
+  - **문서 정합성 보정**: `API.md`/`API.ko.md`/`API.ja.md` 전면 갱신 — 가격을 milli-USD로 통일, Office/HTML 미지원 명시, Markdown 지원 추가, DPI 기본값 300, `docling_refinement` 미지원 명시, 신규 엔드포인트(title/subscription/convert/action) 문서화, 응답 예시를 v1 실제 필드에 맞춤.
+  - **docs 사이트 갱신**: `file-formats.md`에 Markdown 섹션 + Office 미지원 경고 추가. `extraction-options.md` DPI 300 + docling_refinement 미지원 명시. `pricing.md` Markdown 무료 + docling_refinement web-only 표시. `upload.md` 응답 예시 정정 + Markdown 섹션. `changelog.md` 2026-07-23 항목 추가.
+  - **신규 docs 페이지**: `api-reference/account/get-subscription.md`, `api-reference/jobs/rename-job.md`. `sidebars.js`에 추가.
+  - **테스트**: `tests/test_v1_jobs_markdown_title_subscription.py` 신규 (6개 테스트 — markdown 업로드, MEDIA_EXTENSIONS .md 포함, title rename 성공/빈값/200자초과, subscription 조회). SQLite UUID 호환성을 위해 `UUIDString` TypeDecorator 사용.
+- **검증**: 백엔드 301 tests pass (기존 295 + 신규 6), docs 빌드 3개 언어(en/ko/ja) 모두 성공.
+- **⚠️ 회귀 방지 경고**:
+  1. v1 `MEDIA_EXTENSIONS`는 `.md`만 추가됨. Office(DOCX/PPTX/XLSX/HWP)/HTML은 v2(`api/jobs/_shared.py`)에는 있으나 v1에는 의도적으로 추가하지 **않음** — v1 결제 모델(points)이 v2(subscription)와 달라 Office/docling_refinement 비용 분기가 필요하기 때문. v1에 Office를 추가하려면 `confirm_job`의 비용 계산 로직도 함께 수정해야 함.
+  2. v1 `docling_refinement`는 미지원. `upload_job` 시그니처에 해당 Form 파라미터가 없음. 문서에 "web app only"로 명시.
+  3. v1 `PATCH /jobs/{job_id}/title`은 preview 캐시 무효화를 하지 **않음** — v1에는 preview 엔드포인트가 없으므로 불필요. v2의 `rename_job`은 `cache.invalidate_pattern`을 호출하지만 v1은 호출 안 함.
+  4. `API.md`/`API.ko.md`/`API.ja.md`는 이제 v1 실제 동작에 맞춤. v1에 새 기능을 추가할 때는 세 파일 모두 업데이트할 것.
+- **핵심 파일**: `app/backend/api/v1/jobs.py`, `app/backend/api/v1/account.py`, `app/backend/tests/test_v1_jobs_markdown_title_subscription.py`, `app/API.md`, `app/API.ko.md`, `app/API.ja.md`, `app/docs/docs/core-concepts/file-formats.md`, `app/docs/docs/core-concepts/extraction-options.md`, `app/docs/docs/pricing.md`, `app/docs/docs/api-reference/jobs/upload.md`, `app/docs/docs/api-reference/account/get-subscription.md`, `app/docs/docs/api-reference/jobs/rename-job.md`, `app/docs/docs/changelog.md`, `app/docs/sidebars.js`.
+
+### 마크다운 프리뷰 패널 표시 + 파일 탭 파일명 표시 수정 — 2026-07-23
+
+- **배경**: 마크다운 파일 업로드 시 좌측 프리뷰 패널을 숨겼으나, 원본 마크다운 렌더링을 좌측 패널에서 보여주는 것이 더 유용함. 또한 마크다운 파일의 파일 탭에 원래 파일명이 무시되고 "file"이라고만 표시되는 문제가 있었음.
+- **변경 내용**:
+  - **마크다운 프리뷰 패널 표시**: `JobResultPage.jsx`에서 `isMarkdownOnly` 변수와 "마크다운 전용 job은 에디터만 전체 너비" 분기를 제거. 마크다운 전용 job도 항상 `PagedResultViewer`를 사용. 패널 토글 버튼에서 `!isMarkdownOnly` 조건 제거.
+  - **SourcePanel markdown 타입 처리**: `SourcePanel.jsx`의 `SourceIcon`에 `markdown` 타입 아이콘 추가. `selectedFile.type === "markdown"`일 때 `FilePreview`로 렌더링 (marked → prose HTML).
+  - **파일 탭 파일명 표시 수정**: `preview.py`의 병합 로직에서 source_files 항목에 `name` 필드 추가 (`_normalize_display_name` 적용). `SourcePanel.jsx`의 `getDisplayName`에 `file?.filename` fallback 추가.
+- **검증**: 백엔드 305 tests pass, 프론트엔드 84 tests pass, vite build 성공.
+- **⚠️ 회귀 방지 경고**:
+  1. 마크다운 전용 job은 이제 `PagedResultViewer`를 사용하므로, 좌측 패널에서 원본 마크다운이 `FilePreview`로 렌더링되고 우측 패널에서 `SimpleEditor`로 편집 가능. 패널 토글로 각각 숨기기/보이기 가능.
+  2. `preview.py`의 병합 로직이 source_files 항목에 `name`과 `filename` 모두 설정한다. 프론트엔드 `getDisplayName`은 `name` → `filename` → `storage_path` → "file" 순서로 fallback.
+  3. 백엔드 `_build_source_file_item`에서 markdown 타입을 원본 type("markdown") 그대로 유지한다. `preview.py`에서 extracted_files를 source_files에 병합할 때도 `info.get("type", "")`를 포함한다.
+- **핵심 파일**: `app/frontend/src/pages/JobResultPage.jsx`, `app/frontend/src/components/SourcePanel.jsx`, `app/backend/api/jobs/preview.py`.
+
+### HTML/코드 파일 업로드 금지 + 다중 파일 표시 + job title 인라인 수정 — 2026-07-23
+
+- **배경**: HTML/코드 파일은 변환 대상이 아니지만 업로드가 허용되어 있었음. 다중 파일 업로드 시 "N_files.zip"이라는 의미 없는 이름이 표시됨. job 이름을 수정할 수 없었음.
+- **변경 내용**:
+  - **HTML/코드 파일 업로드 금지**: `UploadWidget.jsx`의 `ACCEPT_TYPES`에서 `.html`, `.htm` 제거. `REJECTED_EXTENSIONS` 세트 추가 (.html, .js, .ts, .py, .css, .json 등 50+ 확장자). `addFiles`에서 거부된 파일을 분리하여 커스텀 모달로 표시 (앱 디자인 시스템 사용 — AlertTriangle 아이콘, surface-container 배경). 백엔드 `_shared.py`의 `MEDIA_EXTENSIONS`에서도 `.html`, `.htm`, `.xhtml` 제거.
+  - **다중 파일 "대표파일명 등 N개" 표시**: `uploads.py`의 `upload_job`과 `init_job`에서 다중 파일 시 `original_filename`을 `f"{len(files)}_files.zip"` → `f"{files[0].filename} 등 {len(files)}개의 파일"` 형식으로 변경.
+  - **job title 인라인 수정**: 백엔드 `uploads.py`에 `PATCH /api/jobs/{job_id}/title` 엔드포인트 추가 (모든 상태에서 수정 가능, 200자 제한, preview 캐시 무효화). 프론트엔드 `api.js`에 `renameJob` 메서드 추가. `JobResultPage.jsx` 헤더의 h1 title을 클릭하면 input으로 전환, Enter/체크 버튼으로 저장, Escape/X 버튼으로 취소.
+  - **i18n**: `page:upload.rejectedTitle`, `page:upload.rejectedDesc`, `page:result.clickToEdit` 키를 ko/en/ja에 추가.
+- **검증**: 백엔드 295 tests pass, 프론트엔드 84 tests pass, vite build 성공.
+- **⚠️ 회귀 방지 경고**:
+  1. `REJECTED_EXTENSIONS`에 새 확장자를 추가하면 해당 파일이 업로드 거부 모달에 표시된다. `.csv`는 거부 목록에 있지만 백엔드 `MEDIA_EXTENSIONS`에는 없으므로 백엔드에서도 거부됨 — 일관성 유지 필요.
+  2. `PATCH /api/jobs/{job_id}/title`은 모든 상태에서 호출 가능하다. job이 processing 중일 때 title을 변경해도 처리에는 영향 없음.
+- **핵심 파일**: `app/frontend/src/components/UploadWidget.jsx`, `app/frontend/src/api.js`, `app/backend/api/jobs/uploads.py`, `app/backend/api/jobs/_shared.py`, `app/frontend/src/locales/{ko,en,ja}/page.json`.
+
 ### 디버그 전용 패널 토글 페이지 라우트 추가 — 2026-07-23
 
 - **배경**: 마크다운 결과 페이지에서 좌·우 패널이 완전히 숨겨지는 문제를 진단하기 위해, 로그인을 우회하고 패널 보이기/숨기기를 독립적으로 테스트할 수 있는 디버그 페이지가 필요함.

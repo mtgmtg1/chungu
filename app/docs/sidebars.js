@@ -35,6 +35,7 @@ const sidebars = {
         'api-reference/account/get-usage',
         'api-reference/account/get-transactions',
         'api-reference/account/get-payments',
+        'api-reference/account/get-subscription',
       ],
     },
     {
@@ -56,6 +57,7 @@ const sidebars = {
         'api-reference/jobs/confirm',
         'api-reference/jobs/get-job',
         'api-reference/jobs/list-jobs',
+        'api-reference/jobs/rename-job',
         'api-reference/jobs/download',
         'api-reference/jobs/convert',
         'api-reference/jobs/job-action',

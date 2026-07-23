@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   Box,
+  Check,
   ChevronDown,
   FileCode,
   FileDown,
@@ -17,9 +18,11 @@ import {
   PanelRight,
   PanelRightClose,
   Network,
+  Pencil,
   RefreshCw,
   Trash2,
   Workflow,
+  X,
   XCircle } from
 "lucide-react";
 import SourcePanel from "../components/SourcePanel.jsx";
@@ -149,6 +152,12 @@ export default function JobResultPage() {
   // 모바일 탭 전환: SourcePanel과 결과 콘텐츠를 토글 ("source" | "result")
   const [mobileViewTab, setMobileViewTab] = useState("source");
 
+  // [Flow: job title 인라인 편집 상태 — 헤더의 h1을 클릭하면 input으로 전환]
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [savingTitle, setSavingTitle] = useState(false);
+  const titleInputRef = useRef(null);
+
   const openDropdown = (setter, timerRef) => {
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = null;
@@ -166,6 +175,9 @@ export default function JobResultPage() {
   const displayMarkdown = hasFileMarkdowns && selectedFileMarkdown.trim()
     ? selectedFileMarkdown
     : markdown;
+
+  // [Flow: 마크다운 전용 job도 좌측 프리뷰 패널에서 원본 마크다운을 렌더링하여 보여준다]
+  // 마크다운 파일은 원본이 텍스트이므로 좌측 패널에서 마크다운 렌더링, 우측 패널에서 에디터로 편집.
 
   useEffect(() => {
     if (!jobId) return;
@@ -615,6 +627,51 @@ export default function JobResultPage() {
     }
   }
 
+  // [Flow: Step 1 (title 편집 모드 진입 — 현재 파일명을 draft로 설정) -> Step 2 (input에 포커스)]
+  function startEditingTitle() {
+    setTitleDraft(job?.filename || "");
+    setEditingTitle(true);
+    setTimeout(() => titleInputRef.current?.focus(), 0);
+  }
+
+  // [Flow: Step 1 (title 편집 취소 — 입력값 폐기하고 편집 모드 종료)]
+  function cancelEditingTitle() {
+    setEditingTitle(false);
+    setTitleDraft("");
+  }
+
+  // [Flow: Step 1 (새 title 검증) -> Step 2 (renameJob API 호출) -> Step 3 (job 상태 갱신 및 편집 모드 종료)]
+  async function saveTitle() {
+    const trimmed = titleDraft.trim();
+    if (!trimmed || trimmed === (job?.filename || "")) {
+      cancelEditingTitle();
+      return;
+    }
+    setSavingTitle(true);
+    setError("");
+    try {
+      const updated = await api.renameJob(jobId, trimmed);
+      setJob(updated);
+      setEditingTitle(false);
+      setTitleDraft("");
+    } catch (e) {
+      setError(e.message || t("page:errors.unknown"));
+    } finally {
+      setSavingTitle(false);
+    }
+  }
+
+  // [Flow: title input에서 Enter/Escape 키 처리]
+  function handleTitleKeyDown(e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveTitle();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancelEditingTitle();
+    }
+  }
+
   // [Flow: Step 1 (삭제할 파일의 source_index/source_kind 선택) -> Step 2 (파일명과 함께 확인 모달 열기) -> Step 3 (사용자 확인 후 API 호출) -> Step 4 (목록 갱신)]
   function openDeleteSourceFileModal(sourceIndex, sourceKind) {
     const file = sourceFiles.find(
@@ -877,12 +934,49 @@ export default function JobResultPage() {
             </span>
           </Link>
           <div className="h-4 w-px bg-outline-variant hidden md:block" data-oid="-vnoo-."></div>
-          <h1
-            className="font-headline-md text-headline-md font-bold text-on-surface truncate min-w-0"
-            data-oid="aaxa04a">
-
-            {job?.filename || jobId}
-          </h1>
+          {/* [Flow: job title 인라인 편집 — 클릭 시 input으로 전환, Enter/체크로 저장, Escape/X로 취소] */}
+          {editingTitle ? (
+            <div className="flex items-center gap-1.5 min-w-0" data-oid="title-edit-wrap">
+              <input
+                ref={titleInputRef}
+                type="text"
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onKeyDown={handleTitleKeyDown}
+                disabled={savingTitle}
+                maxLength={200}
+                className="font-headline-md text-headline-md font-bold text-on-surface bg-surface-container-low border border-primary rounded px-2 py-0.5 min-w-0 max-w-[40vw] outline-none focus:ring-2 focus:ring-primary/30"
+                data-oid="title-edit-input"
+              />
+              <button
+                type="button"
+                onClick={saveTitle}
+                disabled={savingTitle}
+                title={t("common:actions.confirm")}
+                className="flex items-center justify-center w-7 h-7 rounded bg-primary text-on-primary hover:bg-primary-container transition-colors shrink-0 disabled:opacity-50"
+                data-oid="title-save-btn">
+                {savingTitle ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              </button>
+              <button
+                type="button"
+                onClick={cancelEditingTitle}
+                disabled={savingTitle}
+                title={t("common:actions.cancel")}
+                className="flex items-center justify-center w-7 h-7 rounded border border-outline-variant text-on-surface-variant hover:bg-surface-container-high transition-colors shrink-0 disabled:opacity-50"
+                data-oid="title-cancel-btn">
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <h1
+              onClick={startEditingTitle}
+              title={t("page:result.clickToEdit")}
+              className="font-headline-md text-headline-md font-bold text-on-surface truncate min-w-0 cursor-text hover:text-primary transition-colors flex items-center gap-1.5"
+              data-oid="aaxa04a">
+              {job?.filename || jobId}
+              <Pencil size={14} className="text-outline opacity-0 hover:opacity-100 transition-opacity shrink-0" data-oid="title-edit-icon" />
+            </h1>
+          )}
           {job?.status === "done" &&
           <span
             className="px-3 py-1 bg-green-100 text-green-700 text-xs font-bold rounded-full flex items-center gap-1.5 border border-green-200 shrink-0"
@@ -1177,6 +1271,7 @@ export default function JobResultPage() {
       }
 
       {job?.status === "done" && !loading && previewMode === "markdown" &&
+      // [Flow: 마크다운 전용 job도 PagedResultViewer를 사용 — 좌측 패널에서 원본 마크다운 렌더링, 우측 패널에서 에디터로 편집]
       <PagedResultViewer
         ref={pagedViewerRef}
         jobId={jobId}

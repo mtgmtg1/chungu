@@ -86,8 +86,8 @@ Control the rendering resolution for PDF pages. Higher DPI improves accuracy for
 
 | DPI | Use case |
 |-----|----------|
-| 150 | Default, good for most documents |
-| 300 | High detail, small fonts |
+| 300 | Default, good for most documents |
+| 150 | Lower detail, faster processing |
 | 600 | Very fine print, receipts |
 
 ```bash
@@ -95,6 +95,19 @@ curl -X POST https://your-domain.com/api/v1/jobs/upload \
   -H "X-API-Key: chu_live_xxxxxxxx" \
   -F "files=@document.pdf" \
   -F "dpi=300"
+```
+
+## Docling refinement
+
+`docling_refinement` applies an optional LLM post-processing step to Docling-preprocessed documents (PDF, Office, HWP) to improve layout accuracy. Costs 3 md ($0.003) per page.
+
+Available via both the web app and the v1 API (`docling_refinement` form field on `POST /jobs/upload`).
+
+```bash
+curl -X POST https://your-domain.com/api/v1/jobs/upload \
+  -H "X-API-Key: chu_live_xxxxxxxx" \
+  -F "files=@document.docx" \
+  -F "docling_refinement=true"
 ```
 
 ## Relative paths (for archives)

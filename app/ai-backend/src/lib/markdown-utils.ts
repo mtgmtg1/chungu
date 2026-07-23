@@ -302,9 +302,12 @@ export function findTablesInMarkdown(
   return { table, tables };
 }
 
-// [Flow: diff-match-patch match() 로 old_text 위치 확인
-//       -> makeDiff() 로 실제 문서 내 매칭 길이 산정
-//       -> 앞뒤 컨텍스트를 포함한 patch 생성 -> applyPatches() 로 안전 교체]
+// [Flow: Step 1 (정확 매칭 indexOf 시도)
+//       -> Step 2 (실패 시 diff-match-patch match() 퍼지 매칭 시도, 예외 시 indexOf 폴백)
+//       -> Step 3 (매칭 길이 산정 후 직접 문자열 슬라이싱으로 교체 — applyPatches 사용 안 함)]
+// 한국어(멀티바이트 UTF-8) 문자에서 @sanity/diff-match-patch의 match()/applyPatches()가
+// "Pattern too long"(32자 초과) 및 "Failed to determine byte offset"(서로게이트 페어) 에러를
+// 발생시키므로, 직접 문자열 슬라이싱으로 교체한다.
 export function replaceTextFuzzy(
   markdown: string,
   oldText: string,
@@ -314,24 +317,57 @@ export function replaceTextFuzzy(
     return { markdown, success: false, applied: [] };
   }
 
-  const start = match(markdown, oldText, 0);
+  // Step 1: 정확 매칭 우선 시도
+  let start = markdown.indexOf(oldText);
+
+  // Step 2: 정확 매칭 실패 시 퍼지 매칭 시도
+  if (start === -1) {
+    try {
+      start = match(markdown, oldText, 0);
+    } catch {
+      // "Pattern too long" 등 예외 시 정규화된 텍스트로 indexOf 폴백
+      start = fuzzyIndexOf(markdown, oldText);
+    }
+  }
+
   if (start === -1) {
     return { markdown, success: false, applied: [] };
   }
 
+  // Step 3: 매칭 길이 산정 후 직접 슬라이싱 교체 (applyPatches 사용 안 함)
   const windowSize = oldText.length * 3 + 64;
   const docWindow = markdown.slice(start, start + windowSize);
   const matchedLength = computeMatchedLength(oldText, docWindow);
 
-  const prefix = markdown.slice(Math.max(0, start - REPLACE_CONTEXT_MARGIN), start);
-  const oldSpan = markdown.slice(start, start + matchedLength);
-  const suffix = markdown.slice(start + matchedLength, start + matchedLength + REPLACE_CONTEXT_MARGIN);
+  const before = markdown.slice(0, start);
+  const after = markdown.slice(start + matchedLength);
+  const result = before + newText + after;
+  const success = result !== markdown;
 
-  const patches = makePatches(prefix + oldSpan + suffix, prefix + newText + suffix);
-  const [result, applied] = applyPatches(patches, markdown);
-  const success = applied.length > 0 && applied.every(Boolean) && result !== markdown;
+  return { markdown: result, success, applied: [success] };
+}
 
-  return { markdown: result, success, applied };
+// [Flow: 공백/줄바꿈을 정규화하여 느슨한 매칭 위치를 찾는다]
+function fuzzyIndexOf(text: string, pattern: string): number {
+  // 정규화: 연속 공백/줄바꿈을 단일 공백으로 축약
+  const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
+  const normPattern = normalize(pattern);
+
+  // 정규화된 텍스트에서 매칭 시도
+  const normText = normalize(text);
+  const normStart = normText.indexOf(normPattern);
+  if (normStart === -1) return -1;
+
+  // 정규화된 위치를 원본 텍스트 위치로 역매핑
+  let origIdx = 0;
+  let normIdx = 0;
+  while (normIdx < normStart && origIdx < text.length) {
+    if (normText[normIdx] === text[origIdx]) {
+      normIdx++;
+    }
+    origIdx++;
+  }
+  return origIdx;
 }
 
 // [Flow: position(beginning/end/heading) 에 new_text 삽입]

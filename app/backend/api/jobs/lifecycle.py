@@ -45,8 +45,6 @@ def confirm_job(
     if job.status != "pending":
         raise HTTPException(status_code=400, detail="Job already processed or cancelled")
 
-    from ..db.models import User
-
     db_user = db.get(User, job.user_id)
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")

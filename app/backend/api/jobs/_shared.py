@@ -344,7 +344,6 @@ def _delete_annotation_file(job: Job, source_index: int, db: Session) -> dict:
             if task_id:
                 celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
             if job.user_id and job.annotate_refundable:
-                from ..db.models import User
                 db_user = db.get(User, job.user_id)
                 if db_user and not db_user.is_admin:
                     premium_pages = entry.get("premium_pages", 0)
@@ -1285,7 +1284,6 @@ def _ensure_xlsx_basic_bundle(job: Job, db: Session) -> None:
     크레딧 시스템: basic_pages 단위로 사용량을 차감한다."""
     if job.result_xlsx_basic_storage_path and job.result_csv_storage_path:
         return
-    from ..db.models import User
     db_user = db.get(User, job.user_id)
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")

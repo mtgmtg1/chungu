@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ...auth.api_key_auth import require_api_key_or_session
 from ...auth.supabase_auth import CurrentUser
 from ...core import cache, converter, subscription_service, supabase_client
-from ...db.models import Job
+from ...db.models import Job, User
 from ...db.session import get_db
 from ...workers.tasks import run_job
 from ._shared import (
@@ -144,7 +144,6 @@ def job_action(
     if action not in ("retry", "refund"):
         raise HTTPException(status_code=400, detail="Unsupported action")
 
-    from ..db.models import User
     db_user = db.get(User, job.user_id)
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")

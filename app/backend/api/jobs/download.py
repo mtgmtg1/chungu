@@ -86,7 +86,6 @@ def convert_job(
     if fmt not in ("xlsx_basic", "csv_basic", "xlsx_advanced", "docx", "pptx"):
         raise HTTPException(status_code=400, detail="Unsupported conversion format")
 
-    from ..db.models import User
 
     db_user = db.get(User, job.user_id)
     if db_user is None:
@@ -258,7 +257,6 @@ def xlsx_advanced_action(
     if action not in ("retry", "refund"):
         raise HTTPException(status_code=400, detail="Unsupported action")
 
-    from ..db.models import User
     db_user = db.get(User, job.user_id)
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")

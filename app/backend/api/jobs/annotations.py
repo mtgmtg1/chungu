@@ -119,7 +119,6 @@ def annotate_job(
     if job.user_id is None:
         raise HTTPException(status_code=402, detail="구독이 필요한 기능입니다.")
 
-    from ..db.models import User
     db_user = db.get(User, job.user_id)
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -278,7 +277,6 @@ def annotate_action(
 
     annotation_index = int(payload.get("annotation_index", 0))
 
-    from ..db.models import User
     db_user = db.get(User, job.user_id)
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -482,7 +480,6 @@ def annotate_edit_job_endpoint(
     if job.user_id is None:
         raise HTTPException(status_code=402, detail="구독이 필요한 기능입니다.")
 
-    from ..db.models import User
     db_user = db.get(User, job.user_id)
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")

@@ -120,7 +120,7 @@ def test_no_annotations_returns_empty():
     job = make_job(annotated_pdf_files=[])
     mock_client = make_mock_storage({})
 
-    with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
+    with patch("backend.api.jobs._shared.supabase_client.get_service_client", return_value=mock_client):
         result = _load_all_annotations(job, source_index=0)
 
     check("빈 annotations 배열 반환", _annotations(result), [])
@@ -146,7 +146,7 @@ def test_ai_annotations_only():
         "test-job-001/annotated_1.annotations.json": json.dumps(ai_annots).encode("utf-8"),
     })
 
-    with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
+    with patch("backend.api.jobs._shared.supabase_client.get_service_client", return_value=mock_client):
         result = _load_all_annotations(job, source_index=0)
 
     check("AI 주석 2개 반환", len(_annotations(result)), 2)
@@ -164,7 +164,7 @@ def test_user_annotations_only_no_ai_path():
         "test-job-001/user_annotations_0.json": json.dumps(user_annots).encode("utf-8"),
     })
 
-    with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
+    with patch("backend.api.jobs._shared.supabase_client.get_service_client", return_value=mock_client):
         result = _load_all_annotations(job, source_index=0)
 
     check("사용자 주석 1개 반환", len(_annotations(result)), 1)
@@ -194,7 +194,7 @@ def test_merge_ai_and_user_with_dedup():
         "test-job-001/user_annotations_0.json": json.dumps(user_annots).encode("utf-8"),
     })
 
-    with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
+    with patch("backend.api.jobs._shared.supabase_client.get_service_client", return_value=mock_client):
         result = _load_all_annotations(job, source_index=0)
 
     # shared-id는 AI 주석이 먼저 들어가고 사용자 주석은 중복 제거되어야 함
@@ -219,7 +219,7 @@ def test_fallback_to_shared_user_annotations():
         "test-job-001/user_annotations.json": json.dumps(user_annots).encode("utf-8"),
     })
 
-    with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
+    with patch("backend.api.jobs._shared.supabase_client.get_service_client", return_value=mock_client):
         result = _load_all_annotations(job, source_index=0)
 
     check("폴백 주석 1개 반환", len(_annotations(result)), 1)
@@ -250,7 +250,7 @@ def test_page_no_filtering():
         "test-job-001/annotated_1.annotations.json": json.dumps(ai_annots).encode("utf-8"),
     })
 
-    with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
+    with patch("backend.api.jobs._shared.supabase_client.get_service_client", return_value=mock_client):
         # page_no=2 → pageIndex=1만 반환
         result_page2 = _load_all_annotations(job, source_index=0, page_no=2)
         # page_no=1 → pageIndex=0만 반환
@@ -273,7 +273,7 @@ def test_resolve_returns_none_no_error():
 
     # _load_all_annotations도 에러 없이 빈 리스트 반환
     mock_client = make_mock_storage({})
-    with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
+    with patch("backend.api.jobs._shared.supabase_client.get_service_client", return_value=mock_client):
         result = _load_all_annotations(job, source_index=0)
     check("None 경로 시 빈 annotations 배열", _annotations(result), [])
 
@@ -290,7 +290,7 @@ def test_source_index_isolation():
         "test-job-001/user_annotations_1.json": json.dumps(user_1).encode("utf-8"),
     })
 
-    with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
+    with patch("backend.api.jobs._shared.supabase_client.get_service_client", return_value=mock_client):
         result_0 = _load_all_annotations(job, source_index=0)
         result_1 = _load_all_annotations(job, source_index=1)
 

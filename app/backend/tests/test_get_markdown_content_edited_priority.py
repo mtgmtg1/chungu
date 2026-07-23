@@ -56,7 +56,7 @@ def test_edited_md_preferred_when_file_markers_equal():
     mock_client = MagicMock()
     mock_client.storage.from_.return_value.download = _mock_storage_download(edited, original)
 
-    with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
+    with patch("backend.api.jobs._shared.supabase_client.get_service_client", return_value=mock_client):
         result = _get_markdown_content(job)
 
     assert "# 테스트 제목" in result, f"편집본이 선택되어야 함. 결과: {result[:200]}"
@@ -80,7 +80,7 @@ def test_edited_md_with_test_title_reflected():
     mock_client = MagicMock()
     mock_client.storage.from_.return_value.download = _mock_storage_download(edited, original)
 
-    with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
+    with patch("backend.api.jobs._shared.supabase_client.get_service_client", return_value=mock_client):
         result = _get_markdown_content(job)
 
     assert "테스트 제목" in result, f"에이전트 편집 내용이 반영되어야 함. 결과: {result[:200]}"
@@ -104,7 +104,7 @@ def test_original_preferred_when_edited_has_no_file_markers():
     mock_client = MagicMock()
     mock_client.storage.from_.return_value.download = _mock_storage_download(edited, original)
 
-    with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client):
+    with patch("backend.api.jobs._shared.supabase_client.get_service_client", return_value=mock_client):
         result = _get_markdown_content(job)
 
     assert "파일 2" in result, "파일 마커가 더 많은 원본이 선택되어야 함"

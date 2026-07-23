@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from ...auth.api_key_auth import require_api_key_with_key
 from ...auth.supabase_auth import CurrentUser
 from ...core import archive_handler, media_loader, office_converter, points_service, supabase_client
+from ...core.job_helpers import convert_format_alias, parse_columns
 from ...core.prompts import DEFAULT_COLUMNS
 from ...core.rate_limit import add_daily_spent_points, enforce_rate_limit
 from ...db.models import ApiKey, ApiUsage, Job, User
@@ -32,19 +33,6 @@ MEDIA_EXTENSIONS = {
     ".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma",
     ".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".webm", ".m4v",
 }
-
-
-def _parse_columns(raw: str) -> list[str]:
-    raw = (raw or "").strip()
-    if not raw:
-        return list(DEFAULT_COLUMNS)
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, list) and parsed:
-            return [str(c).strip() for c in parsed if str(c).strip()]
-    except json.JSONDecodeError:
-        pass
-    return [c.strip() for c in raw.split(",") if c.strip()]
 
 
 def _job_summary(job: Job) -> dict:
@@ -165,7 +153,7 @@ async def upload_job(
         user_id=uuid.UUID(user.user_id),
         email=user.email,
         pipeline=pipeline,
-        columns=_parse_columns(columns),
+        columns=parse_columns(columns),
         prompt=prompt.strip(),
         dpi=dpi,
         ocr_model=ocr_model,
@@ -387,11 +375,6 @@ def _get_markdown_content(job: Job) -> str:
     return ""
 
 
-def _convert_format_alias(fmt: str) -> str:
-    """구형 'xlsx'/'csv' 요청을 새 기본 변환 포맷으로 매핑한다."""
-    return {"xlsx": "xlsx_basic", "csv": "csv_basic"}.get(fmt, fmt)
-
-
 def _ensure_xlsx_basic_bundle(job: Job, db: Session) -> int:
     """CSV/XLSX 기본 변환 번들을 한 번 수행한다. 이미 변환된 경우 0을 반환한다."""
     if job.result_xlsx_basic_storage_path and job.result_csv_storage_path:
@@ -442,7 +425,7 @@ def download_job(
         raise HTTPException(status_code=400, detail="Only completed jobs can be downloaded")
 
     # csv/xlsx 기본 변환은 동일한 번들로 처리; advanced는 별도 경로 사용
-    type = _convert_format_alias(type)
+    type = convert_format_alias(type)
     points_spent = 0
     if type in ("csv_basic", "xlsx_basic"):
         points_spent = _ensure_xlsx_basic_bundle(job, db)
@@ -490,7 +473,7 @@ def convert_job(
     if job.status != "done":
         raise HTTPException(status_code=400, detail="Only completed jobs can be converted")
 
-    fmt = _convert_format_alias(str(payload.get("format", "")).lower())
+    fmt = convert_format_alias(str(payload.get("format", "")).lower())
     if fmt not in ("xlsx_basic", "csv_basic", "xlsx_advanced", "docx", "pptx"):
         raise HTTPException(status_code=400, detail="Unsupported conversion format")
 

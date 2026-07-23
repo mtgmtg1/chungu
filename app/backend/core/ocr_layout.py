@@ -119,12 +119,28 @@ def _parse_html_table_rows(html_fragment: str) -> list[list[str]]:
 
 
 def _split_bbox_into_rows(block_bbox: BBox, row_count: int) -> list[BBox]:
-    """표 block_bbox를 세로로 row_count등분해 각 행의 근사 bbox를 만든다 (행 높이가 균등하다고 가정)."""
+    """[Flow: Step 1 (표 block_bbox 추출) -> Step 2 (행 높이 계산)
+          -> Step 3 (첫 행이 y1(큰 값)에 가까운 구간을 받도록 역순 분할)
+          -> Step 4 (행별 bbox 목록 반환)]
+
+    표 block_bbox를 세로로 row_count등분해 각 행의 근사 bbox를 만든다 (행 높이가 균등하다고 가정).
+
+    [주의] 이 bbox는 _normalize_bbox(PaddleOCR 서비스)에서 y축이 한 번 뒤집힌
+    "normalized bottom-left" 좌표계이다. _layout_bbox_to_pdf_user가 다시 y를
+    뒤집어 PDF user-space로 변환한 뒤, search_job_text에서 pdf_user_to_device로
+    세 번째 뒤집기를 수행하면 총 3번 뒤집혀 y가 반전된다.
+
+    텍스트 레이어 파이프라인(_extract_table_row_items)은 이중 뒤집기(2번)로
+    정상 위치를 얻기 위해 첫 행을 y1(큰 값)에 배정한다.
+    OCR layout 파이프라인도 동일한 좌표계를 사용하므로, 같은 방식으로
+    첫 행을 y1에 가깝게 배정해야 시각적으로 올바른 위치에 표시된다.
+    """
     x0, y0, x1, y1 = block_bbox
     if row_count <= 0:
         return []
     row_height = (y1 - y0) / row_count
-    return [(x0, y0 + i * row_height, x1, y0 + (i + 1) * row_height) for i in range(row_count)]
+    # 첫 행(i=0)이 y1(변환 후 표의 맨 위)에 가장 가깝도록 역순으로 배정한다.
+    return [(x0, y1 - (i + 1) * row_height, x1, y1 - i * row_height) for i in range(row_count)]
 
 
 def _parse_table_block(block: dict) -> OcrTable | None:

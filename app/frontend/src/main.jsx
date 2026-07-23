@@ -29,6 +29,7 @@ import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import DevEdiscoveryPage from "./pages/DevEdiscoveryPage.jsx";
 import DevEdiscoveryTimelinePage from "./pages/DevEdiscoveryTimelinePage.jsx";
 import DebugMarkdownAgentPage from "./pages/DebugMarkdownAgentPage.jsx";
+import DebugHighlightCoordsPage from "./pages/DebugHighlightCoordsPage.jsx";
 
 // 개발 환경에서 전역 dev mock 활성화 — /dev/* 및 /jobs/:jobId 경로 모두 샘플 데이터로 UI 테스트 가능.
 // production 빌드에서는 import.meta.env.DEV가 false이므로 무시된다.
@@ -181,6 +182,12 @@ ReactDOM.createRoot(rootEl).render(
                 path="/dev/debug-markdown-agent"
                 element={<DebugMarkdownAgentPage data-oid="debug-markdown-agent-route" />}
                 data-oid="debug-markdown-agent-route-r" />
+
+              {/* 디버그 전용 라우트 — 스캔 PDF 하이라이트 좌표 어긋남 진단 (로그인 우회) */}
+              <Route
+                path="/dev/debug-highlight-coords"
+                element={<DebugHighlightCoordsPage data-oid="debug-highlight-coords-route" />}
+                data-oid="debug-highlight-coords-route-r" />
 
             </Routes>
           <CookieConsent data-oid="cookie_consent" />

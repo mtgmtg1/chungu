@@ -51,10 +51,11 @@ class TestSearchJobTextOcrFallbackCoords:
     def test_ocr_fallback_returns_device_space_coords(
         self, mock_build_elements, mock_supabase, mock_db, mock_user
     ):
-        """[Flow: 빈 PDF + OCR 요소(PDF user-space) 모킹 -> search_job_text 호출 -> device-space 변환 검증]
+        """[Flow: 빈 PDF + OCR 요소(device-space) 모킹 -> search_job_text 호출 -> 변환 없이 그대로 반환 검증]
 
-        OCR 폴백 요소가 PDF user-space bbox(페이지 상단 y≈800)를 반환하면,
-        search_job_text는 device-space bbox(페이지 상단 y≈42)로 변환해야 한다.
+        OCR 폴백 요소의 bbox_pdf는 _normalize_bbox + _normalized_bbox_to_pdf_user의
+        이중 y반전을 거쳐 device-space(y=0 상단)와 동일한 좌표계가 된다.
+        따라서 search_job_text는 추가 변환 없이 bbox_pdf를 그대로 반환해야 한다.
         """
         job_id = "test-job-ocr-coords"
         job = Job(id=job_id, user_id=mock_user.id)
@@ -70,11 +71,12 @@ class TestSearchJobTextOcrFallbackCoords:
         mock_storage.download.side_effect = lambda path: b"{}" if "layout" in path else pdf_bytes
         mock_supabase.get_service_client.return_value.storage.from_.return_value = mock_storage
 
-        # OCR 요소: PDF user-space에서 페이지 상단(y=800~820, y=0 하단 기준 상단)
+        # OCR 요소: device-space에서 페이지 상단(y=22~42, y=0 상단 기준)
+        # build_agent_elements_from_ocr_layout은 이중 y반전 결과인 device-space를 반환
         mock_build_elements.return_value = [
             {
                 "page_no": 1,
-                "bbox_pdf": [50.0, 800.0, 200.0, 820.0],  # PDF user-space (상단)
+                "bbox_pdf": [50.0, 22.0, 200.0, 42.0],  # device-space (상단)
                 "text": "표제목",
                 "kind": "text",
             }
@@ -94,9 +96,7 @@ class TestSearchJobTextOcrFallbackCoords:
         data = json.loads(response.body.decode("utf-8"))
         assert len(data["matches"]) == 1
         match = data["matches"][0]
-        # PDF user-space (50, 800, 200, 820) → device-space (50, 22, 200, 42)
-        # device_y0 = page_height - pdf_user_y1 = 842 - 820 = 22
-        # device_y1 = page_height - pdf_user_y0 = 842 - 800 = 42
+        # bbox_pdf는 device-space이므로 추가 변환 없이 그대로 반환되어야 함
         assert abs(match["bbox_pdf"][0] - 50.0) < 0.1
         assert abs(match["bbox_pdf"][1] - 22.0) < 0.1, (
             f"device-space y0 should be ~22 (page top), got {match['bbox_pdf'][1]}"
@@ -111,10 +111,10 @@ class TestSearchJobTextOcrFallbackCoords:
     def test_ocr_fallback_table_row_device_space_coords(
         self, mock_build_elements, mock_supabase, mock_db, mock_user
     ):
-        """[Flow: 표 행 OCR 요소(PDF user-space) -> search_job_text 호출 -> device-space 변환 검증]
+        """[Flow: 표 행 OCR 요소(device-space) -> search_job_text 호출 -> 변환 없이 그대로 반환 검증]
 
-        표 행 요소가 PDF user-space bbox(페이지 중간 y≈400~420)를 반환하면,
-        search_job_text는 device-space bbox(페이지 중간 y≈422~442)로 변환해야 한다.
+        표 행 요소의 bbox_pdf는 device-space(y=0 상단) 좌표계이다.
+        search_job_text는 추가 변환 없이 bbox_pdf를 그대로 반환해야 한다.
         """
         job_id = "test-job-ocr-table"
         job = Job(id=job_id, user_id=mock_user.id)
@@ -129,11 +129,11 @@ class TestSearchJobTextOcrFallbackCoords:
         mock_storage.download.side_effect = lambda path: b"{}" if "layout" in path else pdf_bytes
         mock_supabase.get_service_client.return_value.storage.from_.return_value = mock_storage
 
-        # 표 행: PDF user-space에서 페이지 중간(y=400~420)
+        # 표 행: device-space에서 페이지 중간(y=422~442, y=0 상단 기준)
         mock_build_elements.return_value = [
             {
                 "page_no": 1,
-                "bbox_pdf": [21.0, 400.0, 572.0, 420.0],  # PDF user-space (중간)
+                "bbox_pdf": [21.0, 422.0, 572.0, 442.0],  # device-space (중간)
                 "text": "사건구분 | 형사 | 선임구분 | 사선",
                 "kind": "table_row",
             }
@@ -153,9 +153,7 @@ class TestSearchJobTextOcrFallbackCoords:
         data = json.loads(response.body.decode("utf-8"))
         assert len(data["matches"]) == 1
         match = data["matches"][0]
-        # PDF user-space (21, 400, 572, 420) → device-space (21, 422, 572, 442)
-        # device_y0 = 842 - 420 = 422
-        # device_y1 = 842 - 400 = 442
+        # bbox_pdf는 device-space이므로 추가 변환 없이 그대로 반환되어야 함
         assert abs(match["bbox_pdf"][1] - 422.0) < 0.1, (
             f"device-space y0 should be ~422 (page middle), got {match['bbox_pdf'][1]}"
         )

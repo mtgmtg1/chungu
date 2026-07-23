@@ -8,6 +8,44 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 스캔 PDF 하이라이트 y좌표 어긋남 근본 원인 해결 — OCR layout 좌표계 반전 + 교차 검증 로직 추가 — 2026-07-23
+
+- **증상**: 스캔 PDF를 searchable PDF로 변환 후 하이라이트가 텍스트와 어긋남. 특히 표 행에서 y좌표가 반전되어 아래쪽 행에 달려야 할 주석이 위쪽에 표시됨.
+- **근본 원인 (2가지)**:
+  1. **`_split_bbox_into_rows` 행 배정 방향 반전** (`app/backend/core/ocr_layout.py`): 표 block_bbox를 행으로 분할할 때 `y0 + i*row_height` (첫 행이 y0에 가깝게)로 배정했으나, 이 bbox는 `_normalize_bbox`에서 y축이 한 번 뒤집힌 "normalized bottom-left" 좌표계이므로, 첫 HTML 행이 y1(큰 값)에 가깝게 배정되어야 변환 후 표의 맨 위에 표시됨. 기존 로직은 표 내부 행 순서가 뒤집히는 버그를 유발.
+  2. **`search_job_text` OCR 폴백 불필요한 y반전** (`app/backend/api/jobs.py`): OCR 폴백 요소의 `bbox_pdf`가 `_normalize_bbox`(1차 y반전) + `_normalized_bbox_to_pdf_user`(2차 y반전)를 거쳐 device-space와 동일한 좌표계가 됨에도 불구하고, 추가로 `pdf_user_to_device`(3차 y반전)를 적용하여 y가 반전됨. 총 3번 뒤집혀 홀수 → 반전.
+- **수정 내용**:
+  - `app/backend/core/ocr_layout.py`: `_split_bbox_into_rows`의 행 배정 공식을 `y0 + i*row_height` → `y1 - (i+1)*row_height` (역순)로 변경. 첫 HTML 행이 raw bbox의 y1(변환 후 표의 맨 위)에 가깝게 배정. `_extract_table_row_items`(`pdf_text_layer.py`)와 동일한 패턴.
+  - `app/backend/api/jobs.py`: `search_job_text`의 OCR 폴백 경로에서 `pdf_user_to_device` 변환 제거. `bbox_pdf`는 이미 device-space이므로 추가 변환 없이 그대로 사용. 교차 검증 로직(`_cross_validate_matches_with_ocr_layout`)에서도 동일하게 변환 제거.
+  - `app/backend/api/jobs.py`: `_cross_validate_matches_with_ocr_layout` 함수 추가 — `search_for` 결과와 OCR layout 좌표를 교차 검증하여 y 차이가 페이지 높이의 10%를 초과하면 OCR layout y로 보정. 수정 전 코드로 생성된 기존 searchable PDF의 반전된 텍스트 레이어 문제를 런타임에 보정.
+- **테스트**:
+  - `app/backend/tests/test_split_bbox_into_rows.py`: 6개 테스트 (첫 행이 y1에 가깝게, 마지막이 y0에 가깝게, y 단조 감소, x 보존, 0행, 1행).
+  - `app/backend/tests/test_search_job_text_cross_validate.py`: 2개 테스트 (y 보정 적용, y 보정 미적용).
+  - `app/backend/tests/test_search_job_text_ocr_fallback_coords.py`: 기존 2개 테스트를 새 좌표계 이해(device-space 직접 반환)에 맞게 업데이트.
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 268 passed. 기존 job(`8c8bef99...`)의 searchable PDF 재생성 후 `search_for` 좌표 확인 — 표 행0(수용기관) y0=178(표 상단), 표 행9(예약일시) y0=562(표 하단)로 HTML 순서와 시각적 위치가 일치. 디버그 페이지(`/dev/debug-highlight-coords`)로 pixel 좌표 시각적 확인.
+- **핵심 파일**: `app/backend/core/ocr_layout.py`, `app/backend/api/jobs.py`, `app/backend/tests/test_split_bbox_into_rows.py`, `app/backend/tests/test_search_job_text_cross_validate.py`, `app/backend/tests/test_search_job_text_ocr_fallback_coords.py`.
+- **⚠️ 회귀 방지 경고**:
+  1. **OCR layout의 `bbox_pdf`는 device-space(y=0 상단)이다.** `_normalize_bbox` + `_normalized_bbox_to_pdf_user`의 이중 y반전 결과이므로, 추가 `pdf_user_to_device` 변환을 적용하면 y가 반전된다. 절대 추가 변환을 적용하지 말 것.
+  2. **`_split_bbox_into_rows`의 행 배정은 역순이어야 한다.** raw bbox가 "normalized bottom-left" 좌표계이므로 첫 HTML 행이 y1(큰 값)에 가깝게 배정되어야 변환 후 표의 맨 위에 표시된다. `y0 + i*row_height`가 아니라 `y1 - (i+1)*row_height`를 사용할 것.
+  3. **교차 검증 로직은 OCR layout이 device-space라는 전제하에 작동한다.** OCR layout 좌표계가 변경되면 교차 검증 로직도 함께 업데이트해야 함.
+
+### 에이전트 마크다운 편집 미반영 근본 원인 해결 — _get_markdown_content 후보 선택 + JobResultPage loadPreview 수정 — 2026-07-23
+
+- **증상**: 에이전트 도구(`insert_text`/`replace_text` + `apply_edits`)로 마크다운을 편집해도 UI(에디터)에 반영되지 않음. `apply_edits`는 `{"saved":true}`를 반환하지만, 이후 `get_markdown` 및 preview에서 변경사항이 보이지 않음.
+- **근본 원인 (2가지)**:
+  1. **백엔드 `_get_markdown_content` 후보 선택 로직 버그** (`app/backend/api/jobs.py`): `_marker_count`가 파일 마커(`<!-- 파일 N -->`) 수가 같을 때 page 마커(`<!-- Page N -->`) 수를 tie-breaker로 사용. `save_result_page`는 저장 시 `_PAGE_MARKER_RE.sub`로 page 마커를 제거하므로, 편집본(edited_md)은 파일 마커만 가지고 원본(md)은 파일+page 마커를 가져 원본이 더 높은 점수를 받아 선택됨 → 편집 내용 무시.
+  2. **프론트엔드 `JobResultPage.loadPreview`가 원본 마크다운 사용** (`app/frontend/src/pages/JobResultPage.jsx`): `fileMarkdowns`를 `preview.source_files[].result_markdown`(변환 시점 원본)에서 가져왔으나, 이 값은 edited_md가 아님. 백엔드 수정만으로는 preview 응답의 `markdown` 필드는 수정되지만, 프론트엔드가 `source_files[].result_markdown`을 우선 사용하므로 여전히 원본 표시.
+- **수정 내용**:
+  - `app/backend/api/jobs.py`: `_marker_count`를 `_file_marker_count`로 단순화 — 파일 마커 수만 비교, 같으면 `candidates` 순서상 먼저 추가된 edited_md 우선. page 마커는 tie-breaker에서 제외.
+  - `app/frontend/src/pages/JobResultPage.jsx`: `loadPreview`에서 `preview.markdown`(=edited_md 포함)을 `<!-- Page N -->` 마커로 분할하여 `fileMarkdowns`로 사용. `source_files[].result_markdown`은 폴백으로만 사용.
+  - `app/backend/tests/test_get_markdown_content_edited_priority.py`: 3개 회귀 테스트 (편집본 우선, 테스트 제목 반영, 원본 우선 조건).
+- **디버그 페이지**: `/dev/debug-markdown-agent?jobId={id}` — dev bypass 자동 로그인, 마크다운 에디터 + 에이전트 채팅, 각 단계별 상세 로그 패널 (API 호출/응답, Tiptap 내용, 상태 변화). `app/frontend/src/pages/DebugMarkdownAgentPage.jsx`.
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 260 passed. `cd app/frontend && npx vitest run` → 66 passed. a1 서버 재배포 후 실제 `JobResultPage`에서 에이전트가 추가한 `# 테스트 제목`이 표시됨을 브라우저로 확인.
+- **⚠️ 회귀 방지 경고**:
+  1. `_get_markdown_content`의 후보 선택 기준을 변경할 때, `save_result_page`가 page 마커를 제거한다는 점을 반드시 고려할 것. page 마커 수를 tie-breaker로 사용하면 편집본이 원본에 우선하지 못함.
+  2. 프론트엔드에서 `source_files[].result_markdown`은 변환 시점 원본이지 edited_md가 아님. 에이전트 편집 반영 여부를 확인하려면 `preview.markdown`(=`_get_markdown_content` 결과)을 사용할 것.
+- **핵심 파일**: `app/backend/api/jobs.py`, `app/frontend/src/pages/JobResultPage.jsx`, `app/backend/tests/test_get_markdown_content_edited_priority.py`, `app/frontend/src/pages/DebugMarkdownAgentPage.jsx`.
+
 ### 스캔 PDF 표 내부 행 순서 반전 근본 원인 해결 — _extract_table_row_items 행 배정 방향 수정 — 2026-07-22
 
 - **진짜 근본 원인 (이전 "search_job_text 좌표계 통일" 수정으로도 해결되지 않았던 문제)**:

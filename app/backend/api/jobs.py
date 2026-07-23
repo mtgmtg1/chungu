@@ -3699,6 +3699,132 @@ def _is_rect_plausible_for_page(rect: fitz.Rect, page_rect: fitz.Rect) -> bool:
     return True
 
 
+def _cross_validate_matches_with_ocr_layout(
+    matches: list[dict],
+    job,
+    client,
+    pdf_bytes: bytes,
+    query: str,
+    page_no_filter: int | None,
+) -> list[dict]:
+    """[Flow: Step 1 (저장된 OCR layout 다운로드) -> Step 2 (OCR 요소를 device-space로 변환)
+          -> Step 3 (각 search_for 매치와 OCR 요소를 텍스트+페이지로 매칭)
+          -> Step 4 (y 차이가 임계값 초과 시 OCR layout y로 보정)
+          -> Step 5 (보정된 matches 반환)]
+
+    search_for가 텍스트를 찾았더라도, 수정 전 코드로 생성된 searchable PDF의
+    반전된 텍스트 레이어 때문에 y 좌표가 잘못될 수 있다.
+    저장된 OCR layout의 시각적 위치(정답)와 비교하여 y 좌표를 보정한다.
+
+    Args:
+        matches: search_for가 반환한 매치 목록 (device-space 좌표)
+        job: Job 모델 인스턴스 (result_ocr_layout_storage_path 필요)
+        client: Supabase 서비스 클라이언트
+        pdf_bytes: searchable PDF 바이트
+        query: 검색어 문자열
+        page_no_filter: 특정 페이지만 검색 중이면 페이지 번호, None이면 전체
+
+    Returns:
+        y 좌표가 보정된 matches 목록. OCR layout 로드 실패 시 원본 matches 그대로 반환.
+    """
+    import fitz as _fitz
+
+    # Step 1: 저장된 OCR layout 다운로드
+    try:
+        from ..core.pdf_annotate_converter import build_agent_elements_from_ocr_layout
+
+        layout_raw = client.storage.from_("results").download(job.result_ocr_layout_storage_path)
+        layout_by_page = {int(k): v for k, v in json.loads(layout_raw.decode("utf-8")).items()}
+        ocr_page_range = [page_no_filter] if page_no_filter is not None else None
+        ocr_elements = build_agent_elements_from_ocr_layout(layout_by_page, pdf_bytes, page_range=ocr_page_range)
+    except Exception as e:
+        logger.warning(f"[search_job_text] OCR layout 교차 검증 로드 실패: {e}")
+        return matches
+
+    if not ocr_elements:
+        return matches
+
+    # Step 2: 페이지별 page_rect 구축
+    # [주의] OCR 요소의 bbox_pdf는 _normalize_bbox(y축 1차 반전) +
+    #       _normalized_bbox_to_pdf_user(y축 2차 반전)를 거쳐 device-space와
+    #       동일한 좌표계가 된다. 따라서 추가 변환 없이 그대로 사용한다.
+    page_rect_map: dict[int, _fitz.Rect] = {}
+    try:
+        _doc = _fitz.open(stream=pdf_bytes, filetype="pdf")
+        for _page in _doc:
+            page_rect_map[_page.number + 1] = _page.rect
+        _doc.close()
+    except Exception as e:
+        logger.warning(f"[search_job_text] OCR layout 교차 검증 page rect 구축 실패: {e}")
+        return matches
+
+    # OCR 요소를 페이지별로 그룹화 (bbox_pdf는 이미 device-space)
+    ocr_by_page: dict[int, list[dict]] = {}
+    for el in ocr_elements:
+        el_page_no = el.get("page_no", 1)
+        el_bbox = list(el["bbox_pdf"])
+        ocr_by_page.setdefault(el_page_no, []).append({
+            "text": el.get("text", ""),
+            "device_bbox": el_bbox,
+            "kind": el.get("kind", ""),
+        })
+
+    # Step 3 + 4: 각 search_for 매치와 OCR 요소를 비교하여 y 보정
+    try:
+        pattern = _re.compile(query, _re.IGNORECASE)
+    except _re.error:
+        pattern = _re.compile(_re.escape(query), _re.IGNORECASE)
+
+    corrected_count = 0
+    for match in matches:
+        match_page = match["page_no"]
+        match_text = match.get("text", "")
+        match_bbox = match["bbox_pdf"]
+        match_y_center = (match_bbox[1] + match_bbox[3]) / 2.0
+
+        page_rect = page_rect_map.get(match_page)
+        if page_rect is None:
+            continue
+        # 임계값: 페이지 높이의 10% — 이 이상 차이나면 좌표계 오류로 간주
+        y_threshold = page_rect.height * 0.1
+
+        # 같은 페이지의 OCR 요소 중, query 텍스트를 포함하고 y 차이가 가장 작은 요소 찾기
+        page_ocr_elements = ocr_by_page.get(match_page, [])
+        best_ocr = None
+        best_y_diff = float("inf")
+        for ocr_el in page_ocr_elements:
+            if not pattern.search(ocr_el["text"]):
+                continue
+            ocr_bbox = ocr_el["device_bbox"]
+            ocr_y_center = (ocr_bbox[1] + ocr_bbox[3]) / 2.0
+            y_diff = abs(match_y_center - ocr_y_center)
+            if y_diff < best_y_diff:
+                best_y_diff = y_diff
+                best_ocr = ocr_el
+
+        # y 차이가 임계값 초과 시 OCR layout y로 보정
+        if best_ocr is not None and best_y_diff > y_threshold:
+            ocr_bbox = best_ocr["device_bbox"]
+            old_y0, old_y1 = match_bbox[1], match_bbox[3]
+            # x 좌표는 search_for의 정밀한 위치를 유지, y 좌표만 OCR layout으로 보정
+            match_bbox[1] = ocr_bbox[1]
+            match_bbox[3] = ocr_bbox[3]
+            corrected_count += 1
+            logger.info(
+                f"[search_job_text] OCR layout y 보정: page={match_page} "
+                f"text='{match_text[:40]}' "
+                f"y0 {old_y0:.1f}→{ocr_bbox[1]:.1f}, y1 {old_y1:.1f}→{ocr_bbox[3]:.1f} "
+                f"(차이={best_y_diff:.1f} > 임계값={y_threshold:.1f})"
+            )
+
+    if corrected_count > 0:
+        logger.info(
+            f"[search_job_text] OCR layout 교차 검증: {corrected_count}개 매치 y 좌표 보정됨"
+        )
+
+    return matches
+
+
 # [Flow: Step 1 (job 조회) -> Step 2 (searchable PDF 다운로드) -> Step 3 (텍스트 검색)
 #       -> Step 4 (page_no 필터링) -> Step 5 (매치 목록 반환)]
 # Node.js AI 백엔드의 search_text 도구가 호출하는 엔드포인트.
@@ -3788,6 +3914,14 @@ def search_job_text(
     finally:
         doc.close()
 
+    # [Flow: search_for가 매치를 찾았더라도, 수정 전 코드로 생성된 searchable PDF의
+    # 반전된 텍스트 레이어 때문에 y 좌표가 잘못될 수 있다.
+    # 저장된 OCR layout이 있으면 search_for 결과와 교차 검증하여 y 좌표를 보정한다.]
+    if matches and job.result_ocr_layout_storage_path:
+        matches = _cross_validate_matches_with_ocr_layout(
+            matches, job, client, pdf_bytes, query, page_no
+        )
+
     # [Flow: 텍스트 레이어가 없는 스캔 PDF에서는 위 search_for가 항상 매치 0개를 반환한다.
     # 1) 저장된 OCR layout이 있으면 재사용하고, 2) 없으면 PaddleOCR 폴백으로
     # 요소 텍스트에 대해 대소문자 무관 정규식 매칭을 수행한다.]
@@ -3832,12 +3966,11 @@ def search_job_text(
         except _re.error:
             pattern = _re.compile(_re.escape(query), _re.IGNORECASE)
 
-        # [Flow: OCR 폴백 요소의 bbox_pdf는 PDF user-space(y=0 하단) 좌표계이다.
-        #       search_for 경로는 device-space(y=0 상단)를 반환하므로, 좌표계를 통일하기 위해
-        #       PDF user-space → device-space 변환을 적용한다. 그렇지 않으면 에이전트가
-        #       input_space='device'로 저장할 때 y 반전이 발생한다.]
-        from ..core.pdf_coordinate_transform import pdf_user_to_device
-
+        # [Flow: OCR 폴백 요소의 bbox_pdf는 _normalize_bbox(y축 1차 반전) +
+        #       _normalized_bbox_to_pdf_user(y축 2차 반전)를 거쳐 device-space와
+        #       동일한 좌표계가 된다. 따라서 pdf_user_to_device(3차 반전)를
+        #       추가로 적용하면 y가 반전되므로, 변환 없이 그대로 사용한다.
+        #       search_for 경로도 device-space를 반환하므로 좌표계가 일치한다.]
         ocr_page_rect_map: dict[int, fitz.Rect] = {}
         try:
             _ocr_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -3853,20 +3986,8 @@ def search_job_text(
                 continue
             el_page_no = el.get("page_no", 1)
             el_bbox = list(el["bbox_pdf"])
-            # PDF user-space → device-space 변환 (page_rect가 있을 때만)
-            page_rect_ocr = ocr_page_rect_map.get(el_page_no)
-            if page_rect_ocr is not None:
-                try:
-                    device_rect = pdf_user_to_device(
-                        fitz.Rect(el_bbox[0], el_bbox[1], el_bbox[2], el_bbox[3]),
-                        page_rect_ocr,
-                    )
-                    el_bbox = [device_rect.x0, device_rect.y0, device_rect.x1, device_rect.y1]
-                except Exception as e:
-                    logger.warning(
-                        f"[search_job_text] {job_id} page={el_page_no} "
-                        f"PDF user-space → device-space 변환 실패: {e}"
-                    )
+            # bbox_pdf는 _normalize_bbox + _normalized_bbox_to_pdf_user의
+            # 이중 y반전을 거쳐 device-space와 동일하므로 추가 변환 없이 그대로 사용한다.
             # [TABLE_DEBUG] OCR 폴백 경로에서 표 행 좌표 로깅
             if el.get("kind") == "table_row" or "|" in text:
                 logger.info(
@@ -3908,6 +4029,209 @@ def search_job_text(
             "X-OCR-Layout-Path": str(job.result_ocr_layout_storage_path or ""),
         },
     )
+
+
+# [Flow: Step 1 (job 조회 + searchable PDF 다운로드) -> Step 2 (PyMuPDF로 페이지 PNG 렌더링)
+#       -> Step 3 (search_for로 query 검색 → device-space rect 수집)
+#       -> Step 4 (get_text("blocks")로 텍스트 레이어 실제 블록 위치 수집)
+#       -> Step 5 (저장된 OCR layout이 있으면 bbox 수집)
+#       -> Step 6 (device-space → pixel 변환 + base64 이미지 반환)]
+# 스캔 PDF searchable 텍스트 레이어의 하이라이트 좌표 어긋남을 시각적으로 진단하는 디버그 엔드포인트.
+# 프론트엔드 디버그 페이지가 이 결과를 받아 이미지 위에 rect를 오버레이하여 원인을 추적한다.
+@router.get("/jobs/{job_id}/debug/highlight-coords")
+def debug_highlight_coords(
+    job_id: str,
+    query: str = Query(..., description="검색어"),
+    page_no: int = Query(1, ge=1, description="페이지 번호 (1-based)"),
+    dpi: int = Query(150, ge=72, le=300, description="렌더링 DPI"),
+    user: CurrentUser = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """[Flow: searchable PDF의 텍스트 레이어 좌표와 렌더링된 이미지 픽셀 좌표를 비교한다.
+
+    반환:
+      - page_rect: device-space 페이지 크기 (PDF user-space와 동일한 스케일, 원점 좌상단)
+      - scale: device → pixel 변환 비율 (dpi / 72)
+      - image_base64: 렌더링된 페이지 PNG
+      - search_for_rects: PyMuPDF search_for 결과 (device + pixel)
+      - text_blocks: get_text("blocks") 결과 (PDF 텍스트 레이어 실제 위치)
+      - ocr_elements: 저장된 OCR layout bbox (있을 때)
+      - is_likely_scan: 텍스트 레이어가 거의 없으면 true (스캔 PDF 추정)
+    """
+    import base64 as _b64
+
+    job = db.get(Job, job_id)
+    _require_job_access(job, user)
+    _require_job_not_expired(job)
+
+    # searchable PDF 경로 해석 (search_job_text와 동일 로직)
+    storage_path = job.searchable_pdf_storage_path
+    bucket = "pdfs"
+    if not storage_path:
+        files = job.extracted_files or []
+        for info in files:
+            sp = info.get("searchable_pdf_storage_path")
+            if sp:
+                storage_path = sp
+                break
+    if not storage_path and job.pdf_storage_path:
+        storage_path = job.pdf_storage_path
+
+    if not storage_path:
+        raise HTTPException(status_code=404, detail="No PDF available for this job")
+
+    try:
+        client = supabase_client.get_service_client()
+        pdf_bytes = client.storage.from_(bucket).download(storage_path)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to download PDF: {e}")
+
+    scale = dpi / 72.0
+    matrix = fitz.Matrix(scale, scale)
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        if page_no > doc.page_count:
+            raise HTTPException(status_code=400, detail=f"page_no {page_no} > page_count {doc.page_count}")
+        page = doc[page_no - 1]
+        page_rect = page.rect
+
+        # 1) 페이지를 PNG로 렌더링 (device-space 좌표계 기준)
+        pix = page.get_pixmap(matrix=matrix, alpha=False)
+        image_bytes = pix.tobytes("png")
+        image_b64 = _b64.b64encode(image_bytes).decode("ascii")
+        image_w, image_h = pix.width, pix.height
+
+        # 2) search_for로 query 검색 (device-space rect)
+        try:
+            rects = page.search_for(query)
+        except Exception:
+            rects = page.search_for(query.replace("\\", ""))
+        search_for_rects = []
+        for rect in rects:
+            text = page.get_textbox(rect).strip()
+            search_for_rects.append({
+                "device": [round(rect.x0, 2), round(rect.y0, 2), round(rect.x1, 2), round(rect.y1, 2)],
+                "pixel": [round(rect.x0 * scale, 1), round(rect.y0 * scale, 1),
+                          round(rect.x1 * scale, 1), round(rect.y1 * scale, 1)],
+                "text": text,
+            })
+
+        # 3) 텍스트 레이어의 실제 블록 위치 (get_text("blocks"))
+        #    스캔 PDF searchable 텍스트 레이어가 어디에 배치되어 있는지 확인
+        blocks = page.get_text("blocks")
+        text_blocks = []
+        for b in blocks:
+            # b = (x0, y0, x1, y1, text, block_no, block_type)
+            bx0, by0, bx1, by1, btext = b[0], b[1], b[2], b[3], b[4]
+            text_blocks.append({
+                "device": [round(bx0, 2), round(by0, 2), round(bx1, 2), round(by1, 2)],
+                "pixel": [round(bx0 * scale, 1), round(by0 * scale, 1),
+                          round(bx1 * scale, 1), round(by1 * scale, 1)],
+                "text": btext.strip()[:120],
+                "type": b[6],
+            })
+
+        # 4) get_text("dict") 의 line/span 정밀 위치도 일부 수집 (첫 30개)
+        detailed_spans = []
+        try:
+            td = page.get_text("dict")
+            for block in td.get("blocks", []):
+                if block.get("type") != 0:  # 0 = text
+                    continue
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        sbbox = span["bbox"]
+                        detailed_spans.append({
+                            "device": [round(sbbox[0], 2), round(sbbox[1], 2),
+                                       round(sbbox[2], 2), round(sbbox[3], 2)],
+                            "pixel": [round(sbbox[0] * scale, 1), round(sbbox[1] * scale, 1),
+                                      round(sbbox[2] * scale, 1), round(sbbox[3] * scale, 1)],
+                            "text": span.get("text", "").strip()[:80],
+                            "font": span.get("font", ""),
+                            "size": round(span.get("size", 0), 2),
+                        })
+                        if len(detailed_spans) >= 60:
+                            break
+                    if len(detailed_spans) >= 60:
+                        break
+                if len(detailed_spans) >= 60:
+                    break
+        except Exception as e:
+            logger.warning(f"[debug_highlight_coords] dict 추출 실패: {e}")
+
+        # 5) OCR layout bbox (있으면)
+        ocr_elements = []
+        if job.result_ocr_layout_storage_path:
+            try:
+                from ..core.pdf_annotate_converter import build_agent_elements_from_ocr_layout
+                from ..core.pdf_coordinate_transform import pdf_user_to_device
+
+                layout_raw = client.storage.from_("results").download(job.result_ocr_layout_storage_path)
+                layout_by_page = {int(k): v for k, v in json.loads(layout_raw.decode("utf-8")).items()}
+                elements = build_agent_elements_from_ocr_layout(layout_by_page, pdf_bytes, page_range=[page_no])
+                for el in elements:
+                    el_bbox = list(el["bbox_pdf"])
+                    # device-space 변환
+                    try:
+                        dev_rect = pdf_user_to_device(
+                            fitz.Rect(el_bbox[0], el_bbox[1], el_bbox[2], el_bbox[3]), page_rect
+                        )
+                        dev = [dev_rect.x0, dev_rect.y0, dev_rect.x1, dev_rect.y1]
+                    except Exception:
+                        dev = el_bbox
+                    ocr_elements.append({
+                        "device": [round(v, 2) for v in dev],
+                        "pixel": [round(dev[0] * scale, 1), round(dev[1] * scale, 1),
+                                  round(dev[2] * scale, 1), round(dev[3] * scale, 1)],
+                        "text": (el.get("text") or "").strip()[:80],
+                        "kind": el.get("kind", ""),
+                    })
+            except Exception as e:
+                logger.warning(f"[debug_highlight_coords] OCR layout 추출 실패: {e}")
+
+        # 6) 스캔 PDF 추정: 텍스트 레이어 블록이 1~2개이고 대부분 빈 텍스트면 스캔
+        non_empty_blocks = [b for b in text_blocks if b["text"]]
+        is_likely_scan = len(non_empty_blocks) <= 2 and len(text_blocks) <= 5
+
+        # 7) 페이지 텍스트 전체 (디버그용)
+        full_text = page.get_text().strip()
+
+        result = {
+            "job_id": job_id,
+            "page_no": page_no,
+            "dpi": dpi,
+            "scale": round(scale, 4),
+            "page_rect": {
+                "device": [round(page_rect.x0, 2), round(page_rect.y0, 2),
+                           round(page_rect.x1, 2), round(page_rect.y1, 2)],
+                "pixel": [round(page_rect.x0 * scale, 1), round(page_rect.y0 * scale, 1),
+                          round(page_rect.x1 * scale, 1), round(page_rect.y1 * scale, 1)],
+            },
+            "image_base64": image_b64,
+            "image_width": image_w,
+            "image_height": image_h,
+            "search_for_rects": search_for_rects,
+            "text_blocks": text_blocks,
+            "detailed_spans": detailed_spans,
+            "ocr_elements": ocr_elements,
+            "is_likely_scan": is_likely_scan,
+            "searchable_pdf_storage_path": storage_path,
+            "result_ocr_layout_storage_path": job.result_ocr_layout_storage_path,
+            "full_text_preview": full_text[:500],
+            "full_text_length": len(full_text),
+        }
+        logger.info(
+            f"[debug_highlight_coords] job={job_id} page={page_no} query='{query[:40]}' "
+            f"search_for={len(search_for_rects)}건 blocks={len(text_blocks)} "
+            f"spans={len(detailed_spans)} ocr={len(ocr_elements)} is_scan={is_likely_scan}"
+        )
+        return Response(
+            json.dumps(result, ensure_ascii=False, default=str),
+            media_type="application/json",
+        )
+    finally:
+        doc.close()
 
 
 def _resolve_annotations_json_path(job: Job, source_index: int) -> str | None:

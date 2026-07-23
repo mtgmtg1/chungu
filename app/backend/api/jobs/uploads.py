@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from ...auth.api_key_auth import require_api_key_or_session
 from ...auth.supabase_auth import CurrentUser
-from ...core import archive_handler, docling_client, hwp_converter, media_loader, points_service, subscription_service, supabase_client
+from ...core import archive_handler, cache, docling_client, hwp_converter, media_loader, points_service, subscription_service, supabase_client
 from ...core.job_helpers import parse_columns
 from ...db.models import Job, User
 from ...db.session import get_db
@@ -24,13 +24,17 @@ from ... import settings_store
 from ._shared import (
     _analyze_extracted_files,
     _calculate_media_info,
+    _calculate_work_units,
     _count_pages_with_docling,
     _job_summary,
     _normalize_display_name,
+    _PREVIEW_DOCUMENT_TYPES,
     _require_job_access,
     _require_job_not_expired,
+    _subscription_units_from_job,
     _subscription_would_exceed_for_model,
     get_current_user_or_api_key,
+    MEDIA_EXTENSIONS,
 )
 
 logger = logging.getLogger(__name__)

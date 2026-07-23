@@ -20,6 +20,7 @@ from ._shared import (
     _get_markdown_content,
     _is_job_expired,
     _job_summary,
+    _normalize_display_name,
     _require_job_access,
     _require_job_not_expired,
     get_current_user_or_api_key,

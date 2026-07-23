@@ -8,13 +8,16 @@ from sqlalchemy.orm import Session
 
 from ...auth.api_key_auth import require_api_key_or_session
 from ...auth.supabase_auth import CurrentUser
-from ...core import supabase_client
+from ...core import cache, converter, subscription_service, supabase_client
 from ...db.models import Job
 from ...db.session import get_db
 from ...workers.tasks import run_job
 from ._shared import (
+    _calculate_media_info,
+    _FILE_MARKER_RE,
     _get_markdown_content,
     _job_summary,
+    _PAGE_MARKER_RE,
     _require_job_access,
     _require_job_not_expired,
     _split_markdown_by_files,

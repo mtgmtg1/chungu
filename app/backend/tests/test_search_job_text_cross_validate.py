@@ -64,7 +64,7 @@ class TestSearchJobTextCrossValidation:
         user.id = "test-user-id"
         return user
 
-    @patch("backend.api.jobs.supabase_client")
+    @patch("backend.api.jobs.annotations.supabase_client")
     @patch("backend.core.pdf_annotate_converter.build_agent_elements_from_ocr_layout")
     def test_search_for_y_corrected_by_ocr_layout(
         self, mock_build_elements, mock_supabase, mock_db, mock_user
@@ -103,8 +103,8 @@ class TestSearchJobTextCrossValidation:
             }
         ]
 
-        with patch("backend.api.jobs._require_job_access"), \
-             patch("backend.api.jobs._require_job_not_expired"):
+        with patch("backend.api.jobs.annotations._require_job_access"), \
+             patch("backend.api.jobs.annotations._require_job_not_expired"):
             response = search_job_text(
                 job_id=job_id,
                 query="TARGET_TEXT",
@@ -136,7 +136,7 @@ class TestSearchJobTextCrossValidation:
             f"y0 should be corrected to ~200 (OCR layout position), got {match_y0}"
         )
 
-    @patch("backend.api.jobs.supabase_client")
+    @patch("backend.api.jobs.annotations.supabase_client")
     @patch("backend.core.pdf_annotate_converter.build_agent_elements_from_ocr_layout")
     def test_search_for_kept_when_close_to_ocr_layout(
         self, mock_build_elements, mock_supabase, mock_db, mock_user
@@ -174,8 +174,8 @@ class TestSearchJobTextCrossValidation:
             }
         ]
 
-        with patch("backend.api.jobs._require_job_access"), \
-             patch("backend.api.jobs._require_job_not_expired"):
+        with patch("backend.api.jobs.annotations._require_job_access"), \
+             patch("backend.api.jobs.annotations._require_job_not_expired"):
             response = search_job_text(
                 job_id=job_id,
                 query="TITLE_TEXT",

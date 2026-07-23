@@ -46,7 +46,7 @@ class TestSearchJobTextOcrFallbackCoords:
         user.id = "test-user-id"
         return user
 
-    @patch("backend.api.jobs.supabase_client")
+    @patch("backend.api.jobs.annotations.supabase_client")
     @patch("backend.core.pdf_annotate_converter.build_agent_elements_from_ocr_layout")
     def test_ocr_fallback_returns_device_space_coords(
         self, mock_build_elements, mock_supabase, mock_db, mock_user
@@ -82,8 +82,8 @@ class TestSearchJobTextOcrFallbackCoords:
             }
         ]
 
-        with patch("backend.api.jobs._require_job_access"), \
-             patch("backend.api.jobs._require_job_not_expired"):
+        with patch("backend.api.jobs.annotations._require_job_access"), \
+             patch("backend.api.jobs.annotations._require_job_not_expired"):
             response = search_job_text(
                 job_id=job_id,
                 query="표제목",
@@ -106,7 +106,7 @@ class TestSearchJobTextOcrFallbackCoords:
             f"device-space y1 should be ~42 (page top), got {match['bbox_pdf'][3]}"
         )
 
-    @patch("backend.api.jobs.supabase_client")
+    @patch("backend.api.jobs.annotations.supabase_client")
     @patch("backend.core.pdf_annotate_converter.build_agent_elements_from_ocr_layout")
     def test_ocr_fallback_table_row_device_space_coords(
         self, mock_build_elements, mock_supabase, mock_db, mock_user
@@ -139,8 +139,8 @@ class TestSearchJobTextOcrFallbackCoords:
             }
         ]
 
-        with patch("backend.api.jobs._require_job_access"), \
-             patch("backend.api.jobs._require_job_not_expired"):
+        with patch("backend.api.jobs.annotations._require_job_access"), \
+             patch("backend.api.jobs.annotations._require_job_not_expired"):
             response = search_job_text(
                 job_id=job_id,
                 query="형사",

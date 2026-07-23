@@ -22,11 +22,11 @@ def mock_jobs_dependencies(monkeypatch):
     """jobs.py에서 참조하는 외부 모듈 함수를 모킹한다."""
     mock_pdf = MagicMock()
     mock_pdf.get_preview_pdf_url.return_value = "https://preview.example.com/preview.pdf"
-    monkeypatch.setattr("backend.api.jobs.pdf_preview_converter", mock_pdf)
+    monkeypatch.setattr("backend.api.jobs._shared.pdf_preview_converter", mock_pdf)
 
     mock_supabase = MagicMock()
     mock_supabase.get_signed_download_url.return_value = "https://original.example.com/file.pptx"
-    monkeypatch.setattr("backend.api.jobs.supabase_client", mock_supabase)
+    monkeypatch.setattr("backend.api.jobs._shared.supabase_client", mock_supabase)
 
     return {"pdf": mock_pdf, "supabase": mock_supabase}
 

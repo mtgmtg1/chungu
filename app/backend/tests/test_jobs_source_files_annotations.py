@@ -50,7 +50,7 @@ class TestSourceFilesAnnotationsJsonUrl:
         # pdf_preview_converter: pdf 원본 미리보기 URL 생성
         mock_pdf = MagicMock()
         mock_pdf.get_preview_pdf_url.return_value = "https://preview.example.com/preview.pdf"
-        monkeypatch.setattr("backend.api.jobs.pdf_preview_converter", mock_pdf)
+        monkeypatch.setattr("backend.api.jobs._shared.pdf_preview_converter", mock_pdf)
 
         # signed URL 생성기: 경로에 따라 다르게 반환하여 어떤 파일을 요청했는지 확인
         signed_urls = {}
@@ -61,7 +61,7 @@ class TestSourceFilesAnnotationsJsonUrl:
                 return signed_urls[key]
             raise FileNotFoundError(f"signed url not found for {key}")
 
-        monkeypatch.setattr("backend.api.jobs.supabase_client.get_signed_download_url", _signed_url)
+        monkeypatch.setattr("backend.api.jobs._shared.supabase_client.get_signed_download_url", _signed_url)
 
         # get_service_client는 _ensure_clean_source_pdf / _merge_annotation_jsons에서 사용
         class FakeBucket:
@@ -88,7 +88,7 @@ class TestSourceFilesAnnotationsJsonUrl:
                 self.storage = FakeStorage()
 
         monkeypatch.setattr(
-            "backend.api.jobs.supabase_client.get_service_client", lambda: FakeClient()
+            "backend.api.jobs._shared.supabase_client.get_service_client", lambda: FakeClient()
         )
 
         return {"signed_urls": signed_urls, "pdf": mock_pdf}

@@ -60,10 +60,10 @@ def test_save_user_annotations_accumulates_previous_annotations():
     mock_db.get.return_value = job
     mock_db.execute.return_value.scalar_one.return_value = job
 
-    with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client), \
-         patch("backend.api.jobs._require_job_access"), \
-         patch("backend.api.jobs._require_job_not_expired"), \
-         patch("backend.api.jobs.cache"):
+    with patch("backend.api.jobs.annotations.supabase_client.get_service_client", return_value=mock_client), \
+         patch("backend.api.jobs.annotations._require_job_access"), \
+         patch("backend.api.jobs.annotations._require_job_not_expired"), \
+         patch("backend.api.jobs.annotations.cache"):
 
         # 1. 첫 번째 주석 ai-1 저장
         payload1 = {
@@ -131,10 +131,10 @@ def test_save_user_annotations_removals_deletes_specified_id():
     ]
     fake_storage.files[path] = json.dumps(initial_annots).encode("utf-8")
 
-    with patch("backend.api.jobs.supabase_client.get_service_client", return_value=mock_client), \
-         patch("backend.api.jobs._require_job_access"), \
-         patch("backend.api.jobs._require_job_not_expired"), \
-         patch("backend.api.jobs.cache"):
+    with patch("backend.api.jobs.annotations.supabase_client.get_service_client", return_value=mock_client), \
+         patch("backend.api.jobs.annotations._require_job_access"), \
+         patch("backend.api.jobs.annotations._require_job_not_expired"), \
+         patch("backend.api.jobs.annotations.cache"):
 
         payload = {
             "source_index": 0,

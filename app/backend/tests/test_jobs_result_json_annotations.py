@@ -115,7 +115,7 @@ class TestGetJobResultJsonAnnotations:
         class FakeClient:
             storage = FakeStorage()
 
-        monkeypatch.setattr("backend.api.jobs.supabase_client.get_service_client", lambda: FakeClient())
+        monkeypatch.setattr("backend.api.jobs.annotations.supabase_client.get_service_client", lambda: FakeClient())
 
         # [Flow: 현재 사용자 의존성 모킹 -> 소유자 검증 통과]
         class FakeUser:

@@ -53,10 +53,8 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
   - **테스트**: `tests/test_v1_jobs_markdown_title_subscription.py` 신규 (6개 테스트 — markdown 업로드, MEDIA_EXTENSIONS .md 포함, title rename 성공/빈값/200자초과, subscription 조회). SQLite UUID 호환성을 위해 `UUIDString` TypeDecorator 사용.
 - **검증**: 백엔드 301 tests pass (기존 295 + 신규 6), docs 빌드 3개 언어(en/ko/ja) 모두 성공.
 - **⚠️ 회귀 방지 경고**:
-  1. v1 `MEDIA_EXTENSIONS`는 `.md`만 추가됨. Office(DOCX/PPTX/XLSX/HWP)/HTML은 v2(`api/jobs/_shared.py`)에는 있으나 v1에는 의도적으로 추가하지 **않음** — v1 결제 모델(points)이 v2(subscription)와 달라 Office/docling_refinement 비용 분기가 필요하기 때문. v1에 Office를 추가하려면 `confirm_job`의 비용 계산 로직도 함께 수정해야 함.
-  2. v1 `docling_refinement`는 미지원. `upload_job` 시그니처에 해당 Form 파라미터가 없음. 문서에 "web app only"로 명시.
-  3. v1 `PATCH /jobs/{job_id}/title`은 preview 캐시 무효화를 하지 **않음** — v1에는 preview 엔드포인트가 없으므로 불필요. v2의 `rename_job`은 `cache.invalidate_pattern`을 호출하지만 v1은 호출 안 함.
-  4. `API.md`/`API.ko.md`/`API.ja.md`는 이제 v1 실제 동작에 맞춤. v1에 새 기능을 추가할 때는 세 파일 모두 업데이트할 것.
+  1. v1 `PATCH /jobs/{job_id}/title`은 preview 캐시 무효화를 하지 **않음** — v1에는 preview 엔드포인트가 없으므로 불필요. v2의 `rename_job`은 `cache.invalidate_pattern`을 호출하지만 v1은 호출 안 함.
+  2. `API.md`/`API.ko.md`/`API.ja.md`는 이제 v1 실제 동작에 맞춤. v1에 새 기능을 추가할 때는 세 파일 모두 업데이트할 것. (참고: Office/HWP/docling_refinement는 후속 백포트로 추가됨 — 위 항목 참조)
 - **핵심 파일**: `app/backend/api/v1/jobs.py`, `app/backend/api/v1/account.py`, `app/backend/tests/test_v1_jobs_markdown_title_subscription.py`, `app/API.md`, `app/API.ko.md`, `app/API.ja.md`, `app/docs/docs/core-concepts/file-formats.md`, `app/docs/docs/core-concepts/extraction-options.md`, `app/docs/docs/pricing.md`, `app/docs/docs/api-reference/jobs/upload.md`, `app/docs/docs/api-reference/account/get-subscription.md`, `app/docs/docs/api-reference/jobs/rename-job.md`, `app/docs/docs/changelog.md`, `app/docs/sidebars.js`.
 
 ### 마크다운 프리뷰 패널 표시 + 파일 탭 파일명 표시 수정 — 2026-07-23

@@ -8,6 +8,23 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### .md 파일 업로드 및 파싱 허용 — markdown 타입 전체 파이프라인 지원 — 2026-07-23
+
+- **배경**: 파일 업로드 시 `.md` 확장자가 `MEDIA_EXTENSIONS`와 프론트엔드 `ACCEPT_TYPES`에 없어 업로드가 차단됨. 마크다운은 텍스트가 그대로 결과이므로 OCR/LLM 처리 없이 파싱 가능.
+- **변경 내용**:
+  - `app/backend/core/media_loader.py`: `MEDIA_TYPES`에 `"markdown": (".md",)` 추가. `detect_file_type`이 `.md` 파일을 `"markdown"` 타입으로 감지.
+  - `app/backend/api/jobs/_shared.py`: `MEDIA_EXTENSIONS`에 `.md` 추가 (업로드 허용). `_build_source_file_item`의 허용 타입 목록에 `"markdown"` 추가, `"file"`과 동일하게 다운로드 URL만 생성. `_analyze_extracted_files`에 markdown 분기 추가 (페이지/미디어 비용 없이 `total_files`에만 카운트).
+  - `app/frontend/src/components/UploadWidget.jsx`: `ACCEPT_TYPES`에 `.md` 추가.
+  - `app/backend/workers/tasks/job_tasks.py` (`run_job`): 파일 분류 루프에 `markdown_files` 리스트 추가. md 파일은 텍스트를 `read_text(encoding="utf-8")`로 직접 읽어 `file_markdowns_by_name`에 저장 → `result_markdown`으로 사용. `total_to_process`에 markdown 파일 포함. `extracted_info` 구축 시 md 파일을 Storage에 업로드.
+  - `app/backend/workers/tasks/job_tasks.py` (`run_job_added_files`): 파일 분류 루프에 markdown 분기 추가. md 파일 텍스트를 직접 `result_markdown`으로 설정, 상태 `done`으로 표시.
+  - `app/backend/api/jobs/uploads.py` (`confirm_add_files`): Storage 업로드 섹션에 markdown 분기 추가.
+- **비용 모델**: md 파일은 페이지/이미지/오디오/비디오가 0이므로 `_calculate_work_units`가 0을 반환 — 사용자 비용 발생 없음.
+- **검증**: `cd app/backend && venv/bin/python -m pytest tests/ -q` → 295 passed. `detect_file_type(Path("test.md"))` → `"markdown"` 확인.
+- **⚠️ 회귀 방지 경고**:
+  1. `media_loader.detect_file_type`이 `"markdown"`을 반환하므로, 파일 타입 분기에서 `"markdown"`을 명시적으로 처리하지 않으면 "지원하지 않는 파일 타입" 에러가 발생한다. `run_job`과 `run_job_added_files` 모두 markdown 분기를 포함해야 함.
+  2. md 파일은 비용이 0이지만 `total_files`에는 카운트되어야 한다. `_analyze_extracted_files`의 markdown 분기를 제거하면 단일 md 업로드 시 `job.total_files = 0`이 될 수 있음.
+- **핵심 파일**: `app/backend/core/media_loader.py`, `app/backend/api/jobs/_shared.py`, `app/frontend/src/components/UploadWidget.jsx`, `app/backend/workers/tasks/job_tasks.py`, `app/backend/api/jobs/uploads.py`.
+
 ### 결과 페이지 파일탭 업로드 500 오류 수정 — confirm_add_files settings 미임포트 — 2026-07-23
 
 - **증상**: 결과 표시 페이지의 파일 탭 업로드 버튼으로 파일 추가 시 `POST /api/jobs/{id}/confirm-add-files` 가 500 반환. `NameError: name 'settings' is not defined` at `uploads.py:671`.

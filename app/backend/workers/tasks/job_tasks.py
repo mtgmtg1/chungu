@@ -376,6 +376,7 @@ def run_job(job_id: str) -> dict:
                 file_markdowns_by_name: dict[str, str] = {}
                 docling_files: list[Path] = []
                 hwp_files: list[Path] = []
+                markdown_files: list[Path] = []
                 for fp in extracted:
                     ftype = media_loader.detect_file_type(fp)
                     if ftype in ("image", "audio", "video"):
@@ -384,9 +385,18 @@ def run_job(job_id: str) -> dict:
                         docling_files.append(fp)
                     elif ftype in media_loader.HWP_TYPES:
                         hwp_files.append(fp)
+                    elif ftype == "markdown":
+                        markdown_files.append(fp)
+
+                # [Flow: markdown 파일은 텍스트를 그대로 result_markdown으로 사용 — OCR/LLM 처리 불필요]
+                for fp in markdown_files:
+                    try:
+                        file_markdowns_by_name[fp.name] = fp.read_text(encoding="utf-8")
+                    except Exception as e:
+                        errors.append(f"{fp.name}: markdown 읽기 실패 {e}")
 
                 # [Flow: Step 1 (총 파일 수 설정 + 상태 ocr로 변경) -> Step 2 (Docling/HWP/vision 파일 순차 처리하며 done_files 증가) -> Step 3 (미디어 파일 처리하며 done_files 증가)]
-                total_to_process = len(docling_files) + len(hwp_files) + len(media_files)
+                total_to_process = len(docling_files) + len(hwp_files) + len(media_files) + len(markdown_files)
                 job.total_files = total_to_process
                 job.done_files = 0
                 total_done_pages = 0
@@ -630,6 +640,11 @@ def run_job(job_id: str) -> dict:
                             info["storage_path"] = supabase_client.upload_input(BytesIO(p.read_bytes()), p.name, job_id)
                         except Exception as e:
                             errors.append(f"{p.name}: 문서 업로드 실패 {e}")
+                    elif ftype == "markdown":
+                        try:
+                            info["storage_path"] = supabase_client.upload_input(BytesIO(p.read_bytes()), p.name, job_id)
+                        except Exception as e:
+                            errors.append(f"{p.name}: markdown 업로드 실패 {e}")
                     extracted_info.append(info)
                 job.extracted_files = extracted_info
                 job.total_files = len(extracted)
@@ -826,6 +841,7 @@ def run_job_added_files(job_id: str) -> dict:
         docling_files: list[tuple[dict, Path]] = []
         hwp_files: list[tuple[dict, Path]] = []
         media_files: list[tuple[str, dict, Path]] = []
+        markdown_files: list[tuple[dict, Path]] = []
         for info in new_files:
             ftype = info.get("type", "")
             try:
@@ -840,6 +856,8 @@ def run_job_added_files(job_id: str) -> dict:
                 hwp_files.append((info, fp))
             elif ftype in ("image", "audio", "video"):
                 media_files.append((ftype, info, fp))
+            elif ftype == "markdown":
+                markdown_files.append((info, fp))
             else:
                 errors.append(f"{info.get('path', '?')}: 지원하지 않는 파일 타입 ({ftype})")
                 info["status"] = "error"
@@ -949,6 +967,16 @@ def run_job_added_files(job_id: str) -> dict:
                         info["searchable_pdf_storage_path"] = searchable_path
                     except Exception as e:
                         logger.warning(f"[run_job_added_files:{job_id}] 이미지 searchable PDF 생성 실패: {fp.name}: {e}")
+
+        # [Flow: Step 3d (markdown 파일 처리 — 텍스트를 그대로 result_markdown으로 사용)]
+        for info, fp in markdown_files:
+            try:
+                info["result_markdown"] = fp.read_text(encoding="utf-8")
+            except Exception as e:
+                errors.append(f"{fp.name}: markdown 읽기 실패 {e}")
+                info["result_markdown"] = ""
+            info["status"] = "done"
+            info["is_new"] = False
 
         # [Flow: Step 4 (전체 extracted_files에서 combined markdown 재생성)]
         flag_modified(job, "extracted_files")

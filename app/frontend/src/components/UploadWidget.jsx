@@ -173,7 +173,7 @@ export default function UploadWidget({ onComplete, submitLabel, jobId, onProgres
     }
   }
 
-  const ACCEPT_TYPES = ".pdf,.zip,.rar,.7z,.tar.gz,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.mp4,.avi,.mov,.mkv,.webm,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.html,.htm,.hwp,.hwpx";
+  const ACCEPT_TYPES = ".pdf,.zip,.rar,.7z,.tar.gz,.png,.jpg,.jpeg,.gif,.webp,.mp3,.wav,.mp4,.avi,.mov,.mkv,.webm,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.html,.htm,.hwp,.hwpx,.md";
 
   return (
     <form

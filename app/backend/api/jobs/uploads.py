@@ -667,6 +667,13 @@ async def confirm_add_files(
                     )
                 except Exception as e:
                     logger.warning(f"[confirm-add-files:{job.id}] 미디어 업로드 실패: {fp.name}: {e}")
+            elif ftype == "markdown":
+                try:
+                    info_entry["storage_path"] = supabase_client.upload_input(
+                        BytesIO(fp.read_bytes()), fp.name, job.id, unique_suffix=True
+                    )
+                except Exception as e:
+                    logger.warning(f"[confirm-add-files:{job.id}] markdown 업로드 실패: {fp.name}: {e}")
 
             # 새 파일의 원본 데이터를 작업 디렉토리에 저장 (Celery 태스크에서 다운로드 대신 사용)
             work_dir = Path(settings.data_dir) / "jobs" / job_id / "added_files"

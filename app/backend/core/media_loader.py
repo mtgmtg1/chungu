@@ -15,6 +15,7 @@ MEDIA_TYPES = {
     "xlsx": (".xlsx", ".xls", ".xlsm"),
     "html": (".html", ".htm", ".xhtml"),
     "hwp": (".hwp", ".hwpx"),
+    "markdown": (".md",),
 }
 
 # Docling 전처리 서비스가 처리할 수 있는 파일 타입 (PDF + 오피스 + HTML)

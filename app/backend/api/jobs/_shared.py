@@ -272,6 +272,9 @@ async def _analyze_extracted_files(extracted: list[Path]) -> tuple:
         elif ftype == "video":
             video_seconds += media_loader.get_media_duration_seconds(fp)
             total_files += 1
+        elif ftype == "markdown":
+            # markdown 파일은 페이지/미디어 비용 없이 total_files에만 카운트
+            total_files += 1
 
     return pages, image_count, audio_seconds, video_seconds, total_files
 
@@ -491,7 +494,7 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
     if not isinstance(info, dict) or not info.get("storage_path"):
         return None
     ftype = info.get("type", "")
-    if ftype not in (*_PREVIEW_DOCUMENT_TYPES, "image", "audio", "video", "file"):
+    if ftype not in (*_PREVIEW_DOCUMENT_TYPES, "image", "audio", "video", "file", "markdown"):
         return None
     bucket = info.get("bucket", "pdfs")
     try:
@@ -559,7 +562,7 @@ def _build_source_file_item(info: dict, idx: int, source_kind: str = "original")
                         logger.warning(f"[source_files] 개별 searchable PDF URL 생성 실패: {e}")
             return item
         # file 타입 (csv, md, xlsx, txt, html 등) — 다운로드용 signed URL만 생성
-        if ftype == "file":
+        if ftype in ("file", "markdown"):
             try:
                 download_url = supabase_client.get_signed_download_url(storage_path, bucket=bucket, expires_in=3600)
             except Exception:
@@ -2073,6 +2076,7 @@ MEDIA_EXTENSIONS = {
     ".xlsx", ".xls", ".xlsm",
     ".html", ".htm", ".xhtml",
     ".hwp", ".hwpx",
+    ".md",
 }
 
 

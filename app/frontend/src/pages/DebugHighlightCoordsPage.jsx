@@ -270,6 +270,54 @@ export default function DebugHighlightCoordsPage() {
         </div>
       )}
 
+      {/* 자동 검증 결과 (PASS/FAIL) */}
+      {result?.validation && (
+        <div style={{
+          marginBottom: 12, padding: 12, borderRadius: 4,
+          background: result.validation.status === "pass" ? "#d4edda"
+                    : result.validation.status === "fail" ? "#f8d7da"
+                    : "#fff3cd",
+          border: `2px solid ${
+            result.validation.status === "pass" ? "#28a745"
+            : result.validation.status === "fail" ? "#dc3545"
+            : "#ffc107"
+          }`,
+        }}>
+          <div style={{
+            fontSize: 18, fontWeight: "bold", marginBottom: 8,
+            color: result.validation.status === "pass" ? "#155724"
+                 : result.validation.status === "fail" ? "#721c24"
+                 : "#856404",
+          }}>
+            {result.validation.status === "pass" ? "✅ PASS" : result.validation.status === "fail" ? "❌ FAIL" : "⚠️ WARN"} — {result.validation.summary}
+          </div>
+          <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ background: "rgba(0,0,0,0.05)" }}>
+                <th style={{ padding: 4, textAlign: "left", border: "1px solid #ccc" }}>검사 항목</th>
+                <th style={{ padding: 4, textAlign: "center", border: "1px solid #ccc", width: 60 }}>결과</th>
+                <th style={{ padding: 4, textAlign: "left", border: "1px solid #ccc" }}>상세</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.validation.checks.map((c, i) => (
+                <tr key={i}>
+                  <td style={{ padding: 4, border: "1px solid #ddd" }}>{c.name}</td>
+                  <td style={{
+                    padding: 4, border: "1px solid #ddd", textAlign: "center",
+                    fontWeight: "bold",
+                    color: c.status === "pass" ? "#28a745" : c.status === "fail" ? "#dc3545" : "#856404",
+                  }}>
+                    {c.status === "pass" ? "PASS" : c.status === "fail" ? "FAIL" : "WARN"}
+                  </td>
+                  <td style={{ padding: 4, border: "1px solid #ddd" }}>{c.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* 이미지 + 오버레이 */}
       {imgSrc && (
         <div style={{ position: "relative", display: "inline-block", border: "1px solid #999", marginBottom: 12, maxWidth: "100%" }}>

@@ -4031,6 +4031,160 @@ def search_job_text(
     )
 
 
+def _compute_coordinate_validation(
+    search_for_rects: list[dict],
+    text_blocks: list[dict],
+    ocr_elements: list[dict],
+    page_rect,
+    query: str,
+) -> dict:
+    """[Flow: Step 1 (search_for ↔ text_blocks y 차이 계산)
+          -> Step 2 (search_for ↔ ocr_elements y 차이 계산)
+          -> Step 3 (표 행 순서 단조성 검사 — ocr_elements table_row의 y가 HTML 순서대로 증가?)
+          -> Step 4 (PASS/FAIL 판정 + 상세 메시지)]
+
+    디버그 페이지에서 비전 모델 없이도 좌표 정합 상태를 자동 판정하기 위한 검증 로직.
+    세 가지 검사를 수행하여 PASS/FAIL과 상세 메시지를 반환한다.
+
+    Args:
+        search_for_rects: search_for 결과 (device-space)
+        text_blocks: PDF 텍스트 레이어 블록 (device-space)
+        ocr_elements: OCR layout 요소 (device-space)
+        page_rect: 페이지 Rect
+        query: 검색어
+
+    Returns:
+        {"status": "pass"|"fail"|"warn", "checks": [...], "summary": str}
+    """
+    import fitz as _fitz
+    y_threshold = page_rect.height * 0.10  # 페이지 높이의 10%
+    checks = []
+
+    # Check 1: search_for ↔ text_blocks y 일치도
+    if search_for_rects and text_blocks:
+        max_y_diff = 0.0
+        worst_pair = None
+        for sf in search_for_rects:
+            sf_y_center = (sf["device"][1] + sf["device"][3]) / 2.0
+            sf_text = sf.get("text", "")
+            # 가장 가까운 text_block 찾기 (텍스트 포함 또는 y 거리)
+            best_diff = float("inf")
+            best_tb = None
+            for tb in text_blocks:
+                tb_y_center = (tb["device"][1] + tb["device"][3]) / 2.0
+                y_diff = abs(sf_y_center - tb_y_center)
+                if y_diff < best_diff:
+                    best_diff = y_diff
+                    best_tb = tb
+            if best_diff > max_y_diff:
+                max_y_diff = best_diff
+                worst_pair = (sf_text, best_tb.get("text", "") if best_tb else "")
+        status_1 = "pass" if max_y_diff < y_threshold else "fail"
+        checks.append({
+            "name": "search_for ↔ text_blocks y 일치도",
+            "status": status_1,
+            "max_y_diff": round(max_y_diff, 1),
+            "threshold": round(y_threshold, 1),
+            "detail": (
+                f"최대 y 차이: {max_y_diff:.1f}px (임계값: {y_threshold:.1f}px)"
+                if worst_pair is None else
+                f"최대 y 차이: {max_y_diff:.1f}px — '{worst_pair[0][:20]}' ↔ '{worst_pair[1][:20]}'"
+            ),
+        })
+
+    # Check 2: search_for ↔ ocr_elements y 일치도
+    if search_for_rects and ocr_elements:
+        max_y_diff = 0.0
+        worst_pair = None
+        for sf in search_for_rects:
+            sf_y_center = (sf["device"][1] + sf["device"][3]) / 2.0
+            sf_text = sf.get("text", "")
+            best_diff = float("inf")
+            best_ocr = None
+            for ocr in ocr_elements:
+                ocr_y_center = (ocr["device"][1] + ocr["device"][3]) / 2.0
+                y_diff = abs(sf_y_center - ocr_y_center)
+                if y_diff < best_diff:
+                    best_diff = y_diff
+                    best_ocr = ocr
+            if best_diff > max_y_diff:
+                max_y_diff = best_diff
+                worst_pair = (sf_text, best_ocr.get("text", "") if best_ocr else "")
+        status_2 = "pass" if max_y_diff < y_threshold else "fail"
+        checks.append({
+            "name": "search_for ↔ ocr_elements y 일치도",
+            "status": status_2,
+            "max_y_diff": round(max_y_diff, 1),
+            "threshold": round(y_threshold, 1),
+            "detail": (
+                f"최대 y 차이: {max_y_diff:.1f}px (임계값: {y_threshold:.1f}px)"
+                if worst_pair is None else
+                f"최대 y 차이: {max_y_diff:.1f}px — '{worst_pair[0][:20]}' ↔ '{worst_pair[1][:20]}'"
+            ),
+        })
+
+    # Check 3: 표 행 순서 단조성 (ocr_elements table_row의 y가 순서대로 증가?)
+    table_rows = [el for el in ocr_elements if el.get("kind") == "table_row"]
+    if len(table_rows) >= 2:
+        y_centers = [(el["device"][1] + el["device"][3]) / 2.0 for el in table_rows]
+        is_monotonic = all(y_centers[i] < y_centers[i + 1] for i in range(len(y_centers) - 1))
+        # 반전 검사: y가 단조 감소하면 반전된 것
+        is_decreasing = all(y_centers[i] > y_centers[i + 1] for i in range(len(y_centers) - 1))
+        if is_monotonic:
+            status_3 = "pass"
+            detail_3 = f"표 행 {len(table_rows)}개: y가 HTML 순서대로 단조 증가 (정상)"
+        elif is_decreasing:
+            status_3 = "fail"
+            detail_3 = f"표 행 {len(table_rows)}개: y가 HTML 순서의 역순으로 단조 감소 (반전됨!)"
+        else:
+            status_3 = "warn"
+            detail_3 = f"표 행 {len(table_rows)}개: y 순서가 불규칙 (부분 반전 가능성)"
+        checks.append({
+            "name": "표 행 순서 단조성 (ocr_elements table_row)",
+            "status": status_3,
+            "detail": detail_3,
+        })
+
+    # Check 4: text_blocks 표 행 순서 단조성
+    # "|" 구분자가 포함된 블록을 표 행으로 간주
+    table_text_blocks = [b for b in text_blocks if "|" in b.get("text", "") and b["device"][1] > 100]
+    if len(table_text_blocks) >= 2:
+        y_centers_tb = [(b["device"][1] + b["device"][3]) / 2.0 for b in table_text_blocks]
+        is_monotonic_tb = all(y_centers_tb[i] < y_centers_tb[i + 1] for i in range(len(y_centers_tb) - 1))
+        is_decreasing_tb = all(y_centers_tb[i] > y_centers_tb[i + 1] for i in range(len(y_centers_tb) - 1))
+        if is_monotonic_tb:
+            status_4 = "pass"
+            detail_4 = f"text_blocks 표 행 {len(table_text_blocks)}개: y가 단조 증가 (정상)"
+        elif is_decreasing_tb:
+            status_4 = "fail"
+            detail_4 = f"text_blocks 표 행 {len(table_text_blocks)}개: y가 단조 감소 (반전됨!)"
+        else:
+            status_4 = "warn"
+            detail_4 = f"text_blocks 표 행 {len(table_text_blocks)}개: y 순서 불규칙"
+        checks.append({
+            "name": "표 행 순서 단조성 (text_blocks)",
+            "status": status_4,
+            "detail": detail_4,
+        })
+
+    # 종합 판정
+    if not checks:
+        return {"status": "warn", "checks": [], "summary": "검사할 데이터가 부족함"}
+    fail_count = sum(1 for c in checks if c["status"] == "fail")
+    warn_count = sum(1 for c in checks if c["status"] == "warn")
+    if fail_count > 0:
+        overall = "fail"
+        summary = f"FAIL: {fail_count}개 검사 실패, {warn_count}개 경고"
+    elif warn_count > 0:
+        overall = "warn"
+        summary = f"WARN: {warn_count}개 경고, 실패 없음"
+    else:
+        overall = "pass"
+        summary = f"PASS: {len(checks)}개 검사 모두 통과"
+
+    return {"status": overall, "checks": checks, "summary": summary}
+
+
 # [Flow: Step 1 (job 조회 + searchable PDF 다운로드) -> Step 2 (PyMuPDF로 페이지 PNG 렌더링)
 #       -> Step 3 (search_for로 query 검색 → device-space rect 수집)
 #       -> Step 4 (get_text("blocks")로 텍스트 레이어 실제 블록 위치 수집)
@@ -4161,25 +4315,20 @@ def debug_highlight_coords(
             logger.warning(f"[debug_highlight_coords] dict 추출 실패: {e}")
 
         # 5) OCR layout bbox (있으면)
+        # [주의] build_agent_elements_from_ocr_layout의 bbox_pdf는
+        # _normalize_bbox(1차 y반전) + _normalized_bbox_to_pdf_user(2차 y반전)를
+        # 거쳐 device-space와 동일한 좌표계가 된다. 추가 pdf_user_to_device(3차 y반전)를
+        # 적용하면 y가 반전되므로 변환 없이 그대로 사용한다.
         ocr_elements = []
         if job.result_ocr_layout_storage_path:
             try:
                 from ..core.pdf_annotate_converter import build_agent_elements_from_ocr_layout
-                from ..core.pdf_coordinate_transform import pdf_user_to_device
 
                 layout_raw = client.storage.from_("results").download(job.result_ocr_layout_storage_path)
                 layout_by_page = {int(k): v for k, v in json.loads(layout_raw.decode("utf-8")).items()}
                 elements = build_agent_elements_from_ocr_layout(layout_by_page, pdf_bytes, page_range=[page_no])
                 for el in elements:
-                    el_bbox = list(el["bbox_pdf"])
-                    # device-space 변환
-                    try:
-                        dev_rect = pdf_user_to_device(
-                            fitz.Rect(el_bbox[0], el_bbox[1], el_bbox[2], el_bbox[3]), page_rect
-                        )
-                        dev = [dev_rect.x0, dev_rect.y0, dev_rect.x1, dev_rect.y1]
-                    except Exception:
-                        dev = el_bbox
+                    dev = list(el["bbox_pdf"])  # 이미 device-space
                     ocr_elements.append({
                         "device": [round(v, 2) for v in dev],
                         "pixel": [round(dev[0] * scale, 1), round(dev[1] * scale, 1),
@@ -4196,6 +4345,15 @@ def debug_highlight_coords(
 
         # 7) 페이지 텍스트 전체 (디버그용)
         full_text = page.get_text().strip()
+
+        # 8) 자동 검증: search_for ↔ text_blocks ↔ ocr_elements 좌표 일치도 평가
+        # [Flow: Step 1 (search_for ↔ text_blocks y 차이 계산)
+        #       -> Step 2 (search_for ↔ ocr_elements y 차이 계산)
+        #       -> Step 3 (표 행 순서 단조성 검사 — ocr_elements table_row의 y가 HTML 순서대로 증가?)
+        #       -> Step 4 (PASS/FAIL 판정 + 상세 메시지)]
+        validation = _compute_coordinate_validation(
+            search_for_rects, text_blocks, ocr_elements, page_rect, query
+        )
 
         result = {
             "job_id": job_id,
@@ -4216,6 +4374,7 @@ def debug_highlight_coords(
             "detailed_spans": detailed_spans,
             "ocr_elements": ocr_elements,
             "is_likely_scan": is_likely_scan,
+            "validation": validation,
             "searchable_pdf_storage_path": storage_path,
             "result_ocr_layout_storage_path": job.result_ocr_layout_storage_path,
             "full_text_preview": full_text[:500],

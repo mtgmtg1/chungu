@@ -21,6 +21,7 @@ from ._shared import (
     _get_markdown_content,
     _image_files,
     _job_summary,
+    _normalize_display_name,
     _preview_cache_key,
     _require_job_access,
     _require_job_not_expired,
@@ -132,6 +133,7 @@ def preview_job(
             fname = info.get("filename") or info.get("path") or f"파일 {idx + 1}"
             if fname not in existing_filenames:
                 source_files.append({
+                    "name": _normalize_display_name(fname),
                     "filename": fname,
                     "type": info.get("type", ""),
                     "result_markdown": md,

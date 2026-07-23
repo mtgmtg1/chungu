@@ -7,6 +7,7 @@ DB와 FastAPI 의존성 없이 직접 호출하여 검증한다.
 """
 import os
 import sys
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 # [Flow: backend 패키지 루트를 sys.path에 추가]
@@ -35,6 +36,7 @@ def _make_job(
     job.user_id = user_id
     job.status = status
     job.expires_at = None
+    job.created_at = datetime.now(timezone.utc)
     job.ediscovery_graphs = existing_graph or {"nodes": [], "edges": []}
     return job
 

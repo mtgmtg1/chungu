@@ -65,6 +65,29 @@ Upload multiple files at once by compressing them:
 
 All supported file types inside the archive are extracted and processed.
 
+## Markdown
+
+| Format | Notes |
+|--------|-------|
+| `.md` | Text content is used directly as the result — no OCR/LLM processing. **Free** (0 credits). |
+
+Markdown files are ideal when you already have structured Markdown content and want to convert it to CSV/XLSX/DOCX/PPTX via the download/convert endpoints.
+
+## Office formats
+
+Office and HWP formats are supported via both the web app and the v1 API. They are routed through the Docling preprocessing pipeline (Office) or pyhwp (HWP).
+
+| Format | Notes |
+|--------|-------|
+| `.docx` / `.doc` | Word documents — Docling preprocessing |
+| `.pptx` / `.ppt` | PowerPoint — Docling preprocessing |
+| `.xlsx` / `.xls` | Excel — Docling preprocessing |
+| `.hwp` / `.hwpx` | Korean word processor — pyhwp conversion |
+
+:::info
+Office/HWP page counts are estimated via Docling/pyhwp. If estimation fails, the file is treated as 1 page.
+:::
+
 ## Limitations
 
 - Maximum file size: **200 MB** total per upload (admin-configurable)

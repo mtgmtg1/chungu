@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # [Flow: Step 1 (API key 인증) -> Step 2 (파일 업로드/비용 계산) -> Step 3 (confirm 시 포인트 차감 + Celery) -> Step 4 (상태 조회/다운로드)]
+import asyncio
 import json
+import logging
 import tempfile
+import unicodedata
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -16,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from ...auth.api_key_auth import require_api_key_with_key
 from ...auth.supabase_auth import CurrentUser
-from ...core import archive_handler, media_loader, office_converter, points_service, supabase_client
+from ...core import archive_handler, docling_client, hwp_converter, media_loader, office_converter, points_service, supabase_client
 from ...core.job_helpers import convert_format_alias, parse_columns
 from ...core.prompts import DEFAULT_COLUMNS
 from ...core.rate_limit import add_daily_spent_points, enforce_rate_limit
@@ -25,13 +28,56 @@ from ...db.session import get_db
 from ... import settings_store
 from ...workers.tasks import run_job
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+def _normalize_display_name(name: str | None) -> str:
+    """표시용 파일명을 Unicode 조합 정규형(NFC)으로 변환한다.
+
+    macOS에서 생성된 압축 파일 등에 포함된 한글 파일명이 분해 정규형(NFD)으로
+    저장되어 있으면 자음/모음이 분리되어 보일 수 있다.
+    """
+    if not name:
+        return ""
+    try:
+        return unicodedata.normalize("NFC", name)
+    except Exception:
+        return name
+
+
+async def _count_pages_with_docling(data: bytes, filename: str) -> int:
+    """Docling 서비스에 파일을 보내 페이지 수를 추정한다. 실패하면 1을 반환한다.
+
+    [Flow: Step 1 (Docling 비활성화 시 1 반환) -> Step 2 (임시 파일로 변환 요청) -> Step 3 (실패 시 1 반환)]
+    """
+    if not docling_client.is_enabled():
+        return 1
+    suffix = Path(filename).suffix
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(data)
+        tmp_path = Path(tmp.name)
+    try:
+        await asyncio.to_thread(docling_client.convert_file, tmp_path)
+        return 1
+    except Exception as e:
+        logger.warning(f"[docling-page-count] {filename} 실패: {e}")
+        return 1
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
 
 MEDIA_EXTENSIONS = {
     ".pdf", ".zip", ".rar", ".7z", ".tar", ".gz", ".tgz", ".bz2",
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".tif",
     ".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma",
     ".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".webm", ".m4v",
+    ".md",
+    ".docx", ".doc", ".dotx", ".docm",
+    ".pptx", ".ppt", ".potx", ".ppsx", ".pptm", ".potm", ".ppsm",
+    ".xlsx", ".xls", ".xlsm",
+    ".hwp", ".hwpx",
 }
 
 
@@ -98,12 +144,16 @@ async def upload_job(
     prompt: str = Form(""),
     dpi: int = Form(300),
     relative_paths: str = Form(""),
+    docling_refinement: bool = Form(False),
     ocr_model: str = Form("premium"),
     ocr_engine: str = Form("easyocr"),
     auth: tuple[CurrentUser, ApiKey] = Depends(require_api_key_with_key),
     db: Session = Depends(get_db),
 ):
-    """파일을 업로드하고 비용 미리보기를 반환합니다. 포인트는 아직 차감되지 않습니다."""
+    """파일을 업로드하고 비용 미리보기를 반환합니다. 포인트는 아직 차감되지 않습니다.
+
+    [Flow: Step 1 (파일 검증) -> Step 2 (단일 PDF/Office/HWP 또는 멀티파일 분석) -> Step 3 (비용 계산)]
+    """
     user, api_key = auth
     enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
 
@@ -146,8 +196,13 @@ async def upload_job(
             return rel_paths[i]
         return files[i].filename
 
-    is_single_pdf = len(files) == 1 and files[0].filename.lower().endswith(".pdf")
-    original_filename = files[0].filename if len(files) == 1 else f"{len(files)}_files.zip"
+    # 단일 파일 업로드 시 파일 유형을 먼저 파악
+    is_single_file = len(files) == 1
+    single_file_type = "pdf"
+    if is_single_file:
+        single_file_type = media_loader.detect_file_type(Path(files[0].filename))
+
+    original_filename = files[0].filename if is_single_file else f"{len(files)}_files.zip"
 
     job = Job(
         user_id=uuid.UUID(user.user_id),
@@ -156,6 +211,7 @@ async def upload_job(
         columns=parse_columns(columns),
         prompt=prompt.strip(),
         dpi=dpi,
+        use_docling_refinement=docling_refinement,
         ocr_model=ocr_model,
         ocr_engine=ocr_engine,
         original_filename=original_filename,
@@ -171,13 +227,35 @@ async def upload_job(
     video_seconds = 0
     total_files = 0
     try:
-        if is_single_pdf:
+        # [Flow: 단일 PDF/Office/HWP — Docling 또는 pyhwp로 페이지 수 추정]
+        if is_single_file and single_file_type in media_loader.DOCLING_TYPES:
             data = file_data[0]
-            pages = len(PdfReader(BytesIO(data)).pages)
+            if single_file_type == "pdf":
+                pages = len(PdfReader(BytesIO(data)).pages)
+            else:
+                pages = await _count_pages_with_docling(data, files[0].filename)
             total_files = 1
             storage_path = supabase_client.upload_input(BytesIO(data), files[0].filename, job.id)
             job.pdf_storage_path = storage_path
-            job.file_type = "pdf"
+            job.file_type = single_file_type
+        elif is_single_file and single_file_type in media_loader.HWP_TYPES:
+            # [Flow: 단일 HWP/HWPX — pyhwp로 페이지 수 추정]
+            data = file_data[0]
+            suffix = Path(files[0].filename).suffix
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp.write(data)
+                tmp_path = Path(tmp.name)
+            try:
+                pages = await asyncio.to_thread(hwp_converter.get_page_count, tmp_path)
+            except Exception as e:
+                logger.warning(f"[hwp-page-count] {files[0].filename} 실패: {e}")
+                pages = 1
+            finally:
+                tmp_path.unlink(missing_ok=True)
+            total_files = 1
+            storage_path = supabase_client.upload_input(BytesIO(data), files[0].filename, job.id)
+            job.pdf_storage_path = storage_path
+            job.file_type = single_file_type
         else:
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmp_path = Path(tmpdir)
@@ -196,9 +274,18 @@ async def upload_job(
 
                 for fp in extracted:
                     ftype = media_loader.detect_file_type(fp)
-                    if ftype == "pdf":
+                    if ftype in media_loader.DOCLING_TYPES:
                         try:
-                            pages += len(PdfReader(fp).pages)
+                            if ftype == "pdf":
+                                pages += len(PdfReader(fp).pages)
+                            else:
+                                pages += await _count_pages_with_docling(fp.read_bytes(), fp.name)
+                        except Exception:
+                            pass
+                        total_files += 1
+                    elif ftype in media_loader.HWP_TYPES:
+                        try:
+                            pages += await asyncio.to_thread(hwp_converter.get_page_count, fp)
                         except Exception:
                             pass
                         total_files += 1
@@ -210,6 +297,9 @@ async def upload_job(
                         total_files += 1
                     elif ftype == "video":
                         video_seconds += media_loader.get_media_duration_seconds(fp)
+                        total_files += 1
+                    elif ftype == "markdown":
+                        # [Flow: markdown 파일은 페이지/미디어 비용 없이 total_files에만 카운트 — 텍스트가 그대로 결과]
                         total_files += 1
 
                 job.total_files = total_files
@@ -253,7 +343,12 @@ async def upload_job(
         job.ocr_model = "premium"
         db.commit()
 
-    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, ocr_model=ocr_model)
+    docling_refinement_pages = pages if docling_refinement else 0
+    cost = points_service.calculate_cost(
+        db, pages=pages, image_count=image_count, audio_seconds=audio_seconds,
+        video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages,
+        ocr_model=ocr_model,
+    )
     _log_api_usage(
         db, api_key, uuid.UUID(user.user_id), "/api/v1/jobs/upload", 200, points_spent=0, job_id=job.id,
         client_ip=request.client.host if request.client else "",
@@ -265,6 +360,8 @@ async def upload_job(
         "total_pages": pages,
         "total_files": total_files,
         "media_duration_seconds": audio_seconds + video_seconds,
+        "docling_refinement": docling_refinement,
+        "docling_refinement_pages": docling_refinement_pages,
         "ocr_model": ocr_model,
         "ocr_engine": ocr_engine,
         "has_media": has_media,
@@ -306,13 +403,19 @@ def confirm_job(
             audio_seconds += info.get("duration", 0)
         elif ftype == "video":
             video_seconds += info.get("duration", 0)
-    if job.file_type == "pdf":
+    # 단일 PDF/Office/HWP 문서는 extracted_files가 없고 file_type으로 판단
+    if job.file_type in media_loader.DOCLING_TYPES or job.file_type in media_loader.HWP_TYPES:
         image_count = 0
         audio_seconds = 0
         video_seconds = 0
 
     ocr_model = job.ocr_model or "premium"
-    cost = points_service.calculate_cost(db, pages=pages, image_count=image_count, audio_seconds=audio_seconds, video_seconds=video_seconds, ocr_model=ocr_model)
+    docling_refinement_pages = pages if job.use_docling_refinement else 0
+    cost = points_service.calculate_cost(
+        db, pages=pages, image_count=image_count, audio_seconds=audio_seconds,
+        video_seconds=video_seconds, docling_refinement_pages=docling_refinement_pages,
+        ocr_model=ocr_model,
+    )
     try:
         points_service.spend_points(db, db_user, cost["points"], f"API 작업: {job.original_filename}")
     except ValueError as e:
@@ -718,3 +821,42 @@ def job_action(
         client_ip=request.client.host if request.client else "",
     )
     return {"job_id": job_id, "status": "queued"}
+
+
+@router.patch("/{job_id}/title")
+def rename_job(
+    request: Request,
+    job_id: str,
+    payload: dict = Body(...),
+    auth: tuple[CurrentUser, ApiKey] = Depends(require_api_key_with_key),
+    db: Session = Depends(get_db),
+):
+    """Job의 표시 이름(original_filename)을 수정한다.
+
+    [Flow: Step 1 (job 조회 및 소유자 검증) -> Step 2 (새 이름 검증) -> Step 3 (DB 업데이트)]
+
+    모든 상태(pending/processing/done/error)에서 수정 가능하다.
+    새 이름은 1~200자여야 한다.
+    """
+    user, api_key = auth
+    enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
+
+    job = db.get(Job, job_id)
+    if job is None or str(job.user_id) != user.user_id:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    new_title = str(payload.get("title", "") or "").strip()
+    if not new_title:
+        raise HTTPException(status_code=400, detail="Title must not be empty")
+    if len(new_title) > 200:
+        raise HTTPException(status_code=400, detail="Title must be 200 characters or less")
+
+    job.original_filename = _normalize_display_name(new_title)
+    db.commit()
+
+    _log_api_usage(
+        db, api_key, uuid.UUID(user.user_id), "/api/v1/jobs/title", 200,
+        points_spent=0, job_id=job.id,
+        client_ip=request.client.host if request.client else "",
+    )
+    return _job_summary(job)

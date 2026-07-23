@@ -1,6 +1,6 @@
 # Chungu API v1 Documentation
 
-Chungu API v1 allows external developers to upload PDFs/images/audio/video and extract structured tables (CSV/MD/XLSX) using a prepaid point system.
+Chungu API v1 allows external developers to upload PDFs/images/audio/video/Markdown and extract structured tables (CSV/MD/XLSX) using a prepaid credit system. Credits are measured in **milli-USD** (1,000 milli-USD = $1.00 USD).
 
 ## Base URL
 
@@ -24,42 +24,52 @@ API keys can be created from the **Developer Portal** at `/developer` after sign
 
 - Default: 60 requests per minute per API key.
 - Concurrent jobs: up to 5 per account (configurable by admin).
-- Daily point quota: optional per key.
+- Daily credit quota: optional per key.
 
 When exceeded, the API returns `429 Too Many Requests` with a `Retry-After` header.
 
 ## Pricing
 
-Points are deducted based on input type:
+Credits are deducted based on input type and model selected. All amounts are in milli-USD.
 
-| Input | Cost |
-|-------|------|
-| PDF page | 3P |
-| Image | 3P |
-| Audio 1 second | 1P |
-| Video 1 second | 3P |
-| Docling refinement per page | 3P |
+| Input | Basic model | Premium model |
+|-------|-------------|---------------|
+| PDF page | 1 md ($0.001) | 5 md ($0.005) |
+| Office/HWP page | 1 md ($0.001) | 5 md ($0.005) |
+| Image | 1 md ($0.001) | 5 md ($0.005) |
+| Audio (per second) | — | 1 md ($0.001) |
+| Video (per second) | — | 5 md ($0.005) |
+| Markdown (`.md`) | Free (0 md) | Free (0 md) |
+| Docling refinement (per page) | — | 3 md ($0.003) |
 
-Docling refinement applies an optional LLM post-processing step to Docling-preprocessed documents (PDF, Office, HTML, HWP) to improve layout accuracy.
+:::info
+**Basic model**: 100 free pages per day. After the free quota, 1 md/page is charged.
+**Premium model**: No free quota. All pages are charged at 5 md/page.
+:::
 
-Check current prices and packages at `GET /api/v1/account/pricing`.
+Markdown files are processed at no cost — the text content is used as-is for the result.
+
+Check current rates at `GET /api/v1/account/pricing`.
 
 ## Supported Input Types
 
-- **Documents**: PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, HTML, HWP, HWPX
-- **Images**: PNG, JPG, JPEG, GIF, WEBP, BMP, TIFF
+- **PDF**: PDF
+- **Office**: DOCX, DOC, PPTX, PPT, XLSX, XLS (routed through Docling preprocessing)
+- **HWP**: HWP, HWPX (Korean word processor, converted via pyhwp)
+- **Images**: PNG, JPG, JPEG, GIF, BMP, WEBP, TIFF
 - **Audio**: MP3, WAV, FLAC, AAC, OGG, M4A, WMA
 - **Video**: MP4, AVI, MOV, MKV, WEBM, FLV, WMV, M4V
+- **Markdown**: MD (text content used directly as the result, no OCR/LLM processing)
 - **Archives**: ZIP, RAR, 7Z, TAR, GZ, TGZ, BZ2
 
-PDF, Office, HTML, and HWP/HWPX files are routed through the Docling preprocessing pipeline.
+PDF, Office, and HWP/HWPX files are routed through the Docling preprocessing pipeline. Office/HWP page counts are estimated via Docling/pyhwp (defaults to 1 page if estimation fails).
 
 ## Core Flow
 
 1. **Upload files** → `POST /jobs/upload` returns a `job_id` and cost preview.
-2. **Confirm job** → `POST /jobs/{job_id}/confirm` deducts points and queues processing.
+2. **Confirm job** → `POST /jobs/{job_id}/confirm` deducts credits and queues processing.
 3. **Poll status** → `GET /jobs/{job_id}` until `status` is `done` or `error`.
-4. **Download result** → `GET /jobs/{job_id}/download?type=csv|md|xlsx` returns a signed URL.
+4. **Download result** → `GET /jobs/{job_id}/download?type=csv_basic|md|xlsx_basic` returns a signed URL.
 
 ## Endpoints
 
@@ -67,7 +77,7 @@ PDF, Office, HTML, and HWP/HWPX files are routed through the Docling preprocessi
 
 #### `GET /account`
 
-Returns account info, point balance, today's usage, and current API key metadata.
+Returns account info, credit balance, today's usage, and current API key metadata.
 
 **Response:**
 ```json
@@ -82,15 +92,33 @@ Returns account info, point balance, today's usage, and current API key metadata
 
 #### `GET /account/pricing`
 
-Returns point packages and per-unit rates.
+Returns current credit rates (milli-USD) and charge limits.
 
 #### `GET /account/transactions`
 
-Returns point charge/spend history.
+Returns credit charge/spend history.
 
 #### `GET /account/usage?days=30`
 
 Returns daily aggregated usage.
+
+#### `GET /account/payments`
+
+Returns payment history.
+
+#### `GET /account/subscription`
+
+Returns the current subscription status, plan, monthly limit, and usage.
+
+**Response:**
+```json
+{
+  "plan": "pro",
+  "status": "active",
+  "monthly_limit": 100000,
+  "used": 5000
+}
+```
 
 ### API Keys
 
@@ -125,19 +153,30 @@ List your API keys (without full key values).
 
 Deactivate an API key.
 
+#### `POST /keys/{id}/rotate`
+
+Rotate an API key (generates a new key value, invalidates the old one).
+
+#### `GET /keys/{id}/usage`
+
+Returns usage statistics for a specific API key.
+
 ### Jobs
 
 #### `POST /jobs/upload`
 
-Upload files and get a cost preview.
+Upload files and get a cost preview. Credits are **not** deducted at this step.
 
 **Form fields:**
 - `files`: one or more files (multipart/form-data)
 - `pipeline`: `"vision"` (default) or `"hybrid"`
 - `columns`: comma-separated column names or JSON array (optional)
 - `prompt`: extra instruction for the model (optional)
-- `dpi`: PDF rendering DPI, default 150
-- `docling_refinement`: `true` or `false` (default). Enables LLM layout refinement for Docling-compatible documents.
+- `dpi`: PDF rendering DPI, default **300**
+- `ocr_model`: `"basic"` or `"premium"` (default `"premium"`)
+- `ocr_engine`: `"tesseract"`, `"easyocr"` (default), or `"rapidocr"` (premium only)
+- `relative_paths`: JSON array of relative paths for archive files (optional)
+- `docling_refinement`: `true` or `false` (default). Enables LLM layout refinement for PDF/Office/HWP documents at 3 md/page.
 
 **Response:**
 ```json
@@ -150,21 +189,24 @@ Upload files and get a cost preview.
   "media_duration_seconds": 0,
   "docling_refinement": false,
   "docling_refinement_pages": 0,
-  "cost": { "pages": 10, "points": 30, "krw": 30, "usd": "0.02" },
-  "balance": 9970
+  "ocr_model": "premium",
+  "ocr_engine": "easyocr",
+  "has_media": false,
+  "cost": { "pages": 10, "points": 50, "usd": "$0.05" },
+  "balance": 10000
 }
 ```
 
 #### `POST /jobs/{job_id}/confirm`
 
-Confirm the job, deduct points, and start processing.
+Confirm the job, deduct credits, and start processing.
 
 **Response:**
 ```json
 {
   "job_id": "job-id",
   "status": "queued",
-  "remaining_points": 9940
+  "remaining_points": 9950
 }
 ```
 
@@ -182,26 +224,100 @@ Get job status and metadata.
   "filename": "document.pdf",
   "total_pages": 10,
   "done_pages": 10,
-  "cost_points": 30,
+  "total_files": 1,
+  "done_files": 1,
+  "media_duration_seconds": 0,
+  "ocr_model": "premium",
+  "ocr_engine": "easyocr",
+  "cost_points": 50,
+  "error_log": null,
   "downloadable": true,
-  "created_at": "2026-06-26T00:00:00",
-  "finished_at": "2026-06-26T00:01:00"
+  "xlsx_converted": false,
+  "xlsx_basic_converted": false,
+  "xlsx_advanced_converted": false,
+  "xlsx_advanced_status": null,
+  "xlsx_advanced_job_id": null,
+  "xlsx_advanced_refundable": false,
+  "xlsx_advanced_recovery_notes": null,
+  "refundable": false,
+  "retry_count": 0,
+  "created_at": "2026-07-23T00:00:00",
+  "finished_at": "2026-07-23T00:01:00"
 }
 ```
 
 #### `GET /jobs`
 
-List your jobs. Supports `limit` query parameter.
+List your jobs. Supports `limit` query parameter (default 100).
 
-#### `GET /jobs/{job_id}/download?type=xlsx`
+#### `PATCH /jobs/{job_id}/title`
+
+Rename a job's display title. Available in any job state.
+
+**Request:**
+```json
+{ "title": "New title" }
+```
+
+**Response:** same as `GET /jobs/{job_id}`.
+
+**Errors:**
+
+| Status | Meaning |
+|--------|---------|
+| 400 | Title is empty or exceeds 200 characters |
+| 404 | Job not found or doesn't belong to you |
+
+#### `GET /jobs/{job_id}/download?type=xlsx_basic`
 
 Returns a signed Supabase Storage URL for the result file.
 
-**Supported types:** `csv`, `md`, `xlsx`.
+**Supported types:** `csv_basic`, `md`, `xlsx_basic`, `xlsx_advanced`, `docx`, `pptx`.
 
 **Response:**
 ```json
 { "download_url": "https://..." }
+```
+
+:::info
+The signed URL is valid for **1 hour**. For `xlsx_basic`/`csv_basic`, the file is auto-converted on first download (1 md/unit, first conversion only).
+:::
+
+#### `POST /jobs/{job_id}/convert`
+
+Convert a completed job's Markdown result to an Office format.
+
+**Request:**
+```json
+{ "format": "xlsx_basic" }
+```
+
+**Supported formats:** `xlsx_basic`, `csv_basic`, `xlsx_advanced`, `docx`, `pptx`.
+
+| Format | Cost |
+|--------|------|
+| `xlsx_basic` / `csv_basic` | 1 md/unit, first conversion only |
+| `xlsx_advanced` | 3 md/unit, first conversion only |
+| `docx` / `pptx` | Free |
+
+#### `POST /jobs/{job_id}/action`
+
+Retry or refund a failed document parsing job. Only available when `status` is `error` and `refundable` is `true`.
+
+**Request:**
+```json
+{ "action": "retry" }
+```
+
+**Actions:** `retry` (re-dispatch at no extra cost) or `refund` (refund all credits).
+
+#### `POST /jobs/{job_id}/xlsx-advanced-action`
+
+Retry or refund a failed XLSX Advanced conversion. Only available when `xlsx_advanced_status` is `error` and `xlsx_advanced_refundable` is `true`.
+
+**Request:**
+```json
+{ "action": "retry" }
 ```
 
 ## Error Codes
@@ -210,7 +326,7 @@ Returns a signed Supabase Storage URL for the result file.
 |--------|---------|
 | 400 | Bad request (invalid file type, missing fields) |
 | 401 | Invalid or missing API key |
-| 402 | Insufficient points |
+| 402 | Insufficient credits |
 | 403 | Forbidden (missing scope) |
 | 413 | File too large or too many pages |
 | 429 | Rate limit exceeded |

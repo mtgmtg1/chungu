@@ -4,15 +4,15 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ...auth.api_key_auth import require_api_key_or_session
 from ...auth.supabase_auth import CurrentUser
-from ...core import points_service
+from ...core import points_service, subscription_service
 from ...core.rate_limit import enforce_rate_limit, get_daily_spent_points
-from ...db.models import ApiKey, ApiUsage, Payment, PointTransaction
+from ...db.models import ApiKey, ApiUsage, Payment, PointTransaction, User
 from ...db.session import get_db
 from ... import settings_store
 
@@ -183,3 +183,25 @@ def list_payments(
         }
         for p in rows
     ]
+
+
+@router.get("/subscription")
+def get_subscription(
+    request: Request,
+    auth: tuple[CurrentUser, ApiKey | None] = Depends(require_api_key_or_session),
+    db: Session = Depends(get_db),
+):
+    """현재 사용자의 구독 상태와 잔여 한도를 반환한다.
+
+    [Flow: Step 1 (API key/세션 인증) -> Step 2 (사용자 조회) -> Step 3 (subscription_service에서 상태 집계)]
+
+    구독 플랜(free/pro/max), 월간 한도, 사용량, 갱신일 등을 반환한다.
+    """
+    user, api_key = auth
+    if api_key:
+        enforce_rate_limit(request, api_key.id, api_key.rate_limit_rpm)
+
+    db_user = db.get(User, uuid.UUID(user.user_id))
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return subscription_service.get_subscription_status(db, db_user)

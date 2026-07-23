@@ -176,9 +176,8 @@ export default function JobResultPage() {
     ? selectedFileMarkdown
     : markdown;
 
-  // [Flow: 마크다운 전용 job 여부 — 모든 원본 파일이 markdown 타입이면 프리뷰 패널(원본 소스 뷰)을 숨기고 에디터만 전체 너비로 표시]
-  // 마크다운 파일은 원본 자체가 텍스트이므로 좌측 원본 패널이 불필요하다.
-  const isMarkdownOnly = sourceFiles.length > 0 && sourceFiles.every((f) => f.type === "markdown");
+  // [Flow: 마크다운 전용 job도 좌측 프리뷰 패널에서 원본 마크다운을 렌더링하여 보여준다]
+  // 마크다운 파일은 원본이 텍스트이므로 좌측 패널에서 마크다운 렌더링, 우측 패널에서 에디터로 편집.
 
   useEffect(() => {
     if (!jobId) return;
@@ -1096,8 +1095,7 @@ export default function JobResultPage() {
           </span>
           }
           {/* [Flow: 모바일에서는 패널 토글 대신 탭 전환을 사용하므로 숨김] */}
-          {/* [Flow: 마크다운 전용 job은 패널이 하나뿐이므로 토글 버튼도 숨김] */}
-          {job?.status === "done" && !isMobile && !isMarkdownOnly &&
+          {job?.status === "done" && !isMobile &&
           <button
             onClick={() => setSidebarOpen((v) => !v)}
             title={sidebarOpen ? t("page:result.hideSidebar") : t("page:result.showSidebar")}
@@ -1109,7 +1107,7 @@ export default function JobResultPage() {
             }
             </button>
           }
-          {job?.status === "done" && !isMobile && !isMarkdownOnly &&
+          {job?.status === "done" && !isMobile &&
           <button
             onClick={() => setRightPanelOpen((v) => !v)}
             title={rightPanelOpen ? t("page:result.hideResultPanel") : t("page:result.showResultPanel")}
@@ -1272,22 +1270,8 @@ export default function JobResultPage() {
       </div>
       }
 
-      {job?.status === "done" && !loading && previewMode === "markdown" && isMarkdownOnly &&
-      // [Flow: 마크다운 전용 job — 원본 소스 패널 없이 에디터만 전체 너비로 표시]
-      // 마크다운 파일은 원본이 텍스트이므로 좌측 프리뷰 패널이 불필요하다. 에디터에서 직접 편집.
-      <div className="flex-1 flex flex-col overflow-hidden min-h-0" data-oid="markdown-only-editor">
-        <SimpleEditor
-          key={selectedFileIndex}
-          ref={editorRef}
-          markdown={displayMarkdown}
-          editable
-          onPageChange={setCurrentPage}
-          onChange={handleMarkdownChange}
-          data-oid="markdown-only-simple-editor" />
-      </div>
-      }
-
-      {job?.status === "done" && !loading && previewMode === "markdown" && !isMarkdownOnly &&
+      {job?.status === "done" && !loading && previewMode === "markdown" &&
+      // [Flow: 마크다운 전용 job도 PagedResultViewer를 사용 — 좌측 패널에서 원본 마크다운 렌더링, 우측 패널에서 에디터로 편집]
       <PagedResultViewer
         ref={pagedViewerRef}
         jobId={jobId}

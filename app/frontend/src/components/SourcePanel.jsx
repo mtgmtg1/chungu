@@ -19,6 +19,7 @@ function SourceIcon({ type }) {
   if (type === "audio") return <Volume2 size={16} className="text-secondary flex-shrink-0" />;
   if (type === "video") return <Film size={16} className="text-tertiary flex-shrink-0" />;
   if (type === "file") return <FileDown size={16} className="text-tertiary flex-shrink-0" />;
+  if (type === "markdown") return <FileText size={16} className="text-primary flex-shrink-0" />;
   return <FileText size={16} className="text-outline flex-shrink-0" />;
 }
 
@@ -28,7 +29,7 @@ function SourceIcon({ type }) {
  * 파일 탭이나 미리보기에서 깨져 보일 수 있는 한글 파일명을 안정적으로 렌더링한다.
  */
 function getDisplayName(file) {
-  const raw = file?.name || file?.storage_path || "file";
+  const raw = file?.name || file?.filename || file?.storage_path || "file";
   try {
     return decodeURIComponent(raw).normalize("NFC");
   } catch {
@@ -995,7 +996,7 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
       );
     }
 
-    if (selectedFile.type === "file") {
+    if (selectedFile.type === "file" || selectedFile.type === "markdown") {
       return <FilePreview file={selectedFile} />;
     }
 

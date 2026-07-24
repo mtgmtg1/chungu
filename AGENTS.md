@@ -8,6 +8,20 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 링크 미리보기(OG) 메타 태그 추가 — 2026-07-24
+
+- **배경**: 카카오톡/슬랙/라인 등 메신저 링크 미리보기 카드에서 텍스트만 표시되고 썸네일 이미지가 나오지 않았음. `app/frontend/index.html`에 OpenGraph / Twitter Card 메타 태그가 전혀 없어, 크롤러가 `og:image`를 찾지 못해 썸네일이 비었음.
+- **변경 내용**:
+  - `app/frontend/index.html`: `<head>`에 OG/Twitter 메타 태그 12개 추가. `og:type=website`, `og:url=https://proof.teamcat.app/`, `og:title`, `og:description`, `og:image=https://proof.teamcat.app/proof-logo.png` (절대 URL, 400×225px), `og:image:width/height`, `og:site_name=PROOF`, `twitter:card=summary_large_image`, `twitter:title/description/image`.
+  - `app/frontend/dist/index.html`: `npm run build`로 재빌드하여 동일 태그 반영.
+- **검증**: vite build 성공, dist/index.html에 OG 태그 5개 확인.
+- **⚠️ 회귀 방지 경고**:
+  1. `og:image`는 **절대 URL**이어야 함. 상대경로 `/proof-logo.png`로 변경하면 카카오톡 크롤러가 이미지를 못 불러옴.
+  2. 도메인이 `proof.teamcat.app`에서 변경되면 `og:url`, `og:image`, `twitter:image`의 절대 URL을 모두 함께 수정해야 함.
+  3. 카카오톡은 링크 미리보기를 캐싱함. 배포 후 기존 공유 링크는 캐시가 갱신될 때까지 옛날 상태로 표시될 수 있음 — 새 링크를 보내거나 크롤러 재방문을 기다려야 함.
+  4. `proof-logo.png`는 400×225px(16:9). 카카오톡 최소 조건(200×200)은 만족하지만, 더 선명한 썸네일이 필요하면 1200×630px 전용 OG 이미지를 별도 제작해 교체.
+- **핵심 파일**: `app/frontend/index.html`, `app/frontend/dist/index.html`.
+
 ### e-Discovery 타임라인 뷰 "Job expired" 조기 만료 수정 — 2026-07-23
 
 - **배경**: 타임라인 뷰와 재분석 버튼이 완료 후 7일이 지나면 "Job expired" 404를 반환했다. `api/ediscovery.py`의 로컬 `_require_job_not_expired`가 `job.expires_at`(완료 후 `download_expire_days=7`일)를 확인한 반면, 나머지 모든 job 엔드포인트는 `api/jobs/_shared.py`의 공유 함수로 `created_at + RETENTION_DAYS(30일)`를 확인했다. 완료 후 7~30일 사이 job은 결과 페이지는 열리지만 타임라인/재분석은 차단되는 불일치가 발생.

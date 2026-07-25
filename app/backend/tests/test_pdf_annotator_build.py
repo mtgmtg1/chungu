@@ -20,6 +20,7 @@ from core.pdf_annotator import (
     build_embedpdf_annotations,
     HIGHLIGHT_TYPE,
     FREETEXT_TYPE,
+    TEXT_TYPE,
     HELVETICA_FONT,
     LEFT_ALIGN,
     TOP_ALIGN,
@@ -29,6 +30,7 @@ from core.pdf_annotator import (
     CALLOUT_TEXTBOX_BG_COLOR,
     CALLOUT_LINE_ENDING_OPEN_ARROW,
     CALLOUT_STROKE_WIDTH,
+    STICKY_NOTE_ICON_SIZE_PT,
 )
 
 
@@ -78,8 +80,8 @@ class TestBuildEmbedpdfAnnotations:
         assert "strokeColor" in ann
         assert "color" in ann
 
-    def test_margin_note_mode_returns_callout_annotation(self):
-        # [Flow: PDF 바이트 획득 -> margin_note 모드로 변환 -> callout 필드 검증]
+    def test_margin_note_mode_returns_sticky_note_annotation(self):
+        # [Flow: PDF 바이트 획득 -> margin_note 모드로 변환 -> sticky note 필드 검증]
         pdf_bytes = _make_a4_pdf()
         targets = [_target()]
 
@@ -87,26 +89,25 @@ class TestBuildEmbedpdfAnnotations:
 
         assert len(result) == 1
         ann = result[0]["annotation"]
-        assert ann["type"] == FREETEXT_TYPE
-        assert ann["intent"] == "FreeTextCallout"
+        # sticky note는 embedpdf TEXT(type=1)로 생성된다.
+        assert ann["type"] == TEXT_TYPE
         assert ann["pageIndex"] == 0
         assert ann["contents"] == "test"
-        assert ann["fontFamily"] == HELVETICA_FONT
-        assert ann["fontSize"] == CALLOUT_TEXTBOX_FONT_SIZE
-        assert ann["fontColor"] == CALLOUT_TEXTBOX_FONT_COLOR
-        assert ann["textAlign"] == LEFT_ALIGN
-        assert ann["verticalAlign"] == TOP_ALIGN
-        assert ann["color"] == CALLOUT_TEXTBOX_BG_COLOR
-        assert ann["lineEnding"] == CALLOUT_LINE_ENDING_OPEN_ARROW
-        assert ann["strokeWidth"] == CALLOUT_STROKE_WIDTH
-        assert "rect" in ann
-        assert "rectangleDifferences" in ann
-        assert "calloutLine" in ann
-        assert isinstance(ann["calloutLine"], list)
-        assert len(ann["calloutLine"]) in (2, 3)
+        # sticky note는 callout 전용 필드(intent/calloutLine/rectangleDifferences/font*)를 갖지 않는다.
+        assert "intent" not in ann
+        assert "calloutLine" not in ann
+        assert "rectangleDifferences" not in ann
+        assert "fontFamily" not in ann
+        # 아이콘 색은 strokeColor/color로 설정된다.
+        assert "strokeColor" in ann
+        assert "color" in ann
+        # 아이콘은 고정 크기 STICKY_NOTE_ICON_SIZE_PT 로 배치된다.
+        rect = ann["rect"]
+        assert rect["size"]["width"] == pytest.approx(STICKY_NOTE_ICON_SIZE_PT, abs=0.01)
+        assert rect["size"]["height"] == pytest.approx(STICKY_NOTE_ICON_SIZE_PT, abs=0.01)
 
-    def test_both_mode_returns_highlight_and_callout(self):
-        # [Flow: both 모드 요청 -> 하이라이트 1개 + callout 1개 총 2개 생성 확인]
+    def test_both_mode_returns_highlight_and_sticky_note(self):
+        # [Flow: both 모드 요청 -> 하이라이트 1개 + sticky note 1개 총 2개 생성 확인]
         pdf_bytes = _make_a4_pdf()
         targets = [_target()]
 
@@ -114,7 +115,7 @@ class TestBuildEmbedpdfAnnotations:
 
         assert len(result) == 2
         types = {item["annotation"]["type"] for item in result}
-        assert types == {HIGHLIGHT_TYPE, FREETEXT_TYPE}
+        assert types == {HIGHLIGHT_TYPE, TEXT_TYPE}
 
     def test_page_index_is_zero_based_and_out_of_range_is_skipped(self):
         # [Flow: page_no=2로 A4 1페이지 문서에 요청 -> 빈 리스트 반환 확인]
@@ -133,12 +134,13 @@ class TestBuildEmbedpdfAnnotations:
 
         assert result == []
 
-    def test_callout_avoids_existing_elements(self):
-        # [Flow: 페이지 중앙에 기존 요소 배치 -> callout이 다른 위치에 배치되는지 확인]
+    def test_sticky_note_placed_at_target_text_location(self):
+        # [Flow: 대상 텍스트 bbox -> sticky note 아이콘이 대상 텍스트 시작 위치에 배치되는지 확인]
+        # sticky note는 callout과 달리 충돌 회피를 하지 않고 대상 텍스트 위치에 직접 겹쳐 배치한다.
         pdf_bytes = _make_a4_pdf()
-        # 페이지 중앙 큰 장애물
+        # 페이지 중앙 큰 장애물 — sticky note는 이를 무시하고 대상 텍스트 위치에 배치된다.
         obstacles = {1: [(200, 400, 400, 600)]}
-        targets = [_target(bbox_pdf=(100, 700, 200, 720), comment="avoid")]
+        targets = [_target(bbox_pdf=(100, 700, 200, 720), comment="on text")]
 
         result = build_embedpdf_annotations(
             pdf_bytes, targets, mode="margin_note", page_elements_bboxes=obstacles
@@ -146,14 +148,13 @@ class TestBuildEmbedpdfAnnotations:
 
         assert len(result) == 1
         ann = result[0]["annotation"]
+        assert ann["type"] == TEXT_TYPE
         rect = ann["rect"]
-        # 텍스트 박스 전체 영역(obstacle + padding)과 겹치지 않아야 함
-        tx0 = rect["origin"]["x"]
-        ty0 = rect["origin"]["y"]
-        tx1 = tx0 + rect["size"]["width"]
-        ty1 = ty0 + rect["size"]["height"]
-        # 간단히: obstacle (200,400,400,600)과 겹치지 않도록 x1 <= 200 또는 x0 >= 400 이어야 함
-        assert (tx1 <= 200.0 or tx0 >= 400.0) or (ty1 <= 400.0 or ty0 >= 600.0)
+        # 대상 텍스트 시작 x(100)에 아이콘이 배치되어야 한다.
+        assert rect["origin"]["x"] == pytest.approx(100.0, abs=0.01)
+        # 아이콘 크기는 고정 크기.
+        assert rect["size"]["width"] == pytest.approx(STICKY_NOTE_ICON_SIZE_PT, abs=0.01)
+        assert rect["size"]["height"] == pytest.approx(STICKY_NOTE_ICON_SIZE_PT, abs=0.01)
 
     def test_targets_sorted_by_y_within_page(self):
         # [Flow: 같은 페이지에 y좌표가 뒤죽박죽인 대상 2개 -> 결과 순서가 y0 기준 오름차순인지 확인]

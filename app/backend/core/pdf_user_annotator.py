@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 # EmbedPDF PdfAnnotationSubtype enum 값 (숫자 상수)
 # 참고: https://cdn.jsdelivr.net/npm/@embedpdf/models/dist/pdf.d.ts
+TEXT = 1  # sticky note (메모 아이콘 + 팝업 텍스트)
 FREETEXT = 3
 LINE = 4
 SQUARE = 5
@@ -411,6 +412,9 @@ EMBEDPDF_TYPE_MAP = {
     getattr(fitz, "PDF_ANNOT_LINE", 3): LINE,
     getattr(fitz, "PDF_ANNOT_INK", 14): INK,
     getattr(fitz, "PDF_ANNOT_STAMP", 12): STAMP,
+    # PDF_ANNOT_TEXT는 sticky note(메모 아이콘). PyMuPDF 상수 값은 3일 수 있으나
+    # getattr fallback으로 0을 두고, 매핑이 없으면 extract_pdf_annotations가 건너뛴다.
+    getattr(fitz, "PDF_ANNOT_TEXT", 0): TEXT,
 }
 
 
@@ -484,6 +488,11 @@ def extract_pdf_annotations(pdf_bytes: bytes) -> list[dict]:
                 }
                 if embed_type in (HIGHLIGHT, UNDERLINE, SQUIGGLY, STRIKEOUT):
                     annotation["segmentRects"] = [rect]
+                    annotation["strokeColor"] = color
+                    annotation["color"] = color
+                elif embed_type == TEXT:
+                    # sticky note: 메모 아이콘 색은 strokeColor/color로 설정.
+                    # embedpdf xw 렌더러가 color(기본 #facc15)로 아이콘을 채운다.
                     annotation["strokeColor"] = color
                     annotation["color"] = color
                 elif embed_type in (SQUARE, CIRCLE, INK, STAMP):

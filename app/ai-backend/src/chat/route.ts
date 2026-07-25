@@ -63,7 +63,7 @@ ${intentHint}Current context:
 
 Available tool categories:
 1. PDF annotation (only when source_type is pdf or docx/hwp preview):
-   - search_text, get_elements, get_annotations, read_job_json, view_page, add_text_highlight, add_line_highlight, add_text_callout, add_sticky_note, update_annotation, remove_annotation, compare_elements, apply_annotations
+   - search_text, get_elements, get_annotations, read_job_json, view_page, add_text_highlight, add_line_highlight, add_sticky_note, update_annotation, remove_annotation, compare_elements, apply_annotations
 
 2. Markdown editor / report & document editor (when active_editor is markdown):
    - Users may describe this as: 보고서, 문서, 글쓰기, 메모, 메모장, 보고서 작성, 문서 정리, 요약, 마크다운, 에디터.
@@ -115,28 +115,37 @@ Rules:
 - Always use the provided tools to make changes; do not just describe them.
 - CRITICAL: Always read and analyze tool results before making the next tool call. Do NOT call another tool based on assumptions — use the actual data returned by the previous tool. If a tool returns an error, read the error message and adjust your approach accordingly.
 - After calling a tool, summarize what you learned from its output before deciding the next step.
-- For PDF annotations, only call apply_annotations when you are done adding/removing highlights/callouts.
-- OLD TOOLS REMOVED: add_highlight, add_callout, and save_annotations are no longer available. Calling them will fail. Always use add_text_highlight/add_text_callout for new highlights/callouts.
+- For PDF annotations, only call apply_annotations when you are done adding/removing highlights/sticky notes.
+- OLD TOOLS REMOVED: add_highlight, add_callout, add_text_callout, and save_annotations are no longer available. Calling them will fail. Always use add_text_highlight/add_sticky_note for new highlights/sticky notes.
 - To inspect a PDF page visually, call view_page to get a vision analysis. The output is text-only and does NOT contain coordinates or bounding boxes. Pass an explicit dpi between 150 and 300 only when needed.
 - To read existing annotation JSON, call read_job_json with kind="annotations" or get_annotations. Coordinate fields (rect, segmentRects, calloutLine, bbox_pdf) are REDACTED. Use the returned id, type, page_no, color, and comment only for editing or deleting.
 - To read other job result JSON, call read_job_json with kind="ocr_layout" | "extracted_files" | "annotated_pdf_files" | "job_meta".
-- To create highlight/callout/note annotations, use add_text_highlight (highlights exact matched text only), add_line_highlight (highlights full line/row containing the text), add_text_callout (creates a callout text box + leader arrow), or add_sticky_note (creates a sticky note / memo icon at the top-right of the text). The backend searches the PDF text layer and resolves the bounding box/segmentRects automatically. You MUST NOT compute or pass rect/bbox manually.
+- To create highlight/note annotations, use add_text_highlight (highlights exact matched text only), add_line_highlight (highlights full line/row containing the text), or add_sticky_note (creates a sticky note / memo icon placed on the target text — click to open the comment popup). The backend searches the PDF text layer and resolves the bounding box/segmentRects automatically. You MUST NOT compute or pass rect/bbox manually.
+
+- TOOL CALL SYNTAX (CRITICAL — violations cause "Model tried to call unavailable tool" errors):
+  - The tool name is EXACTLY the identifier — e.g. add_text_highlight. NEVER append "(", ")", quotes, or any extra character to the name itself. Parameters go in a separate JSON object.
+  - Correct: add_text_highlight({ texts: ["A","B"], page_no: 1, color: "yellow" })
+  - WRONG:  add_text_highlight(  ← name has trailing "(" attached
+  - WRONG:  "add_text_highlight"(...)  ← do not quote the tool name
+  - page_no is ALWAYS an integer (1, 2, 3...). NEVER pass a string like "1" or "2" — Zod rejects strings and the call fails.
+  - texts is ALWAYS a string array ["A","B"]. For a single text use the 'text' field (string), not 'texts'.
+  - If a tool call fails, READ the error message before retrying. Do NOT repeat the same malformed call.
 
 - USER INTENT & ANNOTATION TYPE MAPPING:
-  1. When the user requests "주석", "메모", "콜아웃", "설명" (General Annotation/Callout/Comment request):
-     - Users naturally mean COMMENT ANNOTATIONS with leader arrows (화살표 코멘트 주석).
-     - You MUST use 'add_text_callout' to create a leader arrow pointing to the target text with a text box. Do NOT use highlight for general annotation requests!
+  1. When the user requests "주석", "메모", "콜아웃", "설명", "스티키노트", "메모지" (General Annotation/Comment/Sticky note request):
+     - Users naturally mean COMMENT ANNOTATIONS as a sticky note (메모 아이콘 + 코멘트 팝업).
+     - You MUST use 'add_sticky_note' to create a sticky note icon placed on the target text with a comment popup. Do NOT use highlight for general annotation requests!
   2. When the user explicitly requests "형광펜", "하이라이트", "강조", "색칠" (Highlight-only request):
      - You MUST use 'add_text_highlight' and pass EMPTY comment (comment: "") so that only pure highlight fill is drawn without overlay text!
 
 
-- BATCH MODE IS MANDATORY (NOT OPTIONAL): add_text_highlight and add_text_callout support multiple input formats. When the user asks for TWO OR MORE annotations, you MUST issue a SINGLE tool call — NEVER call the same tool repeatedly in a loop!
+- BATCH MODE IS MANDATORY (NOT OPTIONAL): add_text_highlight and add_sticky_note support multiple input formats. When the user asks for TWO OR MORE annotations, you MUST issue a SINGLE tool call — NEVER call the same tool repeatedly in a loop!
 - TOKEN-SAVING RULE: When all items share the SAME page_no/comment/color/opacity, use 'texts' (string array) + shared parameters. This is the MOST token-efficient format.
 - BEST EXAMPLE — texts shorthand (USE THIS WHEN settings are shared):
   add_text_highlight({ texts: ["수원구치소", "5839", "응우옌안뚜안"], page_no: 1, color: "yellow", comment: "" })
   → This replaces 3 separate items objects with just a texts array!
-- EXAMPLE — texts shorthand for callouts:
-  add_text_callout({ texts: ["원고", "피고"], page_no: 1, color: "purple", comment: "당사자" })
+- EXAMPLE — texts shorthand for sticky notes:
+  add_sticky_note({ texts: ["원고", "피고"], page_no: 1, color: "purple", comment: "당사자" })
 - EXAMPLE — items list (USE ONLY when each item needs DIFFERENT settings):
   add_text_highlight({ items: [
     { text: "표 1", page_no: 1, color: "yellow", comment: "" },

@@ -154,10 +154,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ annotation_index: annotationIndex }),
     }),
-  saveUserAnnotations: (id, { source_index, annotations }) =>
+  saveUserAnnotations: (id, { source_index, annotations, removals }) =>
     request(`/api/jobs/${id}/user-annotations`, {
       method: 'POST',
-      body: JSON.stringify({ source_index, annotations, input_space: 'device' }),
+      body: JSON.stringify({ source_index, annotations, removals: removals ?? [], input_space: 'device' }),
     }),
   jobAction: (id, action) =>
     request(`/api/jobs/${id}/action`, { method: 'POST', body: JSON.stringify({ action }) }),

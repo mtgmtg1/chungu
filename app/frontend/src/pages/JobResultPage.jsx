@@ -579,7 +579,9 @@ export default function JobResultPage() {
 
   // [Flow: Step 1 (선택된 원본 PDF의 주석을 자동 저장) -> Step 2 (annotation PDF면 덮어쓰기, 원본 PDF면 새 annotation 파일 생성)]
   // 자동 저장이므로 converting 오버레이/에러 배너/새로고침 없이 조용히 처리한다.
-  async function handleSaveAnnotations(annotations) {
+  // removals: 사용자가 뷰어에서 삭제한 주석 ID 목록 — 백엔드 accumulative merge 가
+  //   ID 기반 보존을 하므로 명시적으로 삭제하지 않으면 새로고침 시 부활한다.
+  async function handleSaveAnnotations(annotations, removals = []) {
     const selected = sourceFiles[selectedFileIndex];
     if (!selected || selected.type !== "pdf") return;
     try {
@@ -590,6 +592,7 @@ export default function JobResultPage() {
       const result = await api.saveUserAnnotations(jobId, {
         source_index: fileSourceIndex,
         annotations,
+        removals,
       });
       // [Flow: 백엔드가 재생성한 merged_annotations.json의 새 signed URL로 sourceFiles 갱신]
       // 자동 저장 후 파일 전환/복귀 시 이전 병합본을 로드해 기존 사용자 주석이 유실되는 버그를 방지.

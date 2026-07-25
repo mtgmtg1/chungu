@@ -311,7 +311,7 @@ def build_vision_text_highlight_prompt(
         "When the user asks for a specific highlight color, use one of the following colors: "
         "red, yellow, green, blue, orange, purple, pink, gray. If no color is implied, default to yellow.\n"
         "Determine the annotation display mode based on the user's request: "
-        "'margin_note' (callout with leader arrow) if the user asks for annotations/notes ('주석', '메모', '콜아웃', '설명'), "
+        "'margin_note' (sticky note — memo icon placed on the target text with a comment popup) if the user asks for annotations/notes ('주석', '메모', '콜아웃', '설명', '스티키노트', '메모지'), "
         "'highlight' (pure highlight fill without overlay text) if the user asks for fluorescent pen/highlight ('형광펜', '하이라이트', '강조', '색칠'), "
         "'both' if the user asks for both or does not specify.\n"
 
@@ -357,7 +357,7 @@ def build_annotation_edit_prompt(
     lines: list[str] = []
     for a in annotations:
         ann_id = a.get("id", "")
-        atype = "callout" if str(a.get("type", "")).lower() in ("freetext", "freetextcallout") else "highlight"
+        atype = "sticky" if str(a.get("type", "")).lower() in ("freetext", "freetextcallout", "text", "sticky") else "highlight"
         color = a.get("color", "")
         comment = a.get("comment", "")
         text = a.get("text", "")
@@ -367,9 +367,9 @@ def build_annotation_edit_prompt(
 
     return (
         "You are an assistant editing existing PDF annotations. Below is a list of existing annotations.\n"
-        "Each line is: id=... | type=highlight|callout | color=#RRGGBB | comment=\"...\" | text=\"...\"\n"
+        "Each line is: id=... | type=highlight|sticky | color=#RRGGBB | comment=\"...\" | text=\"...\"\n"
         "- 'highlight' annotations mark a region of the document; 'text' is the highlighted content (if available).\n"
-        "- 'callout' annotations are comment boxes pointing to a region; 'comment' is the box text.\n\n"
+        "- 'sticky' annotations are sticky note (memo icon) placed on a region; 'comment' is the popup note text.\n\n"
         f"--- Existing annotations ---\n{annotations_text}\n\n"
         f"--- Edit instruction ---\n{instruction}\n\n"
         "Apply the edit instruction to the annotations above. You may change the color and/or the comment text.\n"

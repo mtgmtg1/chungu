@@ -8,6 +8,67 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### EmbedPDF 주석 삭제 자동저장(removals 전송) — 2026-07-25
+
+- **배경**: EmbedPDF 뷰어에서 주석 생성은 자동 저장되었으나, 삭제는 새로고침 시 부활했다. 백엔드 `save_user_annotations`(`app/backend/api/jobs/annotations.py`)가 ID 기반 **누적 병합(accumulative merge)** 을 사용하기 때문이다 — 전송된 `annotations` 목록에 없는 ID라고 해서 삭제하지 않고, 오직 `removals` 배열에 명시된 ID만 삭제한다. 프론트엔드는 `exportAnnotations()` 결과(삭제된 주석이 빠진 전체 목록)만 보내고 `removals`를 보내지 않아서 삭제가 백엔드에 반영되지 않았다.
+- **변경 내용**:
+  - **신규 유틸**: `app/frontend/src/utils/annotationDiffUtils.js` — `extractAnnotationId(item)`와 `computeRemovedAnnotationIds(previousItems, currentItems)` 순수 함수. 백엔드 `_annotation_id`(`api/jobs/_shared.py`)와 동일한 ID 추출 규칙(`annotation.id` → 최상위 `id` fallback)을 사용한다. `previousItems`에 있고 `currentItems`에 없는 ID를 차집합으로 계산해 반환.
+  - **SourcePanel**: `handleSaveAnnotations`가 `exportAnnotations()` 결과를 파싱한 뒤 `computeRemovedAnnotationIds(selectedAnnotationsJson, annotations)`로 삭제된 ID를 계산해 `onSaveAnnotations(annotations, removals)`로 전달. `selectedAnnotationsJson`(이전 로드본)을 의존성에 추가.
+  - **JobResultPage**: `handleSaveAnnotations(annotations, removals=[])` 시그니처로 `removals`를 받아 `api.saveUserAnnotations`에 전달.
+  - **api.js**: `saveUserAnnotations`가 `removals`를 payload에 포함해 전송 (`removals: removals ?? []`).
+  - **테스트**: `annotationDiffUtils.test.js` 신규 12개 테스트 — ID 추출(annotation 래퍼/최상위/빈 값/비-dict), removals 계산(Happy Path, 삭제 없음, 신규 추가 무시, previous/current null, ID 없는 항목 무시, 최상위 id 형식).
+- **검증**: 프론트엔드 106 tests pass (기존 94 + 신규 12), vite build 성공.
+- **⚠️ 회귀 방지 경고**:
+  1. `computeRemovedAnnotationIds`는 `selectedAnnotationsJson`(마지막으로 fetch한 병합본)을 기준으로 삼는다. 저장 후 백엔드가 반환한 `merged_annotations_url`로 `sourceFiles[idx].annotations_json_url`이 갱신되면 SourcePanel이 재 fetch하므로 다음 저장 시 기준이 최신화된다 — 재 fetch 완료 전에 연속 삭제하면 이미 삭제된 ID가 removals에 중복 포함될 수 있으나 백엔드가 `if rid in existing_by_id` 로 가드하므로 무해.
+  2. ID 추출 규칙이 백엔드 `_annotation_id`와 다르면 삭제가 누락된다. 백엔드는 `item["annotation"]["id"]` → `item["id"]` 순서이고, 프론트 `extractAnnotationId`도 동일 순서를 사용한다. 한쪽만 바꾸면 불일치.
+  3. `removals`는 문자열 ID 배열이어야 한다. 백엔드가 `isinstance(rid, str)` 로 필터하므로, 숫자 ID가 오면 무시된다. EmbedPDF 주석 ID는 문자열이므로 정상 동작.
+  4. `handleSaveAnnotations`의 `useCallback` 의존성에 `selectedAnnotationsJson`이 추가되었다. 재 fetch 마다 콜백이 재생성되지만 debounce 타이머는 `autoSaveRef`로 유지되므로 타이머 누수 없음.
+  5. `DebugPanelTogglePage`의 `onSaveAnnotations={() => {}}` no-op는 새 시그니처에도 호환된다(인수 무시). `PagedResultViewer`는 prop을 그대로 전달하므로 추가 변경 불필요.
+- **핵심 파일**: `app/frontend/src/utils/annotationDiffUtils.js`(신규), `app/frontend/src/utils/annotationDiffUtils.test.js`(신규), `app/frontend/src/components/SourcePanel.jsx`, `app/frontend/src/pages/JobResultPage.jsx`, `app/frontend/src/api.js`.
+
+### EmbedPDF sticky note 클릭 시 확장 코멘트 위젯 오버레이 — 2026-07-25
+
+- **배경**: sticky note 주석을 클릭하면 snippet의 기본 선택 메뉴만 열리고 코멘트 텍스트를 바로 볼 수 없었다. 사용자 요청으로 sticky note 클릭 시 확장된 위젯이 페이지에 직접 보이고, 그 아래에 기존 선택 메뉴도 유지되는 UX가 필요했다.
+- **변경 내용**:
+  - **접근 방식**: snippet `PDFViewer`를 유지하면서 snippet 공식 API(`mergeSchema`/`registerCommand`/`getRectPositionForPage`/`onScroll`)만 사용하는 DOM 오버레이 하이브리드 방식 채택. headless 마이그레이션은 비용이 크고, snippet은 커스텀 React 컴포넌트 등록 API를 노출하지 않으므로 제외.
+  - **"코멘트 보기" 명령 등록**: `PdfViewer.jsx`의 `handleReady`에서 `commands.registerCommand`로 `sticky-note-comment` 명령 등록. action에서 `getSelectedAnnotations()`(복수형, fallback `getSelectedAnnotation()`)로 선택된 주석을 가져와 `type=1`(TEXT sticky note)이면 확장 위젯 표시.
+  - **selectionMenu schema 병합**: `uiApi.mergeSchema()`로 `selectionMenus`에 새 메뉴 `sticky-note-comment-menu` 추가. 기존 선택 메뉴(삭제/색상/속성 등)는 그대로 유지 — "그 아래에는 기존의 선택메뉴도 떠야한다" 요구사항 충족. `categories: ["annotation-text"]`로 sticky note에만 버튼 표시.
+  - **StickyNoteOverlay 컴포넌트 신규**: `app/frontend/src/components/StickyNoteOverlay.jsx`. 주석 `contents`를 큰 카드(280px 너비, 최대 320px 높이)로 표시. 상단 헤더에 sticky note 아이콘 + 주석 색상 띠 + 닫기 버튼. 본문은 `whitespace-pre-wrap`으로 줄바꿈 보존, 스크롤 가능. 닫기 버튼/외부 클릭/Escape 키로 닫기.
+  - **오버레이 위치 계산**: `scrollApi.getRectPositionForPage(pageIndex+1, rect)`로 주석 rect(페이지 내 device-space)를 viewport 내 절대 좌표로 변환. 위젯 높이(200px 추정)만큼 위로 오프셋해 주석 위에 배치, 페이지 상단을 벗어나면 아래로 배치.
+  - **스크롤/줌 동기화**: `scrollApi.onScroll` + `viewportApi.onViewportChange` 이벤트 구독, throttle 16ms(60fps)로 오버레이 위치 재계산. `expandedAnnotationRef`로 최신 주석을 추적해 이벤트 클로저 문제 회피.
+  - **cleanup**: 컴포넌트 언마운트 시 scroll/viewport/annotation 이벤트 구독 해제 + throttle 타이머 정리.
+  - **i18n**: `page:annotation.viewComment`/`comment`/`close`/`emptyComment` 키를 ko/en/ja에 추가.
+  - **테스트**: `StickyNoteOverlay.test.jsx` 신규 10개 테스트 — 코멘트 표시, 빈 코멘트 placeholder, 닫기 버튼, Escape, 외부 클릭, 카드 내부 클릭, position null/비숫자, 색상 fallback, 여러 줄 줄바꿈 보존.
+- **검증**: 프론트엔드 94 tests pass (기존 84 + 신규 10), vite build 성공.
+- **⚠️ 회귀 방지 경고**:
+  1. `getRectPositionForPage`의 첫 인자는 **1-based 페이지 번호**(`pageIndex + 1`)이다. 0-based로 전달하면 잘못된 페이지의 좌표가 반환되어 오버레이가 어긋난다.
+  2. `mergeSchema`는 기존 selectionMenus를 **덮어쓰지 않고 병합**한다. 새 메뉴를 추가할 때 기존 메뉴 ID를 재사용하면 덮어쓰기되므로, 새 메뉴는 고유 ID(`sticky-note-comment-menu`)를 사용한다.
+  3. `commands.registerCommand`는 동일 ID 재등록 시 에러를 발생시킬 수 있다. `handleReady`는 snippet 초기화 시 한 번만 호출되므로 중복 등록 위험은 없으나, hot-reload 시 주의.
+  4. `expandedAnnotationRef`는 `expandedAnnotation` state를 ref로 미러링한다. 이벤트 핸들러 클로저에서 최신 주석을 참조하려면 ref를 사용해야 한다 — state를 직접 참조하면 stale closure 문제 발생.
+  5. 오버레이 위젯에만 `pointer-events: auto`를 설정하고 위젯 외부는 `pointer-events: none`이어야 snippet의 주석 조작(드래그/리사이즈)이 막히지 않는다. 현재 구현은 위젯 자체에만 `pointer-events: auto`를 설정했으나, 외부 클릭 감지는 document-level `pointerdown` listener로 처리하므로 별도 백드롭 요소를 두지 않는다.
+  6. `categories: ["annotation-text"]`가 snippet의 카테고리 필터링으로 버튼이 sticky note에만 표시되는 것을 보장하지 않을 수 있다. 미지원 시 `visible` 동적 함수로 주석 타입을 체크하는 fallback이 필요할 수 있음 — 실제 동작 확인 필요.
+- **핵심 파일**: `app/frontend/src/components/PdfViewer.jsx`, `app/frontend/src/components/StickyNoteOverlay.jsx`(신규), `app/frontend/src/components/StickyNoteOverlay.test.jsx`(신규), `app/frontend/src/locales/{ko,en,ja}/page.json`.
+
+### 에이전트/비전 주석 callout → sticky note 전환 — 2026-07-25
+
+- **배경**: 에이전트 도구와 백엔드 비전 주석 흐름이 PDF 코멘트 생성 시 FreeTextCallout(텍스트 박스 + 화살표 리더 라인)을 사용했었다. callout은 빈 영역 탐색/충돌 회피 로직이 복잡하고 텍스트 박스가 페이지 여백에 떠서 가독성이 떨어지는 문제가 있었다. 사용자 요청으로 sticky note(메모 아이콘 + 클릭 시 팝업)로 전환.
+- **변경 내용**:
+  - **AI 에이전트 도구**: `app/ai-backend/src/tools/annotations.ts`에서 `add_text_callout` 도구를 `add_sticky_note`로 변경. `PendingAnnotation.type`을 `'highlight' | 'callout'` → `'highlight' | 'sticky'`로 변경. `_buildAnnotationItem`의 callout 분기를 sticky note 분기로 교체 — `type: 1`(embedpdf `T.TEXT`), 대상 텍스트 시작 위치(x0, y0)에 고정 크기 18pt 아이콘을 겹쳐 배치. `calloutLine`/`rectangleDifferences`/`intent`/`fontFamily` 등 callout 전용 필드 제거. `DEFAULT_CALLOUT_COLOR` → `DEFAULT_STICKY_NOTE_COLOR`로 변경(값은 동일 보라색 유지).
+  - **시스템 프롬프트**: `app/ai-backend/src/chat/route.ts`에서 `add_text_callout` 참조를 `add_sticky_note`로 변경. USER INTENT & ANNOTATION TYPE MAPPING에서 "주석/메모/콜아웃/설명" → `add_sticky_note` 사용하도록 수정. 예시 문구 callout → sticky note로 변경.
+  - **백엔드 비전 주석**: `app/backend/core/pdf_annotator.py`의 `build_embedpdf_annotations`에서 `needs_callout` → `needs_sticky_note`로 변경. `_build_callout_annotation` 호출을 `_build_sticky_note_annotation` 호출로 교체. 새 함수는 대상 텍스트 시작 위치에 고정 크기 18pt 아이콘을 배치(빈 영역 탐색/충돌 회피 없음). `TEXT_TYPE = 1` 상수 추가. 레거시 `_build_callout_annotation`/`_find_free_callout_slot`/`_compute_callout_line` 등은 기존 주석 호환성을 위해 유지(현재 dead code).
+  - **프롬프트**: `app/backend/core/prompts.py`에서 `margin_note` 설명을 "callout with leader arrow" → "sticky note — memo icon placed on the target text with a comment popup"로 변경. 편집 프롬프트의 `type=highlight|callout` → `type=highlight|sticky`로 변경.
+  - **변환기**: `app/backend/core/pdf_annotate_converter.py`의 `is_callout` 분기를 `is_note`로 변경 — sticky note(TEXT=1)와 레거시 callout(FREETEXT/FreeTextCallout) 모두 코멘트 주석으로 취급. 기존 callout 주석도 여전히 편집 가능.
+  - **PDF 추출**: `app/backend/core/pdf_user_annotator.py`에 `TEXT = 1` 상수 추가, `EMBEDPDF_TYPE_MAP`에 `PDF_ANNOT_TEXT` → `TEXT` 매핑 추가. `extract_pdf_annotations`에 TEXT 분기 추가(strokeColor/color 설정).
+- **검증**: 백엔드 305 tests pass, ai-backend 68 tests pass, tsc 빌드 성공.
+- **⚠️ 회귀 방지 경고**:
+  1. sticky note는 `type: 1`(embedpdf `T.TEXT`)로 생성된다. 기존 callout 주석(`type: 3` FREETEXT + `intent: FreeTextCallout`)은 더 이상 새로 생성되지 않지만, 기존 주석은 그대로 표시/편집된다. `pdf_annotate_converter.py`의 `is_note` 분기가 두 타입 모두 처리한다.
+  2. sticky note 아이콘 크기는 `STICKY_NOTE_ICON_SIZE_PT = 18.0`(pdf_annotator.py)과 `STICKY_NOTE_ICON_SIZE_PT = 18`(annotations.ts)로 고정이다. 두 상수가 다르면 AI 에이전트 주석과 비전 주석의 아이콘 크기가不一致해진다 — 변경 시 양쪽 모두 수정.
+  3. sticky note는 대상 텍스트 시작 위치에 **직접 겹쳐 배치**된다. callout처럼 빈 영역을 찾지 않으므로, 텍스트 위에 아이콘이 덮이는 것이 정상 동작이다. 충돌 회피 로직이 필요하면 `_build_sticky_note_annotation`에 별도 추가해야 한다.
+  4. `pdf_annotator.py`의 레거시 callout 함수들(`_build_callout_annotation`, `_find_free_callout_slot`, `_compute_callout_line` 등)은 현재 dead code이지만 기존 주석 호환성/테스트 참조를 위해 유지. 제거하려면 `CALLOUT_*` 상수 import하는 테스트도 함께 수정해야 한다.
+  5. `AnnotationTarget.callout_color` 필드명은 레거시 이름 그대로 유지(기존 호출 코드 호환성). sticky note 아이콘 색으로 사용된다.
+  6. `prompts.py` 편집 프롬프트의 `atype`은 이제 `"sticky"`를 반환한다. LLM이 `type=sticky`로 인식하므로, 편집 프롬프트 형식을 변경하면 LLM이 혼동할 수 있다.
+- **핵심 파일**: `app/ai-backend/src/tools/annotations.ts`, `app/ai-backend/src/chat/route.ts`, `app/backend/core/pdf_annotator.py`, `app/backend/core/prompts.py`, `app/backend/core/pdf_annotate_converter.py`, `app/backend/core/pdf_user_annotator.py`, `app/backend/tests/test_pdf_annotator_build.py`.
+
 ### 링크 미리보기(OG) 메타 태그 추가 — 2026-07-24
 
 - **배경**: 카카오톡/슬랙/라인 등 메신저 링크 미리보기 카드에서 텍스트만 표시되고 썸네일 이미지가 나오지 않았음. `app/frontend/index.html`에 OpenGraph / Twitter Card 메타 태그가 전혀 없어, 크롤러가 `og:image`를 찾지 못해 썸네일이 비었음.

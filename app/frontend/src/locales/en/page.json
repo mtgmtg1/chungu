@@ -951,5 +951,11 @@
     "tocTitle": "Table of Contents",
     "tocEmpty": "No headings",
     "tocToggle": "Toggle TOC"
+  },
+  "annotation": {
+    "viewComment": "View Comment",
+    "comment": "Comment",
+    "close": "Close",
+    "emptyComment": "No comment"
   }
 }

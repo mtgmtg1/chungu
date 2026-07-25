@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 # [Flow: Step 1 (AnnotationTarget 목록 수신) -> Step 2 (페이지별 시각적 크기 캡처)
-#       -> Step 3 (callout 텍스트 박스를 기존 요소를 피해 빈 모서리/외곽 여백에 배치)
-#       -> Step 4 (대상 요소 -> knee -> 텍스트 박스 연결점으로 calloutLine 계산)
-#       -> Step 5 (EmbedPDF AnnotationTransferItem[] 배열 생성 — HIGHLIGHT + FreeTextCallout)
-#       -> Step 6 (프론트 importAnnotations()로 직접 로드 가능한 JSON 반환)]
+#       -> Step 3 (sticky note 아이콘을 대상 텍스트 시작 위치에 겹쳐 배치)
+#       -> Step 4 (EmbedPDF AnnotationTransferItem[] 배열 생성 — HIGHLIGHT + TEXT(sticky note))
+#       -> Step 5 (프론트 importAnnotations()로 직접 로드 가능한 JSON 반환)]
 #
-# 과거에는 페이지 우측에 mediabox를 확장해 여백 컬럼을 추가한 뒤 FREETEXT 박스를 배치했지만,
-# JSON 오버레이 방식으로 전환하면서 mediabox 확장이 빠져 여백 박스가 페이지 밖에 떠 있어
-# 보이지 않는 문제가 있었다. 이제 embedpdf의 FreeTextCallout(텍스트 박스 + 화살표 리더 라인)을
-# 사용해 페이지 내 빈 영역에 주석을 배치하고 화살표로 원본 요소를 가리킨다.
+# 과거에는 페이지 우측에 mediabox를 확장해 여백 컬럼을 추가한 뒤 FREETEXT 박스를 배치했고,
+# 이후 FreeTextCallout(텍스트 박스 + 화살표 리더 라인)로 전환했었다. 이제는 embedpdf의
+# TEXT 주석(sticky note, 메모 아이콘 + 클릭 시 팝업)을 사용해 대상 텍스트 위치에 아이콘을
+# 겹쳐 배치한다. 사용자가 아이콘을 클릭하면 코멘트 팝업이 열린다.
 from __future__ import annotations
 
 import logging
@@ -25,36 +24,43 @@ from .pdf_coordinate_transform import (
 
 logger = logging.getLogger(__name__)
 
-# --- callout 텍스트 박스 크기/스타일 상수 ---
-CALLOUT_TEXTBOX_WIDTH_PT = 160.0  # 텍스트 박스 고정 너비 (포인트)
-CALLOUT_TEXTBOX_MIN_HEIGHT_PT = 16.0  # 최소 높이 (텍스트 1줄)
-CALLOUT_TEXTBOX_MAX_HEIGHT_PT = 120.0  # 최대 높이 (약 10줄)
+# --- sticky note 아이콘 크기 상수 ---
+# embedpdf의 xw 렌더러는 rect를 채우는 메모 아이콘을 그린다. 대상 텍스트 시작 위치에
+# 고정 크기 아이콘을 겹쳐 배치한다. 18pt는 일반적인 PDF 뷰어의 sticky note 아이콘과 유사.
+STICKY_NOTE_ICON_SIZE_PT = 18.0
+
+# --- 레거시 callout 상수 (기존 주석 호환성/테스트용) ---
+# 새 주석은 sticky note로 생성되지만, 기존 callout 주석의 변환/편집 로직과 테스트가
+# 이 상수들을 참조하므로 제거하지 않고 유지한다.
+CALLOUT_TEXTBOX_WIDTH_PT = 160.0
+CALLOUT_TEXTBOX_MIN_HEIGHT_PT = 16.0
+CALLOUT_TEXTBOX_MAX_HEIGHT_PT = 120.0
 CALLOUT_TEXTBOX_FONT_SIZE = 8
-CALLOUT_TEXTBOX_LINE_HEIGHT_PT = 11.0  # 줄 높이 (폰트 크기의 ~1.35배)
-CALLOUT_TEXTBOX_PADDING_V_PT = 8.0  # 상하 패딩 합계
-CALLOUT_TEXTBOX_INNER_WIDTH_PT = CALLOUT_TEXTBOX_WIDTH_PT - 12  # 좌우 6pt 여백 → 실제 텍스트 영역
-
-# --- callout 배치 상수 ---
-CALLOUT_PAGE_EDGE_PADDING_PT = 12.0  # 페이지 가장자리에서 텍스트 박스까지 최소 여유
-CALLOUT_COLLISION_MARGIN_PT = 4.0  # 충돌 검사 시 기존 요소 bbox 주변 여유
-CALLOUT_KNEE_MIN_OFFSET_PT = 10.0  # knee가 텍스트 박스에 너무 가까울 때 최소 오프셋
-
-# --- callout 스타일 ---
+CALLOUT_TEXTBOX_LINE_HEIGHT_PT = 11.0
+CALLOUT_TEXTBOX_PADDING_V_PT = 8.0
+CALLOUT_TEXTBOX_INNER_WIDTH_PT = CALLOUT_TEXTBOX_WIDTH_PT - 12
+CALLOUT_PAGE_EDGE_PADDING_PT = 12.0
+CALLOUT_COLLISION_MARGIN_PT = 4.0
+CALLOUT_KNEE_MIN_OFFSET_PT = 10.0
 CALLOUT_STROKE_WIDTH = 1.0
 CALLOUT_LINE_ENDING_OPEN_ARROW = 4  # PdfAnnotationLineEnding.OpenArrow
 CALLOUT_TEXTBOX_BG_COLOR = "#FFFFFF"
 CALLOUT_TEXTBOX_FONT_COLOR = "#333333"
 
 DEFAULT_HIGHLIGHT_COLOR = (1.0, 0.92, 0.3)  # 형광펜 노랑
-DEFAULT_CALLOUT_COLOR = (0.65, 0.35, 0.95)  # 보라색 (사용자 색상 요청이 없을 때 callout 기본색)
-DEFAULT_OPACITY = 0.5  # 하이라이트/callout 공통 기본 투명도 (50%)
+# sticky note 기본색 (사용자 색상 요청이 없을 때). 기존 callout 기본색(보라)을 유지해
+# 비전 주석 흐름의 색상 일관성을 보존한다.
+DEFAULT_STICKY_NOTE_COLOR = (0.65, 0.35, 0.95)
+# 레거시 별칭 — 기존 코드/테스트가 DEFAULT_CALLOUT_COLOR를 참조할 수 있어 유지.
+DEFAULT_CALLOUT_COLOR = DEFAULT_STICKY_NOTE_COLOR
+DEFAULT_OPACITY = 0.5  # 하이라이트/sticky note 공통 기본 투명도 (50%)
 
 
 @dataclass
 class AnnotationTarget:
-    """[Flow: Step 1 (하이라이트/callout 대상 데이터 정의) -> Step 2 (선택적 검색 결과 rects 보관)]
+    """[Flow: Step 1 (하이라이트/sticky note 대상 데이터 정의) -> Step 2 (선택적 검색 결과 rects 보관)]
 
-    하이라이트/callout 공용 대상 하나.
+    하이라이트/sticky note 공용 대상 하나.
     단일 bbox_pdf만 있으면 단순 bbox로 주석을 생성하고,
     search_rects_pdf가 추가되면 한 주석의 segmentRects를 여러 rect로 구성할 수 있다.
     """
@@ -63,10 +69,11 @@ class AnnotationTarget:
     bbox_pdf: tuple[float, float, float, float]  # (x0, y0, x1, y1), 시각적(렌더링된 이미지 기준) PDF 포인트 좌표
     comment: str
     color: tuple[float, float, float] = DEFAULT_HIGHLIGHT_COLOR
-    # callout 리더 라인/텍스트 박스 테두리 색. None이면 DEFAULT_CALLOUT_COLOR(보라) 사용.
+    # sticky note 아이콘 색. None이면 DEFAULT_STICKY_NOTE_COLOR(보라) 사용.
     # 사용자가 명시적으로 색을 요청한 경우에만 이 필드를 설정한다.
+    # (레거시 이름 callout_color는 기존 호출 코드 호환성을 위해 유지)
     callout_color: tuple[float, float, float] | None = None
-    # 하이라이트/callout 투명도 (0.0=완전 투명, 1.0=완전 불투명).
+    # 하이라이트/sticky note 투명도 (0.0=완전 투명, 1.0=완전 불투명).
     # None이면 DEFAULT_OPACITY(0.5) 사용. 사용자가 투명도를 요청한 경우에만 설정.
     opacity: float | None = None
     # 텍스트 레이어 검색 결과로 얻은 여러 rect. 한 텍스트가 페이지에서 여러 줄/영역에 걸쳐 있을 때 사용.
@@ -77,7 +84,8 @@ class AnnotationTarget:
 
 # --- EmbedPDF PdfAnnotationSubtype enum 값 (숫자 상수) ---
 HIGHLIGHT_TYPE = 9  # PdfAnnotationSubtype.HIGHLIGHT
-FREETEXT_TYPE = 3  # PdfAnnotationSubtype.FREETEXT
+FREETEXT_TYPE = 3  # PdfAnnotationSubtype.FREETEXT (레거시 callout)
+TEXT_TYPE = 1  # PdfAnnotationSubtype.TEXT (sticky note / 메모 아이콘)
 HELVETICA_FONT = 4  # PdfStandardFont.Helvetica
 LEFT_ALIGN = 0  # PdfTextAlignment.Left
 TOP_ALIGN = 0  # PdfVerticalAlignment.Top
@@ -106,9 +114,9 @@ def build_embedpdf_annotations(
     page_elements_bboxes: dict[int, list[tuple[float, float, float, float]]] | None = None,
 ) -> list[dict]:
     """[Flow: Step 1 (AnnotationTarget 목록과 PDF 수신) -> Step 2 (페이지별 시각적 크기 캡처)
-          -> Step 3 (callout 텍스트 박스를 기존 요소를 피해 빈 영역에 배치)
+          -> Step 3 (sticky note 아이콘을 대상 텍스트 시작 위치에 겹쳐 배치)
           -> Step 4 (EmbedPDF AnnotationTransferItem[] 배열 생성)
-          -> Step 5 (하이라이트는 HIGHLIGHT, 코멘트는 FreeTextCallout로 변환)]
+          -> Step 5 (하이라이트는 HIGHLIGHT, 코멘트는 TEXT(sticky note)로 변환)]
 
     백엔드에서 생성한 주석을 EmbedPDF의 importAnnotations()로 바로 로드할 수 있는
     AnnotationTransferItem[] 형식으로 변환한다. 이 형식은 PDF 좌표계를 그대로 사용하며
@@ -119,13 +127,13 @@ def build_embedpdf_annotations(
         targets: AnnotationTarget 목록
         mode: "highlight" | "margin_note" | "both"
             - "highlight": 하이라이트만
-            - "margin_note": callout(텍스트 박스 + 화살표)만
-            - "both": 하이라이트 + callout
+            - "margin_note": sticky note(메모 아이콘 + 코멘트 팝업)만
+            - "both": 하이라이트 + sticky note
         annotation_index: 병렬 AI 주석 run을 구분하는 고유 인덱스. 주석 ID에 포함되어
             병합/재시도/삭제 시 run 단위 식별이 가능하다.
         page_elements_bboxes: 페이지별 기존 텍스트 요소 bbox 목록 (1-based page_no →
-            [(x0, y0, x1, y1), ...] in PDF user-space). callout 배치 시 충돌 회피에 사용.
-            None이면 충돌 검사 없이 모서리에 배치.
+            [(x0, y0, x1, y1), ...] in PDF user-space). sticky note는 대상 텍스트 위치에
+            직접 배치하므로 충돌 회피에 사용하지 않는다 (레거시 callout 호환성 인자).
 
     Returns:
         EmbedPDF importAnnotations()가 기대하는 AnnotationTransferItem[] 형식
@@ -135,7 +143,7 @@ def build_embedpdf_annotations(
 
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     enable_highlight = mode in ("highlight", "both")
-    needs_callout = mode in ("margin_note", "both")
+    needs_sticky_note = mode in ("margin_note", "both")
 
     # 페이지별 시각적 크기 캡처 (주석 좌표 변환 기준)
     page_visual_rects: dict[int, fitz.Rect] = {}
@@ -159,9 +167,6 @@ def build_embedpdf_annotations(
         page_height = visual.height
         page_x0 = visual.x0
         page_y0 = visual.y0
-        element_bboxes = (page_elements_bboxes or {}).get(page_no, [])
-        # 같은 페이지에서 이미 배치한 callout 텍스트 박스 — 후속 callout이 겹치지 않도록 장애물에 추가
-        placed_callout_bboxes: list[tuple[float, float, float, float]] = []
 
         for idx, t in enumerate(page_targets):
             base_id = f"backend-{annotation_index}-{page_no}-{idx}"
@@ -196,42 +201,89 @@ def build_embedpdf_annotations(
                     highlight_annotation["annotation"]["custom"] = {"searchText": t.search_text}
                 annotations.append(highlight_annotation)
 
-            # callout 주석 생성 (needs_callout일 때)
-            if needs_callout:
-                # 기존 요소 + 같은 페이지에서 이미 배치한 callout 박스를 모두 장애물로 포함
-                obstacles = element_bboxes + placed_callout_bboxes
-                callout_anno = _build_callout_annotation(
+            # sticky note 주석 생성 (needs_sticky_note일 때)
+            # 대상 텍스트 시작 위치(x0, y0)에 고정 크기 아이콘을 겹쳐 배치한다.
+            # callout과 달리 빈 영역 탐색/충돌 회피를 하지 않는다 — 아이콘이 텍스트 위에
+            # 겹쳐 보이는 것이 sticky note의 자연스러운 동작이다.
+            if needs_sticky_note:
+                sticky_anno = _build_sticky_note_annotation(
                     target_bbox=(x0, y0, x1, y1),
                     comment=t.comment,
-                    color=t.callout_color if t.callout_color is not None else DEFAULT_CALLOUT_COLOR,
+                    color=t.callout_color if t.callout_color is not None else DEFAULT_STICKY_NOTE_COLOR,
                     opacity=t.opacity if t.opacity is not None else DEFAULT_OPACITY,
-                    element_bboxes=obstacles,
                     page_width=page_width,
                     page_height=page_height,
                     page_x0=page_x0,
                     page_y0=page_y0,
-                    base_id=f"{base_id}-callout",
+                    base_id=f"{base_id}-note",
                     page_index=page_no - 1,
+                    search_text=t.search_text,
                 )
-                if callout_anno:
-                    annotations.append(callout_anno)
-                    # 배치된 텍스트 박스 영역(overall rect가 아닌 실제 텍스트 박스)을 장애물에 추가
-                    ann = callout_anno["annotation"]
-                    rect_dev = ann["rect"]
-                    rd = ann["rectangleDifferences"]
-                    tb_dev = {
-                        "origin": {
-                            "x": rect_dev["origin"]["x"] + rd["left"],
-                            "y": rect_dev["origin"]["y"] + rd["top"],
-                        },
-                        "size": {
-                            "width": rect_dev["size"]["width"] - rd["left"] - rd["right"],
-                            "height": rect_dev["size"]["height"] - rd["top"] - rd["bottom"],
-                        },
-                    }
-                    placed_callout_bboxes.append(_device_rect_to_pdf(tb_dev, page_height, page_x0, page_y0))
+                if sticky_anno:
+                    annotations.append(sticky_anno)
 
     return annotations
+
+
+def _build_sticky_note_annotation(
+    target_bbox: tuple[float, float, float, float],
+    comment: str,
+    color: tuple[float, float, float],
+    opacity: float,
+    page_width: float,
+    page_height: float,
+    page_x0: float,
+    page_y0: float,
+    base_id: str,
+    page_index: int,
+    search_text: str | None = None,
+) -> dict | None:
+    """[Flow: Step 1 (대상 텍스트 bbox를 PDF user-space로 수신)
+          -> Step 2 (대상 텍스트 시작 위치에 고정 크기 아이콘 rect 계산)
+          -> Step 3 (device-space로 변환) -> Step 4 (TEXT sticky note AnnotationTransferItem 반환)]
+
+    sticky note(메모 아이콘)를 대상 텍스트의 시작 위치(x0, y0)에 고정 크기로 겹쳐 배치한다.
+    embedpdf의 xw 렌더러가 rect를 채우는 메모 아이콘을 그리며, 클릭 시 contents 팝업이 열린다.
+    callout과 달리 빈 영역 탐색/충돌 회피를 하지 않는다 — 아이콘이 텍스트 위에 겹치는 것이
+    sticky note의 자연스러운 동작이다.
+
+    모든 입력 좌표는 PDF user-space(원점 좌하단, y↑)이며, 반환 rect는 device-space(원점 좌상단, y↓)이다.
+    CropBox/MediaBox가 페이지 원점에서 어긋난 경우 page_x0, page_y0를 반영한다.
+    """
+    x0, y0, _x1, _y1 = target_bbox
+    icon = STICKY_NOTE_ICON_SIZE_PT
+
+    # 대상 텍스트 시작 위치에 고정 크기 아이콘 배치 (PDF user-space)
+    # y0는 텍스트 상단, y0 - icon이 아이콘 상단이 되도록 위로 확장.
+    # 페이지 상단을 벗어나면 y0 아래로 배치해 아이콘이 페이지 내에 있도록 보정.
+    icon_x0 = x0
+    icon_y1 = y0 + icon  # 텍스트 상단에서 아이콘 상단으로
+    icon_y0 = y0
+    if icon_y1 > page_y0 + page_height:
+        # 페이지 상단을 벗어나면 아이콘을 텍스트 아래로 배치
+        icon_y0 = y0 - icon
+        icon_y1 = y0
+    icon_x1 = icon_x0 + icon
+
+    rect_dev = _rect_to_embedpdf_rect(
+        icon_x0, icon_y0, icon_x1, icon_y1,
+        page_height, page_width, page_x0, page_y0,
+    )
+    stroke_hex = _rgb_to_hex(color)
+
+    annotation: dict = {
+        "id": base_id,
+        "type": TEXT_TYPE,  # embedpdf TEXT (sticky note)
+        "pageIndex": page_index,
+        "rect": rect_dev,
+        "strokeColor": stroke_hex,
+        "color": stroke_hex,
+        "opacity": opacity,
+        "contents": comment,
+    }
+    if search_text:
+        annotation["custom"] = {"searchText": search_text}
+    return {"annotation": annotation}
 
 
 def _build_callout_annotation(

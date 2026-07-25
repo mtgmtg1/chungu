@@ -1207,10 +1207,10 @@ def run(
 
             # [Flow: 주석 표시 — embedpdf JSON 오버레이 방식]
             # 깨끗한 보정 이미지 PDF를 표시 기반으로 두고 embedpdf JSON(AnnotationTransferItem[])을
-            # 프론트에서 오버레이한다. 하이라이트는 HIGHLIGHT, 코멘트는 FreeTextCallout(텍스트 박스 +
-            # 화살표 리더 라인)로 생성한다. callout 텍스트 박스는 기존 요소를 피해 페이지 내 빈
-            # 모서리/외곽 여백에 배치된다. 단일 진실원이자 사용자 편집 가능. flatten 다운로드는
-            # 프론트의 embedpdf export plugin(saveAsCopy)이 처리한다.
+            # 프론트에서 오버레이한다. 하이라이트는 HIGHLIGHT, 코멘트는 TEXT(sticky note — 메모 아이콘 +
+            # 클릭 시 팝업)로 생성한다. sticky note 아이콘은 대상 텍스트 시작 위치에 직접 겹쳐 배치된다.
+            # 단일 진실원이자 사용자 편집 가능. flatten 다운로드는 프론트의 embedpdf export
+            # plugin(saveAsCopy)이 처리한다.
             # job당 searchable PDF는 job.searchable_pdf_storage_path를 사용하며,
             # annotations.json에만 주석을 누적한다.
             shared_storage_path = job.searchable_pdf_storage_path
@@ -1221,10 +1221,10 @@ def run(
                 job.searchable_pdf_storage_path = shared_storage_path
             display_name = _searchable_display_name(job)
 
-            # [Flow: callout 배치용 페이지 요소 bbox — 기존 텍스트 요소와 하이라이트 영역을 피해 텍스트 박스 배치]
+            # [Flow: 페이지 요소 bbox 수집 — 레거시 callout 호환성 인자.
+            # sticky note는 대상 텍스트 위치에 직접 배치하므로 충돌 회피에 사용하지 않지만,
+            # build_embedpdf_annotations 시그니처 호환성을 위해 그대로 수집해 전달한다.]
             # elements의 bbox_px를 PDF user-space 좌표로 변환해 페이지별로 그룹화한다.
-            # searchable PDF 경로에서는 elements가 비어 있지만, targets의 bbox_pdf를 추가해
-            # callout이 하이라이트 영역과 겹치지 않도록 한다.
             page_elements_bboxes: dict[int, list[tuple[float, float, float, float]]] = {}
             for el in elements:
                 # paddleocr_service에서 bbox를 PDF user-space로 정규화해서 반환하므로
@@ -1376,15 +1376,20 @@ def run_edit(
                 continue
             atype = str(ann.get("type", "")).lower()
             intent = str(ann.get("intent", "")).lower()
-            is_callout = atype in ("freetext", "freetextcallout") or intent == "freetextcallout"
+            # sticky note(TEXT=1)와 레거시 callout(FREETEXT/FreeTextCallout) 모두 코멘트 주석으로 취급.
+            # 신규 주석은 sticky note로 생성되지만, 기존 callout 주석도 편집할 수 있어야 한다.
+            is_note = (
+                atype in ("freetext", "freetextcallout", "text", "sticky")
+                or intent == "freetextcallout"
+            )
             comment = ann.get("contents", "") or ""
             color = ann.get("color", "") or ann.get("strokeColor", "") or ""
-            # callout 주석은 comment를 원본 텍스트로 전달해 LLM이 재작성 가능.
+            # 코멘트 주석(sticky note/callout)은 comment를 원본 텍스트로 전달해 LLM이 재작성 가능.
             # 하이라이트 주석은 원본 텍스트 추출을 생략하고 comment만 전달 (색상 변경 중심).
-            text = comment if is_callout else ""
+            text = comment if is_note else ""
             editable.append({
                 "id": aid,
-                "type": "callout" if is_callout else "highlight",
+                "type": "sticky" if is_note else "highlight",
                 "color": color,
                 "comment": comment,
                 "text": text,
@@ -1431,7 +1436,7 @@ def run_edit(
             if new_color_name in color_name_to_hex:
                 new_hex = color_name_to_hex[new_color_name]
                 ann["color"] = new_hex
-                # callout 주석은 strokeColor(테두리/리더 라인 색)도 함께 갱신
+                # sticky note/callout 주석은 strokeColor(아이콘/테두리 색)도 함께 갱신
                 if "strokeColor" in ann:
                     ann["strokeColor"] = new_hex
             new_comment = edit.get("comment")

@@ -9,6 +9,7 @@ import PdfViewer from "./PdfViewer.jsx";
 import MediaPlayer from "./MediaPlayer.jsx";
 import { api } from "../api.js";
 import { useIsMobile } from "../hooks/useMediaQuery.js";
+import { computeRemovedAnnotationIds } from "../utils/annotationDiffUtils.js";
 
 function SourceIcon({ type }) {
   if (type === "pdf") return <FileText size={16} className="text-error flex-shrink-0" />;
@@ -607,8 +608,10 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
 
   /**
    * [Flow: Step 1 (PdfViewer ref로 exportAnnotations 호출) -> Step 2 (JSON 파싱)
-   *       -> Step 3 (상위 onSaveAnnotations 콜백에 전달)]
+   *       -> Step 3 (이전 로드본과 비교해 삭제된 ID 추출) -> Step 4 (상위 onSaveAnnotations 콜백에 annotations + removals 전달)]
    * 주석 변경 이벤트 발생 시 1초 debounce 후 자동 저장한다.
+   * 백엔드 save_user_annotations 가 ID 기반 누적 병합을 사용하므로,
+   * 삭제된 주석을 명시적으로 removals 로 보내야 영구 삭제된다.
    */
   const handleSaveAnnotations = useCallback(async () => {
     if (!pdfViewerRef.current || !onSaveAnnotations) return;
@@ -620,11 +623,13 @@ const SourcePanel = forwardRef(function SourcePanel(props, ref) {
     if (!jsonString) return;
     try {
       const annotations = JSON.parse(jsonString);
-      onSaveAnnotations(annotations);
+      // [Flow: selectedAnnotationsJson(이전 로드본) 에서 사라진 ID = 사용자가 삭제한 주석]
+      const removals = computeRemovedAnnotationIds(selectedAnnotationsJson, annotations);
+      onSaveAnnotations(annotations, removals);
     } catch {
       // parse error 무시
     }
-  }, [onSaveAnnotations]);
+  }, [onSaveAnnotations, selectedAnnotationsJson]);
 
   /**
    * [Flow: Step 1 (주석 변경 이벤트 수신) -> Step 2 (1초 debounce 후 자동 저장 예약)]

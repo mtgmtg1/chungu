@@ -21,8 +21,18 @@ const COLOR_PALETTE: Record<string, [number, number, number]> = {
 };
 
 const DEFAULT_HIGHLIGHT_COLOR: [number, number, number] = [1.0, 0.92, 0.3];
-const DEFAULT_CALLOUT_COLOR: [number, number, number] = [0.65, 0.35, 0.95];
+// sticky note 기본 색. 기존 callout 기본색(보라)을 유지해 에이전트 동작 일관성을 보존한다.
+// 사용자가 명시적으로 색을 요청하지 않으면 이 색으로 sticky note 아이콘이 그려진다.
+const DEFAULT_STICKY_NOTE_COLOR: [number, number, number] = [0.65, 0.35, 0.95];
 const DEFAULT_OPACITY = 0.5;
+
+// EmbedPDF PdfAnnotationSubtype enum 값 (숫자 상수)
+// TEXT = 1 은 sticky note(메모 아이콘 + 팝업 텍스트) — embedpdf의 xw 렌더러가 아이콘을 그림.
+const STICKY_NOTE_TYPE = 1;
+// sticky note 아이콘 고정 크기(포인트). 대상 텍스트 시작 위치에 겹쳐 배치할 때 사용.
+// embedpdf xw 렌더러는 rect를 채우는 메모 아이콘을 그리므로, 너무 크면 텍스트를 가리고
+// 너무 작으면 클릭하기 어렵다. 18pt는 일반적인 PDF 뷰어의 sticky note 아이콘과 유사한 크기.
+const STICKY_NOTE_ICON_SIZE_PT = 18;
 
 /**
  * [Flow: Step 1 (RGB[0-1] 값을 0-255로 변환) -> Step 2 (16진수 문자열로 변환) -> Step 3 (hex 조합)]
@@ -85,10 +95,13 @@ interface AnnotationTarget {
   opacity: number;
 }
 
+// type 필드는 주석 렌더링 분기를 결정한다.
+// - 'highlight': 형광펜 하이라이트(type=9)
+// - 'sticky': sticky note 메모 아이콘(type=1) — 대상 텍스트 위치에 아이콘을 겹쳐 배치
 interface PendingAnnotation {
   id: string;
   target: AnnotationTarget;
-  type: 'highlight' | 'callout';
+  type: 'highlight' | 'sticky';
 }
 
 interface CachedElements {
@@ -202,7 +215,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
 
   return {
     search_text: tool({
-      description: 'Search the PDF text layer for keywords or regular expressions. Returns the matched text and page number for verification. Do NOT use coordinates to build annotations manually; use add_text_highlight or add_text_callout with the matched text instead.',
+      description: 'Search the PDF text layer for keywords or regular expressions. Returns the matched text and page number for verification. Do NOT use coordinates to build annotations manually; use add_text_highlight or add_sticky_note with the matched text instead.',
       inputSchema: z.object({
         query: z.string().describe('Search keyword or regular expression'),
         page_no: z.number().optional().describe('1-based page number. Searches all pages if omitted'),
@@ -219,7 +232,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     get_elements: tool({
-      description: 'Return the list of page elements extracted from OCR or the text layer for text inspection only. Coordinates are intentionally omitted; do NOT use them to build annotations. To highlight/callout text, use add_text_highlight or add_text_callout with the exact text. In large PDFs or image-based PDFs, omitting page_no may require OCR of the entire document, so it can be very slow. Always specify page_no when you only need elements from a specific page.',
+      description: 'Return the list of page elements extracted from OCR or the text layer for text inspection only. Coordinates are intentionally omitted; do NOT use them to build annotations. To highlight text or add sticky notes, use add_text_highlight or add_sticky_note with the exact text. In large PDFs or image-based PDFs, omitting page_no may require OCR of the entire document, so it can be very slow. Always specify page_no when you only need elements from a specific page.',
       inputSchema: z.object({
         page_no: z.number().optional().describe('1-based page number. Omitting it will OCR all pages (slow)'),
       }),
@@ -249,7 +262,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
         '- "extracted_files": list of extracted files (markdown/image/PDF paths, etc.)\n' +
         '- "annotated_pdf_files": annotated PDF file metadata list\n' +
         '- "job_meta": job status summary (status, total_pages, file_type, has_pdf, etc.)\n' +
-        'To add new highlights/callouts, use add_text_highlight/add_text_callout with exact text instead.',
+        'To add new highlights/sticky notes, use add_text_highlight/add_sticky_note with exact text instead.',
       inputSchema: z.object({
         kind: z.enum(['annotations', 'ocr_layout', 'extracted_files', 'annotated_pdf_files', 'job_meta'])
           .describe('Type of result JSON to read'),
@@ -276,7 +289,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     get_annotations: tool({
-      description: 'Return the list of existing AI or user annotations. Coordinate fields (rect, segmentRects, calloutLine, bbox_pdf) are REDACTED from the output to prevent reuse for new annotations. Use only to list ids, comments, and colors for editing or deleting existing annotations (update_annotation/remove_annotation). For new highlights/callouts use add_text_highlight/add_text_callout with exact text.',
+      description: 'Return the list of existing AI or user annotations. Coordinate fields (rect, segmentRects, calloutLine, bbox_pdf) are REDACTED from the output to prevent reuse for new annotations. Use only to list ids, comments, and colors for editing or deleting existing annotations (update_annotation/remove_annotation). For new highlights/sticky notes use add_text_highlight/add_sticky_note with exact text.',
       inputSchema: z.object({
         page_no: z.number().optional().describe('1-based page number. Returns all pages if omitted'),
         summary_only: z.boolean().optional().describe('If true, return only summary fields (id/type/page_no/color/comment).'),
@@ -322,7 +335,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     view_page: tool({
-      description: 'Render a specific page of the PDF as an image and analyze it directly with the VLLM vision model. Returns a textual analysis summarizing the page\'s text, layout, tables, and key elements. This output is text-only and does NOT contain coordinates, bounding boxes, or precise positions. Use it only to understand what is on the page, then create annotations with add_text_highlight/add_text_callout using exact text strings.',
+      description: 'Render a specific page of the PDF as an image and analyze it directly with the VLLM vision model. Returns a textual analysis summarizing the page\'s text, layout, tables, and key elements. This output is text-only and does NOT contain coordinates, bounding boxes, or precise positions. Use it only to understand what is on the page, then create annotations with add_text_highlight/add_sticky_note using exact text strings.',
       inputSchema: z.object({
         page_no: z.number().describe('1-based page number'),
         dpi: z.number().min(150).max(300).optional().describe('Rendering DPI (150-300; if omitted, auto-estimated from the page\'s image resolution)'),
@@ -394,20 +407,39 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     add_text_highlight: tool({
-      description: 'Add one or more highlight annotations. PREFERRED: Use `texts` (string array) + shared page_no/comment/color/opacity when all items share the same settings — this saves tokens. Use `items` only when each item needs DIFFERENT settings. Example: `{ texts: ["A", "B", "C"], page_no: 1, color: "yellow" }` instead of 3 separate items.',
+      description: [
+        'Add one or more highlight annotations on exact-matched PDF text.',
+        'The backend searches the PDF text layer and resolves bounding boxes automatically — NEVER pass rect/bbox.',
+        '',
+        'Pick EXACTLY ONE input style:',
+        '  Style A (PREFERRED, batch with shared settings):',
+        '    { texts: ["A", "B", "C"], page_no: 1, color: "yellow", comment: "" }',
+        '  Style B (single text):',
+        '    { text: "A", page_no: 1, color: "yellow" }',
+        '  Style C (each item needs DIFFERENT settings — only use when necessary):',
+        '    { items: [ { text: "A", page_no: 1, color: "red" }, { text: "B", page_no: 2, color: "blue" } ] }',
+        '',
+        'TYPE RULES (violation causes tool call failure):',
+        '  - page_no is ALWAYS an integer (1-based). Never a string like "1".',
+        '  - texts is ALWAYS a string array. A single string goes in `text`, not `texts`.',
+        '  - color is one of: red | yellow | green | blue | orange | purple | pink | gray',
+        '  - opacity is a number between 0.0 and 1.0',
+        '',
+        'After all add_text_highlight calls, call apply_annotations once to persist.',
+      ].join('\n'),
       inputSchema: z.object({
-        texts: z.array(z.string()).optional().describe('PREFERRED for batch: Array of text strings to highlight with shared settings below'),
+        texts: z.array(z.string()).optional().describe('Style A: string array of texts to highlight with shared settings below'),
         items: z.array(
           z.object({
             text: z.string().describe('Exact text string to highlight'),
-            page_no: z.number().optional().describe('1-based page number'),
+            page_no: z.number().optional().describe('1-based page number (integer, not string)'),
             comment: z.string().optional().describe('Annotation comment'),
             color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']).optional().describe('Color name'),
             opacity: z.number().min(0).max(1).optional().describe('Highlight opacity (0.0~1.0)'),
           })
-        ).optional().describe('List of highlight items when each needs DIFFERENT settings'),
-        text: z.union([z.string(), z.array(z.string())]).optional().describe('Exact text or array of text strings to highlight'),
-        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number (shared when using texts)'),
+        ).optional().describe('Style C: list of highlight items when each needs DIFFERENT settings'),
+        text: z.union([z.string(), z.array(z.string())]).optional().describe('Style B: exact text or array of text strings to highlight'),
+        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number — INTEGER ONLY, never a string (shared when using texts)'),
         comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment (shared when using texts)'),
         color: z.union([
           z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),
@@ -472,32 +504,52 @@ export function buildAnnotationTools(context: AnnotationContext) {
       },
     }),
 
-    add_text_callout: tool({
-      description: 'Add one or more callout (text box + leader arrow) annotations. PREFERRED: Use `texts` (string array) + shared page_no/comment/color/opacity when all items share the same settings — this saves tokens. Use `items` only when each item needs DIFFERENT settings.',
+    add_sticky_note: tool({
+      description: [
+        'Add one or more sticky note (memo icon at the target text location) annotations on exact-matched PDF text.',
+        'The sticky note icon is placed on top of the matched text and opens a popup with the comment when clicked.',
+        'The backend searches the PDF text layer and resolves bounding boxes automatically — NEVER pass rect/bbox.',
+        '',
+        'Pick EXACTLY ONE input style:',
+        '  Style A (PREFERRED, batch with shared settings):',
+        '    { texts: ["A", "B"], page_no: 1, color: "purple", comment: "당사자" }',
+        '  Style B (single text):',
+        '    { text: "A", page_no: 1, color: "purple", comment: "메모" }',
+        '  Style C (each item needs DIFFERENT settings — only use when necessary):',
+        '    { items: [ { text: "A", page_no: 1, color: "red", comment: "x" }, { text: "B", page_no: 2, color: "blue", comment: "y" } ] }',
+        '',
+        'TYPE RULES (violation causes tool call failure):',
+        '  - page_no is ALWAYS an integer (1-based). Never a string like "1".',
+        '  - texts is ALWAYS a string array. A single string goes in `text`, not `texts`.',
+        '  - color is one of: red | yellow | green | blue | orange | purple | pink | gray',
+        '  - opacity is a number between 0.0 and 1.0',
+        '',
+        'After all add_sticky_note calls, call apply_annotations once to persist.',
+      ].join('\n'),
       inputSchema: z.object({
-        texts: z.array(z.string()).optional().describe('PREFERRED for batch: Array of text strings with shared settings below'),
+        texts: z.array(z.string()).optional().describe('Style A: string array of texts with shared settings below'),
         items: z.array(
           z.object({
-            text: z.string().describe('Exact text string to point callout to'),
-            page_no: z.number().optional().describe('1-based page number'),
-            comment: z.string().optional().describe('Annotation comment'),
+            text: z.string().describe('Exact text string to place the sticky note on'),
+            page_no: z.number().optional().describe('1-based page number (integer, not string)'),
+            comment: z.string().optional().describe('Annotation comment shown in the sticky note popup'),
             color: z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']).optional().describe('Color name'),
-            opacity: z.number().min(0).max(1).optional().describe('Callout opacity (0.0~1.0)'),
+            opacity: z.number().min(0).max(1).optional().describe('Sticky note opacity (0.0~1.0)'),
           })
-        ).optional().describe('List of callout items when each needs DIFFERENT settings'),
-        text: z.union([z.string(), z.array(z.string())]).optional().describe('Exact text or array of text strings to point callout to'),
-        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number (shared when using texts)'),
-        comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment (shared when using texts)'),
+        ).optional().describe('Style C: list of sticky note items when each needs DIFFERENT settings'),
+        text: z.union([z.string(), z.array(z.string())]).optional().describe('Style B: exact text or array of text strings to place the sticky note on'),
+        page_no: z.union([z.number(), z.array(z.number())]).optional().describe('1-based page number — INTEGER ONLY, never a string (shared when using texts)'),
+        comment: z.union([z.string(), z.array(z.string())]).optional().describe('Annotation comment shown in the sticky note popup (shared when using texts)'),
         color: z.union([
           z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray']),
           z.array(z.enum(['red', 'yellow', 'green', 'blue', 'orange', 'purple', 'pink', 'gray'])),
         ]).optional().describe('Color name (shared when using texts)'),
-        opacity: z.union([z.number(), z.array(z.number())]).optional().describe('Callout opacity (shared when using texts)'),
+        opacity: z.union([z.number(), z.array(z.number())]).optional().describe('Sticky note opacity (shared when using texts)'),
       }),
       execute: async (input) => {
         const itemsToProcess = parseBatchInputs(input as any);
         if (itemsToProcess.length === 0) {
-          return { error: 'No valid text provided for add_text_callout. Pass text or items array.' };
+          return { error: 'No valid text provided for add_sticky_note. Pass text or items array.' };
         }
         const results = [];
         for (const item of itemsToProcess) {
@@ -506,7 +558,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
             (m) => Array.isArray((m as any).bbox_pdf) && (m as any).bbox_pdf.length === 4
           );
           if (!first) {
-            results.push({ text: item.text, success: false, error: `Text not found for callout: '${item.text}'` });
+            results.push({ text: item.text, success: false, error: `Text not found for sticky note: '${item.text}'` });
             continue;
           }
           const bbox = (first as any).bbox_pdf as [number, number, number, number];
@@ -517,11 +569,11 @@ export function buildAnnotationTools(context: AnnotationContext) {
             bbox_pdf: bbox,
             search_text: item.text,
             comment: item.comment || '',
-            color: COLOR_PALETTE[colorKey] || DEFAULT_CALLOUT_COLOR,
+            color: COLOR_PALETTE[colorKey] || DEFAULT_STICKY_NOTE_COLOR,
             opacity: item.opacity ?? DEFAULT_OPACITY,
           };
           const id = `ai-${Date.now()}-${pending.length}`;
-          pending.push({ id, target, type: 'callout' });
+          pending.push({ id, target, type: 'sticky' });
           results.push({ ok: true, id, text: item.text, page_no: pageNo });
         }
         return {
@@ -570,7 +622,7 @@ export function buildAnnotationTools(context: AnnotationContext) {
     }),
 
     apply_annotations: tool({
-      description: 'Save the highlights/callouts added so far to Storage and reflect them in the viewer. Even if saving fails, the actual cause is returned in the result.',
+      description: 'Save the highlights/sticky notes added so far to Storage and reflect them in the viewer. Even if saving fails, the actual cause is returned in the result.',
       inputSchema: z.object({}),
       execute: async () => {
         // [Flow: Step 1 (대기 중인 변경 확인) -> Step 2 (주석 JSON 생성)
@@ -678,55 +730,27 @@ function _buildAnnotationItem(p: PendingAnnotation): Record<string, unknown> {
     };
   }
 
-  // callout (FreeTextCallout)
-  // 대상 텍스트 영역: [x0, y0, x1, y1]
-  // 팁 위치 (대상 텍스트 좌측/상단): tip = [x0, y0 + height / 2]
-  const tbWidth = Math.max(width, 120);
-  const tbHeight = Math.max(height + 16, 32);
-  const boxX0 = Math.max(10, x0 - 150);
-  const boxY0 = y0;
-
-  // 3점 calloutLine: [arrowTip, knee, connectionPoint]
-  const tipPoint = { x: x0, y: y0 + height / 2 };
-  const kneePoint = { x: boxX0 + tbWidth + 15, y: y0 + height / 2 };
-  const boxConnPoint = { x: boxX0 + tbWidth, y: boxY0 + tbHeight / 2 };
-  const calloutLine = [tipPoint, kneePoint, boxConnPoint];
-
-  // overallRect (텍스트 박스 + calloutLine 을 포함하는 AABB)
-  const minX = Math.min(x0, boxX0);
-  const minY = Math.min(y0, boxY0);
-  const maxX = Math.max(x1, boxX0 + tbWidth);
-  const maxY = Math.max(y1, boxY0 + tbHeight);
-  const overallRect = { origin: { x: minX, y: minY }, size: { width: maxX - minX, height: maxY - minY } };
-
-  // rectangleDifferences: overallRect 내에서 텍스트 박스 위치와의 차이 (inset) [left, top, right, bottom]
-  const rd = [
-    boxX0 - minX,
-    boxY0 - minY,
-    maxX - (boxX0 + tbWidth),
-    maxY - (boxY0 + tbHeight),
-  ];
+  // sticky note (embedpdf T.TEXT = 1)
+  // 대상 텍스트 영역: [x0, y0, x1, y1] (device-space, y=0 상단)
+  // sticky note 아이콘을 대상 텍스트의 시작 위치(x0, y0)에 고정 크기로 겹쳐 배치한다.
+  // embedpdf의 xw 렌더러가 rect를 채우는 메모 아이콘을 그리며, 클릭 시 contents 팝업이 열린다.
+  const iconSize = STICKY_NOTE_ICON_SIZE_PT;
+  const stickyRect = {
+    origin: { x: x0, y: y0 },
+    size: { width: iconSize, height: iconSize },
+  };
 
   return {
     annotation: {
       id: p.id,
-      type: 3, // embedpdf FREETEXT
-      intent: 'FreeTextCallout',
+      type: STICKY_NOTE_TYPE, // embedpdf TEXT (sticky note)
       pageIndex: p.target.page_no - 1,
-      rect: overallRect,
-      rectangleDifferences: rd,
-      calloutLine,
-      lineEnding: 4, // OpenArrow
+      rect: stickyRect,
       strokeColor: hexColor,
-      strokeWidth: 1.5,
-      color: '#FFFFFF',
+      color: hexColor,
       opacity: p.target.opacity,
       contents: p.target.comment,
-      fontFamily: 4, // PdfStandardFont.Helvetica
-      fontSize: 9,
-      fontColor: '#1A1A1A',
-      textAlign: 0, // Left
-      verticalAlign: 0, // Top
+      custom: p.target.search_text ? { searchText: p.target.search_text } : undefined,
     },
   };
 

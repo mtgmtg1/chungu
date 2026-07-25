@@ -2065,5 +2065,11 @@
     "tocTitle": "목차",
     "tocEmpty": "목차가 없습니다",
     "tocToggle": "목차 토글"
+  },
+  "annotation": {
+    "viewComment": "코멘트 보기",
+    "comment": "코멘트",
+    "close": "닫기",
+    "emptyComment": "코멘트가 없습니다"
   }
 }

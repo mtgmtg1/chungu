@@ -952,5 +952,11 @@
     "tocTitle": "目次",
     "tocEmpty": "見出しがありません",
     "tocToggle": "目次を切り替え"
+  },
+  "annotation": {
+    "viewComment": "コメントを見る",
+    "comment": "コメント",
+    "close": "閉じる",
+    "emptyComment": "コメントがありません"
   }
 }

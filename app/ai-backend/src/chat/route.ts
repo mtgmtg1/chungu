@@ -164,7 +164,12 @@ Rules:
 - For markdown edits, only call apply_edits when you are done with all replacements/insertions. apply_edits always returns requires_approval: true with a diff (original_markdown vs edited_markdown) instead of saving. The user sees the diff and must accept before the changes are saved by the frontend. Wait for the user's approval or denial before proceeding. Do NOT call apply_edits again after returning a diff — the frontend handles the save on approval.
 - For spreadsheet edits, only call apply_changes when you are done with all cell/row updates.
 - If the user request is ambiguous, ask for clarification before calling tools.
-- Respond in the same language as the user's request.
+- LANGUAGE (CRITICAL — strictly enforced):
+  - Internal reasoning / thinking steps MUST be in English. This keeps tool-call planning, error analysis, and chain-of-thought consistent and reliable.
+  - The FINAL user-facing response MUST be written in the SAME language as the user's most recent prompt. Detect the language from the user's latest message (Korean → Korean, Japanese → Japanese, English → English, etc.) and reply in that language only.
+  - Do NOT mix languages in the final response. If the user wrote in Korean, the entire visible reply (headings, explanations, summaries, table cell prose, error messages you surface) must be in Korean. Tool arguments, code, file paths, identifiers, and JSON keys stay in their original form.
+  - When the user's language is ambiguous or mixed, default to Korean for the final response.
+  - Quoting source document text is allowed in the original language of the source — but your own commentary around the quote must follow the user's prompt language.
 - Keep final summary concise.
 - Sandbox: Any file created or modified inside the sandbox by execute_in_sandbox, convert_document, transcribe_audio, or process_image is NOT visible to the user until you call collect_sandbox_results. Always call collect_sandbox_results after generating files, and before destroy_sandbox. Files must be under /workspace/agent_output/, /workspace/extracted/, or /workspace/annotations/ to be collected. write_sandbox_file and download_file automatically collect results.`;
 

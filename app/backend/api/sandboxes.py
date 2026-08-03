@@ -491,12 +491,18 @@ async def collect_results(
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     collector = _get_collector()
-    # supabase_client 는 별도 import (순환 참조 방지를 위해 지연 import)
+    # [Flow: 서비스 롤 클라이언트 획득 -> 업로드 실행 -> 실패 시 명시적 오류 반환]
+    # 결과 파일은 백엔드가 Storage에 기록해야 하므로 anon 클라이언트가 아닌 서비스 클라이언트를 사용한다.
+    # 클라이언트 생성 실패를 None으로 바꾸면 업로드가 0개인 성공 응답처럼 보이므로 즉시 오류를 반환한다.
     try:
-        from ..core.supabase_client import get_supabase_client
-        supabase = get_supabase_client()
-    except Exception:
-        supabase = None
+        from ..core.supabase_client import get_service_client
+        supabase = get_service_client()
+    except Exception as e:
+        logger.exception("sandbox 결과 파일용 Supabase 서비스 클라이언트 생성 실패")
+        raise HTTPException(
+            status_code=503,
+            detail="Sandbox result storage is temporarily unavailable",
+        ) from e
 
     result = collector.collect_and_upload(
         workspace_path=workspace_path,

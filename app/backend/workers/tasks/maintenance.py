@@ -127,11 +127,13 @@ def cleanup_expired_sandboxes() -> dict:
         collector = ResultCollector()
         workspace_mgr = WorkspaceManager()
 
-        # supabase_client 지연 import (순환 참조 방지)
+        # [Flow: 서비스 롤 클라이언트 획득 -> 만료 sandbox 결과 수집 -> sandbox 종료]
+        # 만료 처리에서도 생성 파일을 잃지 않도록 동일한 서비스 클라이언트를 사용한다.
         try:
-            from ...core.supabase_client import get_supabase_client
-            supabase = get_supabase_client()
+            from ...core.supabase_client import get_service_client
+            supabase = get_service_client()
         except Exception:
+            logger.exception("만료 sandbox 결과 파일용 Supabase 서비스 클라이언트 생성 실패")
             supabase = None
 
         # ========================================

@@ -8,6 +8,23 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 에이전트 샌드박스 결과 파일 수집 실패 수정 — 2026-08-03
+
+- **증상**: 결과 페이지의 AI 에이전트가 샌드박스에서 파일을 생성하거나 외부 파일을 다운로드해도 왼쪽 파일탭에 표시되지 않았고, 사용자가 미리보기/다운로드할 수 없었다.
+- **근본 원인**: `app/backend/api/sandboxes.py`와 만료 샌드박스 정리 태스크가 존재하지 않는 `get_supabase_client()`를 import하고 있었다. 예외를 `supabase = None`으로 조용히 바꾸면서 `ResultCollector`가 Storage 업로드를 건너뛰었고, 따라서 `job.extracted_files`가 갱신되지 않았다.
+- **수정 내용**:
+  - `app/backend/api/sandboxes.py`: 실제 제공되는 `get_service_client()`를 사용하도록 수정. 서비스 클라이언트 생성 실패는 업로드 0개 성공으로 위장하지 않고 HTTP 503으로 명시한다.
+  - `app/backend/workers/tasks/maintenance.py`: 만료된 샌드박스 결과 수집도 `get_service_client()`를 사용하도록 수정하여 자동 정리 시 생성 파일이 유실되지 않게 했다.
+  - 수집 성공 시 기존 파이프라인(`Storage 업로드 → job.extracted_files 추가 → preview 캐시 무효화 → 결과 페이지 재조회 → 왼쪽 파일탭 표시`)을 정상 동작시켰다.
+  - `app/backend/tests/test_api_sandboxes.py`: 수집기가 실제 서비스 클라이언트를 전달받는지 회귀 검증을 추가했다. 기존 FakeCollector 테스트가 잘못된 import를 감지하지 못하던 공백을 보완한다.
+- **검증**: Python 문법 검사 및 `git diff --check` 성공, 프론트엔드 106 tests 통과, Vite build 성공. 백엔드 pytest는 현재 로컬 환경에 `fastapi` 패키지가 없어 실행하지 못했다.
+- **⚠️ 회귀 방지 경고**:
+  1. 샌드박스 결과 업로드는 백엔드 전용 Supabase service-role 클라이언트를 사용해야 한다. 프론트엔드의 anon 클라이언트나 존재하지 않는 `get_supabase_client()`를 사용하지 말 것.
+  2. 업로드 실패를 `supabase=None`으로 바꿔 성공 응답처럼 반환하면 파일이 Storage와 `job.extracted_files` 양쪽에서 사라진다. API 경로에서는 명시적인 오류를 반환해야 한다.
+  3. `ResultCollector`는 Storage 업로드 후에만 `job.extracted_files`를 갱신해야 한다. preview 캐시는 DB 갱신 직후 무효화해야 다음 `source_files` 조회에 새 파일이 포함된다.
+  4. `ResultCollector.scan_workspace()`는 `agent_output`만이 아니라 workspace 전체의 허용 확장자를 스캔하며 `original`, `.git`, `.agent_log`, `node_modules`, 메타데이터 파일은 제외한다. 이 범위를 축소하지 말 것.
+- **핵심 파일**: `app/backend/api/sandboxes.py`, `app/backend/workers/tasks/maintenance.py`, `app/backend/core/sandbox/collector.py`, `app/backend/tests/test_api_sandboxes.py`, `app/backend/api/jobs/_shared.py`, `app/backend/api/jobs/preview.py`.
+
 ### EmbedPDF 주석 삭제 자동저장(removals 전송) — 2026-07-25
 
 - **배경**: EmbedPDF 뷰어에서 주석 생성은 자동 저장되었으나, 삭제는 새로고침 시 부활했다. 백엔드 `save_user_annotations`(`app/backend/api/jobs/annotations.py`)가 ID 기반 **누적 병합(accumulative merge)** 을 사용하기 때문이다 — 전송된 `annotations` 목록에 없는 ID라고 해서 삭제하지 않고, 오직 `removals` 배열에 명시된 ID만 삭제한다. 프론트엔드는 `exportAnnotations()` 결과(삭제된 주석이 빠진 전체 목록)만 보내고 `removals`를 보내지 않아서 삭제가 백엔드에 반영되지 않았다.
@@ -854,7 +871,7 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
   - `manager.py`: SandboxManager — VM 생명주기 (create/execute/status/destroy), containerd CLI 호출, dense_mode 지원, 리소스 제한 (CPU/memory/timeout).
   - `workspace.py`: WorkspaceManager — 결과 파일 준비 (original/extracted/annotations/agent_output 디렉토리), Supabase Storage 다운로드, git init + .gitignore.
   - `communicator.py`: VsockCommunicator — Kata VM 과 AF_VSOCK 통신, HTTP 폴백 지원.
-  - `collector.py`: ResultCollector — agent_output/extracted/annotations 파일 수집, git diff 추출, Supabase Storage 업로드.
+  - `collector.py`: ResultCollector — workspace 전체의 허용 확장자 파일을 스캔하고 입력 원본/메타데이터를 제외한 결과 파일을 Supabase Storage에 업로드. `agent_output` 외의 workspace 경로도 수집 대상이다.
   - `security.py`: 명령어 블랙리스트 (30+ 정규식 패턴: rm -rf /, dd of=/dev/, mkfs, mount, sysctl, insmod, reboot, fork bomb, curl|sh 등), 환경 변수 주입 제거.
 - **Phase 4: FastAPI API + DB 마이그레이션**:
   - `app/backend/api/sandboxes.py`: REST API — POST/GET/DELETE /api/sandboxes, /execute, /files, /files/read, /files/write, /commit, /diff, /collect, /stats (관리자용 통계). 기존 `get_current_user` 인증 재사용, sandbox 소유자 검증.
@@ -882,7 +899,7 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
   - `app/frontend/src/components/UploadWidget.jsx`: 파일/폴더 입력을 `<label>` + `<input ref>` 패턴으로 리팩터링 (버튼 클릭 → 숨겨진 input click 간접 트리거 제거). `jobId`/`onProgress` props 추가로 기존 Job에 파일 추가 모드 지원.
   - `app/frontend/src/api.js`: `initAddFiles`/`confirmAddFiles` 메서드 추가 (기존 Job 파일 추가 — 백엔드 엔드포인트 구현 필요).
 - **Phase 8: 운영 (자동 정리 + 통계)**:
-  - `app/backend/workers/tasks.py`: `cleanup_expired_sandboxes` Celery task — 만료된 sandbox 자동 종료 + 결과 수집 (sandbox_default_timeout 초과 시).
+  - `app/backend/workers/tasks/maintenance.py`: `cleanup_expired_sandboxes` Celery task — 만료된 sandbox 자동 종료 + 결과 수집 (sandbox_default_timeout 초과 시). 결과 수집에는 Supabase service-role 클라이언트를 사용한다.
   - `app/backend/celery_app.py`: beat_schedule에 10분 간격 cleanup-expired-sandboxes 등록.
   - `app/backend/api/sandboxes.py`: `/api/sandboxes/stats` 엔드포인트 — 상태별 카운트, 디스크 사용량, 사용자별 활성 sandbox 수 (관리자용).
 - **인프라 통합**:

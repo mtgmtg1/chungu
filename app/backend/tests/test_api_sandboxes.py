@@ -64,8 +64,12 @@ def mock_db(mock_sandbox, mock_job):
 class FakeCollector:
     """collect_and_upload 호출 시 가짜 수집 결과를 반환하는 Collector mock."""
 
+    received_supabase_client = None
+
     def collect_and_upload(self, workspace_path, job_id, supabase_client=None, since_commit=None, since_timestamp=None):
         """workspace/agent_output/result.csv가 수집된 것처럼 결과를 반환한다."""
+        self.received_supabase_client = supabase_client
+        FakeCollector.received_supabase_client = supabase_client
         return {
             "files": [
                 {
@@ -92,6 +96,11 @@ async def test_collect_results_updates_job_extracted_files_and_invalidates_cache
 
         # [Flow: ResultCollector 싱글톤을 FakeCollector로 교체]
         monkeypatch.setattr("backend.api.sandboxes._get_collector", lambda: FakeCollector())
+        fake_service_client = object()
+        monkeypatch.setattr(
+            "backend.core.supabase_client.get_service_client",
+            lambda: fake_service_client,
+        )
 
         # [Flow: 캐시 무효화 패턴을 기록하기 위해 cache.invalidate_pattern 모킹]
         invalidated_patterns = []
@@ -109,6 +118,7 @@ async def test_collect_results_updates_job_extracted_files_and_invalidates_cache
         assert result["uploaded"] == 1
         assert result["failed"] == 0
         assert result["total_scanned"] == 1
+        assert FakeCollector.received_supabase_client is fake_service_client
 
         # [Flow: job.extracted_files에 수집된 파일이 추가되었는지 검증]
         assert len(mock_job.extracted_files) == 1

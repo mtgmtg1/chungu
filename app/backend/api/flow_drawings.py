@@ -22,6 +22,19 @@ from ..db.session import get_db
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/jobs", tags=["flow-drawings"])
 
+# [Flow: Step 1 (요청 수신) -> Step 2 (FastAPI 스레드풀에서 동기 실행) -> Step 3 (이벤트 루프 비점유)]
+#
+# 이 라우터의 핸들러는 의도적으로 `async def` 가 아니라 `def` 다.
+# FastAPI 는 `def` 핸들러를 스레드풀(anyio, 기본 40스레드)에서 돌리지만,
+# `async def` 핸들러는 이벤트 루프에서 그대로 실행한다. 아래 핸들러는 전부
+# 동기 SQLAlchemy 세션으로 블로킹 I/O 를 하므로, `async def` 로 두면 그 동안
+# 프로세스 전체가 다른 요청을 하나도 처리하지 못한다(uvicorn 워커는 1개다).
+#
+# ⚠️ 여기에 `await` 가 필요한 작업을 추가할 때 함수를 `async def` 로 되돌리지 말 것.
+# 그러면 같은 함수의 동기 DB 호출이 다시 루프를 막는다. `asyncio.to_thread` 로
+# 블로킹 부분을 감싸거나, 비동기 작업을 별도 핸들러로 분리하라.
+
+
 
 class FlowDrawingData(BaseModel):
     """드로잉/주석/노트/엣지 데이터 — paths + text_annotations + note_nodes + custom_edges."""
@@ -32,7 +45,7 @@ class FlowDrawingData(BaseModel):
 
 
 @router.get("/{job_id}/flow-drawings", response_model=None)
-async def get_flow_drawings(
+def get_flow_drawings(
     job_id: str,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -57,7 +70,7 @@ async def get_flow_drawings(
 
 
 @router.put("/{job_id}/flow-drawings", response_model=None)
-async def save_flow_drawings(
+def save_flow_drawings(
     job_id: str,
     data: FlowDrawingData,
     user: CurrentUser = Depends(get_current_user),
@@ -95,7 +108,7 @@ async def save_flow_drawings(
 
 
 @router.delete("/{job_id}/flow-drawings", response_model=None)
-async def delete_flow_drawings(
+def delete_flow_drawings(
     job_id: str,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),

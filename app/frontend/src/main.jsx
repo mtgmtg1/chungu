@@ -1,4 +1,9 @@
-import React from "react";
+// [Flow: Step 1 (전역 Provider 구성) -> Step 2 (라우트별 lazy 청크 선언) -> Step 3 (Suspense 경계 아래 라우팅)]
+//
+// 라우트는 랜딩(UploadPage)을 제외하고 모두 React.lazy 로 분리한다.
+// 정적 import 로 두면 JobResultPage 가 끌어오는 pdf-viewer / tiptap / flow / ai 벤더 청크가
+// 전부 진입 그래프에 포함되어 랜딩 진입만으로 brotli 1.28MB 를 내려받게 된다.
+import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { I18nextProvider } from "react-i18next";
@@ -8,34 +13,47 @@ import "./index.css";
 import { AuthProvider } from "./AuthContext.jsx";
 import { LanguageProvider } from "./LanguageContext.jsx";
 import { enableDevMock } from "./api.js";
-import UploadPage from "./pages/UploadPage.jsx";
-import AuthPage from "./pages/AuthPage.jsx";
-import DashboardPage from "./pages/DashboardPage.jsx";
-import PaymentPage from "./pages/PaymentPage.jsx";
-import AdminLogin from "./pages/AdminLogin.jsx";
-import AdminDashboard from "./pages/AdminDashboard.jsx";
-import DeveloperPage from "./pages/DeveloperPage.jsx";
-import JobsPage from "./pages/JobsPage.jsx";
-import JobConfirmPage from "./pages/JobConfirmPage.jsx";
-import JobResultPage from "./pages/JobResultPage.jsx";
-import SettingsPage from "./pages/SettingsPage.jsx";
-import LegalTermsPage from "./pages/LegalTermsPage.jsx";
-import LegalPrivacyPage from "./pages/LegalPrivacyPage.jsx";
-import LegalRefundPage from "./pages/LegalRefundPage.jsx";
-import PricePage from "./pages/PricePage.jsx";
-import ApiPricingPage from "./pages/ApiPricingPage.jsx";
 import CookieConsent from "./components/CookieConsent.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
-import DevEdiscoveryPage from "./pages/DevEdiscoveryPage.jsx";
-import DevEdiscoveryTimelinePage from "./pages/DevEdiscoveryTimelinePage.jsx";
-import DebugMarkdownAgentPage from "./pages/DebugMarkdownAgentPage.jsx";
-import DebugHighlightCoordsPage from "./pages/DebugHighlightCoordsPage.jsx";
-import DebugPanelTogglePage from "./pages/DebugPanelTogglePage.jsx";
+
+// 랜딩 라우트는 정적으로 유지한다 — 가장 흔한 진입점에서 청크 왕복을 한 번 더 두지 않기 위함.
+// AuthPage 도 ProtectedRoute 가 비로그인 fallback 으로 직접 렌더링하므로 진입 청크에 남는다.
+import UploadPage from "./pages/UploadPage.jsx";
+import AuthPage from "./pages/AuthPage.jsx";
+
+const DashboardPage = lazy(() => import("./pages/DashboardPage.jsx"));
+const PaymentPage = lazy(() => import("./pages/PaymentPage.jsx"));
+const AdminLogin = lazy(() => import("./pages/AdminLogin.jsx"));
+const AdminDashboard = lazy(() => import("./pages/AdminDashboard.jsx"));
+const DeveloperPage = lazy(() => import("./pages/DeveloperPage.jsx"));
+const JobsPage = lazy(() => import("./pages/JobsPage.jsx"));
+const JobConfirmPage = lazy(() => import("./pages/JobConfirmPage.jsx"));
+const JobResultPage = lazy(() => import("./pages/JobResultPage.jsx"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage.jsx"));
+const LegalTermsPage = lazy(() => import("./pages/LegalTermsPage.jsx"));
+const LegalPrivacyPage = lazy(() => import("./pages/LegalPrivacyPage.jsx"));
+const LegalRefundPage = lazy(() => import("./pages/LegalRefundPage.jsx"));
+const PricePage = lazy(() => import("./pages/PricePage.jsx"));
+const ApiPricingPage = lazy(() => import("./pages/ApiPricingPage.jsx"));
+const DevEdiscoveryPage = lazy(() => import("./pages/DevEdiscoveryPage.jsx"));
+const DevEdiscoveryTimelinePage = lazy(() => import("./pages/DevEdiscoveryTimelinePage.jsx"));
+const DebugMarkdownAgentPage = lazy(() => import("./pages/DebugMarkdownAgentPage.jsx"));
+const DebugHighlightCoordsPage = lazy(() => import("./pages/DebugHighlightCoordsPage.jsx"));
+const DebugPanelTogglePage = lazy(() => import("./pages/DebugPanelTogglePage.jsx"));
 
 // 개발 환경에서 전역 dev mock 활성화 — /dev/* 및 /jobs/:jobId 경로 모두 샘플 데이터로 UI 테스트 가능.
 // production 빌드에서는 import.meta.env.DEV가 false이므로 무시된다.
 if (import.meta.env.DEV) {
   enableDevMock(true);
+}
+
+/** 라우트 청크를 내려받는 동안 표시할 전체 화면 스피너. ProtectedRoute 의 로딩 상태와 형태를 맞춘다. */
+function RouteFallback() {
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center" data-oid="route-loading">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" data-oid="route-spinner"></div>
+    </div>);
+
 }
 
 const rootEl = document.getElementById("root");
@@ -45,6 +63,7 @@ ReactDOM.createRoot(rootEl).render(
       <LanguageProvider data-oid="1e:x9zs">
         <AuthProvider data-oid="xcbpezj">
           <BrowserRouter data-oid="j3r-hj3">
+            <Suspense fallback={<RouteFallback data-oid="route-fallback" />} data-oid="route-suspense">
             <Routes data-oid="sza8yga">
               <Route
                 path="/"
@@ -197,6 +216,7 @@ ReactDOM.createRoot(rootEl).render(
                 data-oid="debug-panel-toggle-route-r" />
 
             </Routes>
+            </Suspense>
           <CookieConsent data-oid="cookie_consent" />
           </BrowserRouter>
         </AuthProvider>

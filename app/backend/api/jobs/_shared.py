@@ -657,11 +657,18 @@ def _source_files(job: Job) -> list[dict]:
          if item.get("source_kind") == "original" and item.get("type") == "pdf"),
         None,
     )
+    # clean PDF 존재 확인을 파일마다 하지 않도록, 버킷별 목록을 루프 밖에서 한 번씩만 받는다.
+    _clean_listing_by_bucket: dict[str, set[str] | None] = {}
+
     for i, item in enumerate(source_files):
         if item.get("source_kind") != "original" or item.get("type") != "pdf":
             continue
+        item_bucket = item.get("bucket", "pdfs")
+        if item_bucket not in _clean_listing_by_bucket:
+            _clean_listing_by_bucket[item_bucket] = _list_bucket_files(item_bucket, job.id)
         clean_url, extracted_annotations = _ensure_clean_source_pdf(
-            job.id, item.get("storage_path"), item.get("bucket", "pdfs")
+            job.id, item.get("storage_path"), item_bucket,
+            existing_names=_clean_listing_by_bucket[item_bucket],
         )
         if clean_url:
             item["url"] = clean_url
@@ -729,37 +736,64 @@ def _source_files(job: Job) -> list[dict]:
     # 사용자가 직접 추가/편집한 주석은 파일별로 분리된 user_annotations_{source_index}.json에 저장되며,
     # 여기서 AI 주석 JSON과 병합해 각 원본 탭에서 두 주석을 중복 없이 볼 수 있도록 한다.
     # 파일별 주석 JSON이 없으면 기존 공유 user_annotations.json으로 폴백 (하위 호환).
+    # [Flow: Step 1 (results 폴더 1회 목록 조회) -> Step 2 (존재하는 주석 JSON 만 병합 대상으로 선별)
+    #       -> Step 3 (파일별로 병렬 병합)]
+    # 목록 조회가 실패하면 existing_result_names 가 None 이 되고, 아래 _has_result 가
+    # 기존처럼 signed URL 탐색으로 폴백한다 — 느리지만 동작은 동일하다.
+    existing_result_names = _list_result_files(job.id)
+
+    def _has_result(name: str) -> bool:
+        """results/{job_id}/{name} 이 존재하는지 확인한다."""
+        if existing_result_names is not None:
+            return name in existing_result_names
+        try:
+            return bool(
+                supabase_client.get_signed_download_url(
+                    f"{job.id}/{name}", bucket="results", expires_in=3600
+                )
+            )
+        except Exception:
+            return False
+
+    merge_targets: list[tuple[dict, int, str]] = []
     for item in source_files:
         if item.get("source_kind") != "original" or item.get("type") not in _PREVIEW_DOCUMENT_TYPES:
             continue
         file_source_index = item.get("source_index", 0)
         # [Flow: 파일별 주석 JSON 경로 — source_index별로 분리]
-        per_file_user_annotations_path = f"{job.id}/user_annotations_{file_source_index}.json"
-        # 하위 호환: 파일별 주석 JSON이 없으면 공유 user_annotations.json 사용
-        fallback_user_annotations_path = f"{job.id}/user_annotations.json"
-        # 파일별 주석 JSON이 존재하는지 확인
-        user_annotations_json_path = per_file_user_annotations_path
-        try:
-            user_annotations_url = supabase_client.get_signed_download_url(
-                user_annotations_json_path, bucket="results", expires_in=3600
-            )
-        except Exception:
-            user_annotations_url = None
-        # 파일별 주석 JSON이 없으면 공유 user_annotations.json으로 폴백 (첫 번째 파일만)
-        if not user_annotations_url and file_source_index == 0:
-            user_annotations_json_path = fallback_user_annotations_path
-            try:
-                user_annotations_url = supabase_client.get_signed_download_url(
-                    user_annotations_json_path, bucket="results", expires_in=3600
+        per_file_name = f"user_annotations_{file_source_index}.json"
+        # 하위 호환: 파일별 주석 JSON이 없으면 공유 user_annotations.json 사용 (첫 번째 파일만)
+        if _has_result(per_file_name):
+            merge_targets.append((item, file_source_index, f"{job.id}/{per_file_name}"))
+        elif file_source_index == 0 and _has_result("user_annotations.json"):
+            merge_targets.append((item, file_source_index, f"{job.id}/user_annotations.json"))
+
+    # 병합은 파일마다 다운로드 2회 + 업로드 1회 + 서명 1회로 왕복이 길다. 순차로 돌리면
+    # 파일 수에 비례해 응답이 늘어나므로, 위쪽 signed URL 생성과 같은 폭으로 병렬화한다.
+    # merged 경로가 source_index 별로 분리돼 있어 서로 덮어쓰지 않는다.
+    if merge_targets:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [
+                (
+                    item,
+                    executor.submit(
+                        _merge_annotation_jsons,
+                        job.id,
+                        shared_annotations_json_path,
+                        path,
+                        idx,
+                    ),
                 )
-            except Exception:
-                user_annotations_url = None
-        if user_annotations_url:
-            merged_url = _merge_annotation_jsons(
-                job.id, shared_annotations_json_path, user_annotations_json_path
-            )
-            if merged_url:
-                item["annotations_json_url"] = merged_url
+                for item, idx, path in merge_targets
+            ]
+            for item, future in futures:
+                try:
+                    merged_url = future.result()
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"[source_files:{job.id}] 주석 병합 실패: {e}")
+                    continue
+                if merged_url:
+                    item["annotations_json_url"] = merged_url
     return source_files
 
 
@@ -910,10 +944,41 @@ def _annotation_id(item: dict) -> str:
 
 
 
+def _list_bucket_files(bucket: str, prefix: str) -> set[str] | None:
+    """버킷의 prefix 폴더에 존재하는 파일 이름 집합을 1회 호출로 조회한다.
+
+    [Flow: Step 1 ({bucket}/{prefix} 목록 조회) -> Step 2 (이름 집합 반환) -> Step 3 (실패 시 None)]
+
+    이 함수가 없으면 호출부는 "signed URL 생성이 성공하는가" 또는 "download() 가 성공하는가"로
+    파일 존재를 확인하게 된다. 전자는 없는 객체마다 404 왕복을 낭비하고, 후자는 존재 여부를
+    알아내자고 파일 전체를 내려받는다. 목록 조회 한 번이 둘 다를 대체한다.
+
+    Returns:
+        존재하는 파일 이름 집합. 목록 조회 자체가 실패하면 None (호출부가 기존 탐색으로 폴백).
+    """
+    try:
+        client = supabase_client.get_service_client()
+        entries = client.storage.from_(bucket).list(prefix, {"limit": 1000})
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"[_list_bucket_files] {bucket}/{prefix} 목록 조회 실패, 개별 탐색으로 폴백: {e}")
+        return None
+    if not isinstance(entries, list):
+        return None
+    return {e["name"] for e in entries if isinstance(e, dict) and e.get("name")}
+
+
+
+def _list_result_files(job_id: str) -> set[str] | None:
+    """results 버킷의 job 폴더에 존재하는 파일 이름 집합을 반환한다."""
+    return _list_bucket_files("results", job_id)
+
+
+
 def _merge_annotation_jsons(
     job_id: str,
     ai_annotations_path: str | None,
     user_annotations_path: str,
+    source_index: int = 0,
 ) -> str | None:
     """[Flow: Step 1 (AI 주석 JSON 다운로드) -> Step 2 (사용자 주석 JSON 다운로드)
           -> Step 3 (위치 기반 중복 제거 후 병합) -> Step 4 (merged_annotations.json 업로드)
@@ -939,7 +1004,10 @@ def _merge_annotation_jsons(
     except Exception:
         pass
     merged = _deduplicate_annotations(merged)
-    merged_path = f"{job_id}/merged_annotations.json"
+    # 병합 결과는 원본 파일별로 분리한다. 단일 공유 경로에 쓰면 파일이 여러 개인 job 에서
+    # 마지막 병합이 앞선 파일의 결과를 덮어써, 모든 탭이 같은 주석을 가리키게 된다.
+    # 경로가 분리돼 있어야 아래 병렬 병합도 서로를 침범하지 않는다.
+    merged_path = f"{job_id}/merged_annotations_{source_index}.json"
     try:
         client.storage.from_("results").upload(
             merged_path,
@@ -1054,10 +1122,22 @@ def _overall_annotation_status(entries: list[dict]) -> str:
 
 
 
+def _clean_pdf_verdict_key(job_id: str, path_hash: str) -> str:
+    """clean PDF 판정 캐시 키.
+
+    preview 캐시와 같은 `preview:{job_id}:` 네임스페이스를 쓴다. 이렇게 해야
+    이미 열 군데에서 호출하는 `cache.invalidate_pattern(f"preview:{job_id}:*")` 가
+    이 판정까지 함께 쓸어간다 — 무효화 지점을 새로 만들지 않아도 된다.
+    """
+    return f"preview:{job_id}:cleanpdf:{path_hash}"
+
+
+
 def _ensure_clean_source_pdf(
     job_id: str,
     storage_path: str,
     bucket: str = "pdfs",
+    existing_names: set[str] | None = None,
 ) -> tuple[str | None, list[dict] | None]:
     """[Flow: Step 1 (clean PDF signed URL 생성 시도) -> Step 2 (없으면 원본 PDF 다운로드)
           -> Step 3 (내장 주석 추출) -> Step 4 (주석이 있으면 clean PDF 생성/업로드)
@@ -1072,18 +1152,52 @@ def _ensure_clean_source_pdf(
     # [Flow: storage_path 기반 고유 clean PDF 경로 생성 — 여러 파일이 같은 Job에 있어도 충돌 방지]
     path_hash = hashlib.md5(storage_path.encode("utf-8")).hexdigest()[:12]
     clean_storage_path = f"{job_id}/clean_{path_hash}.pdf"
+    clean_name = f"clean_{path_hash}.pdf"
+    verdict_key = _clean_pdf_verdict_key(job_id, path_hash)
 
-    # Step 1: clean PDF가 이미 존재하는지 download()로 확인한다.
-    # get_signed_download_url()은 존재하지 않는 객체라도 signed URL을 반환하므로
-    # clean PDF가 실제로 없는데도 있다고 판단하는 문제가 발생한다.
-    try:
-        client = supabase_client.get_service_client()
-        client.storage.from_(bucket).download(clean_storage_path)
-        url = supabase_client.get_signed_download_url(clean_storage_path, bucket=bucket, expires_in=3600)
+    # Step 0: 이전 판정이 남아 있으면 Storage 를 건드리지 않고 끝낸다.
+    # "내장 주석 없음"은 예전에는 아무 데도 기록되지 않아, preview 캐시가 만료될 때마다
+    # 원본 PDF 전체를 다시 내려받고 PyMuPDF 파싱을 다시 돌렸다 — 결과는 늘 같은데도.
+    verdict = cache.get(verdict_key)
+    if isinstance(verdict, dict):
+        if verdict.get("state") == "none":
+            return None, []
+        if verdict.get("state") == "clean":
+            try:
+                url = supabase_client.get_signed_download_url(
+                    clean_storage_path, bucket=bucket, expires_in=3600
+                )
+                if url:
+                    return url, None
+            except Exception:
+                # 판정이 낡았다(파일이 사라졌다). 아래 정상 경로로 다시 판정한다.
+                pass
+
+    # Step 1: clean PDF가 이미 존재하는지 확인한다.
+    # get_signed_download_url()은 존재하지 않는 객체라도 signed URL을 반환할 수 있으므로
+    # 존재 확인에 쓸 수 없다. 예전에는 대신 download() 로 확인했는데, 존재 여부를 알자고
+    # 파일 전체를 내려받아 버리는 낭비였다. 폴더 목록 조회로 이름만 확인한다.
+    if existing_names is None:
+        existing_names = _list_bucket_files(bucket, job_id)
+    clean_exists: bool
+    if existing_names is not None:
+        clean_exists = clean_name in existing_names
+    else:
+        # 목록 조회가 불가능한 환경에서는 기존 download() 확인으로 폴백한다.
+        try:
+            supabase_client.get_service_client().storage.from_(bucket).download(clean_storage_path)
+            clean_exists = True
+        except Exception:
+            clean_exists = False
+    if clean_exists:
+        try:
+            url = supabase_client.get_signed_download_url(clean_storage_path, bucket=bucket, expires_in=3600)
+        except Exception as e:
+            logger.warning(f"[_ensure_clean_source_pdf] {job_id} clean PDF URL 생성 실패: {e}")
+            url = None
         if url:
+            cache.set(verdict_key, {"state": "clean"}, ttl_seconds=_CLEAN_PDF_VERDICT_TTL)
             return url, None
-    except Exception as e:
-        logger.info(f"[_ensure_clean_source_pdf] {job_id} clean.pdf 아직 없음(생성 필요): {e}")
 
     # Step 2: 원본 PDF 다운로드
     try:
@@ -1101,6 +1215,9 @@ def _ensure_clean_source_pdf(
         return None, None
 
     if not annotations:
+        # 내장 주석이 없다는 사실을 기록해 두어야 다음 preview 캐시 미스에서
+        # 같은 원본을 또 내려받아 또 파싱하는 일이 없다.
+        cache.set(verdict_key, {"state": "none"}, ttl_seconds=_CLEAN_PDF_VERDICT_TTL)
         return None, []
 
     # Step 4: clean PDF 생성 및 업로드
@@ -1114,7 +1231,9 @@ def _ensure_clean_source_pdf(
         )
         url = supabase_client.get_signed_download_url(clean_storage_path, bucket=bucket, expires_in=3600)
         # clean PDF가 새로 생겼으므로 preview 캐시를 무효화해 source_files 응답이 갱신되도록 한다.
+        # 판정 캐시도 같은 네임스페이스에 있어 함께 지워지므로, 아래에서 다시 심는다.
         cache.invalidate_pattern(f"preview:{job_id}:*")
+        cache.set(verdict_key, {"state": "clean"}, ttl_seconds=_CLEAN_PDF_VERDICT_TTL)
         return url, annotations
     except Exception as e:
         logger.warning(f"[_ensure_clean_source_pdf] {job_id} clean PDF 업로드 실패: {e}")
@@ -2062,6 +2181,11 @@ def _job_summary(job: Job) -> dict:
 
 
 RETENTION_DAYS = 30
+
+
+# clean PDF 판정 캐시 TTL. preview 캐시(300초)보다 길어야 의미가 있다 — 판정은
+# 원본이 바뀌지 않는 한 불변이고, 원본이 바뀌는 지점은 모두 preview 캐시를 무효화한다.
+_CLEAN_PDF_VERDICT_TTL = 3600
 
 
 _PREVIEW_DOCUMENT_TYPES = ("pdf", "docx", "hwp", "pptx")

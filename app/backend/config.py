@@ -16,6 +16,18 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg2://chungu:changeme_postgres@postgres:5432/chungu"
     redis_url: str = "redis://redis:6379/0"
 
+    # DB 커넥션 풀. 대부분의 엔드포인트가 동기 `def` 이라 FastAPI 가 anyio 스레드풀
+    # (기본 40스레드)에서 실행한다 — 풀이 그보다 작으면 스레드가 커넥션을 기다리며
+    # 요청이 큐잉된다. SQLAlchemy 기본값(5 + 10)은 동시 요청 15개에서 포화한다.
+    # ⚠️ pool_size + max_overflow(=40) 를 스레드풀 상한(=40)과 함께 맞춰 둔 값이다.
+    # 한쪽만 올리면 다른 쪽이 병목이 되거나 `QueuePool limit` 오류가 난다.
+    # (파일 업로드 등 await 가 필요한 6개 핸들러는 여전히 async 로 이벤트 루프에서 돈다 —
+    #  목록은 tests/test_no_blocking_async_endpoints.py 의 ALLOWED_ASYNC_WITH_SYNC_DB.)
+    db_pool_size: int = 20
+    db_max_overflow: int = 20
+    # Supabase/pgbouncer 가 유휴 커넥션을 끊어도 죽은 커넥션을 재사용하지 않도록 주기적 재생성.
+    db_pool_recycle: int = 1800
+
     # 보안
     secret_key: str = "changeme_generate_a_long_random_secret"
 
@@ -54,8 +66,15 @@ class Settings(BaseSettings):
     ocr_max_workers: int = 8        # Tesseract 동시 처리 상한
     docling_max_workers: int = 16   # a1 CPU Docling 전처리 서비스 동시 요청 상한
 
-    # OCR 백엔드 선택 (docling | paddleocr) — URL은 동일하므로 백엔드 교체만으로 전환
-    ocr_backend: str = "docling"
+    # OCR 엔진 선택은 paddleocr_service 컨테이너의 PADDLEOCR_BACKEND 환경변수로 한다
+    # (local_v5 | aistudio | local_vl). 백엔드가 무엇이든 백엔드 코드가 호출하는 계약은
+    # /api/convert* 하나이므로, 여기(앱 설정)에는 엔진 선택 값을 두지 않는다.
+
+    # OCR 배치 크기 — 한 요청에 묶어 보낼 페이지 수 (pipeline_vision).
+    # AI Studio는 job당 10페이지가 상한이었고, 로컬 PP-OCRv5는 이 제한이 없으므로
+    # 로컬 전환 후 이 값을 올리면 왕복 횟수가 줄어든다 (서비스 측 상한은
+    # PADDLEOCR_LOCAL_BATCH_MAX_PAGES).
+    ocr_batch_size: int = 10
 
     # Docling 전처리 서비스 (a1 CPU 서버, Tesseract 기본)
     docling_enabled: bool = True

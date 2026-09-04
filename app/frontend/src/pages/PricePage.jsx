@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, FileSpreadsheet, Mail, Shield, FileUp } from "lucide-react";
 import { api } from "../api.js";
+import { initPaddle } from "../utils/loadPaddle.js";
 import GlobalFooter from "../components/GlobalFooter.jsx";
 import { useAuth } from "../AuthContext.jsx";
 import { SkeletonCard } from "../components/Skeleton.jsx";
@@ -59,10 +60,9 @@ export default function PricePage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  // Paddle SDK 는 결제 시점에만 필요하므로 이 페이지에 들어왔을 때 비로소 받는다.
   useEffect(() => {
-    if (window.Paddle) {
-      window.Paddle.Initialize({ token: "live_7809a123ef46120bc1f57e7aba5" });
-    }
+    initPaddle("live_7809a123ef46120bc1f57e7aba5");
   }, []);
 
   useEffect(() => {
@@ -100,8 +100,9 @@ export default function PricePage() {
         plan: planKey,
         cycle: selectedCycle,
       });
-      if (window.Paddle && checkout.transaction_id) {
-        window.Paddle.Checkout.open({ transactionId: checkout.transaction_id });
+      const paddle = await initPaddle("live_7809a123ef46120bc1f57e7aba5");
+      if (paddle && checkout.transaction_id) {
+        paddle.Checkout.open({ transactionId: checkout.transaction_id });
       } else if (checkout.checkout_url) {
         window.open(checkout.checkout_url, "_blank");
       } else {

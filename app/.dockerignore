@@ -4,6 +4,13 @@ frontend/node_modules/
 frontend/dist/
 ai-backend/node_modules/
 ai-backend/dist/
+# 빌드 컨텍스트에서 제외 — 이미지 안에서 재설치되므로 전송할 이유가 없다.
+# 두 디렉토리를 빼면 컨텍스트가 약 880MB -> 약 35MB 로 줄어든다.
+docs/node_modules/
+docs/build/
+docs/.docusaurus/
+backend/venv/
+backend/.venv/
 .env
 *.log
 data/

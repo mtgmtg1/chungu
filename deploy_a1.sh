@@ -32,6 +32,7 @@ rsync -avz --delete \
   --exclude='docs/build' \
   --exclude='docs/.docusaurus' \
   --exclude='.venv' \
+  --exclude='venv' \
   /Users/jun16/repo/chungu/app/ \
   $TARGET:~/chungu-app/app/
 

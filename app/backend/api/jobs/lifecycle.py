@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from ...auth.api_key_auth import require_api_key_or_session
 from ...auth.supabase_auth import CurrentUser, get_current_admin
@@ -77,6 +77,25 @@ def confirm_job(
 
 
 
+# [Flow: Step 1 (_job_summary 가 읽지 않는 대용량 컬럼 선정) -> Step 2 (list_jobs 쿼리에서 defer)
+#       -> Step 3 (SELECT 페이로드 축소)]
+#
+# 목록 조회는 Job 전체 컬럼을 SELECT 하지만 _job_summary 는 아래 컬럼을 하나도 읽지 않는다.
+# 이들은 전부 JSON/Text 라 행당 수백 KB 까지 커질 수 있고(특히 아카이브 업로드의
+# extracted_files), JobsPage 가 5초마다 최대 100건을 폴링하므로 그대로 두면
+# 매 폴링마다 쓰이지 않는 본문을 DB→앱→직렬화 경로로 실어 나른다.
+# defer 는 지연 로딩이므로, 혹시 다른 코드가 접근하더라도 값이 사라지지 않고
+# 그 시점에 추가 쿼리로 채워진다 — 정확성은 유지되고 목록 경로만 가벼워진다.
+_JOB_LIST_DEFERRED_COLUMNS = (
+    Job.extracted_files,
+    Job.prompt,
+    Job.columns,
+    Job.ediscovery_params,
+    Job.element_mappings,
+    Job.issue_tree,
+)
+
+
 @router.get("/jobs")
 def list_jobs(
     user: CurrentUser = Depends(get_current_user_or_api_key),
@@ -84,7 +103,12 @@ def list_jobs(
     limit: int = 100,
 ):
     # [Flow: Step 1 (개발 bypass 사용자면 전체 작업 조회) -> Step 2 (일반 사용자면 본인 작업만 필터) -> Step 3 (요약 목록 반환)]
-    query = select(Job).order_by(Job.created_at.desc()).limit(limit)
+    query = (
+        select(Job)
+        .options(*(defer(col) for col in _JOB_LIST_DEFERRED_COLUMNS))
+        .order_by(Job.created_at.desc())
+        .limit(limit)
+    )
     if not user.is_dev_bypass:
         query = query.where(Job.user_id == uuid.UUID(user.user_id))
     rows = db.execute(query).scalars().all()

@@ -1,0 +1,25 @@
+# PaddleOCR v5 (PP-OCRv5 + PP-StructureV3) 로컬 CPU 추론 의존성.
+# GPU 없는 a1 서버에서 동작한다 — CUDA/vLLM 의존성 없음.
+paddlepaddle==3.3.1
+# [doc-parser] extra 필수 — 없으면 PPStructureV3 생성 시
+# "A dependency error occurred during pipeline creation"으로 실패한다 (a1에서 실측).
+paddleocr[doc-parser]==3.7.0
+
+# FastAPI 서비스
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# 문서/이미지 처리
+PyMuPDF>=1.24.0
+Pillow>=10.2.0
+requests>=2.32.3
+lxml>=5.0.0
+# PP-StructureV3 설정 YAML 패치(ocr_v5._korean_config_path)에서 직접 사용.
+# paddlex가 전이 의존으로 이미 가져오지만, 직접 import하므로 명시한다.
+PyYAML>=6.0
+
+# 이미지 미세 기울기 보정 (core/image_deskew.py)
+deskew>=1.5.0
+opencv-python-headless>=4.8.0
+numpy>=1.24.0

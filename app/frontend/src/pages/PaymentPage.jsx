@@ -12,6 +12,7 @@ import {
 } from
 "lucide-react";
 import { api } from "../api.js";
+import { initPaddle } from "../utils/loadPaddle.js";
 import GlobalFooter from "../components/GlobalFooter.jsx";
 import { useAuth } from "../AuthContext.jsx";
 import { useLanguage } from "../LanguageContext.jsx";
@@ -71,11 +72,10 @@ export default function PaymentPage() {
     }
   }
 
-  // [Flow: Step 1 (Paddle.Initialize) -> Step 2 (트랜잭션 생성 API 호출) -> Step 3 (Paddle.Checkout.open 오버레이)]
+  // [Flow: Step 1 (Paddle SDK 온디맨드 로드 + Initialize) -> Step 2 (트랜잭션 생성 API 호출)
+  //       -> Step 3 (Paddle.Checkout.open 오버레이)]
   useEffect(() => {
-    if (window.Paddle) {
-      window.Paddle.Initialize({ token: "live_7809a123ef46120bc1f57e7aba5" });
-    }
+    initPaddle("live_7809a123ef46120bc1f57e7aba5");
   }, []);
 
   async function payWithPaddle() {
@@ -83,8 +83,11 @@ export default function PaymentPage() {
     setError("");
     try {
       const checkout = await api.createPaddleCheckout({ amount: numAmount, currency });
-      if (window.Paddle && checkout.transaction_id) {
-        window.Paddle.Checkout.open({ transactionId: checkout.transaction_id });
+      // SDK 도착을 기다린다 — 예전처럼 window.Paddle 유무만 보면, 로드가 늦었을 때
+      // 오버레이 대신 조용히 새 탭 폴백으로 새는 경합이 생긴다.
+      const paddle = await initPaddle("live_7809a123ef46120bc1f57e7aba5");
+      if (paddle && checkout.transaction_id) {
+        paddle.Checkout.open({ transactionId: checkout.transaction_id });
       } else if (checkout.checkout_url) {
         window.open(checkout.checkout_url, "_blank");
       } else {

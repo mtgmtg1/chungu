@@ -13,7 +13,6 @@ chat_conversations API가 의도대로 동작하는지 검증한다.
 - 케이스 8: 다른 사용자 접근 차단 — user_id 필터링으로 타인 대화 조회 불가
 - 케이스 9: 도구 결과 요약 저장 — 큰 output이 요약되어 저장되는지 확인
 """
-import asyncio
 import sys
 import os
 import uuid
@@ -143,7 +142,7 @@ def test_list_excludes_messages_and_sorts_by_updated_desc():
     insert_conversation(db, "conv-mid", job_id, user.user_id, "중간 대화", [{"role": "user", "parts": []}], minutes_ago=30)
     insert_conversation(db, "conv-new", job_id, user.user_id, "최신 대화", [{"role": "user", "parts": []}], minutes_ago=10)
 
-    result = asyncio.run(list_chat_conversations(job_id, user, db))
+    result = list_chat_conversations(job_id, user, db)
 
     check("목록 길이 3", len(result), 3)
     # [Flow: updated_at DESC 정렬 — 최신이 첫 번째]
@@ -176,7 +175,7 @@ def test_get_single_includes_messages():
     ]
     insert_conversation(db, "conv-detail", job_id, user.user_id, "인사 대화", messages, minutes_ago=5)
 
-    result = asyncio.run(get_chat_conversation(job_id, "conv-detail", user, db))
+    result = get_chat_conversation(job_id, "conv-detail", user, db)
 
     check_true("결과 반환됨", result is not None)
     check("ID 일치", result["id"], "conv-detail")
@@ -196,7 +195,7 @@ def test_get_nonexistent_returns_none():
     db = setup_test_db()
     user = MockUser("33333333-3333-3333-3333-333333333333")
 
-    result = asyncio.run(get_chat_conversation("job-003", "nonexistent-id", user, db))
+    result = get_chat_conversation("job-003", "nonexistent-id", user, db)
 
     check("None 반환", result, None)
 
@@ -219,7 +218,7 @@ def test_upsert_inserts_new_conversation():
         ],
     )
 
-    result = asyncio.run(save_chat_conversation(job_id, conv_id, data, user, db))
+    result = save_chat_conversation(job_id, conv_id, data, user, db)
 
     check("status=ok", result["status"], "ok")
     check("반환된 ID = 클라이언트 ID", result["id"], conv_id)
@@ -257,7 +256,7 @@ def test_upsert_updates_existing_conversation():
         ],
     )
 
-    result = asyncio.run(save_chat_conversation(job_id, conv_id, data, user, db))
+    result = save_chat_conversation(job_id, conv_id, data, user, db)
 
     check("status=ok", result["status"], "ok")
     check("수정된 title", result["title"], "수정된 제목")
@@ -283,7 +282,7 @@ def test_delete_existing_conversation():
 
     insert_conversation(db, conv_id, job_id, user.user_id, "삭제할 대화", [{"role": "user", "parts": []}])
 
-    result = asyncio.run(delete_chat_conversation(job_id, conv_id, user, db))
+    result = delete_chat_conversation(job_id, conv_id, user, db)
 
     check("status=ok", result["status"], "ok")
     # [Flow: DB에서 실제로 삭제되었는지 확인]
@@ -303,7 +302,7 @@ def test_delete_nonexistent_raises_404():
     from fastapi import HTTPException
 
     try:
-        asyncio.run(delete_chat_conversation("job-007", "nonexistent", user, db))
+        delete_chat_conversation("job-007", "nonexistent", user, db)
         check_true("HTTPException 발생", False)
     except HTTPException as e:
         check("404 상태 코드", e.status_code, 404)
@@ -325,23 +324,23 @@ def test_other_user_cannot_access():
     insert_conversation(db, "conv-private", job_id, user_a.user_id, "user_a 비공개 대화", [{"role": "user", "parts": [{"type": "text", "text": "비밀"}]}])
 
     # [Flow: user_b가 같은 job의 대화 목록 조회 — user_a 대화가 보이면 안 됨]
-    result_b = asyncio.run(list_chat_conversations(job_id, user_b, db))
+    result_b = list_chat_conversations(job_id, user_b, db)
     check("user_b 목록 길이 0", len(result_b), 0)
 
     # [Flow: user_b가 user_a의 대화를 직접 조회 — None 반환]
-    result_direct = asyncio.run(get_chat_conversation(job_id, "conv-private", user_b, db))
+    result_direct = get_chat_conversation(job_id, "conv-private", user_b, db)
     check("user_b 직접 조회 → None", result_direct, None)
 
     # [Flow: user_b가 user_a의 대화를 삭제 시도 — 404]
     from fastapi import HTTPException
     try:
-        asyncio.run(delete_chat_conversation(job_id, "conv-private", user_b, db))
+        delete_chat_conversation(job_id, "conv-private", user_b, db)
         check_true("user_b 삭제 시 HTTPException", False)
     except HTTPException as e:
         check("user_b 삭제 → 404", e.status_code, 404)
 
     # [Flow: user_a는 자신의 대화를 정상 조회 가능]
-    result_a = asyncio.run(get_chat_conversation(job_id, "conv-private", user_a, db))
+    result_a = get_chat_conversation(job_id, "conv-private", user_a, db)
     check_true("user_a 정상 조회 가능", result_a is not None)
     check("user_a 대화 내용", result_a["messages"][0]["parts"][0]["text"], "비밀")
 
@@ -383,7 +382,7 @@ def test_large_tool_output_stored_as_compacted():
     ]
 
     data = ChatConversationData(title="PDF 추출 대화", messages=compacted_messages)
-    result = asyncio.run(save_chat_conversation(job_id, conv_id, data, user, db))
+    result = save_chat_conversation(job_id, conv_id, data, user, db)
 
     check("status=ok", result["status"], "ok")
     check("messages 길이 2", len(result["messages"]), 2)

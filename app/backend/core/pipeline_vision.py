@@ -13,8 +13,14 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
-# AI Studio 기본 페이지 제한 — 한 job에 최대 10페이지까지 처리 가능
-BATCH_SIZE = 10
+def _batch_size() -> int:
+    """한 OCR 요청에 묶어 보낼 페이지 수.
+
+    AI Studio API는 job당 10페이지가 상한이었으나, 로컬 PP-OCRv5 백엔드는 이 제한이 없다.
+    `OCR_BATCH_SIZE`를 올리면 왕복 횟수가 줄어든다 (서비스 측 상한은
+    paddleocr_service의 PADDLEOCR_LOCAL_BATCH_MAX_PAGES).
+    """
+    return max(1, settings.ocr_batch_size)
 
 
 def _detect_provider(endpoint: str, model: str = "") -> str:
@@ -63,7 +69,7 @@ def run_vision(
     # 원본 PDF를 렌더링/deskew/재병합 없이 AI Studio에 직접 제출하여 불필요한 왕복을 제거한다.
     # 실패 시 기존 렌더링 → 배치 경로(Step 2b)로 자동 폴백한다.
     pdf_size_mb = Path(pdf_path).stat().st_size / 1024 / 1024
-    if total_pages <= BATCH_SIZE and Path(pdf_path).suffix.lower() == ".pdf":
+    if total_pages <= _batch_size() and Path(pdf_path).suffix.lower() == ".pdf":
         try:
             logger.info(f"[vision-pdf-direct] {total_pages}페이지 PDF 직접 업로드 경로 시도 ({pdf_size_mb:.1f}MB)")
             if on_progress:
@@ -171,12 +177,13 @@ def run_vision(
     use_batch = len(page_images) > 1
 
     if use_batch:
-        # Step 3a: 배치 PaddleOCR 경로 — 10페이지 단위로 묶어 병렬 제출
+        # Step 3a: 배치 PaddleOCR 경로 — OCR_BATCH_SIZE 페이지 단위로 묶어 병렬 제출
+        batch_size = _batch_size()
         batches = [
-            page_images[i:i + BATCH_SIZE]
-            for i in range(0, len(page_images), BATCH_SIZE)
+            page_images[i:i + batch_size]
+            for i in range(0, len(page_images), batch_size)
         ]
-        batch_workers = min(len(batches), max(1, settings.llm_max_workers // BATCH_SIZE))
+        batch_workers = min(len(batches), max(1, settings.llm_max_workers // batch_size))
         logger.info(f"[vision-batch] {len(page_images)}페이지 → {len(batches)}배치 (workers={batch_workers})")
 
         with ThreadPoolExecutor(max_workers=batch_workers) as batch_executor:

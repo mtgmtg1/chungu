@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
-# [Flow: Step 1 (파일 수신) -> Step 2 (PDF→페이지 이미지 변환) -> Step 3 (PaddleOCR Pipeline 호출) -> Step 4 (마크다운 + 이미지 추출) -> Step 5 (docling_client 호환 응답)]
-# PaddleOCR-VL 1.6 FastAPI 서비스 — 기존 docling_client.py API 스펙 호환
-# vLLM 서버(http://vllm:8080)에 VLM 추론 위임, PP-DocLayoutV2로 레이아웃 분석
-# AI Studio API 폴백 엔드포인트(/api/convert) 포함: 외부 API 호출을 서비스 내부로 캡슐화
+# [Flow: Step 1 (파일 수신) -> Step 2 (PDF→페이지 이미지 변환) -> Step 3 (선택된 OCR 백엔드 호출) -> Step 4 (마크다운 + 이미지 추출) -> Step 5 (docling_client 호환 응답)]
+# PROOF 통합 OCR FastAPI 서비스 — 모든 OCR 요청의 단일 진입점.
+#
+# 백엔드 3종을 PADDLEOCR_BACKEND 환경변수로 선택하며, 클라이언트가 보는 엔드포인트 계약
+# (/api/convert, /api/convert/batch, /api/convert/pdf)은 백엔드와 무관하게 동일하다.
+# 따라서 백엔드 교체는 환경변수 한 줄이며, core/paddleocr_client.py 이하 상위 파이프라인은
+# 수정이 필요 없다.
+#   local_v5 : PP-OCRv5 + PP-StructureV3 로컬 CPU 추론 (a1, GPU 불필요) — 기본값
+#   aistudio : PaddleOCR AI Studio 유료 API 프록시 (외부 의존)
+#   local_vl : PaddleOCR-VL 1.6 + vLLM 로컬 추론 (GPU 필요 — b2 복구 후)
 import base64
 import json
 import logging
@@ -26,6 +32,11 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
+try:  # 패키지 컨텍스트 (backend.paddleocr_service.ocr_v5)
+    from . import ocr_v5
+except ImportError:  # 컨테이너 컨텍스트 (/app/main.py + /app/ocr_v5.py)
+    import ocr_v5
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
@@ -34,6 +45,25 @@ app = FastAPI(title="PROOF PaddleOCR-VL Service")
 VLLM_SERVER_URL = os.environ.get("VLLM_SERVER_URL", "http://vllm:8080/v1")
 VLLM_MODEL_NAME = os.environ.get("VLLM_MODEL_NAME", "PaddleOCR-VL-0.9B")
 PIPELINE_VERSION = os.environ.get("PADDLEOCR_PIPELINE_VERSION", "v1.6")
+
+# ─── OCR 백엔드 선택 ───
+# 상위 파이프라인은 항상 /api/convert* 계약만 호출하고, 실제 엔진은 여기서 결정된다.
+BACKEND_LOCAL_V5 = "local_v5"
+BACKEND_AISTUDIO = "aistudio"
+BACKEND_LOCAL_VL = "local_vl"
+VALID_BACKENDS = (BACKEND_LOCAL_V5, BACKEND_AISTUDIO, BACKEND_LOCAL_VL)
+
+OCR_BACKEND = os.environ.get("PADDLEOCR_BACKEND", BACKEND_LOCAL_V5).strip().lower()
+if OCR_BACKEND not in VALID_BACKENDS:
+    logger.warning(f"[paddleocr] 알 수 없는 PADDLEOCR_BACKEND={OCR_BACKEND!r} — {BACKEND_LOCAL_V5}로 대체")
+    OCR_BACKEND = BACKEND_LOCAL_V5
+
+# 로컬 추론이 실패했을 때 AI Studio API로 재시도할지 여부 (토큰이 설정된 경우에만 동작).
+# 로컬 엔진 배포 초기에 안전망으로 켜두고, 안정화 후 false로 내리는 것을 권장한다.
+LOCAL_FALLBACK_TO_AISTUDIO = (
+    os.environ.get("PADDLEOCR_LOCAL_FALLBACK_TO_AISTUDIO", "true").lower() == "true"
+)
+
 DATA_DIR = Path("/data")
 IMAGE_BASE_DIR = DATA_DIR / "paddleocr_images"
 
@@ -41,6 +71,19 @@ IMAGE_BASE_DIR = DATA_DIR / "paddleocr_images"
 AUTO_PARAMETER_ENABLED = os.environ.get("PADDLEOCR_AUTO_PARAMETER_ENABLED", "true").lower() == "true"
 SAMPLE_DPI = int(os.environ.get("PADDLEOCR_SAMPLE_DPI", "150"))
 SAMPLE_MAX_TOKENS = int(os.environ.get("PADDLEOCR_SAMPLE_MAX_TOKENS", "2000"))
+# 추천에 사용할 Vision LLM. local_v5 백엔드에는 vLLM 컨테이너가 없으므로 VLLM_SERVER_URL을
+# 그대로 쓰면 문서마다 없는 호스트로 붙었다가 타임아웃한다 — 앱의 실제 LLM 엔드포인트를 지정한다.
+RECOMMENDER_ENDPOINT = (
+    os.environ.get("PADDLEOCR_RECOMMENDER_ENDPOINT", "")
+    or os.environ.get("DEFAULT_LLM_ENDPOINT", "")
+    or VLLM_SERVER_URL
+)
+RECOMMENDER_MODEL = (
+    os.environ.get("PADDLEOCR_RECOMMENDER_MODEL", "")
+    or os.environ.get("DEFAULT_LLM_MODEL", "")
+    or VLLM_MODEL_NAME
+)
+RECOMMENDER_API_KEY = os.environ.get("PADDLEOCR_RECOMMENDER_API_KEY", "")
 
 # AI Studio API 설정 (폴백용)
 AISTUDIO_API_URL = os.environ.get("PADDLEOCR_API_URL", "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs")
@@ -219,9 +262,9 @@ def _get_paddleocr_params(pdf_path: Path | None, work_dir: Path) -> dict[str, An
         params = decide_parameters(
             pdf_path=pdf_path,
             sample_dir=sample_dir,
-            endpoint=VLLM_SERVER_URL,
-            model=VLLM_MODEL_NAME,
-            api_key="",
+            endpoint=RECOMMENDER_ENDPOINT,
+            model=RECOMMENDER_MODEL,
+            api_key=RECOMMENDER_API_KEY,
             dpi=SAMPLE_DPI,
             max_tokens=SAMPLE_MAX_TOKENS,
         )
@@ -243,6 +286,7 @@ def _run_paddleocr(
     pipeline = get_pipeline()
     all_markdown_parts: list[str] = []
     layout_pages: list[dict] = []
+    page_angles: list[int] = []
     total_pages = 0
     predict_params = dict(params or {})
     if force_no_geometric_correction:
@@ -261,14 +305,21 @@ def _run_paddleocr(
                     total_pages += 1
                 if capture_layout:
                     layout_pages.append(_extract_layout_from_result(res))
+                page_angles.append(ocr_v5._angle_code(ocr_v5._raw_json(res)))
         except Exception as e:
             logger.error(f"[paddleocr] 페이지 {idx + 1} 추론 실패: {e}")
             all_markdown_parts.append(f"<!-- Page {idx + 1} (OCR 실패) -->\n")
             if capture_layout:
                 layout_pages.append({})
+            page_angles.append(-1)
 
     markdown = "\n\n".join(all_markdown_parts)
-    return {"markdown": markdown, "page_count": total_pages, "layout": layout_pages}
+    return {
+        "markdown": markdown,
+        "page_count": total_pages,
+        "layout": layout_pages,
+        "page_angles": page_angles,
+    }
 
 
 def _image_bbox_to_pdf_rect(
@@ -508,7 +559,12 @@ _tasks_lock = threading.Lock()
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    """서비스 상태 및 현재 선택된 OCR 백엔드를 반환한다."""
+    return {
+        "status": "ok",
+        "backend": OCR_BACKEND,
+        "rec_model": ocr_v5.V5_REC_MODEL if OCR_BACKEND == BACKEND_LOCAL_V5 else "",
+    }
 
 
 def _do_convert(
@@ -605,7 +661,7 @@ async def convert_async(
         }
 
     thread = threading.Thread(
-        target=_do_convert,
+        target=_do_local_v5_convert if _is_local_v5() else _do_convert,
         args=(task_id, input_path, file.filename, capture_layout),
         daemon=True,
     )
@@ -646,6 +702,13 @@ async def convert_file(
         tmp_path = Path(tmpdir)
         input_path = tmp_path / (file.filename or "input.bin")
         input_path.write_bytes(await file.read())
+
+        if _is_local_v5():
+            try:
+                return _v5_convert_sync(input_path, file.filename, capture_layout)
+            except Exception as e:
+                logger.exception(f"[ocr-v5-sync] {file.filename} 변환 실패: {e}")
+                raise HTTPException(status_code=500, detail=f"PaddleOCR v5 inference failed: {e}")
 
         file_type = _detect_file_type(file.filename)
         request_id = uuid.uuid4().hex
@@ -944,16 +1007,236 @@ def _do_aistudio_convert(
             _tasks[task_id]["finished_at"] = time.time()
 
 
+# ─── 로컬 PP-OCRv5 (PP-StructureV3) 백엔드 ───
+#
+# AI Studio 경로와 동일한 per-page 결과(markdown/layout/page_angle)를 만들어내는 것이 목표다.
+# 좌표 규약을 맞추기 위해 PDF도 항상 페이지 이미지로 렌더링한 뒤 추론한다 (AI Studio PDF 직접
+# 제출 경로는 bbox가 PDF user-space로 내려와 이미지 경로와 원점이 달랐다 — 로컬 백엔드는
+# 이미지 규약 하나만 쓰므로 그 불일치가 사라진다).
+
+# 로컬 백엔드는 외부 API의 페이지 제한(10페이지/job)을 받지 않는다.
+LOCAL_BATCH_MAX_PAGES = int(os.environ.get("PADDLEOCR_LOCAL_BATCH_MAX_PAGES", "200"))
+
+
+def _is_local_v5() -> bool:
+    """현재 선택된 백엔드가 로컬 PP-OCRv5인지 여부."""
+    return OCR_BACKEND == BACKEND_LOCAL_V5
+
+
+def _effective_batch_max_pages() -> int:
+    """현재 백엔드의 배치 페이지 상한을 반환한다."""
+    return LOCAL_BATCH_MAX_PAGES if _is_local_v5() else BATCH_MAX_PAGES
+
+
+def _v5_deskew_all(image_paths: list[Path], work_dir: Path) -> list[Path]:
+    """각 페이지 이미지에 deskew(미세 기울기) 보정을 적용한 경로 목록을 반환한다.
+
+    AI Studio 배치 경로(_do_aistudio_batch_convert)와 동일한 전처리다. 보정된 이미지 기준으로
+    bbox가 나오므로, 클라이언트가 주석 PDF의 베이스 이미지를 같은 방식으로 보정해 재현할 수 있다.
+    """
+    try:
+        from backend.core.image_deskew import deskew_image
+    except ImportError:
+        from core.image_deskew import deskew_image
+
+    corrected: list[Path] = []
+    for img_path in image_paths:
+        try:
+            fixed, _angle = deskew_image(img_path, work_dir)
+            corrected.append(fixed)
+        except Exception as e:
+            logger.warning(f"[ocr-v5] {img_path.name} deskew 실패, 원본 사용: {e}")
+            corrected.append(img_path)
+    return corrected
+
+
+def _v5_predict(
+    image_paths: list[Path],
+    params: dict[str, Any] | None,
+    capture_layout: bool,
+) -> list[dict[str, Any]]:
+    """페이지 이미지 목록을 로컬 PP-OCRv5로 추론해 per-page 결과 리스트를 반환한다."""
+    extractor = _extract_layout_from_result if capture_layout else None
+    return ocr_v5.predict_pages(image_paths, params=params, layout_extractor=extractor)
+
+
+def _v5_merge_markdown(pages: list[dict[str, Any]]) -> str:
+    """per-page 마크다운을 `<!-- Page N -->` 마커로 병합한다 (AI Studio 경로와 동일 규칙)."""
+    parts: list[str] = []
+    for idx, page in enumerate(pages):
+        md = page.get("markdown", "") or ""
+        header = f"<!-- Page {idx + 1} -->\n" if idx > 0 else ""
+        parts.append(f"{header}{md}")
+    return "\n\n".join(parts)
+
+
+def _v5_page_images(
+    input_path: Path, filename: str, work_dir: Path
+) -> tuple[list[Path], list[str], str, Path | None]:
+    """입력 파일을 페이지 이미지 목록으로 변환한다.
+
+    [Flow: Step 1 (파일 타입 판정) -> Step 2 (오피스 문서는 LibreOffice로 PDF 변환)
+          -> Step 3 (PDF는 300DPI 페이지 이미지로 렌더링) -> Step 4 (이미지는 그대로 사용)]
+
+    Returns:
+        (페이지 이미지 경로 목록, PDF 내장 이미지 상대경로 목록, 정규화된 file_type,
+         샘플 추출에 쓸 PDF 경로 — 이미지 입력이면 None)
+
+        오피스 문서는 변환된 PDF 경로를 돌려준다. 원본 .docx를 파라미터 추천기에 넘기면
+        PyMuPDF가 열지 못해 추천이 매번 조용히 실패한다.
+    """
+    file_type = _detect_file_type(filename)
+    request_id = uuid.uuid4().hex
+
+    if file_type == "office":
+        pdf_path = _convert_office_to_pdf(input_path, work_dir)
+        file_type = "pdf"
+    elif file_type == "pdf":
+        pdf_path = input_path
+    elif file_type == "image":
+        return [input_path], [], "image", None
+    else:
+        raise RuntimeError(f"Unsupported file type: {filename}")
+
+    image_paths = _pdf_to_images(pdf_path)
+    if not image_paths:
+        raise RuntimeError("Failed to extract page images from PDF")
+    return image_paths, _extract_embedded_images(pdf_path, request_id), file_type, pdf_path
+
+
+def _v5_convert_sync(input_path: Path, filename: str, capture_layout: bool = False) -> "ConvertResponse":
+    """단일 파일(이미지/PDF/오피스)을 로컬 PP-OCRv5로 변환해 ConvertResponse를 반환한다.
+
+    [Flow: Step 1 (페이지 이미지 확보) -> Step 2 (자동 파라미터 추천) -> Step 3 (페이지별 추론)
+          -> Step 4 (마크다운 병합 + layout/page_angles 수집)]
+    """
+    work_dir = input_path.parent
+    image_paths, embedded_images, file_type, pdf_path = _v5_page_images(input_path, filename, work_dir)
+    params = _get_paddleocr_params(pdf_path, work_dir)
+    pages = _v5_predict(image_paths, params, capture_layout)
+
+    return ConvertResponse(
+        markdown=_v5_merge_markdown(pages),
+        images=embedded_images,
+        page_count=len(pages),
+        file_type=file_type,
+        layout=[p.get("layout", {}) for p in pages] if capture_layout else [],
+        page_angles=[p.get("page_angle", -1) for p in pages],
+    )
+
+
+def _v5_batch_result(pages: list[dict[str, Any]]) -> "BatchConvertResponse":
+    """per-page 결과를 BatchConvertResponse로 변환한다."""
+    return BatchConvertResponse(
+        pages=[
+            BatchPageResult(
+                markdown=page.get("markdown", "") or "",
+                layout=page.get("layout", {}) or {},
+                page_angle=page.get("page_angle", -1),
+            )
+            for page in pages
+        ],
+        page_count=len(pages),
+    )
+
+
+def _task_done(task_id: str, result: Any) -> None:
+    """task를 완료 상태로 전이시킨다."""
+    with _tasks_lock:
+        _tasks[task_id]["status"] = "done"
+        _tasks[task_id]["result"] = result
+        _tasks[task_id]["finished_at"] = time.time()
+
+
+def _task_error(task_id: str, message: str) -> None:
+    """task를 실패 상태로 전이시킨다."""
+    with _tasks_lock:
+        _tasks[task_id]["status"] = "error"
+        _tasks[task_id]["error"] = message
+        _tasks[task_id]["finished_at"] = time.time()
+
+
+def _aistudio_fallback_available() -> bool:
+    """로컬 추론 실패 시 AI Studio API로 폴백할 수 있는지 여부."""
+    return LOCAL_FALLBACK_TO_AISTUDIO and bool(AISTUDIO_API_TOKEN)
+
+
+def _do_local_v5_convert(
+    task_id: str,
+    input_path: Path,
+    filename: str,
+    capture_layout: bool = False,
+) -> None:
+    """단일 파일 변환 (백그라운드 스레드). 실패 시 설정에 따라 AI Studio로 폴백한다."""
+    try:
+        result = _v5_convert_sync(input_path, filename, capture_layout)
+        _task_done(task_id, result)
+        logger.info(f"[ocr-v5] {filename} 변환 완료 ({result.page_count}페이지)")
+        return
+    except Exception as e:
+        logger.exception(f"[ocr-v5] {filename} 변환 실패: {e}")
+        if not _aistudio_fallback_available():
+            _task_error(task_id, str(e))
+            return
+        logger.warning(f"[ocr-v5] {filename} AI Studio 폴백 시도")
+    _do_aistudio_convert(task_id, input_path, filename, capture_layout)
+
+
+def _do_local_v5_batch_convert(task_id: str, image_paths: list[Path], filenames: list[str]) -> None:
+    """여러 페이지 이미지 배치 변환 (백그라운드 스레드).
+
+    [Flow: Step 1 (deskew 보정) -> Step 2 (페이지별 병렬 추론) -> Step 3 (per-page 결과 저장)]
+    """
+    try:
+        work_dir = Path(tempfile.mkdtemp())
+        deskewed = _v5_deskew_all(image_paths, work_dir)
+        pages = _v5_predict(deskewed, None, capture_layout=True)
+        _task_done(task_id, _v5_batch_result(pages))
+        logger.info(f"[ocr-v5-batch] {len(image_paths)}장 배치 변환 완료")
+        return
+    except Exception as e:
+        logger.exception(f"[ocr-v5-batch] 배치 변환 실패: {e}")
+        if not _aistudio_fallback_available():
+            _task_error(task_id, str(e))
+            return
+        logger.warning("[ocr-v5-batch] AI Studio 폴백 시도")
+    _do_aistudio_batch_convert(task_id, image_paths, filenames)
+
+
+def _do_local_v5_pdf_convert(task_id: str, pdf_path: Path, filename: str) -> None:
+    """PDF를 페이지 이미지로 렌더링한 뒤 per-page 결과를 반환한다 (백그라운드 스레드).
+
+    AI Studio PDF 직접 제출과 달리 렌더링을 거치므로 bbox 좌표 규약이 이미지 경로와 동일해진다.
+    """
+    try:
+        image_paths = _pdf_to_images(pdf_path)
+        if not image_paths:
+            raise RuntimeError("Failed to extract page images from PDF")
+        params = _get_paddleocr_params(pdf_path, pdf_path.parent)
+        pages = _v5_predict(image_paths, params, capture_layout=True)
+        _task_done(task_id, _v5_batch_result(pages))
+        logger.info(f"[ocr-v5-pdf] {filename} 변환 완료 ({len(pages)}페이지)")
+        return
+    except Exception as e:
+        logger.exception(f"[ocr-v5-pdf] {filename} 변환 실패: {e}")
+        if not _aistudio_fallback_available():
+            _task_error(task_id, str(e))
+            return
+        logger.warning(f"[ocr-v5-pdf] {filename} AI Studio 폴백 시도")
+    _do_aistudio_pdf_convert(task_id, pdf_path, filename)
+
+
 @app.post("/api/convert", response_model=AsyncConvertResponse)
 async def api_convert(
     file: UploadFile = File(...),
     capture_layout: bool = Form(False),
 ) -> AsyncConvertResponse:
-    """AI Studio API를 호출하여 OCR 변환을 수행한다 (폴백 전용 엔드포인트).
+    """이미지 한 장을 현재 선택된 OCR 백엔드로 변환한다 (상위 파이프라인의 기본 진입점).
 
-    토큰은 서비스 환경 변수에서만 사용되어 클라이언트에 노출되지 않는다.
+    백엔드가 aistudio일 때만 외부 API 토큰이 필요하며, 토큰은 서비스 환경 변수에서만
+    사용되어 클라이언트에 노출되지 않는다.
     """
-    if not AISTUDIO_API_TOKEN:
+    if not _is_local_v5() and not AISTUDIO_API_TOKEN:
         raise HTTPException(status_code=503, detail="PADDLEOCR_API_TOKEN is not configured")
 
     if not file.filename:
@@ -964,7 +1247,7 @@ async def api_convert(
     if ext not in image_extensions:
         raise HTTPException(
             status_code=400,
-            detail=f"AI Studio API supports images only (png/jpg/bmp/tiff/webp): {file.filename}",
+            detail=f"/api/convert supports images only (png/jpg/bmp/tiff/webp): {file.filename}",
         )
 
     task_id = uuid.uuid4().hex
@@ -985,7 +1268,7 @@ async def api_convert(
         }
 
     thread = threading.Thread(
-        target=_do_aistudio_convert,
+        target=_do_local_v5_convert if _is_local_v5() else _do_aistudio_convert,
         args=(task_id, input_path, file.filename, capture_layout),
         daemon=True,
     )
@@ -1194,14 +1477,14 @@ def _do_aistudio_pdf_convert(task_id: str, pdf_path: Path, filename: str) -> Non
 
 @app.post("/api/convert/pdf", response_model=AsyncConvertResponse)
 async def api_convert_pdf(file: UploadFile = File(...)) -> AsyncConvertResponse:
-    """원본 PDF를 렌더링 없이 AI Studio에 직접 제출한다 (10페이지 이하 전용).
+    """원본 PDF를 업로드받아 per-page 결과를 반환한다.
 
-    클라이언트가 원본 PDF를 그대로 업로드하면, 서비스가 이를 AI Studio API에
-    단일 job으로 제출한다. 이미지 렌더링/deskew/PDF 재병합을 생략하여
-    10페이지 이하 PDF의 처리 시간을 대폭 단축한다.
-    AI Studio 기본 제한(10페이지)을 초과하면 400 에러를 반환한다.
+    클라이언트는 렌더링 없이 원본 PDF를 그대로 올린다. 백엔드별 처리:
+      - local_v5 : 서비스가 300DPI로 페이지 렌더링 후 페이지별 병렬 추론
+                   (페이지 상한은 PADDLEOCR_LOCAL_BATCH_MAX_PAGES)
+      - aistudio : PDF를 단일 job으로 직접 제출 (외부 API 기본 제한 10페이지)
     """
-    if not AISTUDIO_API_TOKEN:
+    if not _is_local_v5() and not AISTUDIO_API_TOKEN:
         raise HTTPException(status_code=503, detail="PADDLEOCR_API_TOKEN is not configured")
 
     if not file.filename:
@@ -1237,13 +1520,17 @@ async def api_convert_pdf(file: UploadFile = File(...)) -> AsyncConvertResponse:
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to read PDF: {e}")
 
-    if page_count > BATCH_MAX_PAGES:
+    max_pages = _effective_batch_max_pages()
+    if page_count > max_pages:
         raise HTTPException(
             status_code=400,
-            detail=f"PDF exceeds AI Studio page limit: {page_count} > {BATCH_MAX_PAGES}. Use /api/convert/batch with rendered images.",
+            detail=f"PDF exceeds page limit for backend {OCR_BACKEND}: {page_count} > {max_pages}. Use /api/convert/batch with rendered images.",
         )
 
-    logger.info(f"[aistudio-pdf] {file.filename} 직접 변환 시작 ({page_count}페이지, {pdf_path.stat().st_size/1024/1024:.1f}MB)")
+    logger.info(
+        f"[{OCR_BACKEND}-pdf] {file.filename} 변환 시작 "
+        f"({page_count}페이지, {pdf_path.stat().st_size/1024/1024:.1f}MB)"
+    )
 
     task_id = uuid.uuid4().hex
     with _tasks_lock:
@@ -1257,7 +1544,7 @@ async def api_convert_pdf(file: UploadFile = File(...)) -> AsyncConvertResponse:
         }
 
     thread = threading.Thread(
-        target=_do_aistudio_pdf_convert,
+        target=_do_local_v5_pdf_convert if _is_local_v5() else _do_aistudio_pdf_convert,
         args=(task_id, pdf_path, file.filename),
         daemon=True,
     )
@@ -1285,16 +1572,18 @@ async def api_convert_pdf_status(task_id: str) -> BatchTaskStatusResponse:
 
 @app.post("/api/convert/batch", response_model=AsyncConvertResponse)
 async def api_convert_batch(files: list[UploadFile] = File(...)) -> AsyncConvertResponse:
-    if not AISTUDIO_API_TOKEN:
+    """여러 페이지 이미지를 한 요청으로 변환하고 업로드 순서대로 per-page 결과를 반환한다."""
+    if not _is_local_v5() and not AISTUDIO_API_TOKEN:
         raise HTTPException(status_code=503, detail="PADDLEOCR_API_TOKEN is not configured")
 
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded")
 
-    if len(files) > BATCH_MAX_PAGES:
+    max_pages = _effective_batch_max_pages()
+    if len(files) > max_pages:
         raise HTTPException(
             status_code=400,
-            detail=f"Batch exceeds AI Studio page limit: {len(files)} > {BATCH_MAX_PAGES}. Split into smaller batches.",
+            detail=f"Batch exceeds page limit for backend {OCR_BACKEND}: {len(files)} > {max_pages}. Split into smaller batches.",
         )
 
     tmpdir = tempfile.mkdtemp()
@@ -1331,7 +1620,7 @@ async def api_convert_batch(files: list[UploadFile] = File(...)) -> AsyncConvert
         }
 
     thread = threading.Thread(
-        target=_do_aistudio_batch_convert,
+        target=_do_local_v5_batch_convert if _is_local_v5() else _do_aistudio_batch_convert,
         args=(task_id, image_paths, filenames),
         daemon=True,
     )

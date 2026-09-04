@@ -34,6 +34,9 @@ services:
       - UNOSERVER_ENABLED=${UNOSERVER_ENABLED:-true}
       - UNOSERVER_HOST=${UNOSERVER_HOST:-unoserver}
       - UNOSERVER_PORT=${UNOSERVER_PORT:-2003}
+      # OCR 서비스 주소 (worker/beat와 동일 — .env의 값이 컨테이너 외부를 가리키지 않도록 고정)
+      - DOCLING_SERVICE_URL=http://docling:28182
+      - PADDLEOCR_SERVICE_URL=http://paddleocr_service:8080
     ports:
       - "${APP_PORT:-28181}:28181"
     # privileged: 호스트 containerd socket 에 접근하여 Kata VM 을 생성/관리하려면 필요.
@@ -134,16 +137,58 @@ services:
       - default
     restart: unless-stopped
 
+  # [Flow: 모든 OCR 요청의 단일 진입점 — worker/beat가 /api/convert* 로 호출]
+  # PADDLEOCR_BACKEND로 엔진을 고른다:
+  #   local_v5 (기본) : PP-OCRv5 + PP-StructureV3 로컬 CPU 추론 (a1, GPU 불필요)
+  #   aistudio        : PaddleOCR AI Studio 유료 API 프록시
+  #   local_vl        : PaddleOCR-VL 1.6 + vLLM (GPU 필요 — b2 복구 후)
+  # 이미지 자체가 세 백엔드를 모두 담고 있으므로, 롤백은 환경변수 한 줄이다.
   paddleocr_service:
     build:
       context: .
-      dockerfile: backend/paddleocr_service/Dockerfile
+      # 롤백 경로: .env에 PADDLEOCR_DOCKERFILE=backend/paddleocr_service/Dockerfile 를 두면
+      # 기존 경량 AI Studio 프록시 이미지로 되돌아간다 (PADDLEOCR_BACKEND=aistudio 와 함께 사용).
+      dockerfile: ${PADDLEOCR_DOCKERFILE:-backend/paddleocr_service/Dockerfile.v5}
     env_file: .env
     environment:
+      - PADDLEOCR_BACKEND=${PADDLEOCR_BACKEND:-local_v5}
       - PADDLEOCR_API_TOKEN=${PADDLEOCR_API_TOKEN:-}
       - PADDLEOCR_API_URL=${PADDLEOCR_API_URL:-https://paddleocr.aistudio-app.com/api/v2/ocr/jobs}
+      # 로컬 추론 실패 시 AI Studio로 재시도 (토큰이 있을 때만 동작). 안정화 후 false 권장.
+      - PADDLEOCR_LOCAL_FALLBACK_TO_AISTUDIO=${PADDLEOCR_LOCAL_FALLBACK_TO_AISTUDIO:-true}
+      # PP-OCRv5 모델/성능 튜닝. POOL_SIZE × CPU_THREADS ≈ 물리 코어 수(a1: 40코어/80스레드)
+      - PADDLEOCR_V5_REC_MODEL=${PADDLEOCR_V5_REC_MODEL:-korean_PP-OCRv5_mobile_rec}
+      - PADDLEOCR_V5_DET_MODEL=${PADDLEOCR_V5_DET_MODEL:-PP-OCRv5_server_det}
+      - PADDLEOCR_V5_POOL_SIZE=${PADDLEOCR_V5_POOL_SIZE:-4}
+      - PADDLEOCR_V5_CPU_THREADS=${PADDLEOCR_V5_CPU_THREADS:-16}
+      # oneDNN은 paddlepaddle 3.3.1에서 PP-StructureV3 추론 중 크래시한다 (a1 실측) — off 유지
+      - PADDLEOCR_V5_ENABLE_MKLDNN=${PADDLEOCR_V5_ENABLE_MKLDNN:-false}
+      # 표 셀/도장 인식기까지 한국어 모델로 교체 (본문만 바꾸는 kwarg로는 부족)
+      - PADDLEOCR_V5_PATCH_ALL_RECOGNIZERS=${PADDLEOCR_V5_PATCH_ALL_RECOGNIZERS:-true}
+      # 인식 배치 크기는 올리면 오히려 느려진다 (a1 실측: 1→113s, 8→130s) — 1 유지
+      - PADDLEOCR_V5_REC_BATCH_SIZE=${PADDLEOCR_V5_REC_BATCH_SIZE:-1}
+      # 레이아웃 검출 모델. 비워둘 것 — PP-DocLayout-S는 한국어 스캔 표에서 레이아웃을
+      # 전혀 검출하지 못해 마크다운/표가 통째로 비었다 (a1 실측).
+      - PADDLEOCR_V5_LAYOUT_MODEL=${PADDLEOCR_V5_LAYOUT_MODEL:-}
+      - PADDLEOCR_V5_TABLE_RECOGNITION=${PADDLEOCR_V5_TABLE_RECOGNITION:-true}
+      - PADDLEOCR_V5_SEAL_RECOGNITION=${PADDLEOCR_V5_SEAL_RECOGNITION:-true}
+      # 로컬 백엔드는 외부 API의 10페이지/job 제한을 받지 않는다.
+      - PADDLEOCR_LOCAL_BATCH_MAX_PAGES=${PADDLEOCR_LOCAL_BATCH_MAX_PAGES:-200}
+      # 자동 파라미터 추천용 Vision LLM. 비워두면 서비스가 env_file(.env)의
+      # DEFAULT_LLM_ENDPOINT/DEFAULT_LLM_MODEL로 폴백한다 (compose는 변수 기본값 중첩을 지원하지 않는다).
+      - PADDLEOCR_RECOMMENDER_ENDPOINT=${PADDLEOCR_RECOMMENDER_ENDPOINT:-}
+      - PADDLEOCR_RECOMMENDER_MODEL=${PADDLEOCR_RECOMMENDER_MODEL:-}
+      - OMP_NUM_THREADS=${PADDLEOCR_V5_CPU_THREADS:-16}
     volumes:
       - appdata:/data
+      # PP-OCRv5/PP-StructureV3 가중치 캐시 — 재시작 시 재다운로드 방지
+      - paddleocr_v5_models:/root/.paddlex
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
     networks:
       - default
     restart: unless-stopped
@@ -215,6 +260,7 @@ services:
 volumes:
   appdata:
   docling_models:
+  paddleocr_v5_models:
 
 networks:
   supabase-network:

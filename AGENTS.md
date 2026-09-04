@@ -8,6 +8,67 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 프론트엔드 초기 로드 최적화 + 빌드/배포 인프라 정리 — 2026-09-04
+
+> 이 항목은 성능 작업과 별개 세션에서 이루어진 변경을 뒤늦게 정리한 것이다. 수치는 작업자가 코드 주석에 남긴 실측값을 옮겼다.
+
+- **`vite.config.js` — `manualChunks` 를 객체 형태에서 함수 형태로 교체**: 객체 형태는 나열한 패키지의 **전이 의존까지** 같은 청크로 빨아들인다. 그 결과 `react/jsx-runtime` 이 `tiptap-vendor` 로, Vite 의 `__vite_preload` 헬퍼가 `pdf-viewer` 로 끌려갔고, 진입 청크가 헬퍼 하나 때문에 brotli 347KB(pdf-viewer + tiptap-vendor)를 정적 import 하게 됐다. 함수 형태는 매칭되지 않은 모듈에 `undefined` 를 반환해 Rollup 기본 배치를 따르므로 이 오염이 없다.
+  - `vite/preload-helper` 는 가상 모듈이라 패키지명이 없다. 배치를 지정하지 않으면 Rollup 이 임의의 async 벤더 청크에 넣어 같은 문제가 재발하므로, 항상 초기 로드되는 `react-vendor` 에 고정한다.
+  - `@embedpdf/pdfjs-dist` 는 **수동 그룹으로 묶지 않는다**. 자체 dynamic import 로 `worker-engine`/`direct-engine` 을 쪼개는데, 강제로 한 청크에 모으면 그 분할이 무너진다.
+- **`main.jsx` — 랜딩을 제외한 전 라우트 `React.lazy`**: 정적 import 로 두면 `JobResultPage` 가 끌어오는 pdf-viewer / tiptap / flow / ai 벤더 청크가 전부 진입 그래프에 포함되어, 랜딩 진입만으로 brotli 1.28MB 를 내려받는다. 랜딩(`UploadPage`)과 `AuthPage`(ProtectedRoute 의 비로그인 fallback)는 진입 청크에 남긴다.
+- **`i18n.js` — 로케일 코드 분할**: 세 언어를 모두 정적 import 하면 로케일 JSON 312KB(brotli 77KB)가 통째로 진입 청크에 들어간다. `fallbackLng` 인 `en` 만 번들에 남기고 ko/ja 는 최소 backend 플러그인으로 동적 import 한다. `partialBundledLanguages: true` 가 있어야 번들된 en 과 backend 로 읽어온 ko/ja 를 함께 쓴다.
+- **`UploadPage.jsx` — `GridScan` lazy 화**: 배경 장식용 WebGL(three + postprocessing, brotli 141KB)이 랜딩 첫 페인트를 막고 있었다. 콘텐츠와 무관한 장식이므로 `Suspense fallback={null}` 로 분리.
+- **DB 커넥션 풀 설정** (`config.py`, `db/session.py`): `pool_size=20` / `max_overflow=20` / `pool_recycle=1800`. SQLAlchemy 기본값(5 + 10)은 동시 요청 15개에서 포화한다.
+- **`038_add_jobs_user_created_index.sql`**: `/api/jobs` 는 `WHERE user_id = ? ORDER BY created_at DESC LIMIT ?` 형태라, `user_id` 단일 인덱스만으로는 필터 후 Sort 노드가 필요했다. `(user_id, created_at DESC)` 복합 인덱스와 전역 최신순용 `(created_at DESC)` 를 추가.
+- **빌드 재현성**: `Dockerfile.backend` 의 frontend/docs 스테이지가 `npm install` → **`npm ci`**. 이를 위해 `app/frontend/package-lock.json` 과 `app/docs/package-lock.json` 을 `.gitignore` 의 전역 `package-lock.json` 무시 규칙에서 예외 처리해 추적 대상으로 되돌렸다.
+- **빌드 컨텍스트 축소**: `app/.dockerignore` 에 `docs/node_modules`, `docs/build`, `docs/.docusaurus`, `backend/venv`, `backend/.venv` 추가 — 컨텍스트 약 880MB → 약 35MB.
+- **배포 스크립트**: `deploy_a1.sh` / `deploy_develop.sh` rsync 에 `--exclude='venv'` 추가 (기존에는 `.venv` 만 제외해 `backend/venv` 가 통째로 전송됐다).
+- **⚠️ 회귀 방지 경고**:
+  1. **`manualChunks` 를 객체 형태로 되돌리지 말 것.** 전이 의존이 딸려 들어와 진입 청크가 다시 부풀고, 원인이 눈에 잘 띄지 않는다.
+  2. **`main.jsx` 에서 라우트를 정적 import 로 되돌리지 말 것.** 한 줄만 되돌려도 그 라우트가 끌어오는 벤더 청크 전체가 진입 그래프에 합류한다.
+  3. **`package-lock.json` 두 개는 반드시 커밋 상태를 유지해야 한다.** `.gitignore` 의 예외(`!app/frontend/package-lock.json`, `!app/docs/package-lock.json`)를 지우면 fresh clone 에서 `npm ci` 가 실패해 이미지 빌드가 깨진다.
+  4. **`db_pool_size + db_max_overflow` 는 anyio 스레드풀 상한과 짝이다.** 한쪽만 올리면 병목이 옮겨가거나 `QueuePool limit` 오류가 난다.
+- **핵심 파일**: `app/frontend/vite.config.js`, `app/frontend/src/main.jsx`, `app/frontend/src/i18n.js`, `app/frontend/src/pages/UploadPage.jsx`, `app/backend/config.py`, `app/backend/db/session.py`, `app/backend/db/migrations/038_add_jobs_user_created_index.sql`(신규), `app/Dockerfile.backend`, `app/.dockerignore`, `.gitignore`, `deploy_a1.sh`, `deploy_develop.sh`.
+
+### 성능 개선 — 이벤트 루프 블로킹 async 엔드포인트 21개 제거 — 2026-09-04
+
+- **배경**: FastAPI 는 `def` 핸들러를 스레드풀(anyio, 기본 40스레드)에서 실행하지만 `async def` 핸들러는 이벤트 루프에서 그대로 실행한다. 동기 SQLAlchemy 세션만 쓰면서 `async def` 로 선언된 핸들러가 21개 있었고, 그 요청이 끝날 때까지 프로세스 전체가 다른 요청을 하나도 처리하지 못했다. uvicorn 워커는 1개다.
+- **특히 심각했던 지점**: `api/sandboxes.py` 의 12개 핸들러. `SandboxManager` 의 모든 메서드가 `subprocess.run` 으로 nerdctl 을 호출하며 타임아웃이 최대 60초다(`core/sandbox/manager.py:182,274,296,325`). `execute_command` 는 사용자가 준 명령을 그대로 실행한다. 즉 샌드박스 명령 하나가 백엔드 전체를 최대 60초 동결시켰다 — 다른 모든 요청, 헬스체크, `/api/ai` 스트리밍 프록시까지.
+- **변경 내용**:
+  - `async def` → `def` 전환 21개: `api/sandboxes.py`(12), `api/chat_conversations.py`(4), `api/flow_drawings.py`(3), `api/jobs/uploads.py`(2 — `init_job`, `init_add_files`).
+  - 전환 대상은 AST 로 선별했다: 라우트 데코레이터가 붙은 `async def` 중 본문에 동기 DB 호출이 있고 `await` 가 **하나도 없는** 것. `await` 가 없으면 async 로 둘 이유가 없고 손해만 본다.
+  - `await` 가 실제로 필요한 6개(`admin.login`, `jobs/download.save_edited_xlsx`, `jobs/uploads.upload_job`/`create_job`/`confirm_add_files`, `v1/jobs.upload_job`)는 async 를 유지했다.
+  - 각 파일에 회귀 방지 주석 추가. 신규 테스트 `test_no_blocking_async_endpoints.py` 는 "동기 DB 를 쓰면서 async 인 핸들러" 집합을 허용 목록으로 고정한다.
+  - 핸들러를 직접 호출하던 테스트에서 `asyncio.run(...)` 12건과 `await` 1건 제거.
+- **검증**: 백엔드 382 tests pass(기존 380 + 신규 2). 실제 FastAPI 앱에 `httpx.ASGITransport` 로 3초 블로킹 핸들러와 `/api/health` 를 동시 호출해 실측: 전환 전 health 응답이 gather 시작 +3,013ms(블로킹이 끝날 때까지 대기), 전환 후 +206ms(자기 지연분만). 회귀 테스트가 실제로 실패하는지도 `execute_command` 를 일시 되돌려 확인했다.
+- **⚠️ 회귀 방지 경고**:
+  1. **이 핸들러들을 `async def` 로 되돌리지 말 것.** 동기 DB 세션과 subprocess 호출이 그대로 이벤트 루프로 돌아온다. `test_no_blocking_async_endpoints.py` 가 잡지만, 경고 자체를 이해하고 있어야 한다.
+  2. **`await` 가 필요한 작업을 추가할 때** 함수를 통째로 `async def` 로 바꾸지 말 것. 같은 함수의 동기 DB 호출이 다시 루프를 막는다. 블로킹 부분을 `asyncio.to_thread` 로 감싸거나 핸들러를 분리하라.
+  3. **커넥션 풀 여유가 없다.** `db_pool_size=20 + db_max_overflow=20 = 40` 이고 anyio 기본 스레드풀도 40이다. 정확히 맞아떨어져 현재는 풀 고갈이 없지만, 스레드풀 상한(`anyio.to_thread.current_default_thread_limiter()`)을 올리면 `QueuePool limit` 오류가 난다. 둘은 함께 조정해야 한다.
+  4. **핸들러를 직접 호출하는 테스트는 이제 `await`/`asyncio.run` 없이 호출한다.** 다시 async 로 감싸면 `ValueError: a coroutine was expected` 가 아니라 조용히 코루틴 객체를 반환받아 단언이 무의미해질 수 있다.
+  5. `ALLOWED_ASYNC_WITH_SYNC_DB` 에 항목을 추가하기 전에, 정말 `await` 가 필요한지 / 블로킹 부분을 분리할 수 없는지 먼저 확인할 것.
+- **핵심 파일**: `app/backend/api/sandboxes.py`, `app/backend/api/chat_conversations.py`, `app/backend/api/flow_drawings.py`, `app/backend/api/jobs/uploads.py`, `app/backend/tests/test_no_blocking_async_endpoints.py`(신규), `app/backend/tests/test_chat_conversations.py`, `app/backend/tests/test_api_sandboxes.py`.
+
+### 성능 개선 — 응답 압축 / Storage 왕복 제거 / Paddle 온디맨드 — 2026-09-04
+
+- **배경**: 리버스 프록시 없이 uvicorn 이 SPA 번들과 API JSON 을 직접 서빙하는데 압축이 전혀 없었고, `_source_files` 는 파일 존재 확인을 위해 Supabase 왕복을 파일 수만큼 순차로 돌리고 있었다.
+- **변경 내용**:
+  - **`SelectiveGZipMiddleware`** (`backend/main.py`): 스트리밍 경로(`/api/ai/`, `/api/v1/ai/`, `/supabase/`)와 이미 압축된 포맷(`PRECOMPRESSED_EXTENSIONS`)을 제외하고 gzip 압축. `compresslevel=6`, `minimum_size=1024`. 실측: 진입 그래프 684,563 → 190,812 bytes(3.59배), pdfium wasm 4.6MB → 2.1MB, luckysheet 3MB → 622KB.
+  - **`list_jobs` 컬럼 지연 로딩** (`api/jobs/lifecycle.py`): `_job_summary` 가 읽지 않는 `extracted_files` / `prompt` / `columns` / `ediscovery_params` / `element_mappings` / `issue_tree` 를 `defer()`. JobsPage 가 5초마다 최대 100건을 폴링하므로 폴링당 페이로드가 줄어든다.
+  - **`_list_bucket_files` 도입** (`api/jobs/_shared.py`): "signed URL 생성 성공 = 파일 존재" 탐색과 "download() 성공 = 파일 존재" 탐색을 폴더 목록 1회 조회로 대체. 목록 조회 실패 시 기존 탐색으로 폴백한다.
+  - **`_ensure_clean_source_pdf` 판정 캐시**: "내장 주석 없음" / "clean PDF 존재" 판정을 `preview:{job_id}:cleanpdf:{hash}` 에 캐싱(TTL 3600초). 예전에는 판정을 남기지 않아 preview 캐시가 만료될 때마다 원본 PDF 전체를 다시 내려받고 PyMuPDF 파싱을 다시 돌렸다.
+  - **주석 병합 병렬화 + 경로 분리**: `_merge_annotation_jsons` 가 `merged_annotations_{source_index}.json` 에 쓰도록 변경하고, 파일별 병합을 `ThreadPoolExecutor(max_workers=3)` 으로 병렬화.
+  - **Paddle SDK 온디맨드 로드** (`frontend/src/utils/loadPaddle.js` 신규): `index.html` 의 동기 `<script src="cdn.paddle.com/...">` 제거. `PaymentPage`/`PricePage` 가 `initPaddle(token)` 으로 필요 시점에 로드한다.
+- **검증**: 백엔드 380 tests pass(기존 371 + 신규 9), 프론트엔드 113 tests pass(기존 106 + 신규 7), vite build 성공. 실제 FastAPI 앱에 ASGI 를 직접 구동해 와이어 바이트와 압축 해제 후 내용 일치를 확인했다.
+- **⚠️ 회귀 방지 경고**:
+  1. **`GZipMiddleware` 를 전역으로 붙이지 말 것.** starlette 의 `GZipResponder` 는 스트리밍 응답에서 청크를 deflate 윈도우에 write 만 하고 flush 하지 않는다. SSE 는 버퍼가 찰 때까지 클라이언트에 아무것도 도달하지 않아 AI 채팅 스트리밍이 멈춘다. 새 스트리밍 경로를 추가하면 `STREAMING_PATH_PREFIXES` 에도 추가해야 한다.
+  2. **`.wasm` 을 `PRECOMPRESSED_EXTENSIONS` 에 넣지 말 것.** 압축되지 않은 바이트코드라 2.17배(4.6MB → 2.1MB)로 줄어드는, 이 앱에서 가장 큰 단일 절감 대상이다. `.svg` / `.map` / `.json` 도 텍스트이므로 마찬가지다.
+  3. **`merged_annotations.json` → `merged_annotations_{source_index}.json` 경로가 바뀌었다.** 이전 단일 공유 경로는 파일이 여러 개인 job 에서 마지막 병합이 앞선 파일 결과를 덮어써, 모든 원본 탭이 같은 주석을 가리켰다(회귀 테스트: `test_merged_path_is_per_source_index`). 경로를 되돌리면 병렬 병합이 서로를 침범하므로 절대 단일 경로로 합치지 말 것. 배포 후 기존 `merged_annotations.json` 은 참조되지 않는 잔여 파일이 된다.
+  4. **clean PDF 판정 캐시는 `preview:{job_id}:` 네임스페이스에 있어야 한다.** 열 군데에서 호출하는 `cache.invalidate_pattern(f"preview:{job_id}:*")` 이 이 판정까지 함께 쓸어가는 구조에 의존한다. 다른 접두사로 옮기면 원본 PDF 가 교체돼도 낡은 판정이 남는다.
+  5. **`list_jobs` 의 `defer` 대상 컬럼을 `_job_summary` 에서 읽기 시작하면** SQLAlchemy 가 행마다 추가 쿼리를 날려 오히려 느려진다. `_job_summary` 에 필드를 추가할 때 `_JOB_LIST_DEFERRED_COLUMNS` 를 함께 확인할 것.
+  6. **테스트 fake 의 파라미터명은 프로덕션 시그니처와 일치해야 한다.** 호출부가 `bucket=` 키워드를 쓰므로 이름이 다르면 `TypeError` 가 나고 호출부 `except` 에 삼켜져 "파일 없음"으로 조용히 오해석된다.
+- **핵심 파일**: `app/backend/main.py`, `app/backend/api/jobs/_shared.py`, `app/backend/api/jobs/lifecycle.py`, `app/backend/tests/test_selective_gzip.py`(신규), `app/backend/tests/test_source_files_batch_listing.py`(신규), `app/backend/tests/test_clean_pdf_verdict_cache.py`(신규), `app/frontend/src/utils/loadPaddle.js`(신규), `app/frontend/src/utils/loadPaddle.test.js`(신규), `app/frontend/index.html`, `app/frontend/src/pages/PaymentPage.jsx`, `app/frontend/src/pages/PricePage.jsx`.
+
 ### 에이전트 샌드박스 결과 파일 수집 실패 수정 — 2026-08-03
 
 - **증상**: 결과 페이지의 AI 에이전트가 샌드박스에서 파일을 생성하거나 외부 파일을 다운로드해도 왼쪽 파일탭에 표시되지 않았고, 사용자가 미리보기/다운로드할 수 없었다.
@@ -267,7 +328,7 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
   4. **`workers/tasks.py` 분할**: 1632줄 → `workers/tasks/` 패키지 (7개 모듈). Celery `name=` 문자열 100% 유지로 브로커 호환성 보장.
   5. **PDF 좌표 변환 통합 확인**: `core/pdf_coordinate_transform.py` 기반 통합이 이전 커밋에서 완료됨을 확인. 회귀 테스트 17개 통과.
   6. **`api/v1/jobs.py` 중복 분석**: v1 API는 v2와 다른 결제 모델(`points_service` vs `subscription_service`)을 사용하므로 의도적으로 다른 구현. 안전한 통합 대상 아님.
-  7. **프론트엔드 청크 최적화**: `vite.config.js`에 `manualChunks` 추가. 메인 청크 3,350kB → 1,361kB (**59% 감소**). PDF 뷰어·3D·TipTap·Supabase 등을 별도 청크로 분리.
+  7. **프론트엔드 청크 최적화**: `vite.config.js`에 `manualChunks` 추가. 메인 청크 3,350kB → 1,361kB (**59% 감소**). PDF 뷰어·3D·TipTap·Supabase 등을 별도 청크로 분리. — ⚠️ 이때 쓴 **객체 형태** `manualChunks` 는 2026-09-04 에 함수 형태로 교체되었다(전이 의존 오염 문제). 아래 "프론트엔드 초기 로드 최적화" 항목이 현재 구조다.
 - **패키지 구조**:
   - `api/jobs/`: `__init__.py` (router 조립 + 테스트 호환성 re-export), `_shared.py` (46개 공유 헬퍼), `uploads.py`, `lifecycle.py`, `download.py`, `result.py`, `preview.py`, `annotations.py`, `admin.py`
   - `workers/tasks/`: `__init__.py` (태스크 re-export), `_helpers.py` (7개 비-태스크 헬퍼), `job_tasks.py`, `maintenance.py`, `conversion.py`, `annotation_tasks.py`, `ediscovery_tasks.py`
@@ -1284,7 +1345,7 @@ a1 Supabase의 `SUPABASE_PUBLIC_URL`이 `https://proof.teamcat.app/supabase`로 
 
 - **회로 차단기 (Circuit Breaker) 패턴**: `paddleocr_fallback.py`에서 Redis 기반 상태 관리, Redis 불가 시 in-memory fallback
 - **상태 전환**: 1분 내 3회 이상 실패 시 OPEN → 600초 후 HALF_OPEN → 성공 시 CLOSED 복귀
-- **임시 정책**: `is_fallback_preferred()`가 항상 `True`를 반환하여 PaddleOCR을 우선 사용 (vLLM/Docling 서버 개선 전까지)
+- **현재 정책**: `is_fallback_preferred()`는 항상 `True`를 반환한다. 이름은 "fallback"이지만 지금은 PaddleOCR 서비스가 **주 OCR 경로**이므로 정상 동작이다 (a1 로컬 PP-OCRv5). 이 값을 내리면 이미지 OCR이 Docling으로 되돌아가 bbox(주석/searchable PDF/에이전트 좌표)를 잃는다 — 함부로 끄지 말 것.
 - **폴백 제어**: `fallback_controller.can_use_fallback()`로 폴백 가능 여부 판단, `consume_fallback()`로 사용 기록
 - **설정 옵션**:
   - `paddleocr_fallback_enabled`: 폴백 시스템 활성화/비활성화
@@ -1329,7 +1390,7 @@ a1 Supabase의 `SUPABASE_PUBLIC_URL`이 `https://proof.teamcat.app/supabase`로 
   - 최대 20개 이미지를 LLM에 전송 (`docling_max_images_per_doc`)
   - 이미지 최대 긴 변 1920px (`docling_image_max_size`)
   - `build_docling_refinement_prompt`로 프롬프트 생성
-- **OCR 백엔드 선택**: `ocr_backend` 설정으로 `docling` 또는 `paddleocr` 선택
+- **OCR 엔진 선택은 Docling과 무관**: 스캔/이미지 OCR은 전부 `paddleocr_service`가 담당하며 엔진은 그쪽 `PADDLEOCR_BACKEND`로 고른다. 앱 설정에 있던 `ocr_backend`는 어디서도 읽지 않는 죽은 값이어서 제거했다 (`config.py`).
 - **설정 옵션**:
   - `docling_enabled`: Docling 서비스 활성화/비활성화
   - `docling_service_url`: Docling 서비스 URL
@@ -1555,9 +1616,71 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 - Refinement costs: `cost_per_docling_refinement_page_krw` / `cost_per_docling_refinement_page_usd` in `settings_store`.
 - Docs: `app/docs/docs/docling.md` and `app/docs/docs/hwp.md` (HWP Phase 2).
 
-## PaddleOCR Fallback (AI Studio API)
+## Unified OCR Service (PaddleOCR v5 on a1 CPU)
 
-- PaddleOCR AI Studio API (`https://paddleocr.aistudio-app.com/api/v2/ocr/jobs`)를 폴백 OCR 백엔드로 사용한다.
+- **모든 OCR의 단일 진입점은 `paddleocr_service` 컨테이너의 `/api/convert*` 계약이다.** 상위 파이프라인(`core/paddleocr_client.py` → `pipeline_vision` / `pdf_annotate_converter` / `workers/tasks/_helpers` / `job_tasks`)은 어떤 엔진이 도는지 알지 못한다. 엔진 교체는 환경변수 한 줄(`PADDLEOCR_BACKEND`)이며 상위 코드 수정이 없다.
+- **백엔드 3종** (`app/backend/paddleocr_service/main.py`의 `OCR_BACKEND`):
+  - `local_v5` (**기본/프로덕션**): PP-OCRv5 검출·인식 + PP-StructureV3 레이아웃/표 파싱을 a1 CPU에서 직접 추론. GPU 불필요, 외부 API 비용 0. 구현은 `app/backend/paddleocr_service/ocr_v5.py`.
+  - `aistudio`: PaddleOCR AI Studio 유료 API 프록시 (기존 경로, 롤백/폴백용).
+  - `local_vl`: PaddleOCR-VL 1.6 + vLLM (GPU 필요 — b2 복구 후).
+- **한국어 인식 모델**: PP-OCRv5의 기본 server/mobile rec 모델은 **한국어를 지원하지 않는다** (PaddleOCR discussion #15371). 다국어 계열인 `korean_PP-OCRv5_mobile_rec`을 기본 rec 모델로 쓴다 (`PADDLEOCR_V5_REC_MODEL`). 검출은 `PP-OCRv5_server_det`.
+- **한국어를 세 곳 모두에 적용해야 한다 (`PADDLEOCR_V5_PATCH_ALL_RECOGNIZERS`)**: PP-StructureV3 기본 설정에는 `TextRecognition` 모듈이 **세 곳**에 있다 (a1에서 기본 설정을 덤프해 실측):
+  | 설정 경로 | 담당 | `text_recognition_model_name` kwarg로 바뀌나? |
+  |---|---|---|
+  | `SubPipelines.GeneralOCR.SubModules.TextRecognition` | 본문 텍스트 | ✅ 바뀜 |
+  | `SubPipelines.TableRecognition.SubPipelines.GeneralOCR.SubModules.TextRecognition` | **표 셀 텍스트** | ❌ 안 바뀜 |
+  | `SubPipelines.SealRecognition.SubPipelines.SealOCR.SubModules.TextRecognition` | **도장 안 글자** | ❌ 안 바뀜 |
+  즉 kwarg만 쓰면 거래내역 표의 셀과 도장 글자가 한국어 미지원 모델(`PP-OCRv5_server_rec`)로 인식된다 — 한국어 표가 주력인 본 서비스에서는 치명적이다. `ocr_v5._korean_config_path()`가 paddlex 기본 설정 YAML(`paddlex/configs/pipelines/PP-StructureV3.yaml`)을 읽어 **모든 `TextRecognition`의 `model_name`을 재귀적으로 교체**한 파일을 만들고, `PPStructureV3(paddlex_config=...)`로 넘긴다. 키 이름(`TextRecognition`)으로 찾으므로 버전이 올라가 서브파이프라인이 추가돼도 자동으로 함께 교체된다. 기동 로그의 `[ocr-v5] 인식 모델 교체:` 3줄로 확인할 수 있다.
+- **oneDNN(MKLDNN)은 반드시 꺼야 한다**: `enable_mkldnn=True`로 PP-StructureV3를 추론하면 paddlepaddle 3.3.1에서 `NotImplementedError: ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]` (onednn_instruction.cc)로 죽는다 (a1 실측). `PADDLEOCR_V5_ENABLE_MKLDNN` 기본값을 `false`로 두었고, 기본값이 다시 켜지지 않도록 단위 테스트로 고정했다. paddle 업그레이드 후 재시도해볼 만한 성능 레버다.
+- **CPU 비용 실측 (a1, 1755×1240 한국어 스캔 표 문서 1페이지, pool 4 / 16 threads)** — `benchmark_v5.py`로 측정. 직관과 반대인 결과가 두 개 있으니 튜닝 전에 반드시 읽을 것:
+
+  | 설정 | sec/page | 기준 대비 | 인식 라인 | 본문 한글 | **표 안 한글** | 표 블록 |
+  |---|---|---|---|---|---|---|
+  | 기준 (server det, rec batch 8) | 130.1 | — | 239 | 346 | 311 | 2 |
+  | `rec_batch_size=1` | **113.4** | **−13%** | 239 | 345 | 311 | 2 |
+  | `det=PP-OCRv5_mobile_det` | **86.3** | **−34%** | 234 | 345 | 308 | 2 |
+  | `table_recognition=false` | 116.7 | −10% | 239 | 35 | **0** | 2 |
+  | `seal_recognition=false` | 131.2 | ±0 (노이즈) | 239 | 346 | 311 | 2 |
+  | `layout=PP-DocLayout-S` | 119.5 | −8% | 239 | **0** | **0** | **0** |
+
+  - **인식 배치를 키우면 느려진다**: `batch_size=8`이 `1`보다 13% 느렸다(품질은 동일). 텍스트라인 폭이 제각각이라 배치 패딩 낭비가 이득을 넘어선다. `PADDLEOCR_V5_REC_BATCH_SIZE` 기본값은 **1**이며, 단위 테스트로 고정했다.
+  - **`PP-DocLayout-S`로 낮추면 결과가 통째로 빈다**: 레이아웃 블록을 0개 검출해 마크다운·표가 전부 사라졌다(OCR 라인은 239개 정상 검출). 속도 이득도 8%뿐이다. `PADDLEOCR_V5_LAYOUT_MODEL`은 **비워두는 것이 기본값**이고, 다른 문서 유형에서 실측하기 전에는 건드리지 말 것.
+  - **표 인식은 싸고 필수다**: 끄면 10%만 빨라지는데 표 안 한글이 311자 → 0자가 된다. 거래내역 표가 주력 문서이므로 항상 ON.
+  - **도장 인식은 비용이 없다**: 측정 노이즈 범위. 주석 기능이 도장 블록을 대상으로 하므로 ON 유지.
+  - **`mobile_det`은 유일하게 큰 속도 레버(−34%)지만 검출 라인이 2% 줄어든다**(239→234). 법률 문서에서 누락은 결함이므로 기본값은 품질 우선 `PP-OCRv5_server_det`으로 두고, 처리량이 급할 때 내리는 escape hatch로 남긴다.
+- **좌표 규약 (가장 중요)**: PP-StructureV3는 bbox를 입력 이미지 픽셀 좌표(top-left origin)로 반환한다. AI Studio에 **이미지**를 제출했을 때와 같은 규약이므로 `_extract_layout_from_result()`를 그대로 통과시켜 `core/ocr_layout.py` / `core/pdf_text_layer.py`의 좌표 계산을 건드리지 않는다. 또한 로컬 백엔드는 **PDF도 항상 300DPI 페이지 이미지로 렌더링한 뒤** 추론하므로, AI Studio PDF 직접 제출(PDF user-space, bottom-left origin)과 이미지 경로가 원점이 달랐던 불일치가 사라진다 — 좌표 규약이 하나로 통일된다.
+- **반드시 채워야 하는 필드**: `_extract_layout_from_result()`는 `width`/`height`가 없으면 bbox 정규화를 건너뛰고 원본 좌표를 그대로 반환한다(하위 소비자 전부 오작동). PP-StructureV3 `res.json`에는 페이지 크기가 없으므로 `ocr_v5._inject_page_size()`가 이미지 실제 픽셀 크기를 주입하며, 90°/270° 방향 보정이 적용된 페이지는 가로/세로를 교환한다.
+- **numpy 직렬화**: `res.json`의 `rec_boxes`/`rec_polys`는 numpy int16 배열이다. `ocr_v5._to_jsonable()`이 순수 파이썬 타입으로 변환하지 않으면 FastAPI 직렬화와 하위 `float()` 변환이 모두 깨진다.
+- **문서 방향**: AI Studio 경로와 동일하게 `use_doc_orientation_classify=True`(90° 단위 대회전 보정, 각도 코드를 `page_angles`로 반환) + `use_doc_unwarping=False`(왜곡 보정은 역매핑 불가하므로 항상 강제 off — `ocr_v5._filtered_params()`가 값을 덮어쓴다).
+- **자동 파라미터 추천 필터링**: `core/paddleocr_parameter_recommender.py`는 PaddleOCR-VL 전용 키(`use_ocr_for_image_block`, `format_block_content` 등)도 내보낸다. `ocr_v5.PREDICT_PARAM_WHITELIST`로 걸러내지 않으면 `PPStructureV3.predict()`가 TypeError로 죽는다.
+- **CPU 병렬화**: PaddleOCR 파이프라인은 thread-safe가 아니므로 인스턴스 풀(`PADDLEOCR_V5_POOL_SIZE`, 기본 4)로 관리하고 한 인스턴스는 한 스레드만 쓴다. `POOL_SIZE × PADDLEOCR_V5_CPU_THREADS ≈ 물리 코어 수`로 맞춘다(a1: 4 × 16). 페이지 단위 실패는 격리되어 빈 결과로 채워지고 전체 작업을 되돌리지 않는다.
+- **페이지 상한 해제**: AI Studio는 job당 10페이지가 상한이었다. 로컬 백엔드는 `PADDLEOCR_LOCAL_BATCH_MAX_PAGES`(기본 200)까지 받는다. 앱 쪽 배치 크기는 `OCR_BATCH_SIZE`(`settings.ocr_batch_size`, 기본 10) — `pipeline_vision`의 배치 크기와 PDF 직접 제출 임계값, `pdf_annotate_converter`/`_helpers`의 페이지 게이트가 모두 이 값을 참조한다(이전에는 10이 세 곳에 하드코딩되어 있었다).
+- **로컬 실패 시 폴백**: `PADDLEOCR_LOCAL_FALLBACK_TO_AISTUDIO=true`(기본)이고 `PADDLEOCR_API_TOKEN`이 있으면, 로컬 추론 실패 시 같은 task를 AI Studio 경로로 재시도한다. 안정화 후 `false`로 내릴 것.
+- **컨테이너**: `app/backend/paddleocr_service/Dockerfile.v5` (python:3.11-slim + `paddlepaddle==3.3.1` CPU + `paddleocr[doc-parser]==3.7.0` + LibreOffice/CJK 폰트). 모델 가중치는 빌드 시 워밍업으로 이미지에 내려받고, 실패 시 런타임에 `paddleocr_v5_models:/root/.paddlex` 볼륨으로 캐시된다. 롤백은 `.env`에 `PADDLEOCR_DOCKERFILE=backend/paddleocr_service/Dockerfile` + `PADDLEOCR_BACKEND=aistudio`.
+- **`[doc-parser]` extra는 필수다**: 순수 `paddleocr`만 설치하면 PP-StructureV3 생성이 `RuntimeError: A dependency error occurred during pipeline creation`으로 실패한다 (a1 x86_64에서 실측). 설치가 성공했다고 안심하면 안 되고, 컨테이너 기동 로그에서 `[ocr-v5] PPStructureV3 초기화 완료`를 확인해야 한다.
+- **a1에서 실측 검증한 사실** (paddleocr 3.7.0 / paddlepaddle 3.3.1, `docker run --rm python:3.11-slim`):
+  - `paddlepaddle==3.3.1` + `paddleocr[doc-parser]==3.7.0` 설치 성공, `PPStructureV3(...)` 생성 성공
+  - 모델명 `korean_PP-OCRv5_mobile_rec`, `PP-OCRv5_server_det` 유효 (다국어 rec: arabic/cyrillic/devanagari/el/en/eslav/korean/latin/ta/te/th)
+  - 생성자는 `device` / `cpu_threads` / `enable_mkldnn`을 `**kwargs`로 수용하고, **미지원 키는 `ValueError: Unknown argument: X`로 거부**한다 (TypeError가 아니다 — `_build_pipeline`이 두 예외를 모두 잡는 이유)
+  - `PPStructureV3.predict()`에는 `use_layout_detection`이 **없고** `format_block_content`는 **있다** — PaddleOCR-VL 기준으로 짐작하면 틀린다
+- **미검증 / 후속 확인 필요**:
+  1. **한국어 표 인식 품질**: 생성 로그를 보면 표 인식 서브파이프라인이 한국어를 지원하지 않는 `PP-OCRv5_server_rec`도 함께 올린다. 한국어 표가 많은 실제 문서로 셀 텍스트 품질을 확인해야 하며, 열화가 확인되면 `PADDLEOCR_V5_TABLE_RECOGNITION=false`(표는 레이아웃 블록 HTML로만 처리)가 escape hatch다.
+  2. **CPU 처리 시간/페이지**: 실문서 벤치마크 미측정. a1은 495GB RAM / 80스레드에 여유가 크므로(측정 시 load ~3) `PADDLEOCR_V5_POOL_SIZE`를 4보다 올릴 여지가 있다.
+  3. **주석/searchable PDF 좌표 정합**: 단위·통합 테스트로 정규화 규약은 고정했으나, 실제 스캔 PDF의 하이라이트 위치는 develop(28190)에서 눈으로 확인해야 한다.
+- **`/health`가 백엔드를 노출한다**: `{"status":"ok","backend":"local_v5","rec_model":"korean_PP-OCRv5_mobile_rec"}` — 배포 후 어떤 엔진이 도는지 확인하는 1차 수단.
+- **컨테이너 전이 의존성 주의**: `paddleocr_parameter_recommender` → `ocr_client` → `{llm_utils, markdown_sanitizer}`. 기존 `Dockerfile`은 뒤의 두 파일을 복사하지 않아 자동 파라미터 추천이 ImportError로 조용히 죽고 있었다. `Dockerfile.v5`는 전이 의존까지 모두 복사한다.
+- **추천기 LLM 엔드포인트**: `local_v5`에는 vLLM 컨테이너가 없으므로 `VLLM_SERVER_URL`을 그대로 쓰면 문서마다 없는 호스트로 붙었다가 타임아웃한다. `PADDLEOCR_RECOMMENDER_ENDPOINT`(비우면 `DEFAULT_LLM_ENDPOINT`)를 사용한다.
+- **벤치마크 / 품질 A-B 도구**: `app/backend/paddleocr_service/benchmark_v5.py`. `--compare-korean-patch`로 표/도장 인식기 한국어 교체 ON/OFF를 비교하고(표 안 한글 음절 수를 지표로 사용), `--pool-sizes 1,2,4,8`로 pool size별 처리량(pages/min)을 측정한다. 컨테이너 안에서 샘플 디렉터리를 마운트해 실행한다.
+- **테스트**: `app/backend/tests/test_ocr_v5_adapter.py`(어댑터 단위 33개 — 직렬화/회전/페이지 크기/마크다운 인라인/파라미터 화이트리스트/좌표 정규화), `app/backend/tests/test_paddleocr_service_backend_dispatch.py`(엔드포인트 디스패치 통합 9개 — 세 엔드포인트 라우팅, 페이지 상한 해제, 폴백 차단 시 error 전이).
+- Key files:
+  - `app/backend/paddleocr_service/ocr_v5.py` — PP-StructureV3 파이프라인 풀, `predict_page`/`predict_pages`, 결과 정규화
+  - `app/backend/paddleocr_service/main.py` — `OCR_BACKEND` 디스패치, `_do_local_v5_*` 워커, `/health`
+  - `app/backend/paddleocr_service/Dockerfile.v5`, `requirements.v5.txt`
+  - `app/docker-compose.yml` — `paddleocr_service`(v5 이미지 + 모델 볼륨 + healthcheck)
+
+## PaddleOCR AI Studio API (백업 백엔드)
+
+- PaddleOCR AI Studio API (`https://paddleocr.aistudio-app.com/api/v2/ocr/jobs`)를 백업 OCR 백엔드로 사용한다 (`PADDLEOCR_BACKEND=aistudio`, 또는 로컬 실패 시 자동 폴백).
 - AI Studio API는 **이미지 파일만** 지원한다 (png/jpg/bmp/tiff/webp). PDF, 오피스 문서, HWP/HWPX는 직접 전송하지 않는다.
 - 폴백 대상:
   - **Vision 파이프라인** (`pipeline_vision.py`): PDF 페이지를 PNG로 렌더링 후, 모든 페이지를 PaddleOCR 우선 처리. 개별 페이지 텍스트 레이어 검사 없음.
@@ -1705,10 +1828,10 @@ cat app/backend/db/migrations/020_add_pdf_annotate_fields.sql | ssh a1 'docker e
 
 ## GPU OCR Backends (Suspended)
 
-- **Status**: b2 GPU server (RTX 3080) is currently down with boot failures and is scheduled for repair. All GPU OCR backend work is suspended until the server is recovered.
-- **PaddleOCR-VL 1.6**: dual-container architecture (vLLM + PaddleOCR Pipeline) was in progress on b2. Files remain in `app/backend/paddleocr_service/` and `app/docker-compose.paddleocr.yml` for resumption after repair.
+- **Status**: b2 GPU server (RTX 3080 / 2080 Ti) is still down and will not be repaired soon. All GPU OCR backend work stays suspended. b1(192.168.1.69, LLM)과 b3(192.168.1.49)도 함께 내려가 있어, 현재 살아 있는 노드는 a1(80 스레드 Xeon, GPU 없음)과 a2뿐이다.
+- **PaddleOCR-VL 1.6**: dual-container architecture (vLLM + PaddleOCR Pipeline) was in progress on b2. Files remain in `app/backend/paddleocr_service/` (`Dockerfile.pipeline`, `Dockerfile.vllm`, `PADDLEOCR_BACKEND=local_vl`) and `app/docker-compose.paddleocr.yml` for resumption after repair.
 - **Nemotron-OCR-v2**: Docker-based evaluation was attempted but could not complete due to the b2 outage. The model is Turing/CC-7.5 unsupported by NVIDIA's official docs; evaluation will resume on a compatible GPU if available.
-- **Fallback**: production currently uses the CPU-only Docling service with `OCR_ENGINE=easyocr`.
+- **현재 프로덕션 OCR**: GPU를 기다리지 않고 **a1 CPU에서 PaddleOCR v5(PP-OCRv5 + PP-StructureV3)** 로 전환했다 — 위 "Unified OCR Service (PaddleOCR v5 on a1 CPU)" 절 참조.
 
 ## Internationalization (i18n)
 

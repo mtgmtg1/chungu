@@ -27,6 +27,19 @@ from ..db.session import get_db
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/jobs", tags=["chat-conversations"])
 
+# [Flow: Step 1 (요청 수신) -> Step 2 (FastAPI 스레드풀에서 동기 실행) -> Step 3 (이벤트 루프 비점유)]
+#
+# 이 라우터의 핸들러는 의도적으로 `async def` 가 아니라 `def` 다.
+# FastAPI 는 `def` 핸들러를 스레드풀(anyio, 기본 40스레드)에서 돌리지만,
+# `async def` 핸들러는 이벤트 루프에서 그대로 실행한다. 아래 핸들러는 전부
+# 동기 SQLAlchemy 세션으로 블로킹 I/O 를 하므로, `async def` 로 두면 그 동안
+# 프로세스 전체가 다른 요청을 하나도 처리하지 못한다(uvicorn 워커는 1개다).
+#
+# ⚠️ 여기에 `await` 가 필요한 작업을 추가할 때 함수를 `async def` 로 되돌리지 말 것.
+# 그러면 같은 함수의 동기 DB 호출이 다시 루프를 막는다. `asyncio.to_thread` 로
+# 블로킹 부분을 감싸거나, 비동기 작업을 별도 핸들러로 분리하라.
+
+
 
 def _require_chat_user(
     user: CurrentUser = Depends(get_current_user_or_api_key),
@@ -47,7 +60,7 @@ class ChatConversationData(BaseModel):
 
 
 @router.get("/{job_id}/chat-conversations", response_model=None)
-async def list_chat_conversations(
+def list_chat_conversations(
     job_id: str,
     user: CurrentUser = Depends(_require_chat_user),
     db: Session = Depends(get_db),
@@ -81,7 +94,7 @@ async def list_chat_conversations(
 
 
 @router.get("/{job_id}/chat-conversations/{conversation_id}", response_model=None)
-async def get_chat_conversation(
+def get_chat_conversation(
     job_id: str,
     conversation_id: str,
     user: CurrentUser = Depends(_require_chat_user),
@@ -113,7 +126,7 @@ async def get_chat_conversation(
 
 
 @router.put("/{job_id}/chat-conversations/{conversation_id}", response_model=None)
-async def save_chat_conversation(
+def save_chat_conversation(
     job_id: str,
     conversation_id: str,
     data: ChatConversationData,
@@ -159,7 +172,7 @@ async def save_chat_conversation(
 
 
 @router.delete("/{job_id}/chat-conversations/{conversation_id}", response_model=None)
-async def delete_chat_conversation(
+def delete_chat_conversation(
     job_id: str,
     conversation_id: str,
     user: CurrentUser = Depends(_require_chat_user),

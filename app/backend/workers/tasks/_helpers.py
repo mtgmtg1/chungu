@@ -202,7 +202,7 @@ def _build_and_upload_searchable_pdf(
             doc = fitz.open(str(input_path))
             total_input_pages = len(doc)
             doc.close()
-            if total_input_pages <= 10:
+            if total_input_pages <= max(1, settings.ocr_batch_size):
                 pages = paddleocr_client.convert_pdf_with_layout(input_path)
                 layout_pages = [p[1] for p in pages]
                 layout_by_page = {i + 1: layout for i, layout in enumerate(layout_pages) if layout}

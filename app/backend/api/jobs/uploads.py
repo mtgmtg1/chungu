@@ -271,8 +271,11 @@ async def upload_job(
 
 
 
+# 동기 DB 작업만 하므로 `def` 로 둔다 — `async def` 로 두면 FastAPI 가 이벤트 루프에서
+# 그대로 실행해 블로킹 세션이 프로세스 전체의 동시성을 막는다. 같은 파일의 upload_job /
+# create_job / confirm_add_files 는 await 가 필요해 `async def` 를 유지한다.
 @router.post("/jobs/init")
-async def init_job(
+def init_job(
     payload: dict = Body(...),
     user: CurrentUser = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
@@ -531,8 +534,11 @@ async def create_job(
 
 
 
+# 동기 DB 작업만 하므로 `def` 로 둔다 — `async def` 로 두면 FastAPI 가 이벤트 루프에서
+# 그대로 실행해 블로킹 세션이 프로세스 전체의 동시성을 막는다. 같은 파일의 upload_job /
+# create_job / confirm_add_files 는 await 가 필요해 `async def` 를 유지한다.
 @router.post("/jobs/{job_id}/init-add-files")
-async def init_add_files(
+def init_add_files(
     job_id: str,
     payload: dict = Body(...),
     user: CurrentUser = Depends(get_current_user_or_api_key),

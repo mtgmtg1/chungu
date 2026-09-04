@@ -471,7 +471,7 @@ def _collect_page_elements(
         corrected_images: page_no(1-based) → 정돈된 페이지 이미지 경로
         layout_by_page: page_no → PaddleOCR layout 원본 dict (overall_ocr_res 포함, bbox는 normalized 좌표)
     """
-    if use_pdf_direct and (page_range is None or len(page_range) <= 10):
+    if use_pdf_direct and (page_range is None or len(page_range) <= max(1, settings.ocr_batch_size)):
         return _collect_page_elements_pdf_direct(job, temp_dir, page_range)
     return _collect_page_elements_image(job, temp_dir, page_range)
 

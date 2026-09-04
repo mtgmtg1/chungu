@@ -113,7 +113,7 @@ async def test_collect_results_updates_job_extracted_files_and_invalidates_cache
         # [Flow: SQLAlchemy flag_modified 모킹 — MagicMock 객체에 적용]
         monkeypatch.setattr("backend.api.sandboxes.flag_modified", lambda obj, attr: None)
 
-        result = await collect_results("sandbox-123", mock_user, mock_db)
+        result = collect_results("sandbox-123", mock_user, mock_db)
 
         assert result["uploaded"] == 1
         assert result["failed"] == 0

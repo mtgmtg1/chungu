@@ -77,6 +77,10 @@ Thumbs.db
 
 # Misc
 package-lock.json
+# Dockerfile.backend 의 frontend/docs 스테이지는 npm ci 를 쓴다. 락파일이 없으면
+# fresh clone 에서 이미지 빌드가 실패하므로 이 둘만 추적 대상으로 되돌린다.
+!app/frontend/package-lock.json
+!app/docs/package-lock.json
 .gstack/
 .playwright-mcp/
 

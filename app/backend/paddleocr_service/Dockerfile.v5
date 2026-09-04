@@ -1,0 +1,67 @@
+# [Flow: Step 1 (Python + 시스템 의존성) -> Step 2 (paddlepaddle CPU + paddleocr 3.x 설치)
+#       -> Step 3 (서비스 코드 복사) -> Step 4 (모델 워밍업) -> Step 5 (FastAPI 기동)]
+# PaddleOCR v5 로컬 CPU OCR 컨테이너 — a1(GPU 없음, Xeon 듀얼 소켓 80코어) 전용.
+#
+# PP-OCRv5 검출/인식 + PP-StructureV3 레이아웃/표 파싱을 컨테이너 내부에서 직접 수행한다.
+# 의존성/모델명/생성자 kwargs는 a1(x86_64)에서 paddleocr 3.7.0으로 실측 검증했다:
+#   - paddleocr[doc-parser] extra 없이는 PPStructureV3 생성이 dependency error로 실패
+#   - korean_PP-OCRv5_mobile_rec / PP-OCRv5_server_det 모델명 유효
+#   - device / cpu_threads / enable_mkldnn kwargs 수용 (미지원 키는 ValueError로 거부됨)
+# 외부 AI Studio API 의존성이 없으며, PADDLEOCR_BACKEND=aistudio로 되돌리면 동일 이미지에서
+# 프록시 모드로도 동작한다 (main.py가 두 백엔드를 모두 담고 있음).
+
+FROM python:3.11-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+# 모델 캐시 위치 — docker volume으로 마운트해 재시작 시 재다운로드를 피한다.
+ENV HOME=/root
+ENV PADDLE_PDX_CACHE_HOME=/root/.paddlex
+
+# 시스템 의존성:
+#   libgomp1/libglib2.0-0/libgl1 — paddlepaddle + opencv 런타임
+#   libreoffice*                 — DOCX/PPTX/XLSX/HTML → PDF 변환
+#   fonts-noto-cjk               — CJK 렌더링 (LibreOffice 변환 시 글자 깨짐 방지)
+#   imagemagick                  — 샘플 이미지 리사이즈 (core/ocr_client.py의 magick 호출)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 libglib2.0-0 libgl1 libsm6 libxext6 libxrender1 \
+    libreoffice-core libreoffice-writer libreoffice-impress libreoffice-calc \
+    fonts-noto-cjk fonts-noto-cjk-extra \
+    imagemagick \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/paddleocr_service/requirements.v5.txt /tmp/requirements.v5.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.v5.txt
+
+# 서비스 코드
+COPY backend/paddleocr_service/main.py /app/main.py
+COPY backend/paddleocr_service/ocr_v5.py /app/ocr_v5.py
+
+# core 의존 모듈. paddleocr_parameter_recommender → ocr_client → {llm_utils, markdown_sanitizer}
+# 전이 의존까지 모두 복사해야 자동 파라미터 추천이 ImportError로 조용히 죽지 않는다.
+COPY backend/core/__init__.py /app/backend/core/__init__.py
+COPY backend/core/ocr_client.py /app/backend/core/ocr_client.py
+COPY backend/core/llm_utils.py /app/backend/core/llm_utils.py
+COPY backend/core/markdown_sanitizer.py /app/backend/core/markdown_sanitizer.py
+COPY backend/core/prompts.py /app/backend/core/prompts.py
+COPY backend/core/paddleocr_parameter_recommender.py /app/backend/core/paddleocr_parameter_recommender.py
+COPY backend/core/image_deskew.py /app/backend/core/image_deskew.py
+
+WORKDIR /app
+
+# 모델 워밍업: 빌드 시점에 PP-OCRv5/PP-StructureV3 가중치를 이미지에 내려받아
+# 첫 요청 지연과 런타임 네트워크 의존성을 제거한다. 실패해도 빌드는 계속되며,
+# 이 경우 첫 요청 시점에 볼륨(/root/.paddlex)으로 다운로드된다.
+ARG PADDLEOCR_V5_REC_MODEL=korean_PP-OCRv5_mobile_rec
+ENV PADDLEOCR_V5_REC_MODEL=${PADDLEOCR_V5_REC_MODEL}
+RUN python -c "\
+import logging; logging.basicConfig(level=logging.INFO);\
+import ocr_v5;\
+ocr_v5.V5_POOL_SIZE=1;\
+p=ocr_v5._build_pipeline();\
+print('[warmup] PPStructureV3 ready')\
+" || echo "[warmup] skipped (models will download on first request)"
+
+EXPOSE 8080
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

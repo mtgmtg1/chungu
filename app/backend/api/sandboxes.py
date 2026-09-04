@@ -37,6 +37,21 @@ from ..db.session import get_db
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sandboxes", tags=["sandboxes"])
 
+# [Flow: Step 1 (요청 수신) -> Step 2 (FastAPI 스레드풀에서 동기 실행) -> Step 3 (이벤트 루프 비점유)]
+#
+# 이 라우터의 핸들러는 의도적으로 `async def` 가 아니라 `def` 다.
+# FastAPI 는 `def` 핸들러를 스레드풀(anyio, 기본 40스레드)에서 돌리지만,
+# `async def` 핸들러는 이벤트 루프에서 그대로 실행한다.
+#
+# 여기서는 특히 치명적이다. SandboxManager 의 모든 메서드는 `subprocess.run` 으로
+# nerdctl 을 호출하며 타임아웃이 최대 60초다(core/sandbox/manager.py). `async def` 였을 때는
+# 샌드박스 명령 하나가 백엔드 전체를 최대 60초 동결시켰다 — 다른 모든 요청, 헬스체크,
+# /api/ai 스트리밍 프록시까지 전부. execute_command 는 사용자가 준 명령을 그대로 돌린다.
+#
+# ⚠️ 이 파일의 핸들러를 `async def` 로 되돌리지 말 것. 동기 DB 세션과 subprocess 호출이
+# 그대로 이벤트 루프로 돌아온다. `await` 가 필요하면 블로킹 부분을 `asyncio.to_thread` 로 감쌀 것.
+
+
 # --- sandbox manager 인스턴스 (싱글톤) ---
 _sandbox_mgr: SandboxManager | None = None
 _collector: ResultCollector | None = None
@@ -119,7 +134,7 @@ class GitCommitRequest(BaseModel):
 # ========================================
 
 @router.post("")
-async def create_sandbox(
+def create_sandbox(
     req: CreateSandboxRequest,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -192,7 +207,7 @@ async def create_sandbox(
 
 
 @router.get("/stats")
-async def get_sandbox_stats(
+def get_sandbox_stats(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
@@ -256,7 +271,7 @@ async def get_sandbox_stats(
 
 
 @router.get("/{sandbox_id}")
-async def get_sandbox(
+def get_sandbox(
     sandbox_id: str,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -302,7 +317,7 @@ async def get_sandbox(
 
 
 @router.post("/{sandbox_id}/execute")
-async def execute_command(
+def execute_command(
     sandbox_id: str,
     req: ExecuteCommandRequest,
     user: CurrentUser = Depends(get_current_user),
@@ -363,7 +378,7 @@ async def execute_command(
 
 
 @router.get("/{sandbox_id}/files")
-async def list_files(
+def list_files(
     sandbox_id: str,
     path: str = Query("/workspace", description="조회할 경로"),
     user: CurrentUser = Depends(get_current_user),
@@ -384,7 +399,7 @@ async def list_files(
 
 
 @router.get("/{sandbox_id}/files/read")
-async def read_file(
+def read_file(
     sandbox_id: str,
     path: str = Query(..., description="읽을 파일 경로"),
     user: CurrentUser = Depends(get_current_user),
@@ -405,7 +420,7 @@ async def read_file(
 
 
 @router.post("/{sandbox_id}/files/write")
-async def write_file(
+def write_file(
     sandbox_id: str,
     req: WriteFileRequest,
     user: CurrentUser = Depends(get_current_user),
@@ -426,7 +441,7 @@ async def write_file(
 
 
 @router.post("/{sandbox_id}/commit")
-async def git_commit(
+def git_commit(
     sandbox_id: str,
     req: GitCommitRequest,
     user: CurrentUser = Depends(get_current_user),
@@ -447,7 +462,7 @@ async def git_commit(
 
 
 @router.get("/{sandbox_id}/diff")
-async def git_diff(
+def git_diff(
     sandbox_id: str,
     cached: bool = Query(False, description="staged 변경사항만"),
     user: CurrentUser = Depends(get_current_user),
@@ -468,7 +483,7 @@ async def git_diff(
 
 
 @router.post("/{sandbox_id}/collect")
-async def collect_results(
+def collect_results(
     sandbox_id: str,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -553,7 +568,7 @@ async def collect_results(
 
 
 @router.delete("/{sandbox_id}")
-async def destroy_sandbox(
+def destroy_sandbox(
     sandbox_id: str,
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -588,7 +603,7 @@ async def destroy_sandbox(
 
 
 @router.get("")
-async def list_sandboxes(
+def list_sandboxes(
     status: str | None = Query(None, description="상태 필터 (running/stopped/...)"),
     job_id: str | None = Query(None, description="Job ID 필터"),
     limit: int = Query(50, ge=1, le=200),

@@ -190,12 +190,15 @@ class FallbackController:
         return state
 
     def is_fallback_preferred(self) -> bool:
-        """폴백을 우선시할지 여부를 반환한다.
+        """PaddleOCR 서비스를 우선 사용할지 여부를 반환한다.
 
-        임시: vLLM/Docling 서버 개선 전까지 항상 True를 반환하여 PaddleOCR을 우선 사용.
+        이름은 역사적 이유로 "fallback"이지만, 현재 PaddleOCR 서비스(a1 로컬 PP-OCRv5)는
+        이미지/스캔 OCR의 **주 경로**다. False가 되면 이미지 OCR이 Docling으로 되돌아가
+        bbox(주석/searchable PDF/에이전트 좌표)를 잃으므로, 끄려면 그 손실을 감수해야 한다.
+        엔진 교체는 이 플래그가 아니라 paddleocr_service의 PADDLEOCR_BACKEND로 한다.
 
         Returns:
-            True (항상 — 임시 정책)
+            paddleocr_fallback_enabled가 True인 동안 항상 True
         """
         if not settings.paddleocr_fallback_enabled:
             return False

@@ -10,6 +10,7 @@
 #   aistudio : PaddleOCR AI Studio 유료 API 프록시 (외부 의존)
 #   local_vl : PaddleOCR-VL 1.6 + vLLM 로컬 추론 (GPU 필요 — b2 복구 후)
 import base64
+import functools
 import json
 import logging
 import os
@@ -374,39 +375,47 @@ def _normalize_bbox(
     bbox: list[float] | tuple[float, ...],
     page_width_px: float,
     page_height_px: float,
+    flip_y: bool = True,
 ) -> list[float]:
-    """AI Studio(PaddleOCR-VL) bbox를 0~1 top-left normalized 좌표로 변환한다.
+    """bbox를 0~1 top-left normalized(y=0이 상단) 좌표로 변환한다.
 
     [Flow: Step 1 (x좌표를 페이지 너비로 나눔) -> Step 2 (y좌표를 페이지 높이로 나눔)
-          -> Step 3 (PDF user-space y↑를 top-left y↓로 뒤집음)
-          -> Step 4 ([x0, y0, x1, y1] normalized 좌표 반환)]
+          -> Step 3 (원본이 bottom-left면 y를 뒤집음) -> Step 4 ([x0, y0, x1, y1] 반환)]
 
-    AI Studio는 PDF를 직접 받을 때 bbox를 PDF user-space(bottom-left origin, y↑)로 반환한다.
-    이를 y=0이 상단인 top-left normalized 좌표로 변환해야
-    add_text_layer_from_ocr / build_embedpdf_annotations 등이 정확히 동작한다.
+    ⚠️ 이 함수는 좌표 규약 중립이 아니다. 입력 원점이 무엇인지 호출부가 알려줘야 한다.
+
+    Args:
+        flip_y: 입력 bbox가 **bottom-left origin(y↑)** 이면 True (AI Studio 가 PDF 를
+            직접 받았을 때의 규약). 입력이 이미 **top-left origin(y↓)** 이면 False —
+            PP-StructureV3(local_v5) 는 이미지 픽셀 좌표를 top-left 로 반환하므로 여기에 해당한다.
+
+    출력은 항상 top-left normalized 이며, 소비자
+    (`_normalized_bbox_to_pdf_user`, `add_text_layer_from_ocr`, `build_embedpdf_annotations`)
+    가 PDF user-space 로 갈 때 한 번 더 뒤집는다. 따라서 top-left 입력에 flip_y=True 를
+    쓰면 뒤집기가 두 번이 되어 상쇄되고, 하이라이트가 페이지 중앙 기준으로 상하 반전된다.
     """
     if not bbox or len(bbox) < 4:
         return list(bbox) if bbox else []
     x0, y0, x1, y1 = (float(v) for v in bbox[:4])
-    return [
-        x0 / page_width_px,
-        1.0 - (y1 / page_height_px),
-        x1 / page_width_px,
-        1.0 - (y0 / page_height_px),
-    ]
+    if flip_y:
+        ny0, ny1 = 1.0 - (y1 / page_height_px), 1.0 - (y0 / page_height_px)
+    else:
+        ny0, ny1 = y0 / page_height_px, y1 / page_height_px
+    return [x0 / page_width_px, ny0, x1 / page_width_px, ny1]
 
 
 def _normalize_points(
     points: list[list[float]] | list[tuple[float, ...]],
     page_width_px: float,
     page_height_px: float,
+    flip_y: bool = True,
 ) -> list[list[float]]:
-    """AI Studio(PaddleOCR-VL) 다각형 점들을 0~1 top-left normalized 좌표로 변환한다.
+    """다각형 점들을 0~1 top-left normalized 좌표로 변환한다.
 
-    [Flow: Step 1 (각 점의 x를 페이지 너비로 나눔)
-          -> Step 2 (각 점의 y를 페이지 높이로 나눔)
-          -> Step 3 (PDF user-space y↑를 top-left y↓로 뒤집음)
-          -> Step 4 (변환된 점 목록 반환)]
+    [Flow: Step 1 (각 점의 x를 페이지 너비로 나눔) -> Step 2 (y를 페이지 높이로 나눔)
+          -> Step 3 (원본이 bottom-left면 y를 뒤집음) -> Step 4 (변환된 점 목록 반환)]
+
+    `flip_y` 의미는 `_normalize_bbox` 와 동일하다.
     """
     if not points:
         return []
@@ -416,21 +425,27 @@ def _normalize_points(
             converted.append(list(pt) if pt else [])
             continue
         x, y = float(pt[0]), float(pt[1])
-        converted.append([x / page_width_px, 1.0 - (y / page_height_px)])
+        ny = 1.0 - (y / page_height_px) if flip_y else y / page_height_px
+        converted.append([x / page_width_px, ny])
     return converted
 
 
-def _extract_layout_from_result(res: Any) -> dict:
-    """AI Studio(PaddleOCR-VL) 결과 객체에서 bbox를 0~1 top-left normalized 좌표로 변환한 레이아웃을 반환한다.
+def _extract_layout_from_result(res: Any, flip_y: bool = True) -> dict:
+    """결과 객체에서 bbox를 0~1 top-left normalized 좌표로 변환한 레이아웃을 반환한다.
 
     [Flow: Step 1 (res.json 추출) -> Step 2 (페이지 픽셀 크기 확인)
           -> Step 3 (parsing_res_list / layout_det_res / overall_ocr_res의 bbox를 normalized 좌표로 변환)
           -> Step 4 (normalized 좌표계 기준 layout dict 반환)]
 
-    AI Studio에 PDF를 직접 제출하면 반환 bbox는 PDF user-space(bottom-left origin, y↑)이다.
-    이를 0~1 top-left normalized(y=0 상단, y=1 하단)로 변환하면
-    소비자(_collect_page_elements_*, add_text_layer_from_ocr)가 원본 PDF 페이지 크기만 알면
+    출력은 항상 0~1 top-left normalized(y=0 상단, y=1 하단)이다. 소비자
+    (`_collect_page_elements_*`, `add_text_layer_from_ocr`)가 원본 PDF 페이지 크기만 알면
     정확한 PDF user-space 좌표를 계산할 수 있다.
+
+    Args:
+        flip_y: 입력 bbox 의 y 원점이 하단(y↑)이면 True. AI Studio 에 **PDF 를 직접 제출**하면
+            bbox 가 PDF user-space(bottom-left)로 오므로 True 가 맞다.
+            **PP-StructureV3(local_v5)** 는 이미지 픽셀 좌표를 top-left 로 반환하므로 False 여야 한다.
+            잘못 주면 소비자 쪽 뒤집기와 상쇄되어 하이라이트가 상하 반전된다.
     """
     try:
         if isinstance(res, dict):
@@ -472,10 +487,10 @@ def _extract_layout_from_result(res: Any) -> dict:
             continue
         bbox = block.get("block_bbox")
         if bbox:
-            block["block_bbox"] = _normalize_bbox(bbox, page_width_px, page_height_px)
+            block["block_bbox"] = _normalize_bbox(bbox, page_width_px, page_height_px, flip_y)
         points = block.get("block_polygon_points")
         if points:
-            block["block_polygon_points"] = _normalize_points(points, page_width_px, page_height_px)
+            block["block_polygon_points"] = _normalize_points(points, page_width_px, page_height_px, flip_y)
 
     # layout_det_res 내부 boxes 변환
     layout_det = layout.get("layout_det_res") or {}
@@ -485,10 +500,10 @@ def _extract_layout_from_result(res: Any) -> dict:
                 continue
             coord = box.get("coordinate")
             if coord:
-                box["coordinate"] = _normalize_bbox(coord, page_width_px, page_height_px)
+                box["coordinate"] = _normalize_bbox(coord, page_width_px, page_height_px, flip_y)
             points = box.get("polygon_points")
             if points:
-                box["polygon_points"] = _normalize_points(points, page_width_px, page_height_px)
+                box["polygon_points"] = _normalize_points(points, page_width_px, page_height_px, flip_y)
 
     # overall_ocr_res.rec_boxes 변환
     ocr_res = layout.get("overall_ocr_res") or {}
@@ -496,7 +511,7 @@ def _extract_layout_from_result(res: Any) -> dict:
         rec_boxes = ocr_res.get("rec_boxes")
         if isinstance(rec_boxes, list):
             ocr_res["rec_boxes"] = [
-                _normalize_bbox(b, page_width_px, page_height_px)
+                _normalize_bbox(b, page_width_px, page_height_px, flip_y)
                 if b and len(b) >= 4
                 else b
                 for b in rec_boxes
@@ -1056,7 +1071,13 @@ def _v5_predict(
     capture_layout: bool,
 ) -> list[dict[str, Any]]:
     """페이지 이미지 목록을 로컬 PP-OCRv5로 추론해 per-page 결과 리스트를 반환한다."""
-    extractor = _extract_layout_from_result if capture_layout else None
+    # PP-StructureV3 는 bbox 를 입력 이미지 픽셀 좌표(top-left origin)로 반환한다.
+    # AI Studio 의 PDF 직접 제출(bottom-left)과 규약이 다르므로 flip_y=False 여야 한다.
+    # True 로 두면 소비자(_normalized_bbox_to_pdf_user)의 뒤집기와 상쇄되어
+    # 스캔 PDF 하이라이트가 페이지 중앙 기준으로 상하 반전된다.
+    extractor = (
+        functools.partial(_extract_layout_from_result, flip_y=False) if capture_layout else None
+    )
     return ocr_v5.predict_pages(image_paths, params=params, layout_extractor=extractor)
 
 

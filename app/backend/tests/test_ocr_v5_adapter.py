@@ -18,7 +18,14 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from backend.paddleocr_service import ocr_v5
+import functools
+
 from backend.paddleocr_service.main import _extract_layout_from_result
+
+# PP-StructureV3 는 bbox 를 top-left 이미지 픽셀 좌표로 반환하므로, 프로덕션의
+# _v5_predict 와 동일하게 flip_y=False 로 고정한 추출기를 쓴다. 기본값(True)은
+# AI Studio 가 PDF 를 직접 받았을 때(bottom-left)를 위한 것이다.
+_v5_layout_extractor = functools.partial(_extract_layout_from_result, flip_y=False)
 
 
 # ─── 테스트 더블 ───
@@ -488,7 +495,7 @@ def test_predict_page_returns_aistudio_compatible_shape(tmp_path, fake_lease):
     img = _png(tmp_path, "page-001.png", (200, 100))
     fake_lease([_FakeRes(_structure_v3_raw(), {"markdown_texts": "계약서"})])
 
-    out = ocr_v5.predict_page(img, params=None, layout_extractor=_extract_layout_from_result)
+    out = ocr_v5.predict_page(img, params=None, layout_extractor=_v5_layout_extractor)
 
     assert out["markdown"] == "계약서"
     assert out["page_angle"] == 0
@@ -501,6 +508,11 @@ def test_predict_page_returns_aistudio_compatible_shape(tmp_path, fake_lease):
     # x는 폭으로 나눈 값이 그대로 유지된다.
     assert bbox[0] == pytest.approx(10 / 200)
     assert bbox[2] == pytest.approx(110 / 200)
+    # y도 정확히 검증한다. 픽스처 입력은 top-left(이미지 픽셀)이므로 뒤집히면 안 된다.
+    # 범위(0~1)만 보면 상하 반전을 놓친다 — 실제로 그렇게 놓쳤다.
+    # 자세한 회귀 테스트: tests/test_layout_coordinate_origin.py
+    assert bbox[1] == pytest.approx(20 / 100)
+    assert bbox[3] == pytest.approx(60 / 100)
     # rec_boxes도 함께 정규화되어야 한다 (searchable PDF 텍스트 레이어의 입력).
     assert all(0.0 <= v <= 1.0 for v in layout["overall_ocr_res"]["rec_boxes"][0])
 

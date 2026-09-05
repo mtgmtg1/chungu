@@ -8,6 +8,32 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### 스캔 PDF 하이라이트 좌표 상하 반전 수정 (local_v5) — 2026-09-04
+
+- **증상**: PaddleOCR v5(local_v5) 전환 후 스캔 PDF의 하이라이트/주석이 페이지 중앙 기준으로 **상하 반전**되어 찍혔다. 상단 10% 텍스트가 하단 90% 위치에 하이라이트됐다.
+- **근본 원인 — y 뒤집기가 두 번**: top-left(이미지) → bottom-left(PDF user-space) 변환에는 뒤집기가 **홀수 번** 필요한데 두 번이라 상쇄됐다.
+
+  | 단계 | 연산 |
+  |---|---|
+  | PP-StructureV3 raw | 이미지 픽셀, **top-left** 원점 |
+  | `_normalize_bbox` | `ny = 1 - y/H` ← 1차 뒤집기 |
+  | `_normalized_bbox_to_pdf_user` | `(1 - ny) * H` ← 2차 뒤집기 |
+  | 결과 | `pdf_y = y_px` — 위에서 잰 값을 아래에서 잰 값으로 씀 |
+
+  `_normalize_bbox` 의 뒤집기는 **AI Studio 가 PDF 를 직접 받았을 때**(bottom-left 반환)를 위해 쓰인 것이다. local_v5 는 top-left 를 반환하는데 같은 함수를 그대로 통과시켰다. AGENTS.md 의 "AI Studio 이미지 제출과 같은 규약이므로 `_extract_layout_from_result()` 를 그대로 통과시켜" 라는 판단이 어긋난 지점 — 이 함수는 규약 중립이 아니라 bottom-left 를 하드코딩하고 있었다.
+- **수정**: `_normalize_bbox` / `_normalize_points` / `_extract_layout_from_result` 에 `flip_y` 파라미터 추가(기본 `True` — AI Studio 경로 무변경). `_v5_predict` 가 `functools.partial(_extract_layout_from_result, flip_y=False)` 로 추출기를 구성한다.
+- **왜 테스트가 못 잡았나**: `test_predict_page_returns_aistudio_compatible_shape` 가 x 는 `pytest.approx` 로 정확히 검증하면서 **y 는 `0.0 <= v <= 1.0` 범위만** 봤다. 픽스처 docstring 이 입력을 `top-left` 라고 스스로 적어놨는데도 y 단언이 없어, 반전돼도 통과했다.
+- **검증**:
+  - 배포된 develop 서비스(수정 전)에 실제 스캔 PDF(한국어 거래내역, 기울어진 스캔)를 넣어 실측: 최상단 표 제목 `국원산업개발 법인 계좌 입출금…`(육안 상단 ~16%)이 정규화 `y=0.816~0.837` 로 반환됐다 — `1 - 0.16 ≈ 0.84`, 정확한 반전. 게다가 최상단 제목이 그 아래 `합계` 행(`y=0.517`)보다 y 가 커서 순서까지 뒤집혔다.
+  - 실제 프로덕션 함수(`_extract_layout_from_result` → `_layout_bbox_to_pdf_user`)로 세 영역(상단 표 제목 / 중앙 거래내역 표 / 하단 손글씨)을 통과시켜, 수정 전 상단 10~18% → 82~90%, 수정 후 10~18% → 10~18% 로 일치함을 시각 확인.
+  - 백엔드 391 tests pass. 신규 `test_layout_coordinate_origin.py` 9개는 수정을 되돌리면 실제로 실패하는 것까지 확인했다.
+- **⚠️ 회귀 방지 경고**:
+  1. **`_extract_layout_from_result` 를 인자 없이 넘기지 말 것.** 기본값 `flip_y=True` 는 AI Studio PDF 규약이다. local_v5 경로(`_v5_predict`)는 반드시 `flip_y=False` 로 감싸야 한다.
+  2. **좌표 테스트에서 y 를 범위로만 검증하지 말 것.** `0 <= y <= 1` 은 상하 반전을 통과시킨다. 반드시 `pytest.approx` 로 값을 고정하라.
+  3. 새 OCR 백엔드를 추가하면 **그 백엔드의 y 원점을 먼저 확인**하고 `flip_y` 를 명시하라. 이미지 기반 추론은 대개 top-left(`False`), PDF user-space 를 반환하는 API 는 bottom-left(`True`) 다.
+  4. `core/ocr_layout.py` 의 `_split_block_into_rows` 는 "normalized bottom-left" 를 전제로 첫 행을 `y1` 에 배정하는 보정이 들어 있다(129~143행). 같은 파일 11행은 "y=0이 상단" 이라고 적혀 있어 서술이 상반된다 — 이번 수정으로 입력이 실제 top-left 가 되었으므로, 표 행 분할 순서가 맞는지 별도 확인이 필요하다.
+- **핵심 파일**: `app/backend/paddleocr_service/main.py`, `app/backend/tests/test_layout_coordinate_origin.py`(신규), `app/backend/tests/test_ocr_v5_adapter.py`.
+
 ### npm ci 전환이 드러낸 tiptap peer 충돌 + 배포 스크립트 Tailscale 경로 — 2026-09-04
 
 - **증상**: `deploy_develop.sh` 가 Docker 빌드 중 `npm ci` 에서 ERESOLVE 로 실패했다. 스크립트는 `docker compose down` **다음에** `up --build` 를 하므로, 빌드 실패로 develop 환경이 통째로 내려간 채 복구되지 않았다.

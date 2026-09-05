@@ -8,6 +8,22 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
 
 최근 주요 변경사항입니다. 상세한 코드 이력은 `git log`를 참조하세요.
 
+### npm ci 전환이 드러낸 tiptap peer 충돌 + 배포 스크립트 Tailscale 경로 — 2026-09-04
+
+- **증상**: `deploy_develop.sh` 가 Docker 빌드 중 `npm ci` 에서 ERESOLVE 로 실패했다. 스크립트는 `docker compose down` **다음에** `up --build` 를 하므로, 빌드 실패로 develop 환경이 통째로 내려간 채 복구되지 않았다.
+- **근본 원인**: `package-lock.json` 이 내부적으로 모순 상태였다.
+  - `@tiptap/extension-table-of-contents` 와 `@tiptap/extension-unique-id` 는 나머지 tiptap 패키지와 **다른 릴리스 트레인**을 타고 3.28.0 까지 올라가 있었다. 두 패키지의 peer 는 `@tiptap/core@3.28.0` **정확 일치**를 요구한다.
+  - 반면 `@tiptap/starter-kit@3.27.1` 이 딸린 확장 25개를 통해 core 를 3.27.1 로 묶고 있어, 해소 가능한 트리가 존재하지 않았다.
+  - `npm install` 은 이 충돌을 경고만 하고 넘어가지만 `npm ci` 는 거부한다. 즉 충돌은 전부터 잠재해 있었고, `npm install` → `npm ci` 전환이 그것을 드러낸 것이다.
+- **수정**: 두 패키지를 `^3.27.1` → **`3.27.1` 정확 고정**하고 락파일을 재생성했다. 트리 전체가 3.27.1 로 정렬되며 충돌 peer 요구가 0건이 된다. 앱은 `SimpleEditor.jsx` 에서 `TableOfContents.configure({ onUpdate })` 하나만 쓰므로 API 영향이 없다.
+- **배포 스크립트 접속 경로**: `deploy_a1.sh` / `deploy_develop.sh` 가 LAN(`a1`) → WAN(`wan-1`) 두 경로만 시도해, 집 밖에서는 둘 다 막혀 배포가 불가능했다. `~/.ssh/config` 에 이미 정의돼 있던 Tailscale 별칭(`ts-a1`, 100.116.233.17)을 중간 폴백으로 추가해 `a1 → ts-a1 → wan-1` 순으로 시도한다.
+- **검증**: 프론트엔드 113 tests pass + vite build 성공(3.27.1 트리). develop 배포 후 실측 — `/api/health` ok, `paddleocr_service` `{"backend":"local_v5","rec_model":"korean_PP-OCRv5_mobile_rec"}`, 진입 청크 194,536 → 59,705 bytes(3.26배), `content-encoding: gzip` + `vary: Accept-Encoding` + immutable 캐시 헤더 모두 정상.
+- **⚠️ 회귀 방지 경고**:
+  1. **두 tiptap 확장의 `^` 를 되살리지 말 것.** `^3.27.1` 은 3.28.0+ 를 허용하는데, 그 버전들은 core 정확 일치를 요구해 `npm ci` 가 다시 깨진다. tiptap 은 전 패키지가 peer 를 정확 버전으로 고정하므로 **가족 전체가 함께 움직여야 한다** — 올리려면 `starter-kit`/`core`/`react`/`pm` 까지 같은 버전으로 한꺼번에 올릴 것.
+  2. **`npm install` 성공은 `npm ci` 성공을 보장하지 않는다.** 의존성 변경 후에는 빈 디렉터리에 `package.json` + `package-lock.json` 만 복사해 `npm ci` 를 돌려 확인하라. Docker 빌드에서 처음 발견하면 환경이 내려간 채로 디버깅하게 된다.
+  3. **배포 스크립트는 `docker compose down` 후에 빌드한다.** 빌드가 실패하면 환경이 내려간 상태로 남는다. 위험한 빌드 변경은 develop 에서 먼저 확인할 것.
+- **핵심 파일**: `app/frontend/package.json`, `app/frontend/package-lock.json`, `deploy_a1.sh`, `deploy_develop.sh`.
+
 ### 프론트엔드 초기 로드 최적화 + 빌드/배포 인프라 정리 — 2026-09-04
 
 > 이 항목은 성능 작업과 별개 세션에서 이루어진 변경을 뒤늦게 정리한 것이다. 수치는 작업자가 코드 주석에 남긴 실측값을 옮겼다.
@@ -27,6 +43,7 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
   1. **`manualChunks` 를 객체 형태로 되돌리지 말 것.** 전이 의존이 딸려 들어와 진입 청크가 다시 부풀고, 원인이 눈에 잘 띄지 않는다.
   2. **`main.jsx` 에서 라우트를 정적 import 로 되돌리지 말 것.** 한 줄만 되돌려도 그 라우트가 끌어오는 벤더 청크 전체가 진입 그래프에 합류한다.
   3. **`package-lock.json` 두 개는 반드시 커밋 상태를 유지해야 한다.** `.gitignore` 의 예외(`!app/frontend/package-lock.json`, `!app/docs/package-lock.json`)를 지우면 fresh clone 에서 `npm ci` 가 실패해 이미지 빌드가 깨진다.
+  5. **`npm ci` 는 `npm install` 과 달리 peer dependency 를 엄격히 검증한다.** 이 전환 직후 실제로 배포가 깨졌다 — 아래 "npm ci 전환이 드러낸 tiptap peer 충돌" 항목 참조. 프론트 의존성을 건드린 뒤에는 로컬에서 `npm install` 이 통과하는 것만으로 안심하지 말고, 깨끗한 디렉터리에서 `npm ci` 가 통과하는지 반드시 확인할 것.
   4. **`db_pool_size + db_max_overflow` 는 anyio 스레드풀 상한과 짝이다.** 한쪽만 올리면 병목이 옮겨가거나 `QueuePool limit` 오류가 난다.
 - **핵심 파일**: `app/frontend/vite.config.js`, `app/frontend/src/main.jsx`, `app/frontend/src/i18n.js`, `app/frontend/src/pages/UploadPage.jsx`, `app/backend/config.py`, `app/backend/db/session.py`, `app/backend/db/migrations/038_add_jobs_user_created_index.sql`(신규), `app/Dockerfile.backend`, `app/.dockerignore`, `.gitignore`, `deploy_a1.sh`, `deploy_develop.sh`.
 

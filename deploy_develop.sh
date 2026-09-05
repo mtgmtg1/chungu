@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# [Flow: Step 1 (LAN 접속 시도) -> Step 2 (실패 시 WAN fallback) -> Step 3 (rsync 동기화) -> Step 4 (Docker 재빌드/재시작) -> Step 5 (상태 확인)]
+# [Flow: Step 1 (LAN/Tailscale/WAN 순 접속 시도) -> Step 3 (rsync 동기화) -> Step 4 (Docker 재빌드/재시작) -> Step 5 (상태 확인)]
 #
 # develop 환경 배포 스크립트 — 프로덕션(deploy_a1.sh)과 동일한 a1 서버에
 # 별도 프로젝트명(chungu-dev) + 별도 포트로 격리 실행.
@@ -13,23 +13,24 @@ set -e
 #
 # 접속: https://proof-develop.teamcat.app
 
-TARGET=""
 REMOTE_DIR="chungu-dev/app"
 COMPOSE_PROJECT="chungu-dev"
 
-# 1. 접속 경로 선택: LAN 우선, 실패 시 WAN fallback
-if ssh -o ConnectTimeout=5 -o BatchMode=yes a1 "true" 2>/dev/null; then
-  TARGET=a1
-  echo "[deploy:develop] LAN 경로(a1)로 연결됨"
-else
-  echo "[deploy:develop] LAN 경로 실패, WAN 경로(wan-1)로 fallback"
-  if ssh -o ConnectTimeout=10 -o BatchMode=yes wan-1 "true" 2>/dev/null; then
-    TARGET=wan-1
-    echo "[deploy:develop] WAN 경로(wan-1)로 연결됨"
-  else
-    echo "[deploy:develop] LAN/WAN 모두 연결 실패. a1 서버 상태를 확인하세요."
-    exit 1
+# 1. 접속 경로 선택: LAN -> Tailscale -> WAN 순으로 시도한다.
+# LAN 은 집 안에서만 되고, WAN 은 통신사 포트포워딩이라 막히는 경우가 있다.
+# Tailscale(ts-a1)은 어느 네트워크에서도 붙으므로 중간 폴백으로 둔다 (~/.ssh/config 정의).
+TARGET=""
+for candidate in a1 ts-a1 wan-1; do
+  if ssh -o ConnectTimeout=10 -o BatchMode=yes "$candidate" "true" 2>/dev/null; then
+    TARGET=$candidate
+    echo "[deploy:develop] 경로($candidate)로 연결됨"
+    break
   fi
+  echo "[deploy:develop] $candidate 연결 실패 — 다음 경로 시도"
+done
+if [ -z "$TARGET" ]; then
+  echo "[deploy:develop] LAN/Tailscale/WAN 모두 연결 실패. a1 서버 상태와 Tailscale 연결을 확인하세요."
+  exit 1
 fi
 
 # 2. 원격 디렉토리 준비

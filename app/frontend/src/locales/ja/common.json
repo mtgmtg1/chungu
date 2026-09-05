@@ -21,7 +21,18 @@
     "refundPolicy": "返金ポリシー",
     "apiDocs": "APIドキュメント",
     "plans": "プラン",
-    "contact": "サポートへ問い合わせ"
+    "contact": "サポートへ問い合わせ",
+    "businessInfo": "事業者情報",
+    "representative": "代表者名",
+    "companyName": "商号",
+    "businessNumber": "事業者登録番号",
+    "mailOrderNumber": "通信販売業申告番号",
+    "address": "会社住所",
+    "representativeValue": "パク・ヒョンジュン",
+    "companyNameValue": "チームキャット（TeamCat）",
+    "businessNumberValue": "705-17-02663",
+    "mailOrderNumberValue": "未登録",
+    "addressValue": "大韓民国ソウル特別市江北区樊洞443-98 4階"
   },
   "language": {
     "en": "English",

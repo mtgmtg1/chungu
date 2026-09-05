@@ -128,3 +128,39 @@ def test_v5_predict_passes_flip_y_false(monkeypatch):
         f"local_v5 가 y 를 뒤집었다 (기대 0.10, 실제 {bbox[1]:.2f}) — flip_y=False 여야 한다"
     )
     assert bbox[3] == pytest.approx(0.20)
+
+
+class TestRowOrderTopDown:
+    """표 행 / 문단 줄 분할이 위에서 아래 순서인지 검증한다.
+
+    top-left normalized 에서 첫 행은 y0(작은 값)를 받아야 한다. 2026-09-04 이전에는
+    반대로 y1 에 배정했는데, 그때는 _normalize_bbox 가 좌표를 반전시켜 넣어줬기 때문에
+    그 역순 배정이 반전을 상쇄하고 있었다. 근본 원인을 고친 뒤 이 보정을 남겨두면
+    표 행 순서가 거꾸로 뒤집힌다.
+    """
+
+    BLOCK = (0.10, 0.20, 0.90, 0.60)  # top-left normalized, 상단 20%~60%
+
+    def _screen_tops(self, bboxes):
+        import fitz
+
+        rect = fitz.Rect(0, 0, 500, 1000)
+        tops = []
+        for b in bboxes:
+            pdf = _layout_bbox_to_pdf_user({"_coordinate_system": "normalized"}, tuple(b), rect)
+            tops.append((rect.height - pdf[3]) / rect.height)
+        return tops
+
+    def test_ocr_layout_rows_are_top_down(self):
+        from backend.core.ocr_layout import _split_bbox_into_rows
+
+        tops = self._screen_tops(_split_bbox_into_rows(self.BLOCK, 4))
+        assert tops == sorted(tops), f"첫 행이 맨 위가 아니다: {tops}"
+        assert tops[0] == pytest.approx(0.20, abs=1e-6)
+        assert tops[-1] == pytest.approx(0.50, abs=1e-6)
+
+    # NOTE: pdf_text_layer(searchable PDF 텍스트 레이어)의 표 행/문단 줄 분할은
+    # 여기서 다루지 않는다. 그 파이프라인은 normalized_top_left_to_pdf_user 결과를
+    # PyMuPDF page.insert_text() 의 device-space 좌표로 그대로 쓰기 때문에 뒤집기
+    # 횟수가 하이라이트 경로와 다르며, 자체 종단 테스트
+    # (tests/test_extract_table_row_items_order.py)가 그 동작을 고정하고 있다.

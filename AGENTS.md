@@ -31,8 +31,14 @@ PROOF is a PDF/media → structured table (CSV/MD/XLSX) conversion service. It e
   1. **`_extract_layout_from_result` 를 인자 없이 넘기지 말 것.** 기본값 `flip_y=True` 는 AI Studio PDF 규약이다. local_v5 경로(`_v5_predict`)는 반드시 `flip_y=False` 로 감싸야 한다.
   2. **좌표 테스트에서 y 를 범위로만 검증하지 말 것.** `0 <= y <= 1` 은 상하 반전을 통과시킨다. 반드시 `pytest.approx` 로 값을 고정하라.
   3. 새 OCR 백엔드를 추가하면 **그 백엔드의 y 원점을 먼저 확인**하고 `flip_y` 를 명시하라. 이미지 기반 추론은 대개 top-left(`False`), PDF user-space 를 반환하는 API 는 bottom-left(`True`) 다.
-  4. `core/ocr_layout.py` 의 `_split_block_into_rows` 는 "normalized bottom-left" 를 전제로 첫 행을 `y1` 에 배정하는 보정이 들어 있다(129~143행). 같은 파일 11행은 "y=0이 상단" 이라고 적혀 있어 서술이 상반된다 — 이번 수정으로 입력이 실제 top-left 가 되었으므로, 표 행 분할 순서가 맞는지 별도 확인이 필요하다.
-- **핵심 파일**: `app/backend/paddleocr_service/main.py`, `app/backend/tests/test_layout_coordinate_origin.py`(신규), `app/backend/tests/test_ocr_v5_adapter.py`.
+  4. **`ocr_layout._split_bbox_into_rows` 의 역순 배정도 함께 걷어냈다.** 이 함수는 "normalized bottom-left" 를 전제로 첫 행을 `y1`(큰 값)에 배정해, 전역 반전을 국소적으로 상쇄하고 있었다. 근본 원인을 고친 뒤 그대로 두면 표 행 순서가 거꾸로 뒤집힌다(실측 확인: 첫 행이 상단 50%, 마지막 행이 20%). 첫 행이 `y0` 를 받도록 바꿨고 `tests/test_split_bbox_into_rows.py` 의 전제도 갱신했다.
+  5. **`pdf_text_layer.py` 는 건드리지 말 것 — 좌표 소비 방식이 다르다.** 표 행/문단 줄 분할이 겉보기에 같은 역순 배정 패턴을 쓰지만, 그 파이프라인은 `normalized_top_left_to_pdf_user` 결과를 PyMuPDF `page.insert_text()` 의 **device-space(y=0 상단)** 좌표로 그대로 쓰기 때문에 뒤집기 횟수가 하이라이트 경로와 다르다. 작업 중 같은 패턴이라는 이유로 함께 고쳤다가 `tests/test_extract_table_row_items_order.py`(실제 job 데이터 기반 종단 테스트)가 잡아내 되돌렸다. 두 파이프라인의 소비 방식을 먼저 확인하지 않고 패턴만 보고 일괄 수정하지 말 것.
+
+  | 파이프라인 | 변환 | 결과 사용처 | 첫 행 배정 |
+  |---|---|---|---|
+  | 하이라이트/주석 (`pdf_annotate_converter`) | `_layout_bbox_to_pdf_user` | PDF user-space 로 그대로 | `y0` (위) |
+  | searchable PDF 텍스트 레이어 (`pdf_text_layer`) | `normalized_top_left_to_pdf_user` | PyMuPDF device-space 로 직접 | `y1` (유지) |
+- **핵심 파일**: `app/backend/paddleocr_service/main.py`, `app/backend/core/ocr_layout.py`, `app/backend/tests/test_layout_coordinate_origin.py`(신규), `app/backend/tests/test_ocr_v5_adapter.py`, `app/backend/tests/test_split_bbox_into_rows.py`.
 
 ### npm ci 전환이 드러낸 tiptap peer 충돌 + 배포 스크립트 Tailscale 경로 — 2026-09-04
 

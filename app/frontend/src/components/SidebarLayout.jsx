@@ -292,6 +292,23 @@ export default function SidebarLayout({ children, title, subtitle }) {
             </a>
           </div>
         </div>
+        <div
+          className="max-w-container-max mx-auto px-margin-desktop mt-stack-sm"
+          data-oid="sidebar-footer-business">
+
+          <p
+            className="font-label-sm text-label-sm text-on-surface-variant/70 leading-relaxed"
+            data-oid="sidebar-footer-business-text">
+
+            {[
+            `${t("footer.representative")}: ${t("footer.representativeValue")}`,
+            `${t("footer.companyName")}: ${t("footer.companyNameValue")}`,
+            `${t("footer.businessNumber")}: ${t("footer.businessNumberValue")}`,
+            `${t("footer.mailOrderNumber")}: ${t("footer.mailOrderNumberValue")}`,
+            `${t("footer.address")}: ${t("footer.addressValue")}`].
+            join(" | ")}
+          </p>
+        </div>
       </footer>
     </div>);
 

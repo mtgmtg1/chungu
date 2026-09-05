@@ -12,7 +12,7 @@ export default function GlobalFooter() {
 
   return (
     <footer className="w-full py-8 border-t border-outline-variant/20" data-oid="global-footer">
-      <div className="max-w-container-max mx-auto px-gutter flex flex-col md:flex-row justify-between items-center gap-4 text-label-sm text-outline" data-oid="global-footer-inner">
+      <div className="max-w-container-max mx-auto px-gutter flex flex-col md:flex-row justify-between items-start md:items-center gap-4 text-label-sm text-outline" data-oid="global-footer-inner">
         <div className="flex items-center gap-2" data-oid="global-footer-copyright">
           <img
             src="/teamcat-logo.png"
@@ -62,6 +62,17 @@ export default function GlobalFooter() {
             {t("page:upload.admin")}
           </a>
         </div>
+      </div>
+      <div className="max-w-container-max mx-auto px-gutter mt-4 text-label-sm text-outline/70" data-oid="global-footer-business">
+        <p className="leading-relaxed" data-oid="global-footer-business-text">
+          {[
+            `${t("common:footer.representative")}: ${t("common:footer.representativeValue")}`,
+            `${t("common:footer.companyName")}: ${t("common:footer.companyNameValue")}`,
+            `${t("common:footer.businessNumber")}: ${t("common:footer.businessNumberValue")}`,
+            `${t("common:footer.mailOrderNumber")}: ${t("common:footer.mailOrderNumberValue")}`,
+            `${t("common:footer.address")}: ${t("common:footer.addressValue")}`,
+          ].join(" | ")}
+        </p>
       </div>
     </footer>
   );

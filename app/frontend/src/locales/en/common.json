@@ -21,7 +21,18 @@
     "refundPolicy": "Refund Policy",
     "apiDocs": "API Docs",
     "plans": "Plans",
-    "contact": "Contact Support"
+    "contact": "Contact Support",
+    "businessInfo": "Business Information",
+    "representative": "Representative",
+    "companyName": "Company Name",
+    "businessNumber": "Business Registration No.",
+    "mailOrderNumber": "Mail-Order Sales Registration No.",
+    "address": "Address",
+    "representativeValue": "Hyungjun Park",
+    "companyNameValue": "TeamCat",
+    "businessNumberValue": "705-17-02663",
+    "mailOrderNumberValue": "Not yet registered",
+    "addressValue": "4F, 443-98 Beon-dong, Gangbuk-gu, Seoul, Republic of Korea"
   },
   "language": {
     "en": "English",

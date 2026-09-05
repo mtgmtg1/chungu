@@ -21,7 +21,18 @@
     "refundPolicy": "환불 정책",
     "apiDocs": "API 문서",
     "plans": "요금제",
-    "contact": "고객 지원"
+    "contact": "고객 지원",
+    "businessInfo": "사업자 정보",
+    "representative": "대표자명",
+    "companyName": "상호",
+    "businessNumber": "사업자등록번호",
+    "mailOrderNumber": "통신판매업신고번호",
+    "address": "회사주소",
+    "representativeValue": "박형준",
+    "companyNameValue": "팀캣",
+    "businessNumberValue": "705-17-02663",
+    "mailOrderNumberValue": "아직없음",
+    "addressValue": "서울 강북구 번동 443-98 4층"
   },
   "language": {
     "en": "English",

@@ -18,7 +18,7 @@
 #     "parsing_res_list": [
 #       {"block_label": "table"|"text"|"title"|"seal"|"image"|"figure_title"|...,
 #        "block_content": "<table>...</table>" (표인 경우) 또는 일반 텍스트,
-#        "block_bbox": [x0, y0, x1, y1],  # 블록 전체 bbox (PDF user-space), 셀/행 단위 bbox는 없음
+#        "block_bbox": [x0, y0, x1, y1],  # 블록 전체 bbox (0~1 top-left normalized), 셀/행 단위 bbox는 없음
 #        "block_id": int, "block_order": int, "group_id": int,
 #        "block_polygon_points": [[x,y], ...]},
 #       ...
@@ -125,22 +125,20 @@ def _split_bbox_into_rows(block_bbox: BBox, row_count: int) -> list[BBox]:
 
     표 block_bbox를 세로로 row_count등분해 각 행의 근사 bbox를 만든다 (행 높이가 균등하다고 가정).
 
-    [주의] 이 bbox는 _normalize_bbox(PaddleOCR 서비스)에서 y축이 한 번 뒤집힌
-    "normalized bottom-left" 좌표계이다. _layout_bbox_to_pdf_user가 다시 y를
-    뒤집어 PDF user-space로 변환한 뒤, search_job_text에서 pdf_user_to_device로
-    세 번째 뒤집기를 수행하면 총 3번 뒤집혀 y가 반전된다.
+    [주의] 이 bbox는 0~1 top-left normalized(y=0이 상단)이다. 첫 행(i=0)은 표의 맨 위이므로
+    y0(작은 값)에 배정한다.
 
-    텍스트 레이어 파이프라인(_extract_table_row_items)은 이중 뒤집기(2번)로
-    정상 위치를 얻기 위해 첫 행을 y1(큰 값)에 배정한다.
-    OCR layout 파이프라인도 동일한 좌표계를 사용하므로, 같은 방식으로
-    첫 행을 y1에 가깝게 배정해야 시각적으로 올바른 위치에 표시된다.
+    2026-09-04 이전에는 첫 행을 y1(큰 값)에 배정했다. 그때는 paddleocr_service의
+    _normalize_bbox가 top-left 입력에도 y를 뒤집어 좌표가 반전된 채 들어왔고,
+    이 역순 배정이 그 반전을 국소적으로 상쇄하고 있었다. 근본 원인을 고쳤으므로
+    보정도 함께 걷어낸다. 회귀 테스트: tests/test_layout_coordinate_origin.py
     """
     x0, y0, x1, y1 = block_bbox
     if row_count <= 0:
         return []
     row_height = (y1 - y0) / row_count
-    # 첫 행(i=0)이 y1(변환 후 표의 맨 위)에 가장 가깝도록 역순으로 배정한다.
-    return [(x0, y1 - (i + 1) * row_height, x1, y1 - i * row_height) for i in range(row_count)]
+    # 첫 행(i=0)이 표의 맨 위(y0)를 받도록 순서대로 배정한다.
+    return [(x0, y0 + i * row_height, x1, y0 + (i + 1) * row_height) for i in range(row_count)]
 
 
 def _parse_table_block(block: dict) -> OcrTable | None:

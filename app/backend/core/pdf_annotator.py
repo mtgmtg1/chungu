@@ -66,7 +66,12 @@ class AnnotationTarget:
     """
 
     page_no: int  # 1-based
-    bbox_pdf: tuple[float, float, float, float]  # (x0, y0, x1, y1), 시각적(렌더링된 이미지 기준) PDF 포인트 좌표
+    # (x0, y0, x1, y1) — **PDF user-space**(원점 좌하단, y↑). 화면 좌표가 아니다.
+    # _rect_to_embedpdf_rect 가 embedpdf_rect_from_pdf_user 로 y 를 뒤집어
+    # EmbedPDF 의 device-space(원점 좌상단)로 변환한다.
+    # ⚠️ 이 필드를 "렌더링된 이미지 기준 좌표"로 오해하면, 상류의 y 뒤집기 버그를
+    #    정상 동작으로 착각하게 된다(2026-09-04 실제로 그런 주석이 있었다).
+    bbox_pdf: tuple[float, float, float, float]
     comment: str
     color: tuple[float, float, float] = DEFAULT_HIGHLIGHT_COLOR
     # sticky note 아이콘 색. None이면 DEFAULT_STICKY_NOTE_COLOR(보라) 사용.
@@ -154,6 +159,9 @@ def build_embedpdf_annotations(
     for t in targets:
         by_page.setdefault(t.page_no, []).append(t)
     for page_targets in by_page.values():
+        # PDF user-space 오름차순 — 페이지 아래쪽 대상이 먼저 온다. 이 순서는 annotation id 의
+        # idx 에만 쓰여 표시에는 영향이 없으므로 기존 동작을 유지한다
+        # (tests/test_pdf_annotator_build.py::test_targets_sorted_by_y_within_page 가 고정).
         page_targets.sort(key=lambda t: t.bbox_pdf[1])
 
     annotations: list[dict] = []

@@ -1236,10 +1236,15 @@ def debug_highlight_coords(
             logger.warning(f"[debug_highlight_coords] dict 추출 실패: {e}")
 
         # 5) OCR layout bbox (있으면)
-        # [주의] build_agent_elements_from_ocr_layout의 bbox_pdf는
-        # _normalize_bbox(1차 y반전) + _normalized_bbox_to_pdf_user(2차 y반전)를
-        # 거쳐 device-space와 동일한 좌표계가 된다. 추가 pdf_user_to_device(3차 y반전)를
-        # 적용하면 y가 반전되므로 변환 없이 그대로 사용한다.
+        # [주의] bbox_pdf 는 이름 그대로 PDF user-space(원점 좌하단, y↑)다.
+        # 이 디버그 응답은 device-space(원점 좌상단, y↓)로 통일해야 하므로
+        # (search_for_rects / text_blocks 가 device-space이고 _compute_coordinate_validation
+        #  이 셋을 같은 좌표계로 비교한다) pdf_user_to_device 를 반드시 적용한다.
+        #
+        # 2026-09-04 이전에는 변환 없이 그대로 썼다. 그때는 paddleocr_service 의
+        # _normalize_bbox 가 top-left 입력에도 y 를 뒤집어서 bbox_pdf 가 우연히
+        # device-space 와 같은 값이 됐기 때문이다(뒤집기 2회 상쇄). 그 근본 원인을
+        # 고쳤으므로 bbox_pdf 는 이제 진짜 PDF user-space 이며 변환이 필요하다.
         ocr_elements = []
         if job.result_ocr_layout_storage_path:
             try:
@@ -1248,8 +1253,10 @@ def debug_highlight_coords(
                 layout_raw = client.storage.from_("results").download(job.result_ocr_layout_storage_path)
                 layout_by_page = {int(k): v for k, v in json.loads(layout_raw.decode("utf-8")).items()}
                 elements = build_agent_elements_from_ocr_layout(layout_by_page, pdf_bytes, page_range=[page_no])
+                from ...core.pdf_coordinate_transform import pdf_user_to_device
+
                 for el in elements:
-                    dev = list(el["bbox_pdf"])  # 이미 device-space
+                    dev = list(pdf_user_to_device(tuple(el["bbox_pdf"]), page.rect))
                     ocr_elements.append({
                         "device": [round(v, 2) for v in dev],
                         "pixel": [round(dev[0] * scale, 1), round(dev[1] * scale, 1),
